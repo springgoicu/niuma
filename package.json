@@ -1,0 +1,24 @@
+{
+  "name": "niuma",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "pnpm run assets && turbo run dev --parallel",
+    "build": "pnpm run assets && turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "assets": "pnpm --filter @niuma/pixel-assets run generate",
+    "bench": "pnpm --filter @niuma/game-server run bench",
+    "server": "pnpm --filter @niuma/game-server run dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "bun": "^1.4.4",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}

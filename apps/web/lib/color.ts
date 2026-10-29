@@ -1,0 +1,63 @@
+export interface Hsv {
+  h: number;
+  s: number;
+  v: number;
+}
+
+export function hexToHsv(hex: number): Hsv {
+  const r = ((hex >> 16) & 0xff) / 255;
+  const g = ((hex >> 8) & 0xff) / 255;
+  const b = (hex & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+
+  let h = 0;
+  if (delta !== 0) {
+    if (max === r) h = ((g - b) / delta) % 6;
+    else if (max === g) h = (b - r) / delta + 2;
+    else h = (r - g) / delta + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+
+  return { h, s: max === 0 ? 0 : (delta / max) * 100, v: max * 100 };
+}
+
+export function hsvToHex(h: number, s: number, v: number): number {
+  const sat = Math.max(0, Math.min(100, s)) / 100;
+  const val = Math.max(0, Math.min(100, v)) / 100;
+  const c = val * sat;
+  const hh = (((h % 360) + 360) % 360) / 60;
+  const x = c * (1 - Math.abs((hh % 2) - 1));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hh < 1) [r, g, b] = [c, x, 0];
+  else if (hh < 2) [r, g, b] = [x, c, 0];
+  else if (hh < 3) [r, g, b] = [0, c, x];
+  else if (hh < 4) [r, g, b] = [0, x, c];
+  else if (hh < 5) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+
+  const m = val - c;
+  const to255 = (value: number) => Math.round((value + m) * 255);
+  return (to255(r) << 16) | (to255(g) << 8) | to255(b);
+}
+
+export function toHexString(hex: number): string {
+  return `#${(hex & 0xffffff).toString(16).padStart(6, '0')}`;
+}
+
+export function parseHex(input: string): number | null {
+  const cleaned = input.trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) return null;
+  return Number.parseInt(cleaned, 16);
+}
+
+export function isLight(hex: number): boolean {
+  const r = (hex >> 16) & 0xff;
+  const g = (hex >> 8) & 0xff;
+  const b = hex & 0xff;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150;
+}
