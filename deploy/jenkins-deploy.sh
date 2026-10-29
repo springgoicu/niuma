@@ -11,7 +11,8 @@
 #   GAME_SERVER_PORT         默认 3001
 #   GAME_SERVER_HOST         默认 0.0.0.0；nginx 反代 /ws 时改 127.0.0.1
 #   WEB_HOST                 默认 0.0.0.0；nginx 反代时改 127.0.0.1
-#   NEXT_PUBLIC_GAME_WS_URL  编译期注入，例 wss://niuma.example.com/ws；留空则浏览器直连 <hostname>:3001/ws
+#   NEXT_PUBLIC_GAME_WS_URL  编译期注入，例 ws://bangying.top/ws；留空则浏览器走同源 /ws
+#                            （由 nginx 升级到游戏服），本地 next dev 仍自动直连 :3001
 #   RUN_TESTS                默认 1；紧急发包可设 0 跳过测试
 #   WEB_HEAP_MB              默认 1024，Web 进程 --max-old-space-size
 set -euo pipefail

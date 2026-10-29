@@ -72,7 +72,9 @@ export function SiteFooter() {
             直接进入园区
           </Link>
           <a
-            href="http://localhost:3001/health"
+            href="/health"
+            target="_blank"
+            rel="noreferrer"
             className="inline-flex items-center gap-1 text-sm text-mist-300 transition-colors hover:text-mint-400"
           >
             服务器健康检查

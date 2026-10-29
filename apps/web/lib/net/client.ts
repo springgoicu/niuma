@@ -36,9 +36,12 @@ export interface NetHandlers {
 function defaultUrl(): string {
   const configured = process.env.NEXT_PUBLIC_GAME_WS_URL;
   if (configured) return configured;
-  if (typeof window === 'undefined') return 'ws://localhost:3001/ws';
+  if (typeof window === 'undefined') return 'ws://127.0.0.1:3001/ws';
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${protocol}://${window.location.hostname}:3001/ws`;
+  // 本地 `next dev`（3000）没有反代，直连游戏服；线上访问的是 80/443，
+  // 端口为空时走同源 /ws，由 nginx 升级到游戏服，避免浏览器直连 3001 失败
+  const port = window.location.port === '3000' ? ':3001' : '';
+  return `${protocol}://${window.location.hostname}${port}/ws`;
 }
 
 const MAX_RETRY_DELAY = 8000;

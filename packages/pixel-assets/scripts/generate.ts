@@ -1,17 +1,25 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { encodePng } from '../src/png';
-import { COLUMNS, FRAME_SIZE, ROWS, drawFrame, type FrameSpec, type SpeciesName } from '../src/quadruped';
+import { drawFrame, type FrameSpec, type SpeciesName } from '../src/quadruped';
 import { LAYERS, SLOT_TABLE, type LayerName } from '../src/palette';
 import { COSMETIC_CATALOG, COSMETIC_SIZE, drawCosmetic } from '../src/cosmetics';
+import {
+  ATLAS_HEIGHT,
+  ATLAS_WIDTH,
+  CLIPS,
+  COLUMNS,
+  DIRECTIONS,
+  FRAME_SIZE,
+  ROWS,
+} from '../src/layout';
 
 const OUT_DIR = resolve(import.meta.dir, '../../../apps/web/public/sprites');
-const ATLAS_W = FRAME_SIZE * COLUMNS;
-const ATLAS_H = FRAME_SIZE * ROWS;
+/** 布局契约的落点：SSR 的 CSS mask 与客户端切片都读这一份，避免两边各写死一遍列数 */
+const LAYOUT_TS = resolve(import.meta.dir, '../../../apps/web/lib/game/sprite-layout.generated.ts');
 
 const SPECIES: SpeciesName[] = ['cow', 'horse'];
 const EXTRA_COUNT: Record<SpeciesName, number> = { cow: 4, horse: 3 };
-const DIRECTIONS = ['down', 'left', 'right', 'up'] as const;
 
 interface RenderOptions {
   tail: number;
@@ -24,21 +32,21 @@ type LayerAtlas = Map<LayerName, Uint8Array>;
 
 function renderAtlas(species: SpeciesName, options: RenderOptions): LayerAtlas {
   const layers: LayerAtlas = new Map();
-  for (const layer of LAYERS) layers.set(layer, new Uint8Array(ATLAS_W * ATLAS_H * 4));
+  for (const layer of LAYERS) layers.set(layer, new Uint8Array(ATLAS_WIDTH * ATLAS_HEIGHT * 4));
 
   for (let direction = 0; direction < 4; direction += 1) {
-    for (let frame = 0; frame < 8; frame += 1) {
+    for (let column = 0; column < COLUMNS; column += 1) {
       const spec: FrameSpec = {
         species,
         direction: direction as 0 | 1 | 2 | 3,
-        frame,
+        column,
         tail: options.tail,
         pattern: options.pattern,
         extra: options.extra,
         snout: options.snout,
       };
       const px = drawFrame(spec);
-      const ox = frame * FRAME_SIZE;
+      const ox = column * FRAME_SIZE;
       const oy = direction * FRAME_SIZE;
       for (let y = 0; y < FRAME_SIZE; y += 1) {
         for (let x = 0; x < FRAME_SIZE; x += 1) {
@@ -46,7 +54,7 @@ function renderAtlas(species: SpeciesName, options: RenderOptions): LayerAtlas {
           const info = SLOT_TABLE[slot];
           if (!info) continue;
           const target = layers.get(info.layer)!;
-          const index = ((oy + y) * ATLAS_W + ox + x) * 4;
+          const index = ((oy + y) * ATLAS_WIDTH + ox + x) * 4;
           target[index] = info.luma;
           target[index + 1] = info.luma;
           target[index + 2] = info.luma;
@@ -58,28 +66,44 @@ function renderAtlas(species: SpeciesName, options: RenderOptions): LayerAtlas {
   return layers;
 }
 
+/** 与 apps/web/lib/color.ts 的 mixHex 同义：高光色由协议内 5 色派生，不加外观字段 */
+function mixHex(base: number, tint: number, amount: number): number {
+  const mix = (a: number, b: number) => {
+    const channel = ((a >> 0) & 0xff) * (1 - amount) + (b & 0xff) * amount;
+    return Math.round(channel);
+  };
+  const r = mix((base >> 16) & 0xff, (tint >> 16) & 0xff);
+  const g = mix((base >> 8) & 0xff, (tint >> 8) & 0xff);
+  const b = mix(base & 0xff, tint & 0xff);
+  return (r << 16) | (g << 8) | b;
+}
+
 /** 落地页用的默认配色预览图（与 shared-types 的 DEFAULT_APPEARANCE 对齐） */
 const PREVIEW_COLORS: Record<SpeciesName, Record<LayerName, number>> = {
   cow: {
     body: 0xf3efe4,
     pattern: 0x2a2622,
+    bodyLight: mixHex(0xf3efe4, 0xffffff, 0.55),
     hoof: 0x3a3532,
     eyes: 0x1d1a17,
+    eyeLight: mixHex(0x1d1a17, 0xffffff, 0.82),
     extra: 0xe6d6b4,
     snout: 0xd9d2c2,
   },
   horse: {
     body: 0xa96c3c,
     pattern: 0xf0ebdf,
+    bodyLight: mixHex(0xa96c3c, 0xffffff, 0.34),
     hoof: 0x4a3b2e,
     eyes: 0x1d1a17,
+    eyeLight: mixHex(0x1d1a17, 0xffffff, 0.82),
     extra: 0x3b2a1d,
     snout: 0x8a552c,
   },
 };
 
 function renderPreview(species: SpeciesName): Uint8Array {
-  const px = drawFrame({ species, direction: 0, frame: 0, tail: 0, pattern: 1, extra: 1, snout: 0 });
+  const px = drawFrame({ species, direction: 0, column: 0, tail: 0, pattern: 1, extra: 1, snout: 0 });
   const rgba = new Uint8Array(FRAME_SIZE * FRAME_SIZE * 4);
   for (let i = 0; i < px.data.length; i += 1) {
     const info = SLOT_TABLE[px.data[i]!];
@@ -96,11 +120,48 @@ function renderPreview(species: SpeciesName): Uint8Array {
 
 async function writeLayer(species: SpeciesName, layer: LayerName, fileName: string, atlas: LayerAtlas): Promise<string> {
   const rgba = atlas.get(layer)!;
-  const png = encodePng(ATLAS_W, ATLAS_H, rgba);
+  const png = encodePng(ATLAS_WIDTH, ATLAS_HEIGHT, rgba);
   const dir = resolve(OUT_DIR, species);
   await mkdir(dir, { recursive: true });
   await writeFile(resolve(dir, fileName), png);
   return `${species}/${fileName}`;
+}
+
+async function writeLayoutModule(): Promise<void> {
+  const body = `/**
+ * AUTO-GENERATED by packages/pixel-assets/scripts/generate.ts —— 不要手改。
+ * 运行 \`pnpm assets\` 会按 packages/pixel-assets/src/layout.ts 重写本文件。
+ */
+
+export interface GeneratedClip {
+  frames: number[];
+  frameMs: number[];
+  loopFrom: number;
+  loop: boolean;
+}
+
+export const SPRITE_LAYOUT = ${JSON.stringify(
+    {
+      version: 2,
+      frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
+      directions: DIRECTIONS,
+      clips: CLIPS,
+      cosmeticSize: COSMETIC_SIZE,
+    },
+    null,
+    2,
+  )} satisfies {
+  version: number;
+  frame: { w: number; h: number; columns: number; rows: number };
+  directions: readonly string[];
+  clips: Record<string, GeneratedClip>;
+  cosmeticSize: number;
+};
+
+export type SpritePoseName = keyof typeof SPRITE_LAYOUT.clips;
+`;
+  await mkdir(resolve(import.meta.dir, '../../../apps/web/lib/game'), { recursive: true });
+  await writeFile(LAYOUT_TS, body);
 }
 
 async function main(): Promise<void> {
@@ -108,14 +169,11 @@ async function main(): Promise<void> {
   const started = Date.now();
 
   const manifest: Record<string, unknown> = {
+    // v2：clips 改为逐帧时长 + 一次性过渡帧；v1 的 { frames, fps } 不再兼容
+    version: 2,
     frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
     directions: DIRECTIONS,
-    clips: {
-      idle: { frames: [0, 1], fps: 2.5 },
-      walk: { frames: [2, 3, 4, 5], fps: 9 },
-      sit: { frames: [6], fps: 0 },
-      lie: { frames: [7], fps: 0 },
-    },
+    clips: CLIPS,
     origin: { x: FRAME_SIZE / 2, y: 45 },
     /** 配件图标边长；客户端按 1:1 叠加，不做亚像素缩放 */
     cosmeticSize: COSMETIC_SIZE,
@@ -133,12 +191,16 @@ async function main(): Promise<void> {
     const entry: Record<string, unknown> = {};
     const base = renderAtlas(species, { tail: 0, pattern: 0, extra: 0, snout: 0 });
 
+    // 高光跟着尾巴造型走：尾巴是 body 图层的一部分，背线高光自然也要分变体
     const bodies: string[] = [];
+    const bodyLights: string[] = [];
     for (let tail = 0; tail < 2; tail += 1) {
       const atlas = tail === 0 ? base : renderAtlas(species, { tail, pattern: 0, extra: 0, snout: 0 });
       bodies.push(await writeLayer(species, 'body', `body-${tail}.png`, atlas));
+      bodyLights.push(await writeLayer(species, 'bodyLight', `bodyLight-${tail}.png`, atlas));
     }
     entry.body = bodies;
+    entry.bodyLight = bodyLights;
 
     const patterns = [''];
     for (let pattern = 1; pattern < 3; pattern += 1) {
@@ -149,6 +211,8 @@ async function main(): Promise<void> {
 
     entry.hoof = [await writeLayer(species, 'hoof', 'hoof.png', base)];
     entry.eyes = [await writeLayer(species, 'eyes', 'eyes.png', base)];
+    // 眼神光不随尾部/斑纹/角变化，只出一张
+    entry.eyeLight = [await writeLayer(species, 'eyeLight', 'eyeLight.png', base)];
 
     const snouts: string[] = [];
     for (let snout = 0; snout < 2; snout += 1) {
@@ -188,8 +252,12 @@ async function main(): Promise<void> {
   manifest.cosmeticFiles = cosmeticFiles;
 
   await writeFile(resolve(OUT_DIR, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeLayoutModule();
+
   const elapsed = Date.now() - started;
-  console.log(`[pixel-assets] atlas ${ATLAS_W}x${ATLAS_H}, species=${SPECIES.length}, ${elapsed}ms -> ${OUT_DIR}`);
+  console.log(
+    `[pixel-assets] atlas ${ATLAS_WIDTH}x${ATLAS_HEIGHT} · ${COLUMNS} cols · ${SPECIES.length} species · ${elapsed}ms -> ${OUT_DIR}`,
+  );
 }
 
 await main();

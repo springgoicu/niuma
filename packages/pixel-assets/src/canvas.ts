@@ -122,6 +122,56 @@ export class Px {
     }
   }
 
+  /**
+   * 背线高光：每列最上方的主体像素换成高光槽。
+   * 只有该处主体厚度 ≥ 3 才落笔——耳朵、尾巴尖、腿这类 1–2 像素宽的部位
+   * 整块变高光就看不出形体，只会显得脏。
+   */
+  topLight(slot: Slot = S.BodyLight, minRun = 3): void {
+    for (let x = 0; x < this.w; x += 1) {
+      let start = -1;
+      for (let y = 0; y < this.h; y += 1) {
+        if (this.data[y * this.w + x] === S.Body) {
+          start = y;
+          break;
+        }
+      }
+      if (start < 0) continue;
+      let run = 0;
+      for (let y = start; y < this.h && this.data[y * this.w + x] === S.Body; y += 1) run += 1;
+      if (run >= minRun) this.set(x, start, slot);
+    }
+  }
+
+  /**
+   * 底边压暗，但只在 maxY 以上生效：用来给躯干加体积，又不至于把
+   * 后画的腿一起吃掉（腿有自己的分段明暗）。
+   */
+  bottomShadeAbove(maxY: number, slot: Slot = S.BodyShade, thickness = 2): void {
+    for (let x = 0; x < this.w; x += 1) {
+      let painted = 0;
+      for (let y = Math.min(maxY, this.h - 1); y >= 0 && painted < thickness; y -= 1) {
+        const current = this.data[y * this.w + x]!;
+        if (current === S.Body) {
+          this.set(x, y, slot);
+          painted += 1;
+        }
+      }
+    }
+  }
+
+  /** 右缘压暗：光源默认在左上，右侧一像素暗边是廉价但有效的体积暗示 */
+  rightShade(slot: Slot = S.BodyShade, fromY = 0, toY = this.h - 1): void {
+    for (let y = Math.max(0, fromY); y <= Math.min(this.h - 1, toY); y += 1) {
+      for (let x = this.w - 1; x >= 0; x -= 1) {
+        if (this.data[y * this.w + x] === S.Body) {
+          this.set(x, y, slot);
+          break;
+        }
+      }
+    }
+  }
+
   flipX(): Px {
     const out = new Px(this.w, this.h);
     for (let y = 0; y < this.h; y += 1) {
