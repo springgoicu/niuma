@@ -11,14 +11,21 @@ export const COSMETIC_CATALOG = {
 
 export type CosmeticKind = keyof typeof COSMETIC_CATALOG;
 
-const SIZE = 16;
+/** 图标成品边长：按 1:1 叠到 48×48 角色上，不缩放，所以每个像素都是硬像素 */
+const SIZE = 12;
+/** 绘制坐标系沿用 16 格，构图不用重画，输出时按 0.75 落到 12 格 */
+const SOURCE = 16;
+const K = SIZE / SOURCE;
 
 class Icon {
   readonly data = new Uint8Array(SIZE * SIZE * 4);
 
   set(x: number, y: number, hex: number, alpha = 255): void {
-    if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
-    const i = (y * SIZE + x) * 4;
+    // 16→12 的整数取整映射：构图位置不变，但落笔永远是整像素，不会出现半像素
+    const tx = Math.floor(x * K);
+    const ty = Math.floor(y * K);
+    if (tx < 0 || ty < 0 || tx >= SIZE || ty >= SIZE) return;
+    const i = (ty * SIZE + tx) * 4;
     this.data[i] = (hex >> 16) & 0xff;
     this.data[i + 1] = (hex >> 8) & 0xff;
     this.data[i + 2] = hex & 0xff;

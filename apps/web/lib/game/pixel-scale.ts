@@ -15,7 +15,8 @@ export interface PixelMetrics {
 }
 
 const MIN_DEVICE_PX = 3;
-const MAX_DEVICE_PX = 8;
+/** 只是防呆上限：基准 3 / 6 乘上 DPR 3 也只有 18，正常不会触发 */
+const MAX_DEVICE_PX = 24;
 
 function normalizeDpr(dpr: number): number {
   return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;

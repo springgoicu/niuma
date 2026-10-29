@@ -50,8 +50,9 @@ export const SLOT_TABLE: Array<SlotInfo | null> = [
   { layer: 'eyes', luma: 140 },
   { layer: 'extra', luma: 255 },
   { layer: 'extra', luma: 142 },
-  { layer: 'snout', luma: 255 },
-  { layer: 'snout', luma: 158 },
+  // 口鼻在游戏里跟身体共用同一 tint，只能靠明度区分，所以压到 232 才看得出吻部
+  { layer: 'snout', luma: 232 },
+  { layer: 'snout', luma: 168 },
 ];
 
 export const LAYERS: LayerName[] = ['body', 'pattern', 'hoof', 'eyes', 'extra', 'snout'];

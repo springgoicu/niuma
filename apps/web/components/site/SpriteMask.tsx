@@ -27,7 +27,8 @@ export function SpriteStack({
   color,
   className = '',
 }: {
-  layers: string[];
+  /** 每层单独上色：单色剪影会把眼睛、蹄子和角一起抹平，分层才读得出结构 */
+  layers: Array<{ src: string; color?: string }>;
   frame?: number;
   size?: number;
   color: string;
@@ -36,8 +37,15 @@ export function SpriteStack({
   const px = FRAME * spriteZoom(size);
   return (
     <div className={`relative ${className}`} style={{ width: px, height: px }}>
-      {layers.map((src) => (
-        <SpriteMask key={src} src={src} frame={frame} size={size} color={color} className="absolute inset-0" />
+      {layers.map((layer) => (
+        <SpriteMask
+          key={layer.src}
+          src={layer.src}
+          frame={frame}
+          size={size}
+          color={layer.color ?? color}
+          className="absolute inset-0"
+        />
       ))}
     </div>
   );

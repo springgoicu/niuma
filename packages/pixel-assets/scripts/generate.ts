@@ -117,6 +117,8 @@ async function main(): Promise<void> {
       lie: { frames: [7], fps: 0 },
     },
     origin: { x: FRAME_SIZE / 2, y: 45 },
+    /** 配件图标边长；客户端按 1:1 叠加，不做亚像素缩放 */
+    cosmeticSize: COSMETIC_SIZE,
     species: {} as Record<string, unknown>,
     cosmeticAnchors: {
       down: { badge: [0, -21], tie: [0, -16], mouth: [0, -25], back: [0, -22] },

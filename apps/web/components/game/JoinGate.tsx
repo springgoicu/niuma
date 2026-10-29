@@ -48,7 +48,7 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
                 alt=""
                 width={96}
                 height={96}
-                className="pixelated h-16 w-16 shrink-0 sm:h-24 sm:w-24"
+                className="pixelated h-12 w-12 shrink-0 sm:h-24 sm:w-24"
                 style={{ imageRendering: 'pixelated' }}
               />
               <span>
