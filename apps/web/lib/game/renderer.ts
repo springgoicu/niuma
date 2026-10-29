@@ -5,6 +5,7 @@ import {
   Container,
   Graphics,
   RendererType,
+  Sprite,
   Text,
   TilingSprite,
   type Texture,
@@ -12,11 +13,13 @@ import {
 import { WORLD_HEIGHT, WORLD_WIDTH, type CharacterAppearance } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
 import { CharacterSprite } from './character';
+import { GroundFx } from './fx';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetrics } from './pixel-scale';
 
 /** 基准缩放：DPR 2 时每个纹素仍然是 6 个设备像素，观感不变 */
 const BASE_CSS_PER_TEXEL = 3;
-const GROUND_TILE = 128;
+/** 地面砖：256 铺装，比 128 更少重复感，且仍是整数倍平铺 */
+const GROUND_TILE = 256;
 
 const NAME_STYLE = {
   fontFamily: 'JetBrains Mono, monospace',
@@ -34,12 +37,26 @@ class EntityView {
   private readonly bubbleText: Text;
   private readonly bubbleBg = new Graphics();
   private bubbleUntil = 0;
+  private lastColumn = -1;
 
-  constructor(atlas: Atlas, name: string, appearance: CharacterAppearance, devicePxPerTexel: number) {
+  constructor(
+    atlas: Atlas,
+    name: string,
+    appearance: CharacterAppearance,
+    devicePxPerTexel: number,
+    shadow: Texture,
+    private readonly onFootfall: (x: number, y: number) => void,
+  ) {
+    // 接触阴影先入容器：它永远压在所有角色图层之下
+    const shadowSprite = new Sprite(shadow);
+    shadowSprite.anchor.set(0.5, 0.5);
+    shadowSprite.position.set(0, -1);
+    shadowSprite.alpha = 0.85;
+
     this.body = new CharacterSprite(atlas, appearance, 1);
     this.label = new Text({ text: name, style: NAME_STYLE, resolution: devicePxPerTexel });
     this.label.anchor.set(0.5, 1);
-    this.label.position.set(0, -50);
+    this.label.position.set(0, -47);
 
     this.bubbleText = new Text({
       text: '',
@@ -56,11 +73,14 @@ class EntityView {
     });
     this.bubble.visible = false;
     this.bubble.addChild(this.bubbleBg, this.bubbleText);
+    this.shadow = shadowSprite;
   }
+
+  private readonly shadow: Sprite;
 
   async init(): Promise<void> {
     await this.body.build();
-    this.root.addChild(this.body.container, this.label, this.bubble);
+    this.root.addChild(this.shadow, this.body.container, this.label, this.bubble);
   }
 
   /** DPR 变化时按新的设备纹素重建文字位图，否则文字会被拉伸到 2 倍而发虚 */
@@ -72,6 +92,15 @@ class EntityView {
 
   setPosition(x: number, y: number): void {
     this.root.position.set(x, y);
+  }
+
+  /** 换列时顺手判定落脚：跨到接触帧才扬尘，站着不动不会一路冒土 */
+  setPose(direction: number, column: number, dustFrames: Set<number>): void {
+    this.body.setPose(direction, column);
+    if (column !== this.lastColumn && dustFrames.has(column)) {
+      this.onFootfall(this.root.position.x, this.root.position.y);
+    }
+    this.lastColumn = column;
   }
 
   showBubble(text: string, now: number, duration = 6000): void {
@@ -92,7 +121,7 @@ class EntityView {
     this.bubbleBg.rect(right - 1, 0, 1, height).fill(0x9fb0a1);
 
     this.bubbleText.position.set(-Math.round(textW / 2), 2);
-    this.bubble.position.set(0, -56 - height);
+    this.bubble.position.set(0, -54 - height);
     this.bubble.visible = true;
     this.bubbleUntil = now + duration;
   }
@@ -113,6 +142,9 @@ export class GameRenderer {
   private readonly views = new Map<number, EntityView>();
   private atlas!: Atlas;
   private groundTexture?: Texture;
+  private shadowTexture?: Texture;
+  private fx?: GroundFx;
+  private dustFrames = new Set<number>();
   private metrics: PixelMetrics = pixelMetrics(BASE_CSS_PER_TEXEL, 1);
   backend = 'initializing';
   private ready = false;
@@ -148,20 +180,43 @@ export class GameRenderer {
 
   private buildGround(): void {
     const g = new Graphics();
-    g.rect(0, 0, GROUND_TILE, GROUND_TILE).fill(0x10160f);
-    for (let y = 0; y < GROUND_TILE; y += 32) {
-      for (let x = 0; x < GROUND_TILE; x += 32) {
-        const even = (x / 32 + y / 32) % 2 === 0;
-        g.rect(x, y, 32, 32).fill(even ? 0x161f18 : 0x111810);
-        g.rect(x, y, 32, 1).fill(0x0c120c);
-        g.rect(x, y, 1, 32).fill(0x0c120c);
+    const tile = 32;
+    g.rect(0, 0, GROUND_TILE, GROUND_TILE).fill(0x0f150f);
+    for (let y = 0; y < GROUND_TILE; y += tile) {
+      for (let x = 0; x < GROUND_TILE; x += tile) {
+        const odd = (x / tile + y / tile) % 2 === 0;
+        g.rect(x, y, tile, tile).fill(odd ? 0x171f18 : 0x121a13);
+        // 砖缝只画上、左两条，平铺时不会出现 2px 双线
+        g.rect(x, y, tile, 1).fill(0x0a0f0a);
+        g.rect(x, y, 1, tile).fill(0x0a0f0a);
+        g.rect(x + 1, y + 1, tile - 2, 1).fill(0x1c261d);
       }
     }
-    for (let i = 0; i < 26; i += 1) {
-      const px = (i * 37) % 120;
-      const py = (i * 53) % 120;
-      g.rect(px, py, 2, 2).fill(i % 3 === 0 ? 0x1f2b1f : 0x0d130d);
-    }
+    // 细节全部落在砖块内部，不跨砖缝：平铺时不会出现半截图案
+    const speckles: Array<[number, number, number, number]> = [
+      [24, 58, 2, 1],
+      [78, 22, 1, 2],
+      [140, 74, 2, 2],
+      [206, 40, 1, 1],
+      [40, 150, 2, 1],
+      [176, 166, 1, 1],
+      [112, 214, 2, 2],
+      [244, 232, 1, 1],
+    ];
+    for (const [x, y, w, h] of speckles) g.rect(x, y, w, h).fill(0x22301f);
+
+    // 线缆槽：一条横贯的地槽，两端各留 8px 让平铺接缝对齐
+    g.rect(8, 122, GROUND_TILE - 16, 3).fill(0x0a0f0a);
+    g.rect(8, 125, GROUND_TILE - 16, 1).fill(0x1b251b);
+
+    // 纸屑、咖啡渍、通风口：各来一处，密度低才不抢角色
+    g.rect(196, 92, 5, 4).fill(0x8f9a8c);
+    g.rect(197, 93, 3, 1).fill(0x6d776c);
+    g.rect(60, 196, 9, 5).fill(0x17201a);
+    g.rect(62, 195, 6, 1).fill(0x223026);
+    g.rect(150, 20, 8, 8).fill(0x101711);
+    for (let i = 0; i < 3; i += 1) g.rect(151, 22 + i * 2, 6, 1).fill(0x1d281e);
+
     // 地台是整屏面积，必须 1:1 + nearest，否则 1px 网格线会被插值抹成灰带
     this.groundTexture = this.app.renderer.generateTexture({
       target: g,
@@ -176,11 +231,27 @@ export class GameRenderer {
       height: WORLD_HEIGHT,
     });
     this.world.addChild(ground);
+
+    this.shadowTexture = GroundFx.shadowTexture(this.app.renderer);
+    this.fx = new GroundFx(this.app.renderer);
+    this.world.addChild(this.fx.container);
+
+    const walk = this.atlas.manifest.clips.walk;
+    const frames = walk?.frames ?? [];
+    // 接触帧 = 每个步幅的第一帧；六拍走一圈扬两次尘
+    this.dustFrames = new Set(frames.length > 0 ? [frames[0]!, frames[Math.floor(frames.length / 2)]!] : []);
   }
 
   async addEntity(id: number, name: string, appearance: CharacterAppearance): Promise<void> {
     if (!this.ready || this.views.has(id)) return;
-    const view = new EntityView(this.atlas, name, appearance, this.metrics.devicePxPerTexel);
+    const view = new EntityView(
+      this.atlas,
+      name,
+      appearance,
+      this.metrics.devicePxPerTexel,
+      this.shadowTexture!,
+      (x, y) => this.fx?.spawn(x, y),
+    );
     await view.init();
     this.views.set(id, view);
     this.world.addChild(view.root);
@@ -197,8 +268,8 @@ export class GameRenderer {
     this.views.get(id)?.setPosition(snapTexel(x), snapTexel(y));
   }
 
-  setFrame(id: number, frameIndex: number): void {
-    this.views.get(id)?.body.setFrame(frameIndex);
+  setPose(id: number, direction: number, column: number): void {
+    this.views.get(id)?.setPose(direction, column, this.dustFrames);
   }
 
   setAppearance(id: number, appearance: CharacterAppearance): void {
@@ -209,9 +280,10 @@ export class GameRenderer {
     this.views.get(id)?.showBubble(text, performance.now());
   }
 
-  tickBubbles(): void {
+  tickBubbles(dtMs: number): void {
     const now = performance.now();
     for (const view of this.views.values()) view.tickBubble(now);
+    this.fx?.update(dtMs);
   }
 
   updateCamera(x: number, y: number): void {
@@ -243,6 +315,8 @@ export class GameRenderer {
     for (const view of this.views.values()) view.destroy();
     this.views.clear();
     this.groundTexture?.destroy(true);
+    this.shadowTexture?.destroy(true);
+    this.fx?.destroy();
     this.app.destroy(true, { children: true });
   }
 }

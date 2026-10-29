@@ -36,14 +36,16 @@ export const CLIPS: Record<PoseName, ClipSpec> = {
     loopFrom: 0,
     loop: true,
   },
+  // 80ms 一拍 ≈ 4.2 步/秒：和 MOVE_SPEED 132px/s 的手感对齐，再慢就像在冰上滑
   walk: {
     frames: [3, 4, 5, 6, 7, 8],
-    frameMs: [92, 92, 92, 92, 92, 92],
+    frameMs: [80, 80, 80, 80, 80, 80],
     loopFrom: 0,
     loop: true,
   },
-  sit: { frames: [9, 10], frameMs: [190, 900], loopFrom: 1, loop: true },
-  lie: { frames: [11, 12], frameMs: [210, 1000], loopFrom: 1, loop: true },
+  // 坐/躺只有两帧：9/11 是坐定，10/12 抬 1px 当呼吸，两帧来回就是「还在动」
+  sit: { frames: [9, 10], frameMs: [420, 420], loopFrom: 0, loop: true },
+  lie: { frames: [11, 12], frameMs: [520, 520], loopFrom: 0, loop: true },
   emote: { frames: [13, 14, 15], frameMs: [120, 170, 150], loopFrom: 0, loop: false },
 };
 

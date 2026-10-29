@@ -15,7 +15,7 @@ import {
   type Pose,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
-import { frameForPose } from './atlas';
+import { buildClipTracks, clipDuration, frameAt, phaseOffset } from './clip';
 import { Ecs, Local, Motion, POSE, Position, Target } from './ecs';
 import { InputController, type ActionKey } from './input';
 import { GameRenderer } from './renderer';
@@ -47,6 +47,8 @@ export interface SessionCallbacks {
 const POSE_NAMES = ['idle', 'walk', 'sit', 'lie', 'emote'];
 const SEND_INTERVAL = 50;
 const STATS_INTERVAL = 500;
+/** 叫唤是一次性动作：播完由本地回落待机，并把新状态广播出去 */
+const EMOTE_MS = 440;
 
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
@@ -55,6 +57,8 @@ function clamp(value: number, min: number, max: number): number {
 export class GameSession {
   private readonly renderer = new GameRenderer();
   private readonly ecs = new Ecs();
+  private readonly tracks = buildClipTracks();
+  private readonly emoteMs = Math.max(EMOTE_MS, clipDuration(this.tracks.emote));
   private readonly input = new InputController();
   private readonly names = new Map<number, string>();
   private net: NetClient | null = null;
@@ -158,7 +162,11 @@ export class GameSession {
         Position.y[eid] = sy;
       }
       Motion.direction[eid] = state.direction;
-      Motion.pose[eid] = state.pose === POSE.Emote ? POSE.Idle : (state.pose as Pose);
+      // 动作变了才重置起始时刻：同一姿态的重复同步不能把动画打回第 0 帧
+      if (Motion.pose[eid] !== state.pose) {
+        Motion.pose[eid] = state.pose as Pose;
+        Motion.since[eid] = this.elapsed;
+      }
       Motion.moving[eid] = state.moving ? 1 : 0;
     }
   }
@@ -198,15 +206,40 @@ export class GameSession {
     if (!eid) return;
     if (action === 'sit') {
       Motion.pose[eid] = POSE.Sit;
+      Motion.since[eid] = this.elapsed;
       this.net?.sendAction(this.localId, ACTION.Sit);
     } else if (action === 'lie') {
       Motion.pose[eid] = POSE.Lie;
+      Motion.since[eid] = this.elapsed;
       this.net?.sendAction(this.localId, ACTION.Lie);
     } else {
+      // 连按也要能重新播：起始时刻强制归零
       Motion.pose[eid] = POSE.Emote;
+      Motion.since[eid] = this.elapsed;
       this.net?.sendAction(this.localId, ACTION.Emote);
     }
     Motion.moving[eid] = 0;
+  }
+
+  /** 当前该画哪一列：动作 → 时间轴 → 每实体相位偏移 */
+  private columnFor(netId: number, eid: number): number {
+    const pose = this.resolvePose(eid);
+    const track = this.tracks[POSE_NAMES[pose] ?? 'idle'] ?? this.tracks.idle!;
+    return frameAt(track, this.elapsed - Motion.since[eid]! + phaseOffset(netId, track));
+  }
+
+  /**
+   * 叫唤是一次性动作：本地播完自动回待机，下一个同步包就把 Idle 广播出去。
+   * 远端不在这里回收——服务端会一直重发 Emote，本地回收会和重发打架，变成无限循环。
+   */
+  private resolvePose(eid: number): number {
+    const pose = Motion.pose[eid]!;
+    if (pose !== POSE.Emote) return pose;
+    if (eid !== this.ecs.get(this.localId)) return pose;
+    if (this.elapsed - Motion.since[eid]! < this.emoteMs) return pose;
+    Motion.pose[eid] = POSE.Idle;
+    Motion.since[eid] = this.elapsed;
+    return POSE.Idle;
   }
 
   private tick = (ticker: { deltaMS: number }): void => {
@@ -224,10 +257,16 @@ export class GameSession {
         Position.x[localEid] = clamp(Position.x[localEid]! + vector.x * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
         Position.y[localEid] = clamp(Position.y[localEid]! + vector.y * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
         Motion.direction[localEid] = directionFromVector(vector.x, vector.y, Motion.direction[localEid] as Direction);
-        Motion.pose[localEid] = POSE.Walk;
+        if (Motion.pose[localEid] !== POSE.Walk) {
+          Motion.pose[localEid] = POSE.Walk;
+          Motion.since[localEid] = this.elapsed;
+        }
         Motion.moving[localEid] = 1;
       } else {
-        if (Motion.pose[localEid] === POSE.Walk) Motion.pose[localEid] = POSE.Idle;
+        if (Motion.pose[localEid] === POSE.Walk) {
+          Motion.pose[localEid] = POSE.Idle;
+          Motion.since[localEid] = this.elapsed;
+        }
         Motion.moving[localEid] = 0;
       }
     }
@@ -243,9 +282,7 @@ export class GameSession {
       const eid = this.ecs.get(netId);
       if (!eid) continue;
       this.renderer.updateEntity(netId, Position.x[eid]!, Position.y[eid]!);
-      const poseName = POSE_NAMES[Motion.pose[eid]!] ?? 'idle';
-      const clip = frameForPose(poseName, this.elapsed);
-      this.renderer.setFrame(netId, Motion.direction[eid]! * 8 + clip);
+      this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
     }
 
     if (localEid) {
@@ -257,7 +294,7 @@ export class GameSession {
       }
     }
 
-    this.renderer.tickBubbles();
+    this.renderer.tickBubbles(dtMs);
 
     if (now - this.statsAt >= STATS_INTERVAL) {
       const windowMs = now - this.statsAt;

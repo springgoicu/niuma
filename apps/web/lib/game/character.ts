@@ -2,15 +2,20 @@
 
 import { Container, Sprite, type Texture } from 'pixi.js';
 import type { CharacterAppearance } from '@niuma/shared-types';
+import { mixHex } from '../color';
 import { directionOf, type Atlas, type SpriteManifest } from './atlas';
 
-type ColorKey = 'body' | 'pattern' | 'hoof' | 'eyes' | 'extra';
+/**
+ * tint 只能乘、不能提亮，所以高光必须借独立图层，再把本体色往白里混一份当 tint。
+ * 这两个 key 不是外观字段（协议里仍然只有 5 色），只是派生的染色槽。
+ */
+type TintKey = 'body' | 'pattern' | 'hoof' | 'eyes' | 'extra' | 'bodyLight' | 'eyeLight';
 type CosmeticKind = 'badge' | 'tie' | 'mouth' | 'back';
 
 interface TintLayer {
   kind: 'tint';
   path: string;
-  colorKey: ColorKey;
+  colorKey: TintKey;
 }
 
 interface CosmeticLayer {
@@ -24,8 +29,19 @@ type LayerSpec = TintLayer | CosmeticLayer;
 interface LayerEntry {
   sprite: Sprite;
   frames: Texture[] | null;
-  colorKey?: ColorKey;
+  colorKey?: TintKey;
   cosmeticKind?: CosmeticKind;
+}
+
+/** 背线高光只比本体亮一点；再亮就成了塑料反光 */
+const BODY_LIGHT_MIX = 0.22;
+/** 眼神光要压过眼睛色才有「水光」，所以混得比身体高光狠得多 */
+const EYE_LIGHT_MIX = 0.7;
+
+function tintFor(appearance: CharacterAppearance, key: TintKey): number {
+  if (key === 'bodyLight') return mixHex(appearance.colors.body, 0xffffff, BODY_LIGHT_MIX);
+  if (key === 'eyeLight') return mixHex(appearance.colors.eyes, 0xffffff, EYE_LIGHT_MIX);
+  return appearance.colors[key];
 }
 
 function cosmeticPath(manifest: SpriteManifest, kind: CosmeticKind, value: string | undefined): string | null {
@@ -33,13 +49,19 @@ function cosmeticPath(manifest: SpriteManifest, kind: CosmeticKind, value: strin
   return manifest.cosmeticFiles[kind]?.[value] ?? null;
 }
 
+/**
+ * 叠层顺序即前后关系：背包在身后，高光压在斑纹上、眼睛下，
+ * 配件最后叠——领带要能盖住胸口的斑纹。
+ */
 function layerSpecs(manifest: SpriteManifest, appearance: CharacterAppearance): LayerSpec[] {
   const species = manifest.species[appearance.species] ?? manifest.species.cow!;
   const extraId = appearance.species === 'cow' ? appearance.parts.hornId ?? 0 : appearance.parts.maneId ?? 0;
   const body = species.body[appearance.parts.tailId] ?? species.body[0]!;
+  const bodyLight = species.bodyLight?.[appearance.parts.tailId] ?? species.bodyLight?.[0];
   const snout = species.snout[appearance.parts.snoutId] ?? species.snout[0]!;
   const pattern = appearance.parts.patternId > 0 ? species.pattern[appearance.parts.patternId] : undefined;
   const extra = species.extra[extraId];
+  const eyeLight = species.eyeLight?.[0];
 
   const specs: LayerSpec[] = [];
   const back = cosmeticPath(manifest, 'back', appearance.cosmetics.backItem);
@@ -47,9 +69,11 @@ function layerSpecs(manifest: SpriteManifest, appearance: CharacterAppearance): 
 
   specs.push({ kind: 'tint', path: body, colorKey: 'body' });
   if (pattern) specs.push({ kind: 'tint', path: pattern, colorKey: 'pattern' });
+  if (bodyLight) specs.push({ kind: 'tint', path: bodyLight, colorKey: 'bodyLight' });
   specs.push({ kind: 'tint', path: species.hoof[0]!, colorKey: 'hoof' });
   if (extra) specs.push({ kind: 'tint', path: extra, colorKey: 'extra' });
   specs.push({ kind: 'tint', path: species.eyes[0]!, colorKey: 'eyes' });
+  if (eyeLight) specs.push({ kind: 'tint', path: eyeLight, colorKey: 'eyeLight' });
   specs.push({ kind: 'tint', path: snout, colorKey: 'body' });
 
   const tie = cosmeticPath(manifest, 'tie', appearance.cosmetics.tie);
@@ -111,14 +135,14 @@ export class CharacterSprite {
         if (token !== this.token) return;
         const sprite = new Sprite(frames[this.frameIndex] ?? frames[0]!);
         sprite.anchor.set(0.5, 45 / 48);
-        sprite.tint = appearance.colors[spec.colorKey];
+        sprite.tint = tintFor(appearance, spec.colorKey);
         entries.push({ sprite, frames, colorKey: spec.colorKey });
       } else {
         const texture = await this.atlas.cosmetic(spec.path);
         if (token !== this.token) return;
         const sprite = new Sprite(texture);
         sprite.anchor.set(0.5);
-        // 配件按 1:1 叠加：亚像素缩放（曾用 0.55）会把图标糊成一团
+        // 配件按 1:1 叠加：亚像素缩放会把图标糊成一团
         sprite.scale.set(1);
         entries.push({ sprite, frames: null, cosmeticKind: spec.cosmeticKind });
       }
@@ -138,11 +162,15 @@ export class CharacterSprite {
       return;
     }
     for (const entry of this.entries) {
-      if (entry.colorKey) entry.sprite.tint = next.colors[entry.colorKey];
+      if (entry.colorKey) entry.sprite.tint = tintFor(next, entry.colorKey);
     }
   }
 
-  setFrame(index: number): void {
+  /**
+   * 方向与帧列分开传：列数由 manifest 决定，调用方不该再知道「一行 8 帧」这种细节。
+   */
+  setPose(direction: number, column: number): void {
+    const index = direction * this.atlas.columns + column;
     if (index === this.frameIndex) return;
     this.frameIndex = index;
     for (const entry of this.entries) {

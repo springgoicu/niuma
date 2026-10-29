@@ -96,14 +96,16 @@ export function Hero() {
               <div className="absolute bottom-[86px] right-14 animate-float">
                 <SpriteStack
                   layers={[
-                    // body 图里被其他图层挖掉的像素必须补齐，否则眼睛与口鼻会变成透明洞
+                    // 每层只占自己那些像素，必须全部叠上，否则眼睛与口鼻会变成透明洞
                     { src: '/sprites/cow/body-0.png', color: '#4fe3c1' },
+                    { src: '/sprites/cow/bodyLight-0.png', color: '#9df2da' },
                     { src: '/sprites/cow/hoof.png', color: '#2fb59a' },
                     { src: '/sprites/cow/snout-0.png', color: '#e6ede6' },
                     { src: '/sprites/cow/eyes.png', color: '#070a08' },
+                    { src: '/sprites/cow/eyeLight.png', color: '#eafaf1' },
                     { src: '/sprites/cow/extra-1.png', color: '#e6ede6' },
                   ]}
-                  frame={2}
+                  frame={0}
                   size={144}
                   color="#4fe3c1"
                 />

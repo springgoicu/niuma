@@ -4,6 +4,16 @@ export interface Hsv {
   v: number;
 }
 
+/** 两色线性混合：高光 / 眼神光这类派生色统一走这里，避免每处各写一份 */
+export function mixHex(base: number, tint: number, amount: number): number {
+  const t = Math.max(0, Math.min(1, amount));
+  const lerp = (a: number, b: number) => Math.round(a + (b - a) * t);
+  const r = lerp((base >> 16) & 0xff, (tint >> 16) & 0xff);
+  const g = lerp((base >> 8) & 0xff, (tint >> 8) & 0xff);
+  const b = lerp(base & 0xff, tint & 0xff);
+  return (r << 16) | (g << 8) | b;
+}
+
 export function hexToHsv(hex: number): Hsv {
   const r = ((hex >> 16) & 0xff) / 255;
   const g = ((hex >> 8) & 0xff) / 255;

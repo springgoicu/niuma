@@ -1,9 +1,11 @@
 'use client';
 
-import { Application, Graphics } from 'pixi.js';
+import { Application, Graphics, Sprite } from 'pixi.js';
 import type { CharacterAppearance } from '@niuma/shared-types';
-import { frameForPose, loadAtlas, type Atlas } from './atlas';
+import { loadAtlas, type Atlas } from './atlas';
 import { CharacterSprite } from './character';
+import { buildClipTracks, frameAt } from './clip';
+import { GroundFx } from './fx';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, type PixelMetrics } from './pixel-scale';
 
 /** 基准放大倍数：DPR 2 时每纹素 12 设备像素，依然能被整除 */
@@ -15,11 +17,14 @@ const BASE_CSS_PER_TEXEL = 6;
  */
 export class CreatorPreview {
   private readonly app = new Application();
+  private readonly tracks = buildClipTracks();
   private atlas: Atlas | null = null;
   private character: CharacterSprite | null = null;
+  private shadow: Sprite | null = null;
   private direction = 0;
   private pose = 'idle';
   private elapsed = 0;
+  private poseSince = 0;
   private disposed = false;
   private metrics: PixelMetrics = pixelMetrics(BASE_CSS_PER_TEXEL, 1);
   /** app.init() 是否已完成：ticker / stage 只有在这之后才存在 */
@@ -54,11 +59,17 @@ export class CreatorPreview {
     platform.ellipse(0, 3, 68, 16).fill({ color: 0x24302a, alpha: 0.7 });
     platform.ellipse(0, 1, 52, 11).fill({ color: 0x2f4038, alpha: 0.5 });
 
+    // 接触阴影和游戏里共用同一张纹理，预览与实机才不会两套观感
+    this.shadow = new Sprite(GroundFx.shadowTexture(this.app.renderer));
+    this.shadow.anchor.set(0.5, 0.5);
+    this.shadow.position.set(0, -1);
+    this.shadow.scale.set(1);
+
     this.character = new CharacterSprite(this.atlas, appearance, this.metrics.cssScale);
     await this.character.build();
     if (this.disposed) return;
 
-    this.app.stage.addChild(platform, this.character.container);
+    this.app.stage.addChild(platform, this.shadow, this.character.container);
     this.layout(host);
     this.app.ticker.add(this.tick);
     window.addEventListener('resize', this.onResize);
@@ -88,8 +99,8 @@ export class CreatorPreview {
 
   private tick = (ticker: { deltaMS: number }): void => {
     this.elapsed += ticker.deltaMS;
-    const clip = frameForPose(this.pose, this.elapsed);
-    this.character?.setFrame(this.direction * 8 + clip);
+    const track = this.tracks[this.pose] ?? this.tracks.idle!;
+    this.character?.setPose(this.direction, frameAt(track, this.elapsed - this.poseSince));
   };
 
   setAppearance(appearance: CharacterAppearance): void {
@@ -97,8 +108,10 @@ export class CreatorPreview {
   }
 
   setPose(pose: string): void {
+    if (this.pose === pose) return;
     this.pose = pose;
-    this.elapsed = 0;
+    // 换动作从第 0 帧开始：坐下才有「落座」的起始帧，而不是随机停在呼吸相
+    this.poseSince = this.elapsed;
   }
 
   setDirection(direction: number): void {
@@ -120,6 +133,12 @@ export class CreatorPreview {
     this.app.ticker.remove(this.tick);
     this.character?.destroy();
     this.character = null;
+    if (this.shadow) {
+      const texture = this.shadow.texture;
+      this.shadow.destroy();
+      texture.destroy(true);
+      this.shadow = null;
+    }
     this.app.destroy(true, { children: true });
   }
 }

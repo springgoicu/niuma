@@ -1,5 +1,8 @@
-const FRAME = 48;
-const COLUMNS = 8;
+import { SPRITE_LAYOUT } from '@/lib/game/sprite-layout.generated';
+
+const FRAME = SPRITE_LAYOUT.frame.w;
+const COLUMNS = SPRITE_LAYOUT.frame.columns;
+const ROWS = SPRITE_LAYOUT.frame.rows;
 
 /** 只允许 48 的整数倍：非整数倍放大时 CSS mask 会落在半像素上，像素块就糊了 */
 export function spriteZoom(size: number): number {
@@ -8,7 +11,7 @@ export function spriteZoom(size: number): number {
 
 interface SpriteMaskProps {
   src: string;
-  /** 0..31（4 方向 × 8 帧） */
+  /** 0..(columns*rows-1)，行是方向、列是动作帧；列数以生成期为唯一真相 */
   frame?: number;
   /** 期望尺寸的提示值，实际按 48 的整数倍取整 */
   size?: number;
@@ -55,6 +58,7 @@ export function SpriteMask({ src, frame = 0, size = 72, color, className = '' }:
   const zoom = spriteZoom(size);
   const px = FRAME * zoom;
   const col = frame % COLUMNS;
+  const row = Math.floor(frame / COLUMNS);
   return (
     <div
       aria-hidden
@@ -65,10 +69,10 @@ export function SpriteMask({ src, frame = 0, size = 72, color, className = '' }:
         backgroundColor: color,
         WebkitMaskImage: `url(${src})`,
         maskImage: `url(${src})`,
-        WebkitMaskSize: `${FRAME * COLUMNS * zoom}px ${FRAME * 4 * zoom}px`,
-        maskSize: `${FRAME * COLUMNS * zoom}px ${FRAME * 4 * zoom}px`,
-        WebkitMaskPosition: `${-col * px}px 0px`,
-        maskPosition: `${-col * px}px 0px`,
+        WebkitMaskSize: `${FRAME * COLUMNS * zoom}px ${FRAME * ROWS * zoom}px`,
+        maskSize: `${FRAME * COLUMNS * zoom}px ${FRAME * ROWS * zoom}px`,
+        WebkitMaskPosition: `${-col * px}px ${-row * px}px`,
+        maskPosition: `${-col * px}px ${-row * px}px`,
         WebkitMaskRepeat: 'no-repeat',
         maskRepeat: 'no-repeat',
         // 0 模糊的硬投影：软光晕会顺着轮廓把像素边缘抹开

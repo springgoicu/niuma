@@ -178,11 +178,12 @@ async function main(): Promise<void> {
     /** 配件图标边长；客户端按 1:1 叠加，不做亚像素缩放 */
     cosmeticSize: COSMETIC_SIZE,
     species: {} as Record<string, unknown>,
+    // 锚点相对脚底原点 (24,45)：头变大后口鼻抬到 -22 上下，配件位置整体随之上移
     cosmeticAnchors: {
-      down: { badge: [0, -21], tie: [0, -16], mouth: [0, -25], back: [0, -22] },
-      up: { badge: [0, -21], tie: [0, -16], mouth: [0, -25], back: [0, -22] },
-      left: { badge: [-4, -20], tie: [-3, -16], mouth: [-12, -25], back: [8, -22] },
-      right: { badge: [4, -20], tie: [3, -16], mouth: [12, -25], back: [-8, -22] },
+      down: { badge: [0, -20], tie: [1, -15], mouth: [8, -21], back: [0, -26] },
+      up: { badge: [0, -20], tie: [1, -15], mouth: [8, -21], back: [0, -26] },
+      left: { badge: [-5, -20], tie: [-5, -16], mouth: [-13, -23], back: [6, -21] },
+      right: { badge: [5, -20], tie: [5, -16], mouth: [13, -23], back: [-6, -21] },
     },
     cosmetics: COSMETIC_CATALOG,
   };

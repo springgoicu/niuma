@@ -55,12 +55,12 @@ export const SPRITE_LAYOUT = {
         8
       ],
       "frameMs": [
-        92,
-        92,
-        92,
-        92,
-        92,
-        92
+        80,
+        80,
+        80,
+        80,
+        80,
+        80
       ],
       "loopFrom": 0,
       "loop": true
@@ -71,10 +71,10 @@ export const SPRITE_LAYOUT = {
         10
       ],
       "frameMs": [
-        190,
-        900
+        420,
+        420
       ],
-      "loopFrom": 1,
+      "loopFrom": 0,
       "loop": true
     },
     "lie": {
@@ -83,10 +83,10 @@ export const SPRITE_LAYOUT = {
         12
       ],
       "frameMs": [
-        210,
-        1000
+        520,
+        520
       ],
-      "loopFrom": 1,
+      "loopFrom": 0,
       "loop": true
     },
     "emote": {
@@ -104,7 +104,7 @@ export const SPRITE_LAYOUT = {
       "loop": false
     }
   },
-  "cosmeticSize": 12
+  "cosmeticSize": 16
 } satisfies {
   version: number;
   frame: { w: number; h: number; columns: number; rows: number };

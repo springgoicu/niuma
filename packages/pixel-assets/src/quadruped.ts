@@ -201,8 +201,8 @@ function drawHornOrMane(
     if (view === 'side') {
       // 侧面只看得见近侧那只角，短而外倾
       if (variant === 1) {
-        px.rect(headX + 1, top - 3, 2, 4, S.Extra);
-        px.rect(headX + 2, top - 4, 2, 2, S.Extra);
+        px.rect(headX + 1, top - 2, 2, 3, S.Extra);
+        px.rect(headX + 2, top - 3, 2, 2, S.Extra);
         px.rect(headX + 1, top - 1, 2, 1, S.ExtraShade);
       } else if (variant === 2) {
         px.rect(headX + 1, top - 2, 2, 3, S.Extra);
@@ -216,10 +216,10 @@ function drawHornOrMane(
     }
     if (variant === 1) {
       // 两只角向外上方岔开：直上直下会像两根天线
-      px.rect(headX - 7, top - 3, 2, 4, S.Extra);
-      px.rect(headX - 8, top - 4, 2, 2, S.Extra);
-      px.rect(headX + 5, top - 3, 2, 4, S.Extra);
-      px.rect(headX + 6, top - 4, 2, 2, S.Extra);
+      px.rect(headX - 7, top - 2, 2, 3, S.Extra);
+      px.rect(headX - 8, top - 3, 2, 2, S.Extra);
+      px.rect(headX + 5, top - 2, 2, 3, S.Extra);
+      px.rect(headX + 6, top - 3, 2, 2, S.Extra);
       px.rect(headX - 7, top - 1, 2, 1, S.ExtraShade);
       px.rect(headX + 5, top - 1, 2, 1, S.ExtraShade);
     } else if (variant === 2) {
@@ -555,10 +555,10 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
 
   // 耳朵先画，再让头顶盖住根部，才像长在头上而不是贴上去
   if (spec.species === 'cow') {
-    px.rect(BODY_CX - headRx - 3, o.headCY - 2, a.earW + 1, a.earH + 1, S.Body);
-    px.rect(BODY_CX + headRx - 1, o.headCY - 2, a.earW + 1, a.earH + 1, S.Body);
-    px.rect(BODY_CX - headRx - 3, o.headCY - 1, 2, 1, S.BodyShade);
-    px.rect(BODY_CX + headRx + 1, o.headCY - 1, 2, 1, S.BodyShade);
+    px.rect(BODY_CX - headRx - 3, o.headCY - 4, a.earW + 1, a.earH + 1, S.Body);
+    px.rect(BODY_CX + headRx - 1, o.headCY - 4, a.earW + 1, a.earH + 1, S.Body);
+    px.rect(BODY_CX - headRx - 3, o.headCY - 3, 2, 1, S.BodyShade);
+    px.rect(BODY_CX + headRx + 1, o.headCY - 3, 2, 1, S.BodyShade);
   } else {
     px.rect(BODY_CX - 6, o.headCY - headRy - a.earH, a.earW, a.earH + 2, S.Body);
     px.rect(BODY_CX + 4, o.headCY - headRy - a.earH, a.earW, a.earH + 2, S.Body);

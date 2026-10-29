@@ -14,6 +14,8 @@ export const Motion = {
   direction: new Uint8Array(CAPACITY),
   pose: new Uint8Array(CAPACITY),
   moving: new Uint8Array(CAPACITY),
+  /** 当前动作的起始时刻（ms）：换动作时重置，动画从第 0 帧起播 */
+  since: new Float64Array(CAPACITY),
 };
 export const Local = { flag: new Uint8Array(CAPACITY) };
 
@@ -35,6 +37,7 @@ export class Ecs {
     Motion.direction[eid] = 0;
     Motion.pose[eid] = POSE.Idle;
     Motion.moving[eid] = 0;
+    Motion.since[eid] = 0;
     this.byNetId.set(netId, eid);
     return eid;
   }
