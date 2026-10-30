@@ -14,8 +14,10 @@ import {
   encodeAppearanceBroadcast,
   encodePong,
   encodeWelcome,
+  findFreePoint,
   quantizeCoord,
   readOpCode,
+  WORLD_CENTER,
 } from '@niuma/shared-types';
 import type { ServerConfig } from './config';
 import { RingSampler } from './metrics';
@@ -36,10 +38,13 @@ interface SocketData {
 
 const MOVE_SCRATCH = { id: 0, x: 0, y: 0, state: 0 };
 
+/** 出生点在广场内散布；落进花坛/水面时由 findFreePoint 就近挪到空地 */
 function spawnPoint(radius: number): { x: number; y: number } {
   const angle = Math.random() * Math.PI * 2;
   const distance = Math.sqrt(Math.random()) * radius;
-  return { x: 4096 + Math.cos(angle) * distance, y: 4096 + Math.sin(angle) * distance };
+  const x = WORLD_CENTER.x + Math.cos(angle) * distance;
+  const y = WORLD_CENTER.y + Math.sin(angle) * distance;
+  return findFreePoint(x, y);
 }
 
 export function startGameServer(config: ServerConfig) {

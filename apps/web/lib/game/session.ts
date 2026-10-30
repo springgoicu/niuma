@@ -9,6 +9,8 @@ import {
   directionFromVector,
   packState,
   quantizeCoord,
+  regionAt,
+  resolveMotion,
   unpackState,
   type CharacterAppearance,
   type Direction,
@@ -35,6 +37,13 @@ export interface SessionStats {
   y: number;
   nearby: number;
   backend: string;
+}
+
+export interface WorldSnapshot {
+  x: number;
+  y: number;
+  region: string;
+  points: Array<{ x: number; y: number; self: boolean }>;
 }
 
 export interface SessionCallbacks {
@@ -254,14 +263,30 @@ export class GameSession {
       const vector = this.input.vector();
       const moving = vector.x !== 0 || vector.y !== 0;
       if (moving) {
-        Position.x[localEid] = clamp(Position.x[localEid]! + vector.x * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
-        Position.y[localEid] = clamp(Position.y[localEid]! + vector.y * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
+        const prevX = Position.x[localEid]!;
+        const prevY = Position.y[localEid]!;
+        const nextX = clamp(prevX + vector.x * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
+        const nextY = clamp(prevY + vector.y * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
+        // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
+        const resolved = resolveMotion(prevX, prevY, nextX, nextY);
+        const advanced = Math.abs(resolved.x - prevX) + Math.abs(resolved.y - prevY) > 0.01;
+        Position.x[localEid] = resolved.x;
+        Position.y[localEid] = resolved.y;
         Motion.direction[localEid] = directionFromVector(vector.x, vector.y, Motion.direction[localEid] as Direction);
-        if (Motion.pose[localEid] !== POSE.Walk) {
-          Motion.pose[localEid] = POSE.Walk;
-          Motion.since[localEid] = this.elapsed;
+        // 顶在围栏上时原地踏步会露馅：没有实际位移就当站定
+        if (advanced) {
+          if (Motion.pose[localEid] !== POSE.Walk) {
+            Motion.pose[localEid] = POSE.Walk;
+            Motion.since[localEid] = this.elapsed;
+          }
+          Motion.moving[localEid] = 1;
+        } else {
+          if (Motion.pose[localEid] === POSE.Walk) {
+            Motion.pose[localEid] = POSE.Idle;
+            Motion.since[localEid] = this.elapsed;
+          }
+          Motion.moving[localEid] = 0;
         }
-        Motion.moving[localEid] = 1;
       } else {
         if (Motion.pose[localEid] === POSE.Walk) {
           Motion.pose[localEid] = POSE.Idle;
@@ -312,24 +337,27 @@ export class GameSession {
     }
   };
 
-  /** 小地图采样：以本地玩家为原点的相对坐标，4Hz 调用，不进入渲染循环 */
-  sampleNearby(limit = 128): Array<{ x: number; y: number; self: boolean }> {
+  /**
+   * 小地图快照：世界绝对坐标，4Hz 调用，不进入渲染循环。
+   * 返回绝对坐标而不是相对坐标，是因为小地图要同时画地形与玩家，得共用一套世界变换。
+   */
+  worldSnapshot(limit = 128): WorldSnapshot {
     const localEid = this.ecs.get(this.localId);
-    if (!localEid) return [];
-    const lx = Position.x[localEid]!;
-    const ly = Position.y[localEid]!;
-    const points: Array<{ x: number; y: number; self: boolean }> = [];
+    if (!localEid) return { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2, region: '', points: [] };
+    const x = Position.x[localEid]!;
+    const y = Position.y[localEid]!;
+    const points: WorldSnapshot['points'] = [];
     for (const netId of this.names.keys()) {
       const eid = this.ecs.get(netId);
       if (!eid) continue;
-      if (netId === this.localId) {
-        points.push({ x: 0, y: 0, self: true });
-      } else {
-        points.push({ x: Position.x[eid]! - lx, y: Position.y[eid]! - ly, self: false });
-      }
+      points.push({
+        x: netId === this.localId ? x : Position.x[eid]!,
+        y: netId === this.localId ? y : Position.y[eid]!,
+        self: netId === this.localId,
+      });
       if (points.length >= limit) break;
     }
-    return points;
+    return { x, y, region: regionAt(x, y), points };
   }
 
   stop(): void {

@@ -7,19 +7,17 @@ import {
   RendererType,
   Sprite,
   Text,
-  TilingSprite,
   type Texture,
 } from 'pixi.js';
-import { WORLD_HEIGHT, WORLD_WIDTH, type CharacterAppearance } from '@niuma/shared-types';
+import type { CharacterAppearance } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
 import { CharacterSprite } from './character';
 import { GroundFx } from './fx';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetrics } from './pixel-scale';
+import { TerrainView } from './terrain';
 
 /** 基准缩放：DPR 2 时每个纹素仍然是 6 个设备像素，观感不变 */
 const BASE_CSS_PER_TEXEL = 3;
-/** 地面砖：256 铺装，比 128 更少重复感，且仍是整数倍平铺 */
-const GROUND_TILE = 256;
 
 const NAME_STYLE = {
   fontFamily: 'JetBrains Mono, monospace',
@@ -30,7 +28,10 @@ const NAME_STYLE = {
 };
 
 class EntityView {
+  /** 本体与阴影进 y 排序层，会被树冠正确遮挡 */
   readonly root = new Container();
+  /** 昵称与气泡单独一层：立绘可以被树挡住，名字不行 */
+  readonly labels = new Container();
   readonly body: CharacterSprite;
   private readonly label: Text;
   private readonly bubble = new Container();
@@ -80,7 +81,8 @@ class EntityView {
 
   async init(): Promise<void> {
     await this.body.build();
-    this.root.addChild(this.shadow, this.body.container, this.label, this.bubble);
+    this.root.addChild(this.shadow, this.body.container);
+    this.labels.addChild(this.label, this.bubble);
   }
 
   /** DPR 变化时按新的设备纹素重建文字位图，否则文字会被拉伸到 2 倍而发虚 */
@@ -92,6 +94,7 @@ class EntityView {
 
   setPosition(x: number, y: number): void {
     this.root.position.set(x, y);
+    this.labels.position.set(x, y);
   }
 
   /** 换列时顺手判定落脚：跨到接触帧才扬尘，站着不动不会一路冒土 */
@@ -133,15 +136,19 @@ class EntityView {
   destroy(): void {
     this.body.destroy();
     this.root.destroy({ children: true });
+    this.labels.destroy({ children: true });
   }
 }
 
 export class GameRenderer {
   readonly app = new Application();
   private readonly world = new Container();
+  /** 树、围栏、角色统一按脚底 y 排序 */
+  private readonly sorted = new Container();
+  private readonly labels = new Container();
   private readonly views = new Map<number, EntityView>();
   private atlas!: Atlas;
-  private groundTexture?: Texture;
+  private terrain?: TerrainView;
   private shadowTexture?: Texture;
   private fx?: GroundFx;
   private dustFrames = new Set<number>();
@@ -172,69 +179,29 @@ export class GameRenderer {
     if (this.destroyed) return;
     if (document.fonts?.ready) await document.fonts.ready;
     if (this.destroyed) return;
-    this.buildGround();
+    this.buildLayers();
     this.app.stage.addChild(this.world);
     this.world.scale.set(this.metrics.cssScale);
     this.ready = true;
   }
 
-  private buildGround(): void {
-    const g = new Graphics();
-    const tile = 32;
-    g.rect(0, 0, GROUND_TILE, GROUND_TILE).fill(0x0f150f);
-    for (let y = 0; y < GROUND_TILE; y += tile) {
-      for (let x = 0; x < GROUND_TILE; x += tile) {
-        const odd = (x / tile + y / tile) % 2 === 0;
-        g.rect(x, y, tile, tile).fill(odd ? 0x171f18 : 0x121a13);
-        // 砖缝只画上、左两条，平铺时不会出现 2px 双线
-        g.rect(x, y, tile, 1).fill(0x0a0f0a);
-        g.rect(x, y, 1, tile).fill(0x0a0f0a);
-        g.rect(x + 1, y + 1, tile - 2, 1).fill(0x1c261d);
-      }
-    }
-    // 细节全部落在砖块内部，不跨砖缝：平铺时不会出现半截图案
-    const speckles: Array<[number, number, number, number]> = [
-      [24, 58, 2, 1],
-      [78, 22, 1, 2],
-      [140, 74, 2, 2],
-      [206, 40, 1, 1],
-      [40, 150, 2, 1],
-      [176, 166, 1, 1],
-      [112, 214, 2, 2],
-      [244, 232, 1, 1],
-    ];
-    for (const [x, y, w, h] of speckles) g.rect(x, y, w, h).fill(0x22301f);
+  /**
+   * 图层顺序：地形地面 → 尘土 → y 排序层（树/围栏/角色）→ 标签气泡。
+   * 地形纹理全部在这里一次性生成，帧循环里不会再 generateTexture。
+   */
+  private buildLayers(): void {
+    this.sorted.sortableChildren = true;
+    this.terrain = new TerrainView(this.app.renderer);
+    this.terrain.build(this.sorted);
 
-    // 线缆槽：一条横贯的地槽，两端各留 8px 让平铺接缝对齐
-    g.rect(8, 122, GROUND_TILE - 16, 3).fill(0x0a0f0a);
-    g.rect(8, 125, GROUND_TILE - 16, 1).fill(0x1b251b);
-
-    // 纸屑、咖啡渍、通风口：各来一处，密度低才不抢角色
-    g.rect(196, 92, 5, 4).fill(0x8f9a8c);
-    g.rect(197, 93, 3, 1).fill(0x6d776c);
-    g.rect(60, 196, 9, 5).fill(0x17201a);
-    g.rect(62, 195, 6, 1).fill(0x223026);
-    g.rect(150, 20, 8, 8).fill(0x101711);
-    for (let i = 0; i < 3; i += 1) g.rect(151, 22 + i * 2, 6, 1).fill(0x1d281e);
-
-    // 地台是整屏面积，必须 1:1 + nearest，否则 1px 网格线会被插值抹成灰带
-    this.groundTexture = this.app.renderer.generateTexture({
-      target: g,
-      resolution: 1,
-      antialias: false,
-      textureSourceOptions: { scaleMode: 'nearest' },
-    });
-    g.destroy();
-    const ground = new TilingSprite({
-      texture: this.groundTexture,
-      width: WORLD_WIDTH,
-      height: WORLD_HEIGHT,
-    });
-    this.world.addChild(ground);
+    this.world.addChild(this.terrain.ground);
 
     this.shadowTexture = GroundFx.shadowTexture(this.app.renderer);
     this.fx = new GroundFx(this.app.renderer);
     this.world.addChild(this.fx.container);
+
+    this.world.addChild(this.sorted);
+    this.world.addChild(this.labels);
 
     const walk = this.atlas.manifest.clips.walk;
     const frames = walk?.frames ?? [];
@@ -254,7 +221,8 @@ export class GameRenderer {
     );
     await view.init();
     this.views.set(id, view);
-    this.world.addChild(view.root);
+    this.sorted.addChild(view.root);
+    this.labels.addChild(view.labels);
   }
 
   removeEntity(id: number): void {
@@ -265,7 +233,13 @@ export class GameRenderer {
   }
 
   updateEntity(id: number, x: number, y: number): void {
-    this.views.get(id)?.setPosition(snapTexel(x), snapTexel(y));
+    const view = this.views.get(id);
+    if (!view) return;
+    const sx = snapTexel(x);
+    const sy = snapTexel(y);
+    view.setPosition(sx, sy);
+    // 脚底 y 即深度：站在树后会被树冠挡住，站到树前就压回去
+    view.root.zIndex = sy;
   }
 
   setPose(id: number, direction: number, column: number): void {
@@ -284,6 +258,7 @@ export class GameRenderer {
     const now = performance.now();
     for (const view of this.views.values()) view.tickBubble(now);
     this.fx?.update(dtMs);
+    this.terrain?.update(dtMs);
   }
 
   updateCamera(x: number, y: number): void {
@@ -293,6 +268,11 @@ export class GameRenderer {
     // 中心点与角色都落在整纹素栅格上：中心 → 设备像素，角色 → 世界像素
     this.world.x = snapCss(screen.width / 2, dpr) - snapTexel(x) * cssScale;
     this.world.y = snapCss(screen.height / 2, dpr) - snapTexel(y) * cssScale;
+
+    // 只画看得见的树：树冠比脚底高 60px，同屏预算压在百级
+    const halfW = screen.width / cssScale / 2;
+    const halfH = screen.height / cssScale / 2;
+    this.terrain?.cull(x - halfW - 48, y - halfH - 96, x + halfW + 48, y + halfH + 48);
   }
 
   /** 拖窗口到另一块屏（DPR 变化）时重建缩放与文字位图 */
@@ -314,9 +294,9 @@ export class GameRenderer {
     this.destroyed = true;
     for (const view of this.views.values()) view.destroy();
     this.views.clear();
-    this.groundTexture?.destroy(true);
     this.shadowTexture?.destroy(true);
     this.fx?.destroy();
+    this.terrain?.destroy();
     this.app.destroy(true, { children: true });
   }
 }

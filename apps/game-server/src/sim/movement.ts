@@ -4,6 +4,7 @@ import {
   clampWorldX,
   clampWorldY,
   dequantizeCoord,
+  resolveMotion,
   unpackState,
   type MovePacket,
   type Pose,
@@ -44,8 +45,12 @@ export function applyMove(player: Player, packet: MovePacket, now: number): Move
   const clamped = distance > allowed && distance > 0;
   const scale = clamped ? allowed / distance : 1;
 
-  player.x = clampWorldX(player.x + dx * scale);
-  player.y = clampWorldY(player.y + dy * scale);
+  // 先按时间窗截断，再交给地形求解：碰撞只负责「能不能走过去」，不负责限速
+  const nextX = clampWorldX(player.x + dx * scale);
+  const nextY = clampWorldY(player.y + dy * scale);
+  const resolved = resolveMotion(player.x, player.y, nextX, nextY);
+  player.x = resolved.x;
+  player.y = resolved.y;
   player.lastMoveAt = now;
 
   const state = unpackState(packet.state);
