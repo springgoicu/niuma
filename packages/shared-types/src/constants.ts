@@ -36,6 +36,16 @@ export const SYNC_HEADER_BYTES = 7;
 /** 外观压缩后固定长度 */
 export const APPEARANCE_BYTES = 20;
 
+/**
+ * 排队快照：op(1) + ticket(4) + position(2) + length(2) + etaSec(2) + capacity(2)
+ *          + dominant(1) + utilizationPermille(2)
+ */
+export const QUEUE_STATUS_BYTES = 16;
+/** 排队拒绝：op(1) + reason(1) */
+export const QUEUE_REJECT_BYTES = 2;
+/** 排队位次推送间隔（毫秒）；排队者零广播，只有这一条心跳包 */
+export const QUEUE_STATUS_INTERVAL_MS = 1000;
+
 export const DIRECTION = {
   Down: 0,
   Left: 1,

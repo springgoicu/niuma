@@ -3,6 +3,7 @@
 import {
   ACTION,
   MOVE_SPEED,
+  QUEUE_REJECT_REASON,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   dequantizeCoord,
@@ -15,6 +16,7 @@ import {
   type CharacterAppearance,
   type Direction,
   type Pose,
+  type QueueStatusPacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
 import { buildClipTracks, clipDuration, frameAt, phaseOffset } from './clip';
@@ -47,7 +49,11 @@ export interface WorldSnapshot {
 }
 
 export interface SessionCallbacks {
-  onStatus(status: 'connecting' | 'online' | 'offline' | 'error', detail?: string): void;
+  onStatus(status: 'connecting' | 'queued' | 'online' | 'offline' | 'error', detail?: string): void;
+  /** 排队位次快照；null 表示离开队列（入场、被拒或断线） */
+  onQueue(status: QueueStatusPacket | null): void;
+  /** 被准入拒绝，0 表示解除拒绝态 */
+  onRejected(reason: number): void;
   onStats(stats: SessionStats): void;
   onChat(entry: ChatEntry): void;
   onRequestChat(): void;
@@ -94,8 +100,22 @@ export class GameSession {
     this.statsAt = performance.now();
 
     this.net = new NetClient({
-      onOpen: () => this.callbacks.onStatus('online', this.renderer.backend),
+      // socket 打开不代表入场：真正的在线由 WELCOME 决定，中间可能隔着一条排队
+      onOpen: () => this.callbacks.onStatus('connecting', '等待准入'),
+      // 断线时保留最后一份排队快照：面板转为「重连中」，而不是把人踢回空白页
       onClose: () => this.callbacks.onStatus('offline', '连接中断，正在重连'),
+      onQueue: (status) => {
+        this.callbacks.onQueue(status);
+        this.callbacks.onStatus('queued', '排队中');
+      },
+      onRejected: (reason) => {
+        this.callbacks.onQueue(null);
+        this.callbacks.onRejected(reason);
+        this.callbacks.onStatus(
+          'error',
+          reason === QUEUE_REJECT_REASON.WaitTimeout ? '排队超时，请重新排队' : '园区已满，请稍后再来',
+        );
+      },
       onWelcome: (packet) => this.handleWelcome(packet.entityId, packet.x, packet.y, profile),
       onSpawn: (packet) => this.handleSpawn(packet.id, packet.name, packet.appearance, packet.x, packet.y),
       onDespawn: (id) => this.handleDespawn(id),
@@ -116,6 +136,8 @@ export class GameSession {
   }
 
   private handleWelcome(entityId: number, x: number, y: number, profile: { name: string; appearance: CharacterAppearance }): void {
+    this.callbacks.onQueue(null);
+    this.callbacks.onRejected(0);
     this.clearWorld();
     this.localId = entityId;
     this.names.set(entityId, profile.name);
@@ -198,6 +220,14 @@ export class GameSession {
     }
     this.names.clear();
     this.localId = 0;
+  }
+
+  /** 被拒后由用户显式重试：重置拒绝态并立刻重连，不等指数退避 */
+  retry(): void {
+    this.callbacks.onRejected(0);
+    this.callbacks.onQueue(null);
+    this.callbacks.onStatus('connecting', '重新排队');
+    this.net?.retry();
   }
 
   sendChat(text: string): void {

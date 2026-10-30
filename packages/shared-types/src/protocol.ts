@@ -4,10 +4,22 @@ import {
   MAX_CHAT_CHARS,
   MAX_NAME_BYTES,
   MOVE_PACKET_BYTES,
+  QUEUE_REJECT_BYTES,
+  QUEUE_STATUS_BYTES,
   SYNC_ENTRY_BYTES,
 } from './constants';
-import type { CharacterAppearance, ChatPacket, EntitySnapshot, MovePacket, SpawnPacket, WelcomePacket } from './types';
-import { OpCode } from './types';
+import type {
+  CharacterAppearance,
+  ChatPacket,
+  EntitySnapshot,
+  LimitKind,
+  MovePacket,
+  QueueRejectedPacket,
+  QueueStatusPacket,
+  SpawnPacket,
+  WelcomePacket,
+} from './types';
+import { OpCode, QUEUE_REJECT_REASON } from './types';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -367,4 +379,61 @@ export function decodeAppearanceBroadcast(data: Uint8Array): { entityId: number;
   if (reader.u8() !== OpCode.S2C_APPEARANCE) throw new Error('not an appearance broadcast');
   const entityId = reader.u16();
   return { entityId, appearance: decodeAppearance(data, reader.offset) };
+}
+
+/** 水位千分比：越界输入不能把仪表打歪，统一钳到 0..1000 */
+function clampPermille(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1000, Math.max(0, Math.round(value)));
+}
+
+/** 16 字节排队快照，服务端每秒每人一条 */
+export function encodeQueueStatus(packet: QueueStatusPacket): Uint8Array {
+  const writer = new ByteWriter(QUEUE_STATUS_BYTES);
+  writer
+    .u8(OpCode.S2C_QUEUE_STATUS)
+    .u32(packet.ticket)
+    .u16(packet.position)
+    .u16(packet.length)
+    .u16(packet.etaSec)
+    .u16(packet.capacity)
+    .u8(packet.dominant)
+    .u16(clampPermille(packet.utilizationPermille));
+  return writer.finish();
+}
+
+export function decodeQueueStatus(data: Uint8Array): QueueStatusPacket {
+  if (data.byteLength !== QUEUE_STATUS_BYTES) {
+    throw new Error(`queue status must be ${QUEUE_STATUS_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_QUEUE_STATUS) throw new Error('not a queue status packet');
+  const ticket = reader.u32();
+  const position = reader.u16();
+  const length = reader.u16();
+  const etaSec = reader.u16();
+  const capacity = reader.u16();
+  const dominant = reader.u8() as LimitKind;
+  return { ticket, position, length, etaSec, capacity, dominant, utilizationPermille: reader.u16() };
+}
+
+/** 2 字节拒绝包：只区分「队列满」与「等待超时」 */
+export function encodeQueueRejected(reason: number): Uint8Array {
+  const writer = new ByteWriter(QUEUE_REJECT_BYTES);
+  writer.u8(OpCode.S2C_QUEUE_REJECTED).u8(reason);
+  return writer.finish();
+}
+
+export function decodeQueueRejected(data: Uint8Array): QueueRejectedPacket {
+  if (data.byteLength !== QUEUE_REJECT_BYTES) {
+    throw new Error(`queue rejected must be ${QUEUE_REJECT_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_QUEUE_REJECTED) throw new Error('not a queue rejected packet');
+  // 未知 reason 一律降级为「队列已满」：客户端只认这两种，不能因为新枚举值卡死
+  const reason =
+    reader.u8() === QUEUE_REJECT_REASON.WaitTimeout
+      ? QUEUE_REJECT_REASON.WaitTimeout
+      : QUEUE_REJECT_REASON.QueueFull;
+  return { reason };
 }

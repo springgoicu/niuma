@@ -203,6 +203,10 @@
     animation: blink 1.15s steps(2, start) infinite;
   }
 
+  .animate-queue-roll {
+    animation: queue-roll 180ms var(--ease-out-expo);
+  }
+
   .animate-scan {
     animation: scan 6s linear infinite;
   }
@@ -243,6 +247,17 @@
   }
   100% {
     transform: translateY(400%);
+  }
+}
+
+@keyframes queue-roll {
+  from {
+    transform: translateY(0.28em);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 

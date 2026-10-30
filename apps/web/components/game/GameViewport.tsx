@@ -11,6 +11,7 @@ import { ChatDock } from './ChatDock';
 import { ConnectionBanner, OnlineBadge, PlayerCard } from './Hud';
 import { JoinGate } from './JoinGate';
 import { MiniMap } from './MiniMap';
+import { QueueGate } from './QueueGate';
 
 export function GameViewport() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -20,6 +21,8 @@ export function GameViewport() {
 
   const setStatus = useGameUi((state) => state.setStatus);
   const setStats = useGameUi((state) => state.setStats);
+  const setQueue = useGameUi((state) => state.setQueue);
+  const setRejected = useGameUi((state) => state.setRejected);
   const pushMessage = useGameUi((state) => state.pushMessage);
   const setChatOpen = useGameUi((state) => state.setChatOpen);
 
@@ -48,6 +51,8 @@ export function GameViewport() {
     if (!profile || !host || sessionRef.current) return;
     const session = new GameSession({
       onStatus: (status, detail) => setStatus(status, detail),
+      onQueue: (queue) => setQueue(queue),
+      onRejected: (reason) => setRejected(reason),
       onStats: (stats) => setStats(stats),
       onChat: (entry) => pushMessage(entry),
       onRequestChat: () => setChatOpen(true),
@@ -67,6 +72,11 @@ export function GameViewport() {
   const handleChat = useCallback((text: string) => sessionRef.current?.sendChat(text), []);
   const handleAction = useCallback((action: 'sit' | 'lie' | 'emote') => {
     sessionRef.current?.perform(action);
+  }, []);
+  const handleRetry = useCallback(() => {
+    useGameUi.getState().setRejected(0);
+    useGameUi.getState().setQueue(null);
+    sessionRef.current?.retry();
   }, []);
 
   return (
@@ -101,6 +111,7 @@ export function GameViewport() {
             </div>
           </div>
 
+          <QueueGate onRetry={handleRetry} />
           <ConnectionBanner />
         </>
       )}

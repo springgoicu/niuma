@@ -61,6 +61,8 @@ export const OpCode = {
   C2S_PING: 0x14,
   S2C_PONG: 0x15,
   C2S_CHAT: 0x16,
+  S2C_QUEUE_STATUS: 0x17,
+  S2C_QUEUE_REJECTED: 0x18,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -96,6 +98,49 @@ export interface ChatPacket {
   entityId: number;
   msgId: number;
   text: string;
+}
+
+/**
+ * 当前主导压力的维度。0 表示三项都健康，其余用于客户端解释「为什么在排队」：
+ * 带宽看的是实测出口字节，人数看的是准入容量，Tick 看的是 p95 是否逼近预算。
+ */
+export const LIMIT_KIND = {
+  None: 0,
+  Bandwidth: 1,
+  Players: 2,
+  Tick: 3,
+} as const;
+
+export type LimitKind = (typeof LIMIT_KIND)[keyof typeof LIMIT_KIND];
+
+export const QUEUE_REJECT_REASON = {
+  /** 队列已达动态上限，直接拒绝，避免请求无限堆积 */
+  QueueFull: 1,
+  /** 排队超过最长等待时间，主动劝退 */
+  WaitTimeout: 2,
+} as const;
+
+export type QueueRejectReason = (typeof QUEUE_REJECT_REASON)[keyof typeof QUEUE_REJECT_REASON];
+
+/** 排队位次快照：排队者每秒收到一条，零广播、零同步 */
+export interface QueueStatusPacket {
+  /** 服务端分配的排队号，仅用于日志串联与重连排查 */
+  ticket: number;
+  /** 从 1 开始的前方人数 */
+  position: number;
+  /** 队列总长度（含自己） */
+  length: number;
+  /** 预计等待秒数 */
+  etaSec: number;
+  /** 当前准入容量（AIMD 自适应后的人数上限） */
+  capacity: number;
+  dominant: LimitKind;
+  /** 综合水位千分比，0..1000 */
+  utilizationPermille: number;
+}
+
+export interface QueueRejectedPacket {
+  reason: QueueRejectReason;
 }
 
 /** 服务端广播给客户端的行动结果，用于动作栏与气泡 */

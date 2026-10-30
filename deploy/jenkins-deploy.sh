@@ -14,7 +14,9 @@
 #   NEXT_PUBLIC_GAME_WS_URL  编译期注入，例 ws://bangying.top/ws；留空则浏览器走同源 /ws
 #                            （由 nginx 升级到游戏服），本地 next dev 仍自动直连 :3001
 #   RUN_TESTS                默认 1；紧急发包可设 0 跳过测试
-#   WEB_HEAP_MB              默认 1024，Web 进程 --max-old-space-size
+#   WEB_HEAP_MB              默认 512，Web 进程 --max-old-space-size
+#                            2G 机型必须压在 512 以内：游戏服上限 600M + Web 上限 768M
+#                            才留得下 nginx/pm2/OS 的余量；1024 会和排队机制抢内存先 OOM
 set -euo pipefail
 
 # ==================== 0. 环境与配置 ====================
@@ -43,7 +45,7 @@ GAME_HOST="${GAME_SERVER_HOST:-0.0.0.0}"
 WEB_HOST="${WEB_HOST:-0.0.0.0}"
 NEXT_WS_URL="${NEXT_PUBLIC_GAME_WS_URL:-}"
 RUN_TESTS="${RUN_TESTS:-1}"
-WEB_HEAP_MB="${WEB_HEAP_MB:-1024}"
+WEB_HEAP_MB="${WEB_HEAP_MB:-512}"
 
 WS="${WORKSPACE:-$(pwd)}"
 

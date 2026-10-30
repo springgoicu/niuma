@@ -6,6 +6,8 @@ import {
   decodeChatBroadcast,
   decodeDespawn,
   decodePong,
+  decodeQueueRejected,
+  decodeQueueStatus,
   decodeSpawn,
   decodeSync,
   decodeWelcome,
@@ -17,6 +19,7 @@ import {
   type CharacterAppearance,
   type ChatPacket,
   type EntitySnapshot,
+  type QueueStatusPacket,
   type SpawnPacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
@@ -25,6 +28,10 @@ export interface NetHandlers {
   onOpen(): void;
   onClose(): void;
   onWelcome(packet: WelcomePacket): void;
+  /** 服务端准入后的排队位次快照，每秒一条 */
+  onQueue(status: QueueStatusPacket): void;
+  /** 被拒绝（队列满 / 等待超时）后不再自动重连，必须显式 retry */
+  onRejected(reason: number): void;
   onSpawn(packet: SpawnPacket): void;
   onDespawn(id: number, reason: number): void;
   onSync(tick: number, entities: EntitySnapshot[]): void;
@@ -50,8 +57,10 @@ export class NetClient {
   private socket: WebSocket | null = null;
   private name = '';
   private appearance: CharacterAppearance | null = null;
-  private retry = 0;
+  private attempts = 0;
   private disposed = false;
+  /** 被服务端拒绝后进入终止态：不自动重连，否则队列满时会自造重连风暴 */
+  private terminal = false;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPingAt = 0;
@@ -70,6 +79,29 @@ export class NetClient {
     this.name = name;
     this.appearance = appearance;
     this.disposed = false;
+    this.terminal = false;
+    this.open();
+  }
+
+  /** 用户点「重新排队」：清掉终止态并立刻重连，不等指数退避 */
+  retry(): void {
+    if (this.disposed) return;
+    this.terminal = false;
+    this.attempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const stale = this.socket;
+    if (stale) {
+      // 先摘掉回调再关：否则旧连接的 onclose 会再排一次重连，造出双连接
+      stale.onopen = null;
+      stale.onmessage = null;
+      stale.onerror = null;
+      stale.onclose = null;
+      stale.close();
+      this.socket = null;
+    }
     this.open();
   }
 
@@ -80,7 +112,7 @@ export class NetClient {
     this.socket = socket;
 
     socket.onopen = () => {
-      this.retry = 0;
+      this.attempts = 0;
       if (this.appearance) socket.send(encodeHello(this.name, this.appearance));
       this.handlers.onOpen();
       this.startPing();
@@ -96,6 +128,9 @@ export class NetClient {
 
     socket.onclose = () => {
       this.stopPing();
+      this.socket = null;
+      // 被拒后不改状态也不重连：否则「园区已满」会被冲成「正在重连」
+      if (this.terminal) return;
       this.handlers.onClose();
       this.scheduleReconnect();
     };
@@ -127,6 +162,13 @@ export class NetClient {
         this.handlers.onAppearance(packet.entityId, packet.appearance);
         break;
       }
+      case OpCode.S2C_QUEUE_STATUS:
+        this.handlers.onQueue(decodeQueueStatus(data));
+        break;
+      case OpCode.S2C_QUEUE_REJECTED:
+        this.terminal = true;
+        this.handlers.onRejected(decodeQueueRejected(data).reason);
+        break;
       case OpCode.S2C_PONG: {
         const stamp = decodePong(data);
         const rtt = (Date.now() & 0xffffffff) - stamp;
@@ -139,9 +181,9 @@ export class NetClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed) return;
-    const delay = Math.min(MAX_RETRY_DELAY, 500 * 2 ** this.retry);
-    this.retry += 1;
+    if (this.disposed || this.terminal) return;
+    const delay = Math.min(MAX_RETRY_DELAY, 500 * 2 ** this.attempts);
+    this.attempts += 1;
     this.reconnectTimer = setTimeout(() => this.open(), delay);
   }
 

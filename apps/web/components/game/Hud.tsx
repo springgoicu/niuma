@@ -90,7 +90,9 @@ export function OnlineBadge() {
 
 export function ConnectionBanner() {
   const status = useGameUi((state) => state.status);
-  if (status === 'online' || status === 'idle') return null;
+  const rejected = useGameUi((state) => state.rejected);
+  // 排队与被拒由 QueueGate 整屏接管，横幅只负责「接入中/断线」这类过渡态
+  if (status === 'online' || status === 'idle' || status === 'queued' || rejected > 0) return null;
   return (
     <div className="pointer-events-none absolute left-1/2 top-20 z-30 -translate-x-1/2">
       <div className="flex items-center gap-3 border-2 border-amber-400/60 bg-ink-900/95 px-4 py-2 backdrop-blur">

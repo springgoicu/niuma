@@ -4,6 +4,7 @@ import {
   MAX_PACKET_BYTES,
   OpCode,
   POSE,
+  QUEUE_REJECT_REASON,
   TICK_MS,
   decodeAction,
   decodeChatSend,
@@ -13,14 +14,17 @@ import {
   decodeSetAppearance,
   encodeAppearanceBroadcast,
   encodePong,
+  encodeQueueRejected,
+  encodeQueueStatus,
   encodeWelcome,
   findFreePoint,
   quantizeCoord,
   readOpCode,
   WORLD_CENTER,
 } from '@niuma/shared-types';
+import { AdmissionController, type HelloPayload } from './admission/controller';
 import type { ServerConfig } from './config';
-import { RingSampler } from './metrics';
+import { EgressMeter, RingSampler } from './metrics';
 import { SpatialGrid } from './spatial/grid';
 import { handleChat } from './sim/chat';
 import { applyMove } from './sim/movement';
@@ -53,22 +57,27 @@ export function startGameServer(config: ServerConfig) {
   const sockets = new Map<number, ServerWebSocket<SocketData>>();
   const tickSampler = new RingSampler(1200);
   const moveSampler = new RingSampler(1200);
+  const egress = new EgressMeter();
+  const admission = new AdmissionController(config.admission);
   let nextWsId = 1;
   let tickCount = 0;
+  let lastSampleAt = 0;
 
   const transport: Transport = {
     send(wsId, data) {
       const socket = sockets.get(wsId);
       if (!socket || socket.readyState !== 1) return;
+      // 出口计量必须落在唯一收口处：用水位判断带宽时不能靠人数估算
+      egress.record(data.byteLength);
       socket.send(data);
     },
   };
 
-  function handleHello(ws: ServerWebSocket<SocketData>, data: Uint8Array): void {
+  /** 真正入场：建实体、回 WELCOME、结算首帧视野。排队者放行时复用的就是这条路径 */
+  function admit(ws: ServerWebSocket<SocketData>, payload: HelloPayload): void {
     if (ws.data.playerId !== 0) return;
-    const hello = decodeHello(data);
     const point = spawnPoint(config.spawnRadius);
-    const player = world.create(hello.name, hello.appearance, ws.data.wsId, point.x, point.y);
+    const player = world.create(payload.name, payload.appearance, ws.data.wsId, point.x, point.y);
     if (!player) {
       ws.close(1013, 'server full');
       return;
@@ -85,6 +94,35 @@ export function startGameServer(config: ServerConfig) {
     );
     refreshView(player, world, grid, transport);
     console.log(`[game] + ${player.name}#${player.id} online=${world.size}`);
+  }
+
+  function rejectWaiter(ws: ServerWebSocket<SocketData>, reason: number): void {
+    const socket = ws;
+    socket.send(encodeQueueRejected(reason));
+    socket.close(1013, reason === QUEUE_REJECT_REASON.QueueFull ? 'queue full' : 'queue timeout');
+  }
+
+  function handleHello(ws: ServerWebSocket<SocketData>, data: Uint8Array): void {
+    if (ws.data.playerId !== 0) return;
+    const hello = decodeHello(data);
+    const payload: HelloPayload = { name: hello.name, appearance: hello.appearance };
+    const alreadyQueued = admission.isQueued(ws.data.wsId);
+    const decision = admission.decide(ws.data.wsId, payload, world.size, Date.now());
+
+    if (decision.kind === 'admit') {
+      admit(ws, payload);
+      return;
+    }
+    if (decision.kind === 'queued') {
+      ws.send(encodeQueueStatus(decision.status));
+      if (!alreadyQueued) {
+        console.log(
+          `[queue] ws=${ws.data.wsId} ticket=${decision.status.ticket} pos=${decision.status.position}/${decision.status.length}`,
+        );
+      }
+      return;
+    }
+    rejectWaiter(ws, decision.reason);
   }
 
   function dispatch(ws: ServerWebSocket<SocketData>, data: Uint8Array, now: number): void {
@@ -137,6 +175,10 @@ export function startGameServer(config: ServerConfig) {
 
   function handleClose(ws: ServerWebSocket<SocketData>): void {
     sockets.delete(ws.data.wsId);
+    // 出队必须发生在世界清理之前：排队者的 playerId 还是 0，早退会把位次永久占住
+    if (admission.drop(ws.data.wsId)) {
+      console.log(`[queue] leave ws=${ws.data.wsId} remaining=${admission.queueLength}`);
+    }
     const player = world.get(ws.data.playerId);
     if (!player) return;
     const label = `${player.name}#${player.id}`;
@@ -177,6 +219,8 @@ export function startGameServer(config: ServerConfig) {
               p95: Number(tickSampler.percentile(0.95).toFixed(3)),
               max: Number(tickSampler.max().toFixed(3)),
             },
+            egressKbps: Number(egress.kbps().toFixed(2)),
+            admission: admission.snapshot(world.size),
             clampedMoves: moveSampler.count,
             gridBuckets: grid.bucketCount,
             uptimeSec: Math.round(process.uptime()),
@@ -220,11 +264,50 @@ export function startGameServer(config: ServerConfig) {
   const timer = setInterval(() => {
     tickCount += 1;
     const now = Date.now();
+
+    // 没入场又不在队列里的连接才算「HELLO 超时」；排队者是在队列里等，不是掉线
     for (const socket of sockets.values()) {
-      if (socket.data.playerId === 0 && now - socket.data.openedAt > config.helloTimeoutMs) {
+      if (socket.data.playerId !== 0) continue;
+      if (admission.isQueued(socket.data.wsId)) continue;
+      if (now - socket.data.openedAt > config.helloTimeoutMs) {
         socket.close(1008, 'hello timeout');
       }
     }
+
+    // 采样是 O(n log n)，按 sampleIntervalMs 限流，绝不进 20Hz 路径
+    if (now - lastSampleAt >= config.admission.sampleIntervalMs) {
+      lastSampleAt = now;
+      const event = admission.observe(now, {
+        egressKbps: egress.kbps(now),
+        online: world.size,
+        tickP95Ms: tickSampler.percentile(0.95),
+      });
+      if (event) {
+        console.log(
+          `[gate] ${event.kind} capacity=${event.capacity} utilization=${event.utilization.toFixed(3)} queue=${admission.queueLength}`,
+        );
+      }
+    }
+
+    const { admitted, expired } = admission.drain(now, world.size);
+    for (const entry of expired) {
+      const socket = sockets.get(entry.wsId);
+      if (!socket) continue;
+      console.log(`[queue] expire ws=${entry.wsId} waited=${Math.round(entry.waitedMs / 1000)}s`);
+      rejectWaiter(socket, QUEUE_REJECT_REASON.WaitTimeout);
+    }
+    for (const entry of admitted) {
+      const socket = sockets.get(entry.wsId);
+      if (!socket || socket.readyState !== 1) continue;
+      admit(socket, entry.payload);
+    }
+
+    // 排队位次每秒推一次，排队者除此之外不产生任何流量
+    for (const { wsId, status } of admission.statuses(now, world.size)) {
+      const socket = sockets.get(wsId);
+      if (socket && socket.readyState === 1) socket.send(encodeQueueStatus(status));
+    }
+
     const result = runTick(world, grid, transport, tickCount);
     tickSampler.push(result.duration);
   }, TICK_MS);
@@ -234,5 +317,5 @@ export function startGameServer(config: ServerConfig) {
     server.stop(true);
   };
 
-  return { server, stop, world, grid, stats: () => ({ tickSampler, moveSampler }) };
+  return { server, stop, world, grid, admission, stats: () => ({ tickSampler, moveSampler }) };
 }

@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   APPEARANCE_BYTES,
   DIRECTION,
+  LIMIT_KIND,
   MOVE_PACKET_BYTES,
   POSE,
+  QUEUE_REJECT_BYTES,
+  QUEUE_REJECT_REASON,
+  QUEUE_STATUS_BYTES,
   SYNC_ENTRY_BYTES,
   SYNC_HEADER_BYTES,
   DEFAULT_APPEARANCE,
@@ -23,8 +27,12 @@ import {
   encodeDespawn,
   encodeHello,
   encodeMove,
+  encodeQueueRejected,
+  encodeQueueStatus,
   encodeSpawn,
   encodeSync,
+  decodeQueueRejected,
+  decodeQueueStatus,
   packState,
   quantizeCoord,
   sanitizeAppearance,
@@ -191,5 +199,45 @@ describe('spawn / despawn / chat / hello', () => {
     const decoded = decodeAppearanceBroadcast(packet);
     expect(decoded.entityId).toBe(77);
     expect(decoded.appearance.species).toBe('cow');
+  });
+});
+
+describe('queue packets', () => {
+  const status = {
+    ticket: 0xdeadbeef,
+    position: 37,
+    length: 128,
+    etaSec: 96,
+    capacity: 60,
+    dominant: LIMIT_KIND.Bandwidth,
+    utilizationPermille: 923,
+  } as const;
+
+  it('is exactly 16 bytes and round-trips every field', () => {
+    const packet = encodeQueueStatus(status);
+    expect(packet.byteLength).toBe(QUEUE_STATUS_BYTES);
+    expect(packet.byteLength).toBe(16);
+    expect(decodeQueueStatus(packet)).toEqual(status);
+  });
+
+  it('clamps the utilization gauge into 0..1000 permille', () => {
+    expect(decodeQueueStatus(encodeQueueStatus({ ...status, utilizationPermille: 4200 })).utilizationPermille).toBe(1000);
+    expect(decodeQueueStatus(encodeQueueStatus({ ...status, utilizationPermille: -8 })).utilizationPermille).toBe(0);
+    expect(decodeQueueStatus(encodeQueueStatus({ ...status, utilizationPermille: Number.NaN })).utilizationPermille).toBe(0);
+  });
+
+  it('rejects a truncated queue status instead of decoding garbage', () => {
+    const packet = encodeQueueStatus(status);
+    expect(() => decodeQueueStatus(packet.subarray(0, QUEUE_STATUS_BYTES - 1))).toThrow(/16 bytes/);
+  });
+
+  it('encodes the reject reason in 2 bytes and downgrades unknown reasons', () => {
+    const full = encodeQueueRejected(QUEUE_REJECT_REASON.QueueFull);
+    expect(full.byteLength).toBe(QUEUE_REJECT_BYTES);
+    expect(decodeQueueRejected(full)).toEqual({ reason: QUEUE_REJECT_REASON.QueueFull });
+    expect(decodeQueueRejected(encodeQueueRejected(QUEUE_REJECT_REASON.WaitTimeout))).toEqual({
+      reason: QUEUE_REJECT_REASON.WaitTimeout,
+    });
+    expect(decodeQueueRejected(encodeQueueRejected(9))).toEqual({ reason: QUEUE_REJECT_REASON.QueueFull });
   });
 });
