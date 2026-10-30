@@ -10,7 +10,7 @@ import { directionOf, type Atlas, type SpriteManifest } from './atlas';
  * 这两个 key 不是外观字段（协议里仍然只有 5 色），只是派生的染色槽。
  */
 type TintKey = 'body' | 'pattern' | 'hoof' | 'eyes' | 'extra' | 'bodyLight' | 'eyeLight';
-type CosmeticKind = 'badge' | 'tie' | 'mouth' | 'back';
+type CosmeticKind = 'head' | 'eyes' | 'neck' | 'back';
 
 interface TintLayer {
   kind: 'tint';
@@ -20,8 +20,8 @@ interface TintLayer {
 
 interface CosmeticLayer {
   kind: 'cosmetic';
-  path: string;
   cosmeticKind: CosmeticKind;
+  value: string;
 }
 
 type LayerSpec = TintLayer | CosmeticLayer;
@@ -31,6 +31,8 @@ interface LayerEntry {
   frames: Texture[] | null;
   colorKey?: TintKey;
   cosmeticKind?: CosmeticKind;
+  /** 四向图标一次加载：切朝向只换 texture 引用，不触发加载 */
+  textures?: Record<string, Texture>;
 }
 
 /** 背线高光只比本体亮一点；再亮就成了塑料反光 */
@@ -44,14 +46,9 @@ function tintFor(appearance: CharacterAppearance, key: TintKey): number {
   return appearance.colors[key];
 }
 
-function cosmeticPath(manifest: SpriteManifest, kind: CosmeticKind, value: string | undefined): string | null {
-  if (!value || value === 'none') return null;
-  return manifest.cosmeticFiles[kind]?.[value] ?? null;
-}
-
 /**
- * 叠层顺序即前后关系：背包在身后，高光压在斑纹上、眼睛下，
- * 配件最后叠——领带要能盖住胸口的斑纹。
+ * 叠层顺序即前后关系：背包在身后；帽子排在 extra 之前，牛角与马鬃从帽子上方穿出，
+ * 戴帽不会丢掉物种剪影；眼镜压在眼睛上、口鼻之下；颈饰最后叠，压在下巴与胸口的交界。
  */
 function layerSpecs(manifest: SpriteManifest, appearance: CharacterAppearance): LayerSpec[] {
   const species = manifest.species[appearance.species] ?? manifest.species.cow!;
@@ -64,31 +61,45 @@ function layerSpecs(manifest: SpriteManifest, appearance: CharacterAppearance): 
   const eyeLight = species.eyeLight?.[0];
 
   const specs: LayerSpec[] = [];
-  const back = cosmeticPath(manifest, 'back', appearance.cosmetics.backItem);
-  if (back) specs.push({ kind: 'cosmetic', path: back, cosmeticKind: 'back' });
+  const back = appearance.cosmetics.backItem;
+  if (back && back !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'back', value: back });
 
   specs.push({ kind: 'tint', path: body, colorKey: 'body' });
   if (pattern) specs.push({ kind: 'tint', path: pattern, colorKey: 'pattern' });
   if (bodyLight) specs.push({ kind: 'tint', path: bodyLight, colorKey: 'bodyLight' });
+
+  const headwear = appearance.cosmetics.headwear;
+  if (headwear && headwear !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'head', value: headwear });
+
   specs.push({ kind: 'tint', path: species.hoof[0]!, colorKey: 'hoof' });
   if (extra) specs.push({ kind: 'tint', path: extra, colorKey: 'extra' });
   specs.push({ kind: 'tint', path: species.eyes[0]!, colorKey: 'eyes' });
   if (eyeLight) specs.push({ kind: 'tint', path: eyeLight, colorKey: 'eyeLight' });
+
+  const eyewear = appearance.cosmetics.eyewear;
+  if (eyewear && eyewear !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'eyes', value: eyewear });
+
   specs.push({ kind: 'tint', path: snout, colorKey: 'body' });
 
-  const tie = cosmeticPath(manifest, 'tie', appearance.cosmetics.tie);
-  if (tie) specs.push({ kind: 'cosmetic', path: tie, cosmeticKind: 'tie' });
-  const badge = cosmeticPath(manifest, 'badge', appearance.cosmetics.badge);
-  if (badge) specs.push({ kind: 'cosmetic', path: badge, cosmeticKind: 'badge' });
-  const mouth = cosmeticPath(manifest, 'mouth', appearance.cosmetics.mouthItem);
-  if (mouth) specs.push({ kind: 'cosmetic', path: mouth, cosmeticKind: 'mouth' });
+  const neckwear = appearance.cosmetics.neckwear;
+  if (neckwear && neckwear !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'neck', value: neckwear });
 
   return specs;
 }
 
 function variantKey(appearance: CharacterAppearance): string {
   const extra = appearance.species === 'cow' ? appearance.parts.hornId : appearance.parts.maneId;
-  return [appearance.species, appearance.parts.patternId, appearance.parts.snoutId, extra, appearance.parts.tailId, appearance.cosmetics.backItem, appearance.cosmetics.tie, appearance.cosmetics.badge, appearance.cosmetics.mouthItem].join('|');
+  return [
+    appearance.species,
+    appearance.parts.patternId,
+    appearance.parts.snoutId,
+    extra,
+    appearance.parts.tailId,
+    appearance.cosmetics.backItem,
+    appearance.cosmetics.headwear,
+    appearance.cosmetics.eyewear,
+    appearance.cosmetics.neckwear,
+  ].join('|');
 }
 
 /**
@@ -138,13 +149,15 @@ export class CharacterSprite {
         sprite.tint = tintFor(appearance, spec.colorKey);
         entries.push({ sprite, frames, colorKey: spec.colorKey });
       } else {
-        const texture = await this.atlas.cosmetic(spec.path);
+        const textures = await this.loadCosmeticTextures(spec.cosmeticKind, spec.value);
         if (token !== this.token) return;
-        const sprite = new Sprite(texture);
+        const first = textures.down ?? textures.right ?? Object.values(textures)[0];
+        if (!first) continue;
+        const sprite = new Sprite(first);
         sprite.anchor.set(0.5);
         // 配件按 1:1 叠加：亚像素缩放会把图标糊成一团
         sprite.scale.set(1);
-        entries.push({ sprite, frames: null, cosmeticKind: spec.cosmeticKind });
+        entries.push({ sprite, frames: null, cosmeticKind: spec.cosmeticKind, textures });
       }
     }
 
@@ -179,15 +192,38 @@ export class CharacterSprite {
     this.layoutCosmetics();
   }
 
+  /** 四向图标一次读进 entry：切朝向只换 texture 引用，不在帧循环里 await */
+  private async loadCosmeticTextures(kind: CosmeticKind, value: string): Promise<Record<string, Texture>> {
+    const files = this.atlas.manifest.cosmeticFiles[kind]?.[value];
+    const textures: Record<string, Texture> = {};
+    if (!files) return textures;
+    for (const [direction, path] of Object.entries(files)) {
+      if (path) textures[direction] = await this.atlas.cosmetic(path);
+    }
+    return textures;
+  }
+
+  /**
+   * 锚点按 物种 × 朝向 × 帧列 查表：呼吸、走路起伏、蹦跳与坐躺过渡帧各有一组，
+   * 配件不会因为换姿势而悬空。锚点为 null 的朝向（如背面的眼镜）整层隐藏。
+   */
   private layoutCosmetics(): void {
     if (this.entries.length === 0) return;
     const directionName = this.atlas.manifest.directions[directionOf(this.frameIndex)] ?? 'down';
-    const anchors = this.atlas.manifest.cosmeticAnchors[directionName];
-    if (!anchors) return;
+    const column = this.frameIndex % this.atlas.columns;
+    const byDirection = this.atlas.manifest.cosmeticAnchors[this.appearanceValue.species]?.[directionName];
+    const anchors = byDirection?.[String(column)] ?? byDirection?.['0'];
     for (const entry of this.entries) {
       if (!entry.cosmeticKind) continue;
-      const anchor = anchors[entry.cosmeticKind];
-      if (anchor) entry.sprite.position.set(Math.round(anchor[0]), Math.round(anchor[1]));
+      const anchor = anchors?.[entry.cosmeticKind] ?? null;
+      const texture = entry.textures?.[directionName];
+      if (!anchor || !texture) {
+        entry.sprite.visible = false;
+        continue;
+      }
+      entry.sprite.visible = true;
+      entry.sprite.texture = texture;
+      entry.sprite.position.set(Math.round(anchor[0]), Math.round(anchor[1]));
     }
   }
 

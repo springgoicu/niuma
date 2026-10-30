@@ -85,7 +85,7 @@ export function SpeciesSection() {
             </h2>
           </div>
           <p className="max-w-md text-sm leading-relaxed text-mist-300">
-            两种物种，同一套 KPI。外观可以随便调——颜色、斑纹、口鼻、角或鬃毛、工牌与领带。
+            两种物种，同一套 KPI。外观可以随便调——颜色、斑纹、口鼻、角或鬃毛、头饰与眼镜。
             反正周五之前没人会看。
           </p>
         </div>

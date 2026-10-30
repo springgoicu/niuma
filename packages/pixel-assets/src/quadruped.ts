@@ -434,8 +434,11 @@ function breatheOffset(spec: FrameSpec, pose: PoseName, phase: number): number {
   return 0;
 }
 
-function drawSide(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): Px {
-  const px = new Px();
+/**
+ * 姿态 → 侧视构图参数。抽出来是为了让锚点生成与绘制共用同一份几何：
+ * 配件的挂点若另写一套偏移，改一次美术就会漂一次（ADR-0007）。
+ */
+function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): SideOptions {
   const standBodyCY = FEET - a.legH - a.bodyRy;
   const standHeadCY = standBodyCY - a.bodyRy - a.neckH + 1;
   const bob = pose === 'walk' ? (BOB_WALK[phase] ?? 0) : 0;
@@ -445,7 +448,7 @@ function drawSide(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): P
 
   if (pose === 'sit') {
     // 坐下：后腿折成臀部，前腿直撑；尾巴落地
-    drawSideBody(px, spec, a, {
+    return {
       bodyCY: standBodyCY + 6 + breathe,
       headCY: standHeadCY + 4 + breathe,
       headX: HEAD_CX,
@@ -458,12 +461,11 @@ function drawSide(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): P
       lying: false,
       haunch: true,
       blink,
-    });
-    return px;
+    };
   }
 
   if (pose === 'lie') {
-    drawSideBody(px, spec, a, {
+    return {
       bodyCY: FEET - a.bodyRy * 0.8 - 1 + breathe,
       headCY: FEET - a.headR - 1 + breathe,
       headX: HEAD_CX,
@@ -476,14 +478,13 @@ function drawSide(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): P
       lying: true,
       haunch: false,
       blink,
-    });
-    return px;
+    };
   }
 
   // emote：先蹲、再蹦、落地；只挪躯干，脚底线不动
   const hop = pose === 'emote' ? ([2, -3, 0][phase] ?? 0) : 0;
   const emoteLegs: LegAnim = pose === 'emote' && phase === 1 ? { swing: 0, lift: 2 } : STILL;
-  drawSideBody(px, spec, a, {
+  return {
     bodyCY: standBodyCY + bob + hop + breathe,
     headCY: standHeadCY + bob + hop + breathe + (pose === 'emote' && phase === 1 ? -1 : 0),
     headX: HEAD_CX,
@@ -496,7 +497,12 @@ function drawSide(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): P
     lying: false,
     haunch: false,
     blink,
-  });
+  };
+}
+
+function drawSide(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): Px {
+  const px = new Px();
+  drawSideBody(px, spec, a, sideOptions(spec, a, pose, phase));
   return px;
 }
 
@@ -609,8 +615,8 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
   px.closeDiagonalGaps();
 }
 
-function drawFacing(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): Px {
-  const px = new Px();
+/** 姿态 → 正视/背视构图参数，理由同 sideOptions */
+function facingOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): FacingOptions {
   const back = spec.direction === 3;
   const standBodyCY = FEET - a.legH - a.bodyRy;
   const standHeadCY = standBodyCY - a.bodyRy - 3;
@@ -621,7 +627,7 @@ function drawFacing(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number):
   const walkLift = pose === 'walk' ? phase % 2 : 0;
   const emoteLift = pose === 'emote' && phase === 1 ? 2 : 0;
 
-  drawFacingBody(px, spec, a, {
+  return {
     bodyCY: sit ? standBodyCY + 8 + breathe : standBodyCY + bob + hop + breathe,
     headCY: sit ? standHeadCY + 9 + breathe : standHeadCY + bob + hop + breathe,
     bodyRx: a.bodyRx,
@@ -633,8 +639,94 @@ function drawFacing(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number):
     legLift: [walkLift + emoteLift, 1 - walkLift + emoteLift],
     openMouth: pose === 'emote' && phase !== 0,
     blink: spec.column === 2,
-  });
+  };
+}
+
+function drawFacing(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number): Px {
+  const px = new Px();
+  drawFacingBody(px, spec, a, facingOptions(spec, a, pose, phase));
   return px;
+}
+
+/** 锚点坐标系：manifest 的 cosmeticAnchors 相对脚底原点，与客户端 sprite.position 同域 */
+const ORIGIN_X = FRAME_SIZE / 2;
+const ORIGIN_Y = FEET;
+
+/**
+ * 配件挂点：由同一份解剖学 + 姿态参数推出，绘制与锚点不会再各写一套。
+ * 坐标为帧内像素中心坐标，转成相对脚底原点后返回（朝左的帧整体镜像，x 取反）。
+ */
+export interface FrameLandmarks {
+  /** 头心 */
+  head: [number, number];
+  /** 头顶（帽子基准） */
+  headTop: [number, number];
+  /** 眼线中心；朝上时看不见眼睛，为 null */
+  eye: [number, number] | null;
+  /** 吻部中心 */
+  muzzle: [number, number];
+  /** 颈线（下巴与胸口交界，围巾/项圈基准） */
+  neck: [number, number];
+  /** 躯干中心（背包基准） */
+  torso: [number, number];
+}
+
+function localize(point: [number, number], mirror: boolean): [number, number] {
+  const x = point[0] - ORIGIN_X;
+  return [mirror ? -x : x, point[1] - ORIGIN_Y];
+}
+
+function sideLandmarks(a: Anatomy, o: SideOptions): Omit<FrameLandmarks, 'eye'> & { eye: [number, number] } {
+  return {
+    head: [o.headX, o.headCY],
+    headTop: [o.headX, o.headCY - a.headR * 0.94],
+    eye: [o.headX + 2, o.headCY - 0.5],
+    muzzle: [o.headX + a.headR - 1.6, o.headCY + a.headR * 0.42],
+    neck: [o.headX - 2, o.headCY + a.headR + 1.5],
+    torso: [BODY_CX, o.bodyCY],
+  };
+}
+
+function facingLandmarks(a: Anatomy, o: FacingOptions): FrameLandmarks {
+  const headRy = a.headR * 0.92;
+  return {
+    head: [BODY_CX, o.headCY],
+    headTop: [BODY_CX, o.headCY - headRy],
+    eye: o.back ? null : [BODY_CX, o.headCY - 1.5],
+    muzzle: [BODY_CX, o.headCY + headRy * 0.58],
+    neck: [BODY_CX, o.headCY + headRy + 0.5],
+    torso: [BODY_CX, o.bodyCY],
+  };
+}
+
+export function landmarksOf(species: SpeciesName, direction: number, column: number): FrameLandmarks {
+  const a = ANATOMY[species];
+  const pose = poseOfColumn(column);
+  const phase = phaseOfColumn(column);
+  const spec: FrameSpec = { species, direction: direction as 0 | 1 | 2 | 3, column, tail: 0, pattern: 0, extra: 0, snout: 0 };
+
+  if (direction === 1 || direction === 2) {
+    const raw = sideLandmarks(a, sideOptions(spec, a, pose, phase));
+    const mirror = direction === 1;
+    return {
+      head: localize(raw.head, mirror),
+      headTop: localize(raw.headTop, mirror),
+      eye: localize(raw.eye, mirror),
+      muzzle: localize(raw.muzzle, mirror),
+      neck: localize(raw.neck, mirror),
+      torso: localize(raw.torso, mirror),
+    };
+  }
+
+  const raw = facingLandmarks(a, facingOptions(spec, a, pose, phase));
+  return {
+    head: localize(raw.head, false),
+    headTop: localize(raw.headTop, false),
+    eye: raw.eye ? localize(raw.eye, false) : null,
+    muzzle: localize(raw.muzzle, false),
+    neck: localize(raw.neck, false),
+    torso: localize(raw.torso, false),
+  };
 }
 
 export function drawFrame(spec: FrameSpec): Px {

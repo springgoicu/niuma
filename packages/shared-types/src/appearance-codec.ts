@@ -1,15 +1,15 @@
 import { APPEARANCE_BYTES } from './constants';
 import {
-  BADGE_IDS,
   BACK_IDS,
+  EYEWEAR_IDS,
+  HEADWEAR_IDS,
   HORN_IDS,
   MANE_IDS,
-  MOUTH_IDS,
+  NECKWEAR_IDS,
   PATTERN_IDS,
   SNOUT_IDS,
   SPECIES_LIMITS,
   TAIL_IDS,
-  TIE_IDS,
   catalogIndexOf,
   catalogValue,
 } from './catalog';
@@ -87,9 +87,9 @@ export function sanitizeAppearance(input: Partial<CharacterAppearance> | null | 
       tailId: clampIndex(parts?.tailId ?? base.parts.tailId, limits.tails),
     },
     cosmetics: {
-      badge: pickCosmetic(BADGE_IDS, cosmetics?.badge ?? base.cosmetics.badge),
-      tie: pickCosmetic(TIE_IDS, cosmetics?.tie ?? base.cosmetics.tie),
-      mouthItem: pickCosmetic(MOUTH_IDS, cosmetics?.mouthItem ?? base.cosmetics.mouthItem),
+      headwear: pickCosmetic(HEADWEAR_IDS, cosmetics?.headwear ?? base.cosmetics.headwear),
+      eyewear: pickCosmetic(EYEWEAR_IDS, cosmetics?.eyewear ?? base.cosmetics.eyewear),
+      neckwear: pickCosmetic(NECKWEAR_IDS, cosmetics?.neckwear ?? base.cosmetics.neckwear),
       backItem: pickCosmetic(BACK_IDS, cosmetics?.backItem ?? base.cosmetics.backItem),
     },
   };
@@ -120,9 +120,9 @@ export function encodeAppearance(appearance: CharacterAppearance): Uint8Array {
   out[12] = a.parts.snoutId;
   out[13] = extraId;
   out[14] = a.parts.tailId;
-  out[15] = catalogIndexOf(BADGE_IDS, a.cosmetics.badge);
-  out[16] = catalogIndexOf(TIE_IDS, a.cosmetics.tie);
-  out[17] = catalogIndexOf(MOUTH_IDS, a.cosmetics.mouthItem);
+  out[15] = catalogIndexOf(HEADWEAR_IDS, a.cosmetics.headwear);
+  out[16] = catalogIndexOf(EYEWEAR_IDS, a.cosmetics.eyewear);
+  out[17] = catalogIndexOf(NECKWEAR_IDS, a.cosmetics.neckwear);
   out[18] = catalogIndexOf(BACK_IDS, a.cosmetics.backItem);
   out[19] = 0;
   return out;
@@ -155,9 +155,9 @@ export function decodeAppearance(bytes: Uint8Array, offset = 0): CharacterAppear
     colors,
     parts,
     cosmetics: {
-      badge: catalogValue(BADGE_IDS, bytes[offset + 15]!),
-      tie: catalogValue(TIE_IDS, bytes[offset + 16]!),
-      mouthItem: catalogValue(MOUTH_IDS, bytes[offset + 17]!),
+      headwear: catalogValue(HEADWEAR_IDS, bytes[offset + 15]!),
+      eyewear: catalogValue(EYEWEAR_IDS, bytes[offset + 16]!),
+      neckwear: catalogValue(NECKWEAR_IDS, bytes[offset + 17]!),
       backItem: catalogValue(BACK_IDS, bytes[offset + 18]!),
     },
   });
@@ -178,9 +178,9 @@ export function appearanceKey(appearance: CharacterAppearance): string {
     a.parts.snoutId,
     extra,
     a.parts.tailId,
-    a.cosmetics.badge,
-    a.cosmetics.tie,
-    a.cosmetics.mouthItem,
+    a.cosmetics.headwear,
+    a.cosmetics.eyewear,
+    a.cosmetics.neckwear,
     a.cosmetics.backItem,
   ].join('|');
 }

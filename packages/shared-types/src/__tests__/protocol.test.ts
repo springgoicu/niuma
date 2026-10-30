@@ -108,13 +108,21 @@ describe('appearance codec', () => {
       species: 'cow',
       colors: { body: 0xffffff, pattern: -1, hoof: 0x123456, eyes: 0, extra: 0 },
       parts: { patternId: 99, snoutId: -4, tailId: 88, hornId: 42 },
-      cosmetics: { badge: '<script>', tie: 'navy', mouthItem: 'coffee', backItem: 'briefcase' },
+      cosmetics: { headwear: '<script>', eyewear: 'sun', neckwear: 'scarf', backItem: 'briefcase' },
     });
     expect(dirty.parts.patternId).toBeLessThan(3);
     expect(dirty.parts.tailId).toBeLessThan(2);
     expect(dirty.parts.hornId).toBeLessThan(4);
-    expect(dirty.cosmetics.badge).toBe('none');
-    expect(dirty.cosmetics.tie).toBe('navy');
+    expect(dirty.cosmetics.headwear).toBe('none');
+    expect(dirty.cosmetics.eyewear).toBe('sun');
+    expect(dirty.cosmetics.neckwear).toBe('scarf');
+  });
+
+  it('falls back to none when a cosmetic byte is past the end of its catalog', () => {
+    const bytes = encodeAppearance(DEFAULT_APPEARANCE.cow);
+    // 16 是眼镜槽：旧协议里这一格是领带（0-4），4 在新目录里已越界，必须回落 none 而不是抛错
+    bytes[16] = 4;
+    expect(decodeAppearance(bytes).cosmetics.eyewear).toBe('none');
   });
 
   it('keeps local preview identical to the wire colour', () => {

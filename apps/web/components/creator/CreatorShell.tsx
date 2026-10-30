@@ -56,7 +56,7 @@ export function CreatorShell() {
             </h1>
           </div>
           <p className="max-w-sm text-sm leading-relaxed text-mist-300">
-            颜色、斑纹、口鼻、角或鬃毛、工牌领带——随便调。这里没有 HR 审核，只有 20Hz 的 Tick。
+            颜色、斑纹、口鼻、角或鬃毛、头饰眼镜颈饰——随便调。这里没有 HR 审核，只有 20Hz 的 Tick。
           </p>
         </div>
 

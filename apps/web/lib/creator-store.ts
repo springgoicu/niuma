@@ -13,7 +13,7 @@ import {
 
 export type Pose = 'idle' | 'walk' | 'sit' | 'lie';
 export type ColorSlot = 'body' | 'pattern' | 'hoof' | 'eyes' | 'extra';
-export type CosmeticKind = 'badge' | 'tie' | 'mouthItem' | 'backItem';
+export type CosmeticKind = 'headwear' | 'eyewear' | 'neckwear' | 'backItem';
 
 interface CreatorState {
   name: string;

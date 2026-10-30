@@ -1,9 +1,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { encodePng } from '../src/png';
-import { drawFrame, type FrameSpec, type SpeciesName } from '../src/quadruped';
+import { drawFrame, landmarksOf, type FrameSpec, type SpeciesName } from '../src/quadruped';
 import { LAYERS, SLOT_TABLE, type LayerName } from '../src/palette';
-import { COSMETIC_CATALOG, COSMETIC_SIZE, drawCosmetic } from '../src/cosmetics';
+import {
+  COSMETIC_CATALOG,
+  COSMETIC_SIZE,
+  drawCosmetic,
+  mirrorCosmetic,
+  type CosmeticDirection,
+  type CosmeticKind,
+} from '../src/cosmetics';
 import {
   ATLAS_HEIGHT,
   ATLAS_WIDTH,
@@ -142,7 +149,7 @@ export interface GeneratedClip {
 
 export const SPRITE_LAYOUT = ${JSON.stringify(
     {
-      version: 2,
+      version: 3,
       frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
       directions: DIRECTIONS,
       clips: CLIPS,
@@ -164,13 +171,55 @@ export type SpritePoseName = keyof typeof SPRITE_LAYOUT.clips;
   await writeFile(LAYOUT_TS, body);
 }
 
+type AnchorPair = [number, number];
+
+const roundPair = (point: [number, number]): AnchorPair => [Math.round(point[0]), Math.round(point[1])];
+
+/**
+ * 配件锚点：物种 × 朝向 × 帧列。
+ * 按帧列而不是按姿态，是为了让呼吸、走路起伏、蹦跳与坐躺过渡帧都不会让配件浮起 1~3px；
+ * 数值全部由 landmarksOf 推导，不做手工调表（ADR-0007）。
+ */
+function buildCosmeticAnchors(): Record<string, Record<string, Record<string, Record<string, AnchorPair | null>>>> {
+  const table: Record<string, Record<string, Record<string, Record<string, AnchorPair | null>>>> = {};
+  for (const species of SPECIES) {
+    table[species] = {};
+    for (let direction = 0; direction < DIRECTIONS.length; direction += 1) {
+      const name = DIRECTIONS[direction]!;
+      table[species]![name] = {};
+      // 背包画在身体之后：侧视时朝身后偏，正/背视时抬高露出肩线
+      const backOffset: AnchorPair = name === 'right' ? [-6, -3] : name === 'left' ? [6, -3] : [0, -8];
+      for (let column = 0; column < COLUMNS; column += 1) {
+        const landmarks = landmarksOf(species, direction, column);
+        table[species]![name]![column] = {
+          head: roundPair(landmarks.headTop),
+          eyes: landmarks.eye ? roundPair(landmarks.eye) : null,
+          neck: roundPair(landmarks.neck),
+          back: roundPair([landmarks.torso[0] + backOffset[0], landmarks.torso[1] + backOffset[1]]),
+        };
+      }
+    }
+  }
+  return table;
+}
+
+/** 朝左直接镜像朝右的图；眼镜背面不出图，锚点同时为 null */
+function cosmeticIcon(kind: CosmeticKind, id: string, dir: string): Uint8Array | null {
+  if (kind === 'back') return drawCosmetic(kind, id, 'down');
+  if (dir === 'up') return kind === 'eyes' ? null : drawCosmetic(kind, id, 'up');
+  if (dir === 'left') return mirrorCosmetic(drawCosmetic(kind, id, 'side'));
+  if (dir === 'right') return drawCosmetic(kind, id, 'side');
+  const art: CosmeticDirection = 'down';
+  return drawCosmetic(kind, id, art);
+}
+
 async function main(): Promise<void> {
   await mkdir(OUT_DIR, { recursive: true });
   const started = Date.now();
 
   const manifest: Record<string, unknown> = {
-    // v2：clips 改为逐帧时长 + 一次性过渡帧；v1 的 { frames, fps } 不再兼容
-    version: 2,
+    // v3：配件锚点改为 物种 × 朝向 × 帧列，图标按朝向分文件；v2 的扁平锚点不再兼容
+    version: 3,
     frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
     directions: DIRECTIONS,
     clips: CLIPS,
@@ -178,13 +227,8 @@ async function main(): Promise<void> {
     /** 配件图标边长；客户端按 1:1 叠加，不做亚像素缩放 */
     cosmeticSize: COSMETIC_SIZE,
     species: {} as Record<string, unknown>,
-    // 锚点相对脚底原点 (24,45)：头变大后口鼻抬到 -22 上下，配件位置整体随之上移
-    cosmeticAnchors: {
-      down: { badge: [0, -20], tie: [1, -15], mouth: [8, -21], back: [0, -26] },
-      up: { badge: [0, -20], tie: [1, -15], mouth: [8, -21], back: [0, -26] },
-      left: { badge: [-5, -20], tie: [-5, -16], mouth: [-13, -23], back: [6, -21] },
-      right: { badge: [5, -20], tie: [5, -16], mouth: [13, -23], back: [-6, -21] },
-    },
+    // 锚点相对脚底原点 (24,45)
+    cosmeticAnchors: buildCosmeticAnchors(),
     cosmetics: COSMETIC_CATALOG,
   };
 
@@ -238,16 +282,31 @@ async function main(): Promise<void> {
   }
   manifest.preview = { cow: 'preview-cow.png', horse: 'preview-horse.png' };
 
-  const cosmeticFiles: Record<string, Record<string, string | null>> = {};
-  for (const [kind, ids] of Object.entries(COSMETIC_CATALOG)) {
+  const cosDir = resolve(OUT_DIR, 'cos');
+  await mkdir(cosDir, { recursive: true });
+  const cosmeticFiles: Record<string, Record<string, Record<string, string | null> | null>> = {};
+  for (const [kind, ids] of Object.entries(COSMETIC_CATALOG) as [CosmeticKind, readonly string[]][]) {
     cosmeticFiles[kind] = { none: null };
     for (const id of ids) {
-      const data = drawCosmetic(kind as keyof typeof COSMETIC_CATALOG, id);
-      const dir = resolve(OUT_DIR, 'cos');
-      await mkdir(dir, { recursive: true });
-      const fileName = `${kind}-${id}.png`;
-      await writeFile(resolve(dir, fileName), encodePng(COSMETIC_SIZE, COSMETIC_SIZE, data));
-      cosmeticFiles[kind]![id] = `cos/${fileName}`;
+      const entry: Record<string, string | null> = {};
+      if (kind === 'back') {
+        // 背包三视图通用：只出一张，四个朝向都指向它
+        const fileName = `back-${id}.png`;
+        await writeFile(resolve(cosDir, fileName), encodePng(COSMETIC_SIZE, COSMETIC_SIZE, drawCosmetic(kind, id, 'down')));
+        for (const dir of DIRECTIONS) entry[dir] = `cos/${fileName}`;
+      } else {
+        for (const dir of DIRECTIONS) {
+          const data = cosmeticIcon(kind, id, dir);
+          if (!data) {
+            entry[dir] = null;
+            continue;
+          }
+          const fileName = `${kind}-${id}-${dir}.png`;
+          await writeFile(resolve(cosDir, fileName), encodePng(COSMETIC_SIZE, COSMETIC_SIZE, data));
+          entry[dir] = `cos/${fileName}`;
+        }
+      }
+      cosmeticFiles[kind]![id] = entry;
     }
   }
   manifest.cosmeticFiles = cosmeticFiles;

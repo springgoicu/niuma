@@ -31,8 +31,10 @@ export interface SpriteManifest {
   /** 配件图标边长；缺省按 16 处理，兼容旧图集 */
   cosmeticSize?: number;
   species: Record<string, SpeciesLayers>;
-  cosmeticFiles: Record<string, Record<string, string | null>>;
-  cosmeticAnchors: Record<string, Record<string, [number, number]>>;
+  /** v3：配件图标按朝向分文件，none 为 null */
+  cosmeticFiles: Record<string, Record<string, Record<string, string | null> | null>>;
+  /** v3：物种 → 朝向 → 帧列 → 类别，null 表示该朝向不显示（如背面的眼镜） */
+  cosmeticAnchors: Record<string, Record<string, Record<string, Record<string, [number, number] | null>>>>;
   preview?: Record<string, string>;
 }
 

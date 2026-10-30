@@ -1,14 +1,14 @@
 'use client';
 
-import { BACK_IDS, BADGE_IDS, MOUTH_IDS, PATTERN_IDS, SNOUT_IDS, TAIL_IDS, TIE_IDS } from '@niuma/shared-types';
+import { BACK_IDS, EYEWEAR_IDS, HEADWEAR_IDS, NECKWEAR_IDS, PATTERN_IDS, SNOUT_IDS, TAIL_IDS } from '@niuma/shared-types';
 import { useCreatorStore, extraLabel, extraOptions, type CosmeticKind } from '@/lib/creator-store';
 
 const PATTERN_LABELS = ['无斑纹', '奶牛斑块', '马蹄踏雪'];
 const SNOUT_LABELS = ['宽牛吻', '狭长马吻'];
 const TAIL_LABELS = ['短尾穗', '长尾'];
-const BADGE_LABELS = ['不戴', '实习生', '研发', '产品', '运维', '老板'];
-const TIE_LABELS = ['不打', '酒红', '藏青', '条纹', '领结'];
-const MOUTH_LABELS = ['空着', '叼咖啡', '叼青草', '叼笔'];
+const HEADWEAR_LABELS = ['不戴', '学士帽', '鸭舌帽', '贝雷帽', '安全帽', '礼帽'];
+const EYEWEAR_LABELS = ['不戴', '圆框眼镜', '墨镜', '单眼镜'];
+const NECKWEAR_LABELS = ['不戴', '围巾', '项圈', '挂脖耳机'];
 const BACK_LABELS = ['空手', '电脑包', '公文包'];
 
 function Chip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
@@ -139,9 +139,9 @@ export function PartRail() {
         ))}
       </Group>
 
-      {cosmeticGroup('工牌', 'badge', 'badge', BADGE_IDS, BADGE_LABELS, appearance.cosmetics.badge)}
-      {cosmeticGroup('领带', 'tie', 'tie', TIE_IDS, TIE_LABELS, appearance.cosmetics.tie)}
-      {cosmeticGroup('嘴里叼着', 'mouth', 'mouthItem', MOUTH_IDS, MOUTH_LABELS, appearance.cosmetics.mouthItem)}
+      {cosmeticGroup('头饰', 'head', 'headwear', HEADWEAR_IDS, HEADWEAR_LABELS, appearance.cosmetics.headwear)}
+      {cosmeticGroup('眼镜', 'eyes', 'eyewear', EYEWEAR_IDS, EYEWEAR_LABELS, appearance.cosmetics.eyewear)}
+      {cosmeticGroup('颈饰', 'neck', 'neckwear', NECKWEAR_IDS, NECKWEAR_LABELS, appearance.cosmetics.neckwear)}
       {cosmeticGroup('背上', 'back', 'backItem', BACK_IDS, BACK_LABELS, appearance.cosmetics.backItem)}
 
       <p className="mt-6 border-t-2 border-ink-700 pt-4 font-mono text-[10px] leading-relaxed text-mist-500">

@@ -31,12 +31,12 @@ export interface CharacterAppearance {
     tailId: number;
   };
   cosmetics: {
-    /** 工牌 */
-    badge?: string;
-    /** 领带 */
-    tie?: string;
-    /** 叼咖啡 / 叼青草 */
-    mouthItem?: string;
+    /** 头饰：学士帽 / 鸭舌帽 / 贝雷帽 / 安全帽 / 礼帽 */
+    headwear?: string;
+    /** 眼镜：圆框 / 墨镜 / 单眼镜 */
+    eyewear?: string;
+    /** 颈饰：围巾 / 项圈 / 挂脖耳机 */
+    neckwear?: string;
     /** 电脑包 / 公文包 */
     backItem?: string;
   };
@@ -121,9 +121,9 @@ export const DEFAULT_APPEARANCE: Record<Species, CharacterAppearance> = {
       tailId: 0,
     },
     cosmetics: {
-      badge: 'dev',
-      tie: 'crimson',
-      mouthItem: 'coffee',
+      headwear: 'cap',
+      eyewear: 'round',
+      neckwear: 'scarf',
       backItem: 'laptop',
     },
   },
@@ -143,9 +143,9 @@ export const DEFAULT_APPEARANCE: Record<Species, CharacterAppearance> = {
       tailId: 1,
     },
     cosmetics: {
-      badge: 'intern',
-      tie: 'navy',
-      mouthItem: 'grass',
+      headwear: 'none',
+      eyewear: 'monocle',
+      neckwear: 'collar',
       backItem: 'briefcase',
     },
   },
