@@ -8,6 +8,9 @@ interface ChatDockProps {
   onSend: (text: string) => void;
 }
 
+const MAX_INPUT_LENGTH = 160;
+const CHAR_WARNING_THRESHOLD = 140;
+
 export function ChatDock({ onSend }: ChatDockProps) {
   const messages = useGameUi((state) => state.messages);
   const open = useGameUi((state) => state.chatOpen);
@@ -31,6 +34,9 @@ export function ChatDock({ onSend }: ChatDockProps) {
     onSend(text);
     setDraft('');
   };
+
+  const charCount = draft.length;
+  const isNearLimit = charCount > CHAR_WARNING_THRESHOLD;
 
   return (
     <div className="pointer-events-auto w-[340px] max-w-[calc(100vw-2rem)] border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm">
@@ -80,27 +86,32 @@ export function ChatDock({ onSend }: ChatDockProps) {
               event.preventDefault();
               submit();
             }}
-            className="flex items-center gap-2 border-t-2 border-ink-700 p-2"
+            className="border-t-2 border-ink-700 px-2 py-2 space-y-1"
           >
-            <input
-              ref={inputRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') setOpen(false);
-              }}
-              maxLength={160}
-              placeholder="说点什么…（Enter 发送，Esc 收起）"
-              aria-label="聊天输入框"
-              className="min-w-0 flex-1 border-2 border-ink-600 bg-ink-950 px-2.5 py-1.5 font-mono text-[11px] text-mist-100 outline-none focus:border-mint-400"
-            />
-            <button
-              type="submit"
-              aria-label="发送"
-              className="grid h-8 w-8 cursor-pointer place-items-center border-2 border-mint-400 bg-mint-400/10 text-mint-400 transition-colors hover:bg-mint-400 hover:text-ink-950"
-            >
-              <Send className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                ref={inputRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') setOpen(false);
+                }}
+                maxLength={MAX_INPUT_LENGTH}
+                placeholder="说点什么…（Enter 发送，Esc 收起）"
+                aria-label="聊天输入框"
+                className="min-w-0 flex-1 border-2 border-ink-600 bg-ink-950 px-2.5 py-1.5 font-mono text-[11px] text-mist-100 outline-none focus:border-mint-400"
+              />
+              <button
+                type="submit"
+                aria-label="发送"
+                className="grid h-8 w-8 cursor-pointer place-items-center border-2 border-mint-400 bg-mint-400/10 text-mint-400 transition-colors hover:bg-mint-400 hover:text-ink-950"
+              >
+                <Send className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className={`text-right font-mono text-[9px] ${isNearLimit ? 'text-amber-400' : 'text-mist-500'}`}>
+              {charCount} / {MAX_INPUT_LENGTH}
+            </div>
           </form>
         </>
       )}

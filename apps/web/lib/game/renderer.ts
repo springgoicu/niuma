@@ -58,13 +58,21 @@ class EntityView {
   readonly labels = new Container();
   readonly body: PonyRenderer;
   private readonly label: Text;
-  private readonly bubble = new Container();
   private readonly bubbleText: Text;
   private readonly bubbleBg = new Graphics();
   private readonly shadows: Texture[];
   private shadowIndex = SHADOW_NORMAL;
-  private bubbleUntil = 0;
+  bubbleUntil = 0;
   private lastColumn = -1;
+  
+  // 气泡保护和性能优化字段
+  private lastBubbleUpdateTime = 0;
+  private readonly BUBBLE_UPDATE_THROTTLE = 300; // ms，300ms 内最多 1 个更新
+  private readonly MAX_CHAT_LENGTH = 80; // 最大字符数
+  private readonly MAX_LINES = 3; // 最大行数
+  private readonly FADE_DURATION = 400; // 淡出持续时间 ms
+
+  readonly bubble = new Container();
 
   constructor(
     atlas: Atlas,
@@ -142,7 +150,24 @@ class EntityView {
   }
 
   showBubble(text: string, now: number, duration = 6000): void {
-    this.bubbleText.text = text;
+    // 节流：相同实体 300ms 内最多更新一次气泡
+    if (now - this.lastBubbleUpdateTime < this.BUBBLE_UPDATE_THROTTLE) {
+      return;
+    }
+    this.lastBubbleUpdateTime = now;
+
+    // 限制字符数
+    let sanitized = text.length > this.MAX_CHAT_LENGTH 
+      ? text.substring(0, this.MAX_CHAT_LENGTH - 1) + '…'
+      : text;
+    
+    // 限制行数
+    const lines = sanitized.split('\n');
+    if (lines.length > this.MAX_LINES) {
+      sanitized = lines.slice(0, this.MAX_LINES).join('\n') + '…';
+    }
+
+    this.bubbleText.text = sanitized;
     const textW = Math.ceil(this.bubbleText.width);
     const textH = Math.ceil(this.bubbleText.height);
     const width = textW + 8;
@@ -161,11 +186,26 @@ class EntityView {
     this.bubbleText.position.set(-Math.round(textW / 2), 2);
     this.bubble.position.set(0, BUBBLE_OFFSET_Y - height);
     this.bubble.visible = true;
+    this.bubble.alpha = 1; // 重置透明度
     this.bubbleUntil = now + duration;
   }
 
   tickBubble(now: number): void {
-    if (this.bubble.visible && now > this.bubbleUntil) this.bubble.visible = false;
+    if (!this.bubble.visible) return;
+    
+    if (now > this.bubbleUntil) {
+      // 平滑淡出（最后 FADE_DURATION ms）
+      const fadeStart = this.bubbleUntil - this.FADE_DURATION;
+      if (now > fadeStart) {
+        const fadeProgress = (now - fadeStart) / this.FADE_DURATION;
+        this.bubble.alpha = Math.max(0, 1 - fadeProgress); // 从 1 淡到 0
+      }
+      // 淡出完成后隐藏
+      if (now > this.bubbleUntil) {
+        this.bubble.visible = false;
+        this.bubble.alpha = 1; // 重置 alpha 以备下次显示
+      }
+    }
   }
 
   destroy(): void {
@@ -199,6 +239,11 @@ export class GameRenderer {
   /** 用于检测异步初始化期间实体是否被销毁或移出会话（generation token 机制） */
   private readonly pendingInit = new Map<number, { generation: number; abort: AbortController }>();
   private initGeneration = 0;
+  /** 相机可见范围缓存，用于实体可见性筛选 */
+  private cameraBounds: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
+  
+  // 气泡队列管理：限制同屏气泡数量
+  private readonly MAX_VISIBLE_BUBBLES = 10;
 
   async init(host: HTMLElement): Promise<void> {
     const dpr = readDpr();
@@ -361,15 +406,54 @@ export class GameRenderer {
 
   tickBubbles(dtMs: number): void {
     const now = performance.now();
-    for (const view of this.views.values()) view.tickBubble(now);
+    
+    // 收集所有活跃气泡
+    const activeBubbles: Array<{ id: number; view: EntityView; bubbleUntil: number }> = [];
+    for (const [id, view] of this.views.entries()) {
+      if (view.bubble.visible) {
+        activeBubbles.push({ id, view, bubbleUntil: view.bubbleUntil });
+      }
+    }
+    
+    // 按气泡过期时间排序（最久的在前）
+    activeBubbles.sort((a, b) => a.bubbleUntil - b.bubbleUntil);
+    
+    // 如果超过限制，让最早的气泡立即淡出
+    if (activeBubbles.length > this.MAX_VISIBLE_BUBBLES) {
+      for (let i = 0; i < activeBubbles.length - this.MAX_VISIBLE_BUBBLES; i++) {
+        // 触发淡出：设置气泡过期时间到现在，使其立即开始淡出
+        activeBubbles[i].view.bubbleUntil = now;
+      }
+    }
+    
+    // 更新所有气泡的淡出进度
+    for (const view of this.views.values()) {
+      view.tickBubble(now);
+    }
+    
     this.fx?.update(dtMs);
     this.terrain?.update(dtMs);
     this.syncOccluders();
   }
 
   /**
+   * 判定实体是否在当前相机可见范围内（包括裁剪余量）
+   */
+  private isEntityVisible(x: number, y: number): boolean {
+    if (!this.cameraBounds) return true;
+    const padding = CULL_PAD_X; // 使用相同的裁剪余量
+    return (
+      x >= this.cameraBounds.minX - padding &&
+      x <= this.cameraBounds.maxX + padding &&
+      y >= this.cameraBounds.minY - padding &&
+      y <= this.cameraBounds.maxY + padding
+    );
+  }
+
+  /**
    * 把可见角色的脚底坐标喂给地形：树冠透明的唯一输入。
    * 复用一块 Float32Array，帧循环里不分配对象。
+   * 只处理相机视口范围内的实体，减少输入数据量。
    */
   private syncOccluders(): void {
     if (!this.terrain) return;
@@ -377,9 +461,12 @@ export class GameRenderer {
     let count = 0;
     for (const view of this.views.values()) {
       if (count >= capacity) break;
-      this.occluders[count * 2] = view.root.position.x;
-      this.occluders[count * 2 + 1] = view.root.position.y;
-      count += 1;
+      // 只处理可见实体
+      if (this.isEntityVisible(view.root.position.x, view.root.position.y)) {
+        this.occluders[count * 2] = view.root.position.x;
+        this.occluders[count * 2 + 1] = view.root.position.y;
+        count += 1;
+      }
     }
     this.terrain.occlude(this.occluders, count);
   }
@@ -399,6 +486,14 @@ export class GameRenderer {
     // nearest 采样也救不回被撕开的像素边（roundPixels 只吸附顶点，不吸附相机原点）
     const camX = Math.floor(cameraAxis(x, bounds.x, bounds.w, halfW));
     const camY = Math.floor(cameraAxis(y, bounds.y, bounds.h, halfH));
+
+    // 缓存相机可见范围（用于实体筛选）
+    this.cameraBounds = {
+      minX: camX - halfW,
+      maxX: camX + halfW,
+      minY: camY - halfH,
+      maxY: camY + halfH,
+    };
 
     // 中心点与角色都落在整纹素栅格上：中心 → 设备像素，角色 → 世界像素
     this.world.x = snapCss(screen.width / 2, dpr) - snapTexel(camX) * cssScale;
@@ -425,6 +520,13 @@ export class GameRenderer {
 
   get entityCount(): number {
     return this.views.size;
+  }
+
+  /**
+   * 获取当前相机的可见范围（用于实体筛选）
+   */
+  getCameraBounds(): { minX: number; maxX: number; minY: number; maxY: number } | null {
+    return this.cameraBounds;
   }
 
   destroy(): void {
