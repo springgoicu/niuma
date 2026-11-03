@@ -9,21 +9,45 @@ import {
   Text,
   type Texture,
 } from 'pixi.js';
-import type { CharacterAppearance } from '@niuma/shared-types';
+import { ISLAND, type CharacterAppearance } from '@niuma/shared-types';
+import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
-import { CharacterSprite } from './character';
-import { GroundFx } from './fx';
+import { GroundFx, SHADOW_NORMAL } from './fx';
+import { PonyRenderer } from './pony';
+import type { PonyMotion } from './pony-motion';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetrics } from './pixel-scale';
+import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
 
 /** 基准缩放：DPR 2 时每个纹素仍然是 6 个设备像素，观感不变 */
 const BASE_CSS_PER_TEXEL = 3;
 
+/**
+ * 所有「角色上方多远」的偏移都由生成物推导：
+ * 角色顶在脚底之上 (frame.h - origin.y) 个纹素，昵称与气泡贴着头顶往外让几像素。
+ * 这几个数字以前是 -47 / -54 / 48 / 96 手推的，网格一换必错。
+ */
+const FRAME_H = SPRITE_LAYOUT.frame.h;
+const HEAD_ROOM = FRAME_H - SPRITE_LAYOUT.origin.y;
+const LABEL_OFFSET_Y = -HEAD_ROOM + 2;
+const BUBBLE_OFFSET_Y = -HEAD_ROOM - 5;
+/** 裁剪余量：半帧宽 + 一帧高（树冠另算，由地形自己按纹理高度给） */
+const CULL_PAD_X = SPRITE_LAYOUT.frame.w;
+const CULL_PAD_Y = FRAME_H;
+
+/** 视口比岛屿还宽时居中，否则把相机夹进包围盒；NaN 回落到中心 */
+function cameraAxis(value: number, start: number, length: number, half: number): number {
+  if (!Number.isFinite(value)) return start + length / 2;
+  if (half * 2 >= length) return start + length / 2;
+  return value < start + half ? start + half : value > start + length - half ? start + length - half : value;
+}
+
 const NAME_STYLE = {
   fontFamily: 'JetBrains Mono, monospace',
   fontSize: 9,
-  fill: 0xe6ede6,
-  stroke: { color: 0x0b0f0d, width: 4 },
+  fill: 0xf4ede1,
+  // 描边是暖深褐而不是炭黑：暖底画面上纯黑描边会立刻把观感拉回马赛克
+  stroke: { color: 0x2b2118, width: 4 },
   letterSpacing: 0.4,
 };
 
@@ -32,11 +56,13 @@ class EntityView {
   readonly root = new Container();
   /** 昵称与气泡单独一层：立绘可以被树挡住，名字不行 */
   readonly labels = new Container();
-  readonly body: CharacterSprite;
+  readonly body: PonyRenderer;
   private readonly label: Text;
   private readonly bubble = new Container();
   private readonly bubbleText: Text;
   private readonly bubbleBg = new Graphics();
+  private readonly shadows: Texture[];
+  private shadowIndex = SHADOW_NORMAL;
   private bubbleUntil = 0;
   private lastColumn = -1;
 
@@ -45,19 +71,20 @@ class EntityView {
     name: string,
     appearance: CharacterAppearance,
     devicePxPerTexel: number,
-    shadow: Texture,
+    shadows: Texture[],
     private readonly onFootfall: (x: number, y: number) => void,
   ) {
-    // 接触阴影先入容器：它永远压在所有角色图层之下
-    const shadowSprite = new Sprite(shadow);
+    // 接触阴影先入容器：它永远压在所有角色图层之下。
+    // 阴影是 root 的直接子节点，角色本体的起伏只作用在 body.container 上，
+    // 所以人抬起来时影子不会跟着飞。
+    this.shadows = shadows;
+    const shadowSprite = new Sprite(shadows[SHADOW_NORMAL]!);
     shadowSprite.anchor.set(0.5, 0.5);
-    shadowSprite.position.set(0, -1);
-    shadowSprite.alpha = 0.85;
 
-    this.body = new CharacterSprite(atlas, appearance, 1);
+    this.body = new PonyRenderer(atlas, appearance, 1);
     this.label = new Text({ text: name, style: NAME_STYLE, resolution: devicePxPerTexel });
     this.label.anchor.set(0.5, 1);
-    this.label.position.set(0, -47);
+    this.label.position.set(0, LABEL_OFFSET_Y);
 
     this.bubbleText = new Text({
       text: '',
@@ -65,7 +92,7 @@ class EntityView {
       style: {
         fontFamily: 'Noto Sans SC, sans-serif',
         fontSize: 8,
-        fill: 0x0b0f0d,
+        fill: 0x2b2118,
         wordWrap: true,
         wordWrapWidth: 110,
         align: 'center',
@@ -106,6 +133,14 @@ class EntityView {
     this.lastColumn = column;
   }
 
+  /** 微动效：整数纹素起伏 + 阴影形态切换（换 texture，不做浮点缩放） */
+  applyMotion(motion: PonyMotion): void {
+    this.body.setBob(motion.bobTexels);
+    if (motion.shadow === this.shadowIndex) return;
+    this.shadowIndex = motion.shadow;
+    this.shadow.texture = this.shadows[motion.shadow] ?? this.shadows[SHADOW_NORMAL]!;
+  }
+
   showBubble(text: string, now: number, duration = 6000): void {
     this.bubbleText.text = text;
     const textW = Math.ceil(this.bubbleText.width);
@@ -116,15 +151,15 @@ class EntityView {
     const right = left + width;
 
     this.bubbleBg.clear();
-    this.bubbleBg.rect(left, 0, width, height).fill(0xe6ede6);
+    this.bubbleBg.rect(left, 0, width, height).fill(0xf4ede1);
     // 1px 硬边替代圆角 + 抗锯齿，气泡也跟着像素栅格走
-    this.bubbleBg.rect(left, 0, width, 1).fill(0x9fb0a1);
-    this.bubbleBg.rect(left, height - 1, width, 1).fill(0x9fb0a1);
-    this.bubbleBg.rect(left, 0, 1, height).fill(0x9fb0a1);
-    this.bubbleBg.rect(right - 1, 0, 1, height).fill(0x9fb0a1);
+    this.bubbleBg.rect(left, 0, width, 1).fill(0xb9a68c);
+    this.bubbleBg.rect(left, height - 1, width, 1).fill(0xb9a68c);
+    this.bubbleBg.rect(left, 0, 1, height).fill(0xb9a68c);
+    this.bubbleBg.rect(right - 1, 0, 1, height).fill(0xb9a68c);
 
     this.bubbleText.position.set(-Math.round(textW / 2), 2);
-    this.bubble.position.set(0, -54 - height);
+    this.bubble.position.set(0, BUBBLE_OFFSET_Y - height);
     this.bubble.visible = true;
     this.bubbleUntil = now + duration;
   }
@@ -149,20 +184,28 @@ export class GameRenderer {
   private readonly views = new Map<number, EntityView>();
   private atlas!: Atlas;
   private terrain?: TerrainView;
-  private shadowTexture?: Texture;
+  /** 屏幕空间的乘算柔光层；`?light=0` 时整层不建 */
+  private light?: AmbientLight;
+  private shadowTextures: Texture[] = [];
   private fx?: GroundFx;
   private dustFrames = new Set<number>();
+  /** 树冠遮挡的输入缓冲：脚底坐标 (x, y) 成对写入，容量 512 人 */
+  private readonly occluders = new Float32Array(1024);
+  private lightEnabled = true;
   private metrics: PixelMetrics = pixelMetrics(BASE_CSS_PER_TEXEL, 1);
   backend = 'initializing';
   private ready = false;
   private destroyed = false;
+  /** 用于检测异步初始化期间实体是否被销毁或移出会话（generation token 机制） */
+  private readonly pendingInit = new Map<number, { generation: number; abort: AbortController }>();
+  private initGeneration = 0;
 
   async init(host: HTMLElement): Promise<void> {
     const dpr = readDpr();
     this.metrics = pixelMetrics(BASE_CSS_PER_TEXEL, dpr);
     await this.app.init({
       preference: 'webgpu',
-      background: 0x0b0f0d,
+      background: 0x14100c,
       resizeTo: host,
       antialias: false,
       roundPixels: true,
@@ -181,6 +224,11 @@ export class GameRenderer {
     if (this.destroyed) return;
     this.buildLayers();
     this.app.stage.addChild(this.world);
+    // 柔光层压在 world 之上、屏幕空间：整张地图画完才覆盖，不随相机缩放
+    if (this.lightEnabled) {
+      this.light = new AmbientLight();
+      this.app.stage.addChild(this.light.sprite);
+    }
     this.world.scale.set(this.metrics.cssScale);
     this.ready = true;
   }
@@ -190,13 +238,24 @@ export class GameRenderer {
    * 地形纹理全部在这里一次性生成，帧循环里不会再 generateTexture。
    */
   private buildLayers(): void {
+    // 灰度开关：?flat=1 退回矩形平铺，?light=0 关掉柔光层，用于线上快速定位观感回归
+    const params = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+    this.lightEnabled = params?.get('light') !== '0';
+
     this.sorted.sortableChildren = true;
-    this.terrain = new TerrainView(this.app.renderer);
+    this.terrain = new TerrainView(this.app.renderer, {
+      flat: params?.get('flat') === '1',
+      edge: params?.get('edge') !== '0',
+    });
     this.terrain.build(this.sorted);
 
-    this.world.addChild(this.terrain.ground);
+    this.world.addChild(this.terrain.base);
+    // 边缘层：草尖 / 外凸圆弧 / 内缘暗边，压在底色之上、贴花之下
+    this.world.addChild(this.terrain.edge);
+    // 贴花压在地面之上、尘土与角色之下
+    this.world.addChild(this.terrain.decals);
 
-    this.shadowTexture = GroundFx.shadowTexture(this.app.renderer);
+    this.shadowTextures = GroundFx.shadowTextures(this.app.renderer);
     this.fx = new GroundFx(this.app.renderer);
     this.world.addChild(this.fx.container);
 
@@ -211,25 +270,66 @@ export class GameRenderer {
 
   async addEntity(id: number, name: string, appearance: CharacterAppearance): Promise<void> {
     if (!this.ready || this.views.has(id)) return;
+    
+    // 为本次初始化分配 generation token 和 abort signal
+    const generation = ++this.initGeneration;
+    const abort = new AbortController();
+    this.pendingInit.set(id, { generation, abort });
+    
     const view = new EntityView(
       this.atlas,
       name,
       appearance,
       this.metrics.devicePxPerTexel,
-      this.shadowTexture!,
+      this.shadowTextures,
       (x, y) => this.fx?.spawn(x, y),
     );
-    await view.init();
+    
+    try {
+      await view.init();
+    } catch (e) {
+      // 如果初始化被中止，销毁已创建的资源
+      if (abort.signal.aborted) {
+        view.destroy();
+      }
+      throw e;
+    }
+    
+    // 初始化完成后再次校验：Renderer 是否销毁、generation 是否一致、实体是否仍在会话
+    if (this.destroyed || abort.signal.aborted) {
+      view.destroy();
+      this.pendingInit.delete(id);
+      return;
+    }
+    
+    const pending = this.pendingInit.get(id);
+    if (!pending || pending.generation !== generation) {
+      // 有更新的初始化请求或实体已被移除，销毁本视图
+      view.destroy();
+      this.pendingInit.delete(id);
+      return;
+    }
+    
+    // 所有检查通过，正式加入渲染系统
     this.views.set(id, view);
     this.sorted.addChild(view.root);
     this.labels.addChild(view.labels);
+    this.pendingInit.delete(id);
   }
 
   removeEntity(id: number): void {
     const view = this.views.get(id);
-    if (!view) return;
-    this.views.delete(id);
-    view.destroy();
+    if (view) {
+      this.views.delete(id);
+      view.destroy();
+    }
+    
+    // 如果实体正在初始化，中止异步过程
+    const pending = this.pendingInit.get(id);
+    if (pending) {
+      pending.abort.abort();
+      this.pendingInit.delete(id);
+    }
   }
 
   updateEntity(id: number, x: number, y: number): void {
@@ -246,6 +346,11 @@ export class GameRenderer {
     this.views.get(id)?.setPose(direction, column, this.dustFrames);
   }
 
+  /** 待机呼吸 / 行走起伏 / 阴影 squash：全部是整数纹素与纹理切换 */
+  setMotion(id: number, motion: PonyMotion): void {
+    this.views.get(id)?.applyMotion(motion);
+  }
+
   setAppearance(id: number, appearance: CharacterAppearance): void {
     this.views.get(id)?.body.setAppearance(appearance);
   }
@@ -259,20 +364,53 @@ export class GameRenderer {
     for (const view of this.views.values()) view.tickBubble(now);
     this.fx?.update(dtMs);
     this.terrain?.update(dtMs);
+    this.syncOccluders();
+  }
+
+  /**
+   * 把可见角色的脚底坐标喂给地形：树冠透明的唯一输入。
+   * 复用一块 Float32Array，帧循环里不分配对象。
+   */
+  private syncOccluders(): void {
+    if (!this.terrain) return;
+    const capacity = this.occluders.length / 2;
+    let count = 0;
+    for (const view of this.views.values()) {
+      if (count >= capacity) break;
+      this.occluders[count * 2] = view.root.position.x;
+      this.occluders[count * 2 + 1] = view.root.position.y;
+      count += 1;
+    }
+    this.terrain.occlude(this.occluders, count);
   }
 
   updateCamera(x: number, y: number): void {
     this.syncMetrics();
     const screen = this.app.screen;
+    // 柔光层跟着视口铺满，并在 30s 粒度上换一次时段色
+    this.light?.resize(screen.width, screen.height);
+    this.light?.update(performance.now());
     const { dpr, cssScale } = this.metrics;
-    // 中心点与角色都落在整纹素栅格上：中心 → 设备像素，角色 → 世界像素
-    this.world.x = snapCss(screen.width / 2, dpr) - snapTexel(x) * cssScale;
-    this.world.y = snapCss(screen.height / 2, dpr) - snapTexel(y) * cssScale;
-
-    // 只画看得见的树：树冠比脚底高 60px，同屏预算压在百级
     const halfW = screen.width / cssScale / 2;
     const halfH = screen.height / cssScale / 2;
-    this.terrain?.cull(x - halfW - 48, y - halfH - 96, x + halfW + 48, y + halfH + 48);
+    // 相机夹在岛屿包围盒内：贴到海岸时角色不在正中，但画面不会露出世界外的黑
+    const bounds = ISLAND.bounds;
+    // 相机位移强制向下取整：浮点坐标会让整层画面落在半像素里，
+    // nearest 采样也救不回被撕开的像素边（roundPixels 只吸附顶点，不吸附相机原点）
+    const camX = Math.floor(cameraAxis(x, bounds.x, bounds.w, halfW));
+    const camY = Math.floor(cameraAxis(y, bounds.y, bounds.h, halfH));
+
+    // 中心点与角色都落在整纹素栅格上：中心 → 设备像素，角色 → 世界像素
+    this.world.x = snapCss(screen.width / 2, dpr) - snapTexel(camX) * cssScale;
+    this.world.y = snapCss(screen.height / 2, dpr) - snapTexel(camY) * cssScale;
+
+    // 只画看得见的树：余量按帧尺寸给，树冠那一截由地形自己补
+    this.terrain?.cull(
+      camX - halfW - CULL_PAD_X,
+      camY - halfH - CULL_PAD_Y,
+      camX + halfW + CULL_PAD_X,
+      camY + halfH + CULL_PAD_Y,
+    );
   }
 
   /** 拖窗口到另一块屏（DPR 变化）时重建缩放与文字位图 */
@@ -292,9 +430,16 @@ export class GameRenderer {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    
+    // 中止所有待处理的异步初始化
+    for (const { abort } of this.pendingInit.values()) {
+      abort.abort();
+    }
+    this.pendingInit.clear();
+    
     for (const view of this.views.values()) view.destroy();
     this.views.clear();
-    this.shadowTexture?.destroy(true);
+    for (const texture of this.shadowTextures) texture.destroy(true);
     this.fx?.destroy();
     this.terrain?.destroy();
     this.app.destroy(true, { children: true });
