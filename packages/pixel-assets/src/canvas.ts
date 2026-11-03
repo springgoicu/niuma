@@ -1,12 +1,23 @@
 import { S, SLOT_TABLE, type LayerName, type Slot } from './palette';
+import { FRAME_SIZE } from './layout';
 
-/** 索引位图：每个像素存一个 slot，绘制期不做颜色混合，导出期才拆层 */
+/** 一个点：[x, y]，允许小数，落笔时按像素中心判定 */
+export type Point = readonly [number, number];
+
+/**
+ * 索引位图：每个像素存一个 slot，绘制期不做颜色混合，导出期才拆层。
+ *
+ * 画法纪律（这套美术「清不清楚」全靠它）：
+ * 1) 只允许硬边，禁止抗锯齿 / 羽化 / 半透明；
+ * 2) 每个形体最多两阶——本体 + 一档阴影，阴影靠整块偏移得到，不逐列扫描；
+ * 3) 描边一律 1px 且闭合，对角针孔必须在导出前补掉。
+ */
 export class Px {
   readonly w: number;
   readonly h: number;
   readonly data: Uint8Array;
 
-  constructor(w = 48, h = 48) {
+  constructor(w = FRAME_SIZE, h = FRAME_SIZE) {
     this.w = w;
     this.h = h;
     this.data = new Uint8Array(w * h);
@@ -32,6 +43,21 @@ export class Px {
     }
   }
 
+  /** 圆角矩形：cx/cy 是中心，w/h 是整宽整高。方块躯干（牛）与圆肩躯干（马）共用 */
+  roundRect(cx: number, cy: number, w: number, h: number, r: number, slot: Slot): void {
+    const W = Math.max(1, Math.round(w));
+    const H = Math.max(1, Math.round(h));
+    const x0 = Math.round(cx - W / 2);
+    const y0 = Math.round(cy - H / 2);
+    const rr = Math.min(r, W / 2, H / 2);
+    for (let iy = 0; iy < H; iy += 1) {
+      const dy = Math.min(iy + 0.5, H - iy - 0.5);
+      let inset = 0;
+      if (dy < rr) inset = Math.round(rr - Math.sqrt(Math.max(0, rr * rr - (rr - dy) * (rr - dy))));
+      this.rect(x0 + inset, y0 + iy, W - inset * 2, 1, slot);
+    }
+  }
+
   ellipse(cx: number, cy: number, rx: number, ry: number, slot: Slot): void {
     if (rx <= 0 || ry <= 0) return;
     const rx2 = rx * rx;
@@ -45,6 +71,31 @@ export class Px {
         const dx = x + 0.5 - cx;
         const dy = y + 0.5 - cy;
         if ((dx * dx) / rx2 + (dy * dy) / ry2 <= 1) this.set(x, y, slot);
+      }
+    }
+  }
+
+  /** 多边形按像素中心做奇偶扫描填充；颈、腿、角、尾都是靠它画硬边形状 */
+  polygon(points: ReadonlyArray<Point>, slot: Slot): void {
+    if (points.length < 3) return;
+    const ys = points.map((point) => point[1]);
+    const minY = Math.max(0, Math.floor(Math.min(...ys)));
+    const maxY = Math.min(this.h - 1, Math.ceil(Math.max(...ys)));
+    for (let y = minY; y <= maxY; y += 1) {
+      const scan = y + 0.5;
+      const hits: number[] = [];
+      for (let i = 0; i < points.length; i += 1) {
+        const a = points[i]!;
+        const b = points[(i + 1) % points.length]!;
+        if ((a[1] <= scan && b[1] > scan) || (b[1] <= scan && a[1] > scan)) {
+          hits.push(a[0] + ((scan - a[1]) / (b[1] - a[1])) * (b[0] - a[0]));
+        }
+      }
+      hits.sort((p, q) => p - q);
+      for (let i = 0; i + 1 < hits.length; i += 2) {
+        const from = Math.ceil(hits[i]! - 0.5);
+        const to = Math.floor(hits[i + 1]! - 0.5);
+        for (let x = from; x <= to; x += 1) this.set(x, y, slot);
       }
     }
   }
@@ -89,6 +140,39 @@ export class Px {
   }
 
   /**
+   * 描边归属改写：整帧只出一遍描边，但尾巴要独立染色（ADR-0011）。
+   * 四邻接里只有目标图层的描边像素改成该图层自己的描边槽，尾巴的边就不会被主体色带跑；
+   * 与躯干相接的那一圈仍留给主体。相邻的描边像素不参与判定，否则 1px 轮廓互相挡住自己。
+   */
+  retagOutline(from: Slot, layer: LayerName, to: Slot): void {
+    const snapshot = this.data.slice();
+    for (let y = 0; y < this.h; y += 1) {
+      for (let x = 0; x < this.w; x += 1) {
+        if (snapshot[y * this.w + x] !== from) continue;
+        let touches = false;
+        let other = false;
+        for (const [dx, dy] of [
+          [-1, 0],
+          [1, 0],
+          [0, -1],
+          [0, 1],
+        ] as const) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= this.w || ny >= this.h) continue;
+          const slot = snapshot[ny * this.w + nx]!;
+          if (slot === from) continue;
+          const info = SLOT_TABLE[slot];
+          if (!info) continue;
+          if (info.layer === layer) touches = true;
+          else other = true;
+        }
+        if (touches && !other) this.set(x, y, to);
+      }
+    }
+  }
+
+  /**
    * 补齐描边的对角针孔：两像素沿对角线相接、四面全空的那个格子填实。
    * 不补的话轮廓在 45° 处会出现断点，放大后像毛边。
    */
@@ -108,70 +192,6 @@ export class Px {
     }
   }
 
-  /** 每列最低的若干主体像素压暗，制造底边体积感 */
-  bottomShade(slot: Slot = S.BodyShade, thickness = 2): void {
-    for (let x = 0; x < this.w; x += 1) {
-      let painted = 0;
-      for (let y = this.h - 1; y >= 0 && painted < thickness; y -= 1) {
-        const current = this.data[y * this.w + x]!;
-        if (current === S.Body || current === S.BodyShade) {
-          this.set(x, y, slot);
-          painted += 1;
-        }
-      }
-    }
-  }
-
-  /**
-   * 背线高光：每列最上方的主体像素换成高光槽。
-   * 只有该处主体厚度 ≥ 3 才落笔——耳朵、尾巴尖、腿这类 1–2 像素宽的部位
-   * 整块变高光就看不出形体，只会显得脏。
-   */
-  topLight(slot: Slot = S.BodyLight, minRun = 3): void {
-    for (let x = 0; x < this.w; x += 1) {
-      let start = -1;
-      for (let y = 0; y < this.h; y += 1) {
-        if (this.data[y * this.w + x] === S.Body) {
-          start = y;
-          break;
-        }
-      }
-      if (start < 0) continue;
-      let run = 0;
-      for (let y = start; y < this.h && this.data[y * this.w + x] === S.Body; y += 1) run += 1;
-      if (run >= minRun) this.set(x, start, slot);
-    }
-  }
-
-  /**
-   * 底边压暗，但只在 maxY 以上生效：用来给躯干加体积，又不至于把
-   * 后画的腿一起吃掉（腿有自己的分段明暗）。
-   */
-  bottomShadeAbove(maxY: number, slot: Slot = S.BodyShade, thickness = 2): void {
-    for (let x = 0; x < this.w; x += 1) {
-      let painted = 0;
-      for (let y = Math.min(maxY, this.h - 1); y >= 0 && painted < thickness; y -= 1) {
-        const current = this.data[y * this.w + x]!;
-        if (current === S.Body) {
-          this.set(x, y, slot);
-          painted += 1;
-        }
-      }
-    }
-  }
-
-  /** 右缘压暗：光源默认在左上，右侧一像素暗边是廉价但有效的体积暗示 */
-  rightShade(slot: Slot = S.BodyShade, fromY = 0, toY = this.h - 1): void {
-    for (let y = Math.max(0, fromY); y <= Math.min(this.h - 1, toY); y += 1) {
-      for (let x = this.w - 1; x >= 0; x -= 1) {
-        if (this.data[y * this.w + x] === S.Body) {
-          this.set(x, y, slot);
-          break;
-        }
-      }
-    }
-  }
-
   flipX(): Px {
     const out = new Px(this.w, this.h);
     for (let y = 0; y < this.h; y += 1) {
@@ -185,6 +205,47 @@ export class Px {
   blit(src: Px): void {
     this.data.set(src.data);
   }
+}
+
+/**
+ * 两阶明暗的唯一入口：同一个形体先按 (dx,dy) 偏移画一档阴影，再用本体色盖回原位。
+ * 结果是一圈 1px 硬暗边（右下），不产生逐列扫描的阶梯噪点。
+ */
+export function solid(
+  px: Px,
+  body: Slot,
+  shade: Slot,
+  draw: (slot: Slot, dx: number, dy: number) => void,
+  dx = 1,
+  dy = 1,
+): void {
+  draw(shade, dx, dy);
+  draw(body, 0, 0);
+}
+
+/**
+ * 锥形四边带：把「一条有粗细的线」表达成四边形，颈、腿、角、尾共用。
+ * 宽度从 wa 线性收到 wb，用来画上粗下细的腿与上粗下细的颈。
+ */
+export function taper(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  wa: number,
+  wb: number,
+): Point[] {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * 0.5;
+  const ny = (dx / len) * 0.5;
+  return [
+    [ax + nx * wa, ay + ny * wa],
+    [bx + nx * wb, by + ny * wb],
+    [bx - nx * wb, by - ny * wb],
+    [ax - nx * wa, ay - ny * wa],
+  ];
 }
 
 /** 确定性伪随机，保证每次生成的美术完全一致 */

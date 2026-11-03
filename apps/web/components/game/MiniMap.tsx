@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { MapPin } from 'lucide-react';
-import { WORLD_CENTER, WORLD_LAYOUT, type Point, type WorldRect } from '@niuma/shared-types';
+import { ISLAND, WORLD_CENTER, WORLD_LAYOUT, type Point, type TreeInstance, type WorldRect } from '@niuma/shared-types';
 import { MINIMAP_COLORS as M } from '@/lib/game/terrain-palette';
 import type { GameSession } from '@/lib/game/session';
 
@@ -39,13 +39,59 @@ function traceWorldPolygon(ctx: CanvasRenderingContext2D, points: readonly Point
   ctx.closePath();
 }
 
+/** 树只画 1px 点：密到成片就说明到了加班林，孤树则是草地里的一粒深绿 */
+function drawTreeDots(
+  ctx: CanvasRenderingContext2D,
+  trees: readonly TreeInstance[],
+  camX: number,
+  camY: number,
+  color: string,
+): void {
+  ctx.fillStyle = color;
+  const reach = VIEW_RADIUS + 80;
+  for (const tree of trees) {
+    if (Math.abs(tree.x - camX) > reach || Math.abs(tree.y - camY) > reach) continue;
+    ctx.fillRect(screenX(tree.x, camX), screenY(tree.y, camY), 1, 1);
+  }
+}
+
 /** 小地图只画布局，不采样主视图：形状少、4Hz，绘制成本可以忽略 */
 function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number): void {
-  ctx.fillStyle = M.ground;
+  // 整块画布先铺海：岛外的视野就是海，不能再露出 HUD 底色
+  ctx.fillStyle = M.sea;
   ctx.fillRect(0, 0, SIZE, SIZE);
+
+  ctx.fillStyle = M.ground;
+  traceWorldPolygon(ctx, ISLAND.points, camX, camY);
+  ctx.fill();
+  ctx.strokeStyle = M.shore;
+  ctx.lineWidth = 2;
+  traceWorldPolygon(ctx, ISLAND.points, camX, camY);
+  ctx.stroke();
+  ctx.lineWidth = 1;
 
   ctx.fillStyle = M.forest;
   for (const forest of WORLD_LAYOUT.forests) fillWorldRect(ctx, forest.rect, camX, camY);
+
+  // 花海：亮一档的草色块 + 三粒该花田配色的花点，20px 内也能和普通草地分开
+  for (const field of WORLD_LAYOUT.flowerFields) {
+    ctx.fillStyle = M.meadow;
+    fillWorldRect(ctx, field.rect, camX, camY);
+    ctx.fillStyle = field.palette === 0 ? M.flowerWhite : field.palette === 1 ? M.flowerGold : M.flowerRose;
+    const dots: Array<[number, number]> = [
+      [0.32, 0.38],
+      [0.56, 0.52],
+      [0.44, 0.7],
+    ];
+    for (const [tx, ty] of dots) {
+      ctx.fillRect(
+        screenX(field.rect.x + field.rect.w * tx, camX),
+        screenY(field.rect.y + field.rect.h * ty, camY),
+        2,
+        2,
+      );
+    }
+  }
 
   ctx.fillStyle = M.dirt;
   for (const path of WORLD_LAYOUT.paths) fillWorldRect(ctx, path, camX, camY);
@@ -66,7 +112,10 @@ function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number):
     traceWorldPolygon(ctx, lake.points, camX, camY);
     ctx.fill();
   }
-  for (const river of WORLD_LAYOUT.rivers) fillWorldRect(ctx, river.rect, camX, camY);
+  for (const river of WORLD_LAYOUT.rivers) {
+    traceWorldPolygon(ctx, river.polygon, camX, camY);
+    ctx.fill();
+  }
 
   ctx.strokeStyle = M.sand;
   for (const lake of WORLD_LAYOUT.lakes) {
@@ -85,15 +134,8 @@ function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number):
     ctx.stroke();
   }
 
-  // 树只画 1px 点：密到成片就说明到了加班林
-  ctx.fillStyle = M.forestDot;
-  const reach = VIEW_RADIUS + 80;
-  for (const forest of WORLD_LAYOUT.forests) {
-    for (const tree of forest.trees) {
-      if (Math.abs(tree.x - camX) > reach || Math.abs(tree.y - camY) > reach) continue;
-      ctx.fillRect(screenX(tree.x, camX), screenY(tree.y, camY), 1, 1);
-    }
-  }
+  for (const forest of WORLD_LAYOUT.forests) drawTreeDots(ctx, forest.trees, camX, camY, M.forestDot);
+  drawTreeDots(ctx, WORLD_LAYOUT.wildTrees, camX, camY, M.forestDot);
 }
 
 export function MiniMap({ getSession }: { getSession: () => GameSession | null }) {
@@ -134,7 +176,7 @@ export function MiniMap({ getSession }: { getSession: () => GameSession | null }
       if (self) {
         const px = screenX(self.x, camX);
         const py = screenY(self.y, camY);
-        ctx.fillStyle = '#070a08';
+        ctx.fillStyle = '#1b1611';
         ctx.fillRect(px - 2, py - 2, 5, 5);
         ctx.fillStyle = M.self;
         ctx.fillRect(px - 1, py - 1, 3, 3);

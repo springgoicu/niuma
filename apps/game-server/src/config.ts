@@ -66,7 +66,8 @@ export function loadConfig(): ServerConfig {
     hostname: process.env.GAME_SERVER_HOST ?? '0.0.0.0',
     maxMessagesPerSecond: readInt(process.env.GAME_SERVER_MAX_MPS, 120),
     helloTimeoutMs: 5000,
-    spawnRadius: readInt(process.env.GAME_SPAWN_RADIUS, 240),
+    // 与 shared-types 的 SPAWN_RADIUS 对齐：世界放大 1.25 后出生圈同步放大
+    spawnRadius: readInt(process.env.GAME_SPAWN_RADIUS, 300),
     admission,
   };
 }

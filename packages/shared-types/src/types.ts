@@ -5,8 +5,29 @@
 
 export type Species = 'cow' | 'horse';
 
+/**
+ * 颜色槽的线协议顺序，编码时按此序逐槽写 u16。
+ * 追加只允许放在末尾：偏移由数组下标推导，插队会让旧字节解成别的部位。
+ */
+export const APPEARANCE_COLOR_KEYS = [
+  'body',
+  'pattern',
+  'hoof',
+  'eyes',
+  'extra',
+  'snout',
+  'tail',
+  'headwear',
+  'eyewear',
+  'neckwear',
+  'hairstyle',
+] as const;
+
+export type AppearanceColorKey = (typeof APPEARANCE_COLOR_KEYS)[number];
+
 export interface CharacterAppearance {
   species: Species;
+  /** 11 个独立色槽：前 5 个是整体，后 6 个跟随各自的属性 */
   colors: {
     /** 主体色，32-bit HEX */
     body: number;
@@ -18,6 +39,18 @@ export interface CharacterAppearance {
     eyes: number;
     /** 牛角 / 马鬃色 */
     extra: number;
+    /** 口鼻色 */
+    snout: number;
+    /** 尾巴色 */
+    tail: number;
+    /** 头饰色 */
+    headwear: number;
+    /** 眼镜色 */
+    eyewear: number;
+    /** 颈饰色 */
+    neckwear: number;
+    /** 发型色 */
+    hairstyle: number;
   };
   parts: {
     /** 奶牛斑纹 / 马蹄踏雪 */
@@ -37,8 +70,8 @@ export interface CharacterAppearance {
     eyewear?: string;
     /** 颈饰：围巾 / 项圈 / 挂脖耳机 */
     neckwear?: string;
-    /** 电脑包 / 公文包 */
-    backItem?: string;
+    /** 发型：寸头 / 齐刘海 / 马尾 / 爆炸头 / 大背头 */
+    hairstyle?: string;
   };
 }
 
@@ -76,7 +109,12 @@ export interface EntitySnapshot {
   state: number;
 }
 
-export interface MovePacket extends EntitySnapshot {}
+export interface MovePacket extends EntitySnapshot {
+  /** 客户端单调递增序号，用于防重复 */
+  clientSequence?: number;
+  /** 客户端时间戳（毫秒），用于延迟估计 */
+  clientTimestampMs?: number;
+}
 
 export interface SpawnPacket {
   id: number;
@@ -158,6 +196,13 @@ export const DEFAULT_APPEARANCE: Record<Species, CharacterAppearance> = {
       hoof: 0x3a3532,
       eyes: 0x1d1a17,
       extra: 0xe6d6b4,
+      // 口鼻与尾巴默认跟随主体色，跟改造前「口鼻借 body 染色」的观感一致
+      snout: 0xf3efe4,
+      tail: 0xf3efe4,
+      headwear: 0x2c4a7c,
+      eyewear: 0x66756a,
+      neckwear: 0xc94f3a,
+      hairstyle: 0x2a2622,
     },
     parts: {
       patternId: 1,
@@ -169,7 +214,7 @@ export const DEFAULT_APPEARANCE: Record<Species, CharacterAppearance> = {
       headwear: 'cap',
       eyewear: 'round',
       neckwear: 'scarf',
-      backItem: 'laptop',
+      hairstyle: 'buzz',
     },
   },
   horse: {
@@ -180,6 +225,12 @@ export const DEFAULT_APPEARANCE: Record<Species, CharacterAppearance> = {
       hoof: 0x4a3b2e,
       eyes: 0x1d1a17,
       extra: 0x3b2a1d,
+      snout: 0xa96c3c,
+      tail: 0xa96c3c,
+      headwear: 0x2c4a7c,
+      eyewear: 0x66756a,
+      neckwear: 0x2c4a7c,
+      hairstyle: 0x3b2a1d,
     },
     parts: {
       patternId: 1,
@@ -191,7 +242,7 @@ export const DEFAULT_APPEARANCE: Record<Species, CharacterAppearance> = {
       headwear: 'none',
       eyewear: 'monocle',
       neckwear: 'collar',
-      backItem: 'briefcase',
+      hairstyle: 'none',
     },
   },
 };

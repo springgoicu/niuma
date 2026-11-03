@@ -31,9 +31,20 @@ export interface MoveResult {
 /**
  * 服务端权威移动：客户端上报目标点，服务端按时间窗限速。
  * 超速不踢人，只把坐标沿原方向截断到允许距离——避免误伤高延迟玩家。
+ * 
+ * 支持新协议中的 clientSequence 防重复和 clientTimestampMs 用于延迟估计。
  */
 export function applyMove(player: Player, packet: MovePacket, now: number): MoveResult {
   // packet.id 仅用于协议完整性与日志，服务端一律以连接绑定的实体为准
+  
+  // 防重复：如果有序号且低于已处理的序号，直接丢弃
+  if (packet.clientSequence !== undefined) {
+    if (packet.clientSequence <= player.lastClientMoveSequence) {
+      return { accepted: false, crossed: false, clamped: false };
+    }
+    player.lastClientMoveSequence = packet.clientSequence;
+  }
+  
   const targetX = dequantizeCoord(packet.x);
   const targetY = dequantizeCoord(packet.y);
   const dx = targetX - player.x;

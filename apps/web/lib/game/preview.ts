@@ -1,15 +1,20 @@
 'use client';
 
-import { Application, Graphics, Sprite } from 'pixi.js';
+import { Application, Graphics, Sprite, type Texture } from 'pixi.js';
 import type { CharacterAppearance } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
-import { CharacterSprite } from './character';
-import { buildClipTracks, frameAt } from './clip';
-import { GroundFx } from './fx';
+import { BLINK_COLUMN, buildClipTracks, frameAt } from './clip';
+import { PonyRenderer } from './pony';
+import { ponyMotion, type PonyPoseName } from './pony-motion';
+import { GroundFx, SHADOW_NORMAL } from './fx';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, type PixelMetrics } from './pixel-scale';
 
-/** 基准放大倍数：DPR 2 时每纹素 12 设备像素，依然能被整除 */
-const BASE_CSS_PER_TEXEL = 6;
+/**
+ * 基准放大倍数：DPR 2 时每纹素 10 设备像素，依然能被整除。
+ * 48 网格时是 6（角色约 246 CSS px 高），64 网格改成 5 正好还是约 240，
+ * 预览台不用改版式就能装下，也不会出现非整数倍缩放。
+ */
+const BASE_CSS_PER_TEXEL = 5;
 
 /**
  * 捏人预览：单角色、整数倍放大，颜色拖动只改 tint，不重建纹理，
@@ -19,8 +24,9 @@ export class CreatorPreview {
   private readonly app = new Application();
   private readonly tracks = buildClipTracks();
   private atlas: Atlas | null = null;
-  private character: CharacterSprite | null = null;
+  private character: PonyRenderer | null = null;
   private shadow: Sprite | null = null;
+  private shadowTextures: Texture[] = [];
   private direction = 0;
   private pose = 'idle';
   private elapsed = 0;
@@ -55,17 +61,17 @@ export class CreatorPreview {
     if (this.disposed || !this.atlas) return;
 
     const platform = new Graphics();
-    platform.ellipse(0, 6, 82, 22).fill({ color: 0x1c2520, alpha: 0.95 });
-    platform.ellipse(0, 3, 68, 16).fill({ color: 0x24302a, alpha: 0.7 });
-    platform.ellipse(0, 1, 52, 11).fill({ color: 0x2f4038, alpha: 0.5 });
+    platform.ellipse(0, 6, 82, 22).fill({ color: 0xc9b48f, alpha: 0.32 });
+    platform.ellipse(0, 3, 68, 16).fill({ color: 0x8a6f4e, alpha: 0.28 });
+    platform.ellipse(0, 1, 52, 11).fill({ color: 0x5c4128, alpha: 0.3 });
 
-    // 接触阴影和游戏里共用同一张纹理，预览与实机才不会两套观感
-    this.shadow = new Sprite(GroundFx.shadowTexture(this.app.renderer));
+    // 接触阴影和游戏里共用同一组纹理，预览与实机才不会两套观感
+    this.shadowTextures = GroundFx.shadowTextures(this.app.renderer);
+    this.shadow = new Sprite(this.shadowTextures[SHADOW_NORMAL]!);
     this.shadow.anchor.set(0.5, 0.5);
-    this.shadow.position.set(0, -1);
     this.shadow.scale.set(1);
 
-    this.character = new CharacterSprite(this.atlas, appearance, this.metrics.cssScale);
+    this.character = new PonyRenderer(this.atlas, appearance, this.metrics.cssScale);
     await this.character.build();
     if (this.disposed) return;
 
@@ -99,8 +105,16 @@ export class CreatorPreview {
 
   private tick = (ticker: { deltaMS: number }): void => {
     this.elapsed += ticker.deltaMS;
+    const since = this.elapsed - this.poseSince;
+    // 预览台与游戏内共用同一套动效契约：整数纹素、三档阴影、35s 眨眼
+    const motion = ponyMotion(this.pose as PonyPoseName, since, 0);
     const track = this.tracks[this.pose] ?? this.tracks.idle!;
-    this.character?.setPose(this.direction, frameAt(track, this.elapsed - this.poseSince));
+    this.character?.setPose(this.direction, motion.blinking ? BLINK_COLUMN : frameAt(track, since));
+    this.character?.setBob(motion.bobTexels);
+    if (this.shadow) {
+      const texture = this.shadowTextures[motion.shadow] ?? this.shadowTextures[SHADOW_NORMAL]!;
+      if (this.shadow.texture !== texture) this.shadow.texture = texture;
+    }
   };
 
   setAppearance(appearance: CharacterAppearance): void {
@@ -133,12 +147,10 @@ export class CreatorPreview {
     this.app.ticker.remove(this.tick);
     this.character?.destroy();
     this.character = null;
-    if (this.shadow) {
-      const texture = this.shadow.texture;
-      this.shadow.destroy();
-      texture.destroy(true);
-      this.shadow = null;
-    }
+    this.shadow?.destroy();
+    this.shadow = null;
+    for (const texture of this.shadowTextures) texture.destroy(true);
+    this.shadowTextures = [];
     this.app.destroy(true, { children: true });
   }
 }

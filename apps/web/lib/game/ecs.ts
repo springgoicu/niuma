@@ -10,6 +10,21 @@ const CAPACITY = 4096;
  */
 export const Position = { x: new Float32Array(CAPACITY), y: new Float32Array(CAPACITY) };
 export const Target = { x: new Float32Array(CAPACITY), y: new Float32Array(CAPACITY) };
+/** 远端角色位置快照：用于时间线插值 */
+export const Snapshot = {
+  /** 当前快照时间戳（客户端接收时间）*/
+  currentTime: new Float64Array(CAPACITY),
+  /** 上一次快照时间戳 */
+  prevTime: new Float64Array(CAPACITY),
+  /** 当前快照 X 坐标 */
+  currentX: new Float32Array(CAPACITY),
+  /** 当前快照 Y 坐标 */
+  currentY: new Float32Array(CAPACITY),
+  /** 上一次快照 X 坐标 */
+  prevX: new Float32Array(CAPACITY),
+  /** 上一次快照 Y 坐标 */
+  prevY: new Float32Array(CAPACITY),
+};
 export const Motion = {
   direction: new Uint8Array(CAPACITY),
   pose: new Uint8Array(CAPACITY),
@@ -38,6 +53,14 @@ export class Ecs {
     Motion.pose[eid] = POSE.Idle;
     Motion.moving[eid] = 0;
     Motion.since[eid] = 0;
+    // 初始化快照数据
+    const now = performance.now();
+    Snapshot.currentTime[eid] = now;
+    Snapshot.prevTime[eid] = now;
+    Snapshot.currentX[eid] = x;
+    Snapshot.currentY[eid] = y;
+    Snapshot.prevX[eid] = x;
+    Snapshot.prevY[eid] = y;
     this.byNetId.set(netId, eid);
     return eid;
   }

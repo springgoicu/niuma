@@ -25,6 +25,7 @@ export class Player {
   dirty = false;
   needsViewRefresh = false;
   lastMoveAt = 0;
+  lastClientMoveSequence = -1; // 上次处理的移动包序号（用于防重复）
   chatWindowStart = 0;
   chatCount = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
@@ -48,6 +49,7 @@ export class Player {
     this.dirty = false;
     this.needsViewRefresh = false;
     this.lastMoveAt = 0;
+    this.lastClientMoveSequence = -1;
     this.chatWindowStart = 0;
     this.chatCount = 0;
     this.known.clear();

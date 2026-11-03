@@ -4,6 +4,7 @@ import {
   MAX_CHAT_CHARS,
   MAX_NAME_BYTES,
   MOVE_PACKET_BYTES,
+  MOVE_PACKET_WITH_TIMING_BYTES,
   QUEUE_REJECT_BYTES,
   QUEUE_STATUS_BYTES,
   SYNC_ENTRY_BYTES,
@@ -170,16 +171,22 @@ export function truncateChat(text: string): string {
   return out;
 }
 
-/** 8 字节移动包，服务端热路径直接复用该函数 */
+/** 编码移动包，支持带或不带序号和时间戳 */
 export function encodeMove(packet: MovePacket): Uint8Array {
-  const w = new ByteWriter(MOVE_PACKET_BYTES);
+  const hasTimingInfo = packet.clientSequence !== undefined && packet.clientTimestampMs !== undefined;
+  const size = hasTimingInfo ? 14 : 8;
+  const w = new ByteWriter(size);
   w.u8(OpCode.C2S_MOVE).u16(packet.id).u16(packet.x).u16(packet.y).u8(packet.state);
+  if (hasTimingInfo) {
+    w.u16(packet.clientSequence!).u32(packet.clientTimestampMs!);
+  }
   return w.finish();
 }
 
 export function decodeMove(data: Uint8Array, out?: MovePacket): MovePacket {
-  if (data.byteLength !== MOVE_PACKET_BYTES) {
-    throw new Error(`move packet must be ${MOVE_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  const len = data.byteLength;
+  if (len !== MOVE_PACKET_BYTES && len !== MOVE_PACKET_WITH_TIMING_BYTES) {
+    throw new Error(`move packet must be ${MOVE_PACKET_BYTES} or ${MOVE_PACKET_WITH_TIMING_BYTES} bytes, got ${len}`);
   }
   if (data[0] !== OpCode.C2S_MOVE) throw new Error(`unexpected opcode ${data[0]}`);
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -188,6 +195,10 @@ export function decodeMove(data: Uint8Array, out?: MovePacket): MovePacket {
   packet.x = view.getUint16(3, true);
   packet.y = view.getUint16(5, true);
   packet.state = view.getUint8(7);
+  if (len === MOVE_PACKET_WITH_TIMING_BYTES) {
+    packet.clientSequence = view.getUint16(8, true);
+    packet.clientTimestampMs = view.getUint32(10, true);
+  }
   return packet;
 }
 

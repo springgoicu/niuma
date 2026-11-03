@@ -1,19 +1,25 @@
 import { APPEARANCE_BYTES } from './constants';
 import {
-  BACK_IDS,
   EYEWEAR_IDS,
+  HAIR_IDS,
   HEADWEAR_IDS,
   HORN_IDS,
   MANE_IDS,
   NECKWEAR_IDS,
-  PATTERN_IDS,
-  SNOUT_IDS,
   SPECIES_LIMITS,
-  TAIL_IDS,
   catalogIndexOf,
   catalogValue,
 } from './catalog';
-import { DEFAULT_APPEARANCE, type CharacterAppearance, type Species } from './types';
+import { APPEARANCE_COLOR_KEYS, DEFAULT_APPEARANCE, type CharacterAppearance, type Species } from './types';
+
+/**
+ * 32 字节定长外观（ADR-0011）：
+ * [0] species | [1..22] 11×u16 RGB565 | [23..26] parts | [27..30] 配件索引 | [31] reserved
+ */
+const COLORS_OFFSET = 1;
+const PARTS_OFFSET = COLORS_OFFSET + APPEARANCE_COLOR_KEYS.length * 2;
+const COSMETICS_OFFSET = PARTS_OFFSET + 4;
+const RESERVED_OFFSET = COSMETICS_OFFSET + 4;
 
 export function clampColor(hex: number): number {
   if (!Number.isFinite(hex)) return 0;
@@ -66,21 +72,20 @@ export function sanitizeAppearance(input: Partial<CharacterAppearance> | null | 
   const species: Species = input?.species === 'horse' ? 'horse' : 'cow';
   const base = DEFAULT_APPEARANCE[species];
   const limits = SPECIES_LIMITS[species];
-  const colors = input?.colors;
+  const inputColors = input?.colors;
   const parts = input?.parts;
   const cosmetics = input?.cosmetics;
   const extraRaw = species === 'cow' ? parts?.hornId : parts?.maneId;
   const extraId = clampIndex(extraRaw ?? (species === 'cow' ? base.parts.hornId ?? 1 : base.parts.maneId ?? 1), limits.extras);
 
+  const colors = {} as CharacterAppearance['colors'];
+  for (const key of APPEARANCE_COLOR_KEYS) {
+    colors[key] = normalizeColor(inputColors?.[key] ?? base.colors[key]);
+  }
+
   const appearance: CharacterAppearance = {
     species,
-    colors: {
-      body: normalizeColor(colors?.body ?? base.colors.body),
-      pattern: normalizeColor(colors?.pattern ?? base.colors.pattern),
-      hoof: normalizeColor(colors?.hoof ?? base.colors.hoof),
-      eyes: normalizeColor(colors?.eyes ?? base.colors.eyes),
-      extra: normalizeColor(colors?.extra ?? base.colors.extra),
-    },
+    colors,
     parts: {
       patternId: clampIndex(parts?.patternId ?? base.parts.patternId, limits.patterns),
       snoutId: clampIndex(parts?.snoutId ?? base.parts.snoutId, limits.snouts),
@@ -90,7 +95,7 @@ export function sanitizeAppearance(input: Partial<CharacterAppearance> | null | 
       headwear: pickCosmetic(HEADWEAR_IDS, cosmetics?.headwear ?? base.cosmetics.headwear),
       eyewear: pickCosmetic(EYEWEAR_IDS, cosmetics?.eyewear ?? base.cosmetics.eyewear),
       neckwear: pickCosmetic(NECKWEAR_IDS, cosmetics?.neckwear ?? base.cosmetics.neckwear),
-      backItem: pickCosmetic(BACK_IDS, cosmetics?.backItem ?? base.cosmetics.backItem),
+      hairstyle: pickCosmetic(HAIR_IDS, cosmetics?.hairstyle ?? base.cosmetics.hairstyle),
     },
   };
 
@@ -102,29 +107,25 @@ export function sanitizeAppearance(input: Partial<CharacterAppearance> | null | 
   return appearance;
 }
 
-/**
- * 20 字节定长外观：
- * [0] species | [1..10] 5×u16 RGB565 | [11..14] parts | [15..18] cosmetics | [19] reserved
- */
 export function encodeAppearance(appearance: CharacterAppearance): Uint8Array {
   const a = sanitizeAppearance(appearance);
   const out = new Uint8Array(APPEARANCE_BYTES);
   const view = new DataView(out.buffer);
   out[0] = a.species === 'horse' ? 1 : 0;
-  const colors = [a.colors.body, a.colors.pattern, a.colors.hoof, a.colors.eyes, a.colors.extra];
-  for (let i = 0; i < colors.length; i += 1) {
-    view.setUint16(1 + i * 2, hexToRgb565(colors[i]!), true);
+  for (let i = 0; i < APPEARANCE_COLOR_KEYS.length; i += 1) {
+    const key = APPEARANCE_COLOR_KEYS[i]!;
+    view.setUint16(COLORS_OFFSET + i * 2, hexToRgb565(a.colors[key]), true);
   }
   const extraId = a.species === 'cow' ? a.parts.hornId ?? 0 : a.parts.maneId ?? 0;
-  out[11] = a.parts.patternId;
-  out[12] = a.parts.snoutId;
-  out[13] = extraId;
-  out[14] = a.parts.tailId;
-  out[15] = catalogIndexOf(HEADWEAR_IDS, a.cosmetics.headwear);
-  out[16] = catalogIndexOf(EYEWEAR_IDS, a.cosmetics.eyewear);
-  out[17] = catalogIndexOf(NECKWEAR_IDS, a.cosmetics.neckwear);
-  out[18] = catalogIndexOf(BACK_IDS, a.cosmetics.backItem);
-  out[19] = 0;
+  out[PARTS_OFFSET] = a.parts.patternId;
+  out[PARTS_OFFSET + 1] = a.parts.snoutId;
+  out[PARTS_OFFSET + 2] = extraId;
+  out[PARTS_OFFSET + 3] = a.parts.tailId;
+  out[COSMETICS_OFFSET] = catalogIndexOf(HEADWEAR_IDS, a.cosmetics.headwear);
+  out[COSMETICS_OFFSET + 1] = catalogIndexOf(EYEWEAR_IDS, a.cosmetics.eyewear);
+  out[COSMETICS_OFFSET + 2] = catalogIndexOf(NECKWEAR_IDS, a.cosmetics.neckwear);
+  out[COSMETICS_OFFSET + 3] = catalogIndexOf(HAIR_IDS, a.cosmetics.hairstyle);
+  out[RESERVED_OFFSET] = 0;
   return out;
 }
 
@@ -134,19 +135,18 @@ export function decodeAppearance(bytes: Uint8Array, offset = 0): CharacterAppear
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset + offset, APPEARANCE_BYTES);
   const species: Species = bytes[offset] === 1 ? 'horse' : 'cow';
-  const colors = {
-    body: rgb565ToHex(view.getUint16(1, true)),
-    pattern: rgb565ToHex(view.getUint16(3, true)),
-    hoof: rgb565ToHex(view.getUint16(5, true)),
-    eyes: rgb565ToHex(view.getUint16(7, true)),
-    extra: rgb565ToHex(view.getUint16(9, true)),
-  };
+
+  const colors = {} as CharacterAppearance['colors'];
+  for (let i = 0; i < APPEARANCE_COLOR_KEYS.length; i += 1) {
+    colors[APPEARANCE_COLOR_KEYS[i]!] = rgb565ToHex(view.getUint16(COLORS_OFFSET + i * 2, true));
+  }
+
   const parts = {
-    patternId: bytes[offset + 11]!,
-    snoutId: bytes[offset + 12]!,
-    tailId: bytes[offset + 14]!,
+    patternId: bytes[offset + PARTS_OFFSET]!,
+    snoutId: bytes[offset + PARTS_OFFSET + 1]!,
+    tailId: bytes[offset + PARTS_OFFSET + 3]!,
   } as CharacterAppearance['parts'];
-  const extraId = bytes[offset + 13]!;
+  const extraId = bytes[offset + PARTS_OFFSET + 2]!;
   if (species === 'cow') parts.hornId = extraId;
   else parts.maneId = extraId;
 
@@ -155,10 +155,10 @@ export function decodeAppearance(bytes: Uint8Array, offset = 0): CharacterAppear
     colors,
     parts,
     cosmetics: {
-      headwear: catalogValue(HEADWEAR_IDS, bytes[offset + 15]!),
-      eyewear: catalogValue(EYEWEAR_IDS, bytes[offset + 16]!),
-      neckwear: catalogValue(NECKWEAR_IDS, bytes[offset + 17]!),
-      backItem: catalogValue(BACK_IDS, bytes[offset + 18]!),
+      headwear: catalogValue(HEADWEAR_IDS, bytes[offset + COSMETICS_OFFSET]!),
+      eyewear: catalogValue(EYEWEAR_IDS, bytes[offset + COSMETICS_OFFSET + 1]!),
+      neckwear: catalogValue(NECKWEAR_IDS, bytes[offset + COSMETICS_OFFSET + 2]!),
+      hairstyle: catalogValue(HAIR_IDS, bytes[offset + COSMETICS_OFFSET + 3]!),
     },
   });
 }
@@ -169,11 +169,7 @@ export function appearanceKey(appearance: CharacterAppearance): string {
   const extra = a.species === 'cow' ? a.parts.hornId ?? 0 : a.parts.maneId ?? 0;
   return [
     a.species,
-    a.colors.body.toString(16),
-    a.colors.pattern.toString(16),
-    a.colors.hoof.toString(16),
-    a.colors.eyes.toString(16),
-    a.colors.extra.toString(16),
+    ...APPEARANCE_COLOR_KEYS.map((key) => a.colors[key].toString(16)),
     a.parts.patternId,
     a.parts.snoutId,
     extra,
@@ -181,6 +177,6 @@ export function appearanceKey(appearance: CharacterAppearance): string {
     a.cosmetics.headwear,
     a.cosmetics.eyewear,
     a.cosmetics.neckwear,
-    a.cosmetics.backItem,
+    a.cosmetics.hairstyle,
   ].join('|');
 }

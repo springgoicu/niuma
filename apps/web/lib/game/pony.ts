@@ -4,13 +4,67 @@ import { Container, Sprite, type Texture } from 'pixi.js';
 import type { CharacterAppearance } from '@niuma/shared-types';
 import { mixHex } from '../color';
 import { directionOf, type Atlas, type SpriteManifest } from './atlas';
+import { SPRITE_LAYOUT } from './sprite-layout.generated';
+
+/**
+ * 脚底锚点直接由生成物推导（origin.y / 帧高）。
+ * 这里曾经写死 45 / 48，网格一换就要回来改一次，还只改一处——配件、气泡、裁剪全跟着漂。
+ */
+const FOOT_ANCHOR_Y = SPRITE_LAYOUT.origin.y / SPRITE_LAYOUT.frame.h;
 
 /**
  * tint 只能乘、不能提亮，所以高光必须借独立图层，再把本体色往白里混一份当 tint。
- * 这两个 key 不是外观字段（协议里仍然只有 5 色），只是派生的染色槽。
+ * bodyLight / eyeLight 不是外观字段，只是派生的染色槽；其余 key 与协议 11 色一一对应。
  */
-type TintKey = 'body' | 'pattern' | 'hoof' | 'eyes' | 'extra' | 'bodyLight' | 'eyeLight';
-type CosmeticKind = 'head' | 'eyes' | 'neck' | 'back';
+type TintKey =
+  | 'body'
+  | 'pattern'
+  | 'hoof'
+  | 'eyes'
+  | 'extra'
+  | 'snout'
+  | 'tail'
+  | 'headwear'
+  | 'eyewear'
+  | 'neckwear'
+  | 'hairstyle'
+  | 'bodyLight'
+  | 'eyeLight';
+type CosmeticKind = 'head' | 'eyes' | 'neck' | 'hair';
+
+/**
+ * 纸娃娃的深度顺序，唯一真相（ADR-0013）。
+ *
+ * 与需求文本唯一的偏离：鬃毛（extra）排在眼睛之前。
+ * 图集里鬃毛与眼睛在同一帧的不同像素上，鬃毛压过去会直接吃掉表情；
+ * 读脸优先级高于「鬃毛在最上层」的字面顺序，所以保持现状。
+ * 同理，头饰排在 extra 之前——牛角与马鬃要从帽子上方穿出。
+ */
+export const PONY_LAYER_ORDER = [
+  // 身后
+  'tail',
+  // 身体
+  'body',
+  'pattern',
+  'bodyLight',
+  // 头饰先于 extra：牛角与马鬃从帽子上方穿出，戴帽不会丢掉物种剪影
+  'hairstyle',
+  'headwear',
+  // 前蹄压在身体之上
+  'hoof',
+  // 鬃毛 / 牛角
+  'extra',
+  // 表情：眼睛与眼神光，眼镜压在眼睛上
+  'eyes',
+  'eyeLight',
+  'eyewear',
+  // 口鼻
+  'snout',
+  // 颈饰最后叠，压在下巴与胸口的交界
+  'neckwear',
+] as const;
+
+export type PonyLayerId = (typeof PONY_LAYER_ORDER)[number];
 
 interface TintLayer {
   kind: 'tint';
@@ -22,6 +76,8 @@ interface CosmeticLayer {
   kind: 'cosmetic';
   cosmeticKind: CosmeticKind;
   value: string;
+  /** ADR-0011：配件图标是灰度图，颜色跟属性走 */
+  colorKey: TintKey;
 }
 
 type LayerSpec = TintLayer | CosmeticLayer;
@@ -46,45 +102,52 @@ function tintFor(appearance: CharacterAppearance, key: TintKey): number {
   return appearance.colors[key];
 }
 
-/**
- * 叠层顺序即前后关系：背包在身后；帽子排在 extra 之前，牛角与马鬃从帽子上方穿出，
- * 戴帽不会丢掉物种剪影；眼镜压在眼睛上、口鼻之下；颈饰最后叠，压在下巴与胸口的交界。
- */
+/** 按 PONY_LAYER_ORDER 组装图层：缺哪层就跳过，不会留空洞 */
 function layerSpecs(manifest: SpriteManifest, appearance: CharacterAppearance): LayerSpec[] {
   const species = manifest.species[appearance.species] ?? manifest.species.cow!;
   const extraId = appearance.species === 'cow' ? appearance.parts.hornId ?? 0 : appearance.parts.maneId ?? 0;
-  const body = species.body[appearance.parts.tailId] ?? species.body[0]!;
-  const bodyLight = species.bodyLight?.[appearance.parts.tailId] ?? species.bodyLight?.[0];
+  const body = species.body[0]!;
+  const bodyLight = species.bodyLight?.[0];
+  const tail = species.tail?.[appearance.parts.tailId] ?? species.tail?.[0];
   const snout = species.snout[appearance.parts.snoutId] ?? species.snout[0]!;
   const pattern = appearance.parts.patternId > 0 ? species.pattern[appearance.parts.patternId] : undefined;
   const extra = species.extra[extraId];
   const eyeLight = species.eyeLight?.[0];
 
-  const specs: LayerSpec[] = [];
-  const back = appearance.cosmetics.backItem;
-  if (back && back !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'back', value: back });
+  const specs = new Map<PonyLayerId, LayerSpec>();
+  if (tail) specs.set('tail', { kind: 'tint', path: tail, colorKey: 'tail' });
+  specs.set('body', { kind: 'tint', path: body, colorKey: 'body' });
+  if (pattern) specs.set('pattern', { kind: 'tint', path: pattern, colorKey: 'pattern' });
+  if (bodyLight) specs.set('bodyLight', { kind: 'tint', path: bodyLight, colorKey: 'bodyLight' });
+  specs.set('hoof', { kind: 'tint', path: species.hoof[0]!, colorKey: 'hoof' });
+  if (extra) specs.set('extra', { kind: 'tint', path: extra, colorKey: 'extra' });
+  specs.set('eyes', { kind: 'tint', path: species.eyes[0]!, colorKey: 'eyes' });
+  if (eyeLight) specs.set('eyeLight', { kind: 'tint', path: eyeLight, colorKey: 'eyeLight' });
+  specs.set('snout', { kind: 'tint', path: snout, colorKey: 'snout' });
 
-  specs.push({ kind: 'tint', path: body, colorKey: 'body' });
-  if (pattern) specs.push({ kind: 'tint', path: pattern, colorKey: 'pattern' });
-  if (bodyLight) specs.push({ kind: 'tint', path: bodyLight, colorKey: 'bodyLight' });
-
+  const hairstyle = appearance.cosmetics.hairstyle;
+  if (hairstyle && hairstyle !== 'none') {
+    specs.set('hairstyle', { kind: 'cosmetic', cosmeticKind: 'hair', value: hairstyle, colorKey: 'hairstyle' });
+  }
   const headwear = appearance.cosmetics.headwear;
-  if (headwear && headwear !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'head', value: headwear });
-
-  specs.push({ kind: 'tint', path: species.hoof[0]!, colorKey: 'hoof' });
-  if (extra) specs.push({ kind: 'tint', path: extra, colorKey: 'extra' });
-  specs.push({ kind: 'tint', path: species.eyes[0]!, colorKey: 'eyes' });
-  if (eyeLight) specs.push({ kind: 'tint', path: eyeLight, colorKey: 'eyeLight' });
-
+  if (headwear && headwear !== 'none') {
+    specs.set('headwear', { kind: 'cosmetic', cosmeticKind: 'head', value: headwear, colorKey: 'headwear' });
+  }
   const eyewear = appearance.cosmetics.eyewear;
-  if (eyewear && eyewear !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'eyes', value: eyewear });
-
-  specs.push({ kind: 'tint', path: snout, colorKey: 'body' });
-
+  if (eyewear && eyewear !== 'none') {
+    specs.set('eyewear', { kind: 'cosmetic', cosmeticKind: 'eyes', value: eyewear, colorKey: 'eyewear' });
+  }
   const neckwear = appearance.cosmetics.neckwear;
-  if (neckwear && neckwear !== 'none') specs.push({ kind: 'cosmetic', cosmeticKind: 'neck', value: neckwear });
+  if (neckwear && neckwear !== 'none') {
+    specs.set('neckwear', { kind: 'cosmetic', cosmeticKind: 'neck', value: neckwear, colorKey: 'neckwear' });
+  }
 
-  return specs;
+  const ordered: LayerSpec[] = [];
+  for (const id of PONY_LAYER_ORDER) {
+    const spec = specs.get(id);
+    if (spec) ordered.push(spec);
+  }
+  return ordered;
 }
 
 function variantKey(appearance: CharacterAppearance): string {
@@ -95,7 +158,7 @@ function variantKey(appearance: CharacterAppearance): string {
     appearance.parts.snoutId,
     extra,
     appearance.parts.tailId,
-    appearance.cosmetics.backItem,
+    appearance.cosmetics.hairstyle,
     appearance.cosmetics.headwear,
     appearance.cosmetics.eyewear,
     appearance.cosmetics.neckwear,
@@ -105,8 +168,11 @@ function variantKey(appearance: CharacterAppearance): string {
 /**
  * 分层角色：每层是灰度图 + tint，等价于调色板替换但完全合批、每帧零开销。
  * 变体（物种/配件/斑纹）变化才重建精灵，纯颜色变化只改 tint。
+ *
+ * 微动效不在这里算：`pony-motion.ts` 给出整数纹素与阴影档位，
+ * 这里只负责把 bob 落到容器 y 上——阴影在容器外，所以不会被一起抬高。
  */
-export class CharacterSprite {
+export class PonyRenderer {
   readonly container = new Container();
   private entries: LayerEntry[] = [];
   private frameIndex = 0;
@@ -133,6 +199,12 @@ export class CharacterSprite {
     this.container.scale.set(scale);
   }
 
+  /** 待机 / 行走的整数纹素起伏：只允许 0 或负值，角色永远不会陷进地面 */
+  setBob(bobTexels: number): void {
+    if (this.container.y === bobTexels) return;
+    this.container.y = bobTexels;
+  }
+
   async build(appearance: CharacterAppearance = this.appearanceValue): Promise<void> {
     const token = (this.token += 1);
     this.appearanceValue = appearance;
@@ -145,7 +217,7 @@ export class CharacterSprite {
         const frames = await this.atlas.frames(spec.path);
         if (token !== this.token) return;
         const sprite = new Sprite(frames[this.frameIndex] ?? frames[0]!);
-        sprite.anchor.set(0.5, 45 / 48);
+        sprite.anchor.set(0.5, FOOT_ANCHOR_Y);
         sprite.tint = tintFor(appearance, spec.colorKey);
         entries.push({ sprite, frames, colorKey: spec.colorKey });
       } else {
@@ -157,7 +229,8 @@ export class CharacterSprite {
         sprite.anchor.set(0.5);
         // 配件按 1:1 叠加：亚像素缩放会把图标糊成一团
         sprite.scale.set(1);
-        entries.push({ sprite, frames: null, cosmeticKind: spec.cosmeticKind, textures });
+        sprite.tint = tintFor(appearance, spec.colorKey);
+        entries.push({ sprite, frames: null, colorKey: spec.colorKey, cosmeticKind: spec.cosmeticKind, textures });
       }
     }
 

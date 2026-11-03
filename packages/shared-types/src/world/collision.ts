@@ -8,7 +8,7 @@
  * 4. 桥面是水域放行区，其余水面一律不可涉。
  */
 
-import { WORLD_HEIGHT, WORLD_WIDTH } from '../constants';
+import { WORLD_WIDTH } from '../constants';
 import {
   distanceSqToPolygon,
   distanceSqToSegment,
@@ -17,11 +17,11 @@ import {
   type Point,
   type WorldRect,
 } from './geometry';
-import { PLANTER_RADIUS, TREE_TRUNK_RADIUS, WORLD_CENTER, WORLD_LAYOUT, isOnBridge } from './layout';
+import { ISLAND, PLANTER_RADIUS, TREE_TRUNK_RADIUS, WORLD_CENTER, WORLD_LAYOUT, isOnBridge, isOnLand } from './layout';
 
-/** 玩家碰撞半径：约等于身体宽度的一半，围栏与树干的体感由此决定 */
-export const PLAYER_RADIUS = 7;
-/** 单步最长 4px，小于最薄障碍的有效厚度，避免高速穿模 */
+/** 玩家碰撞半径：约等于身体宽度的一半（角色 48 texel 高、躯干 23 宽），围栏与树干的体感由此决定 */
+export const PLAYER_RADIUS = 9;
+/** 单步最长 4px，小于最薄障碍的有效厚度（3px 栏板 + 9px 半径 = 15），避免高速穿模 */
 const MAX_SUBSTEP = 4;
 /** 障碍索引网格边长 */
 const GRID_SIZE = 128;
@@ -40,15 +40,6 @@ type Blocker =
     }
   | { readonly kind: 'polygon'; readonly points: ReadonlyArray<Point>; readonly water: boolean };
 
-function rectPolygon(rect: WorldRect): Point[] {
-  return [
-    [rect.x, rect.y],
-    [rect.x + rect.w, rect.y],
-    [rect.x + rect.w, rect.y + rect.h],
-    [rect.x, rect.y + rect.h],
-  ];
-}
-
 const blockers: Blocker[] = [];
 
 for (const segment of WORLD_LAYOUT.fence.segments) {
@@ -58,7 +49,8 @@ for (const segment of WORLD_LAYOUT.fence.segments) {
     y1: segment.y1,
     x2: segment.x2,
     y2: segment.y2,
-    r: 2,
+    // 栏板视觉厚度 5px，碰撞半径取一半
+    r: 3,
     water: false,
   });
 }
@@ -67,6 +59,9 @@ for (const forest of WORLD_LAYOUT.forests) {
     blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS, water: false });
   }
 }
+for (const tree of WORLD_LAYOUT.wildTrees) {
+  blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS, water: false });
+}
 for (const planter of WORLD_LAYOUT.planters) {
   blockers.push({ kind: 'circle', x: planter.x, y: planter.y, r: PLANTER_RADIUS, water: false });
 }
@@ -74,7 +69,7 @@ for (const lake of WORLD_LAYOUT.lakes) {
   blockers.push({ kind: 'polygon', points: lake.points, water: true });
 }
 for (const river of WORLD_LAYOUT.rivers) {
-  blockers.push({ kind: 'polygon', points: rectPolygon(river.rect), water: true });
+  blockers.push({ kind: 'polygon', points: river.polygon, water: true });
 }
 
 const cells = new Map<number, number[]>();
@@ -160,6 +155,8 @@ function overlaps(blocker: Blocker, x: number, y: number, radius: number): boole
 /** 该点是否与地形相交；非有限坐标视为被挡，避免 NaN 污染权威状态 */
 export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return true;
+  // 海即边界：先判陆地，再查围栏/树/水。顺序反了会让「站在海里但没碰到障碍」被放行
+  if (!isOnLand(x, y, radius)) return true;
   const onBridge = isOnBridge(x, y);
   const list = gather(x, y, radius);
   for (const index of list) {
@@ -170,14 +167,27 @@ export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS):
   return false;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return value < min ? min : value > max ? max : value;
+}
+
+/** 陆地边界；世界矩形只是坐标上限，海才是真正的墙 */
 function insideWorld(x: number, y: number, radius: number): boolean {
-  return x > radius && y > radius && x < WORLD_WIDTH - radius && y < WORLD_HEIGHT - radius;
+  return isOnLand(x, y, radius);
 }
 
 /** 就近找一块空地：出生点兜底、卡进障碍时脱困 */
 export function findFreePoint(x: number, y: number, radius: number = PLAYER_RADIUS): { x: number; y: number } {
-  const startX = Number.isFinite(x) ? x : WORLD_CENTER.x;
-  const startY = Number.isFinite(y) ? y : WORLD_CENTER.y;
+  let startX = Number.isFinite(x) ? x : WORLD_CENTER.x;
+  let startY = Number.isFinite(y) ? y : WORLD_CENTER.y;
+  // 压测会把出生半径放大到 3000，采样点会落进海里：先夹回陆地包围盒再就近搜。
+  // 只判「在不在陆地」，不判半径——贴岸的点保留原点，环搜索会自己往内陆走。
+  if (!isOnLand(startX, startY)) {
+    const { x: bx, y: by, w, h } = ISLAND.bounds;
+    const margin = radius + 1;
+    startX = clamp(startX, bx + margin, bx + w - margin);
+    startY = clamp(startY, by + margin, by + h - margin);
+  }
   if (insideWorld(startX, startY, radius) && !isBlocked(startX, startY, radius)) {
     return { x: startX, y: startY };
   }

@@ -20,7 +20,7 @@ import {
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
 import { buildClipTracks, clipDuration, frameAt, phaseOffset } from './clip';
-import { Ecs, Local, Motion, POSE, Position, Target } from './ecs';
+import { Ecs, Local, Motion, POSE, Position, Snapshot, Target } from './ecs';
 import { InputController, type ActionKey } from './input';
 import { GameRenderer } from './renderer';
 
@@ -65,8 +65,25 @@ const STATS_INTERVAL = 500;
 /** 叫唤是一次性动作：播完由本地回落待机，并把新状态广播出去 */
 const EMOTE_MS = 440;
 
+/** P1：网络同步改进 - 时间线插值配置 */
+const MOVEMENT_CONFIG = {
+  /** 小于该距离时使用平滑插值 */
+  LARGE_DISPLACEMENT_THRESHOLD: 320,
+  /** 极端位移时瞬移的阈值（如 1000+） */
+  TELEPORT_THRESHOLD: 1000,
+  /** 指数插值系数 */
+  INTERPOLATION_FACTOR: 14,
+  /** 平滑纠正的保守因子 */
+  SMOOTH_CORRECTION_FACTOR: 0.3,
+};
+
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
+}
+
+/** 线性插值辅助函数 */
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 export class GameSession {
@@ -79,7 +96,9 @@ export class GameSession {
   private net: NetClient | null = null;
   private localId = 0;
   private elapsed = 0;
-  private lastSend = 0;
+  private movementSendTime = 0; // 独立的移动发送计时器（ms）
+  private clientMoveSequence = 0; // 移动包序号计数器
+  private readonly MOVEMENT_SEND_INTERVAL = 50; // ms，目标 20Hz
   private statsAt = 0;
   private frames = 0;
   private fps = 60;
@@ -188,10 +207,47 @@ export class GameSession {
 
       Target.x[eid] = sx;
       Target.y[eid] = sy;
-      if (Math.hypot(sx - Position.x[eid]!, sy - Position.y[eid]!) > 320) {
+      
+      // P1：三层位移处理策略
+      const curX = Position.x[eid]!;
+      const curY = Position.y[eid]!;
+      const distance = Math.hypot(sx - curX, sy - curY);
+      const now = performance.now();
+      
+      if (distance > MOVEMENT_CONFIG.TELEPORT_THRESHOLD) {
+        // 极端位移（>1000px）：瞬移（如重生、传送）
         Position.x[eid] = sx;
         Position.y[eid] = sy;
+        // 重置快照
+        Snapshot.currentTime[eid] = now;
+        Snapshot.prevTime[eid] = now;
+        Snapshot.currentX[eid] = sx;
+        Snapshot.currentY[eid] = sy;
+        Snapshot.prevX[eid] = sx;
+        Snapshot.prevY[eid] = sy;
+      } else if (distance > MOVEMENT_CONFIG.LARGE_DISPLACEMENT_THRESHOLD) {
+        // 大位移（320-1000px）：平滑纠正而非瞬间跳变
+        const factor = Math.min(distance / MOVEMENT_CONFIG.LARGE_DISPLACEMENT_THRESHOLD, 1.0);
+        Position.x[eid] = lerp(curX, sx, factor * MOVEMENT_CONFIG.SMOOTH_CORRECTION_FACTOR);
+        Position.y[eid] = lerp(curY, sy, factor * MOVEMENT_CONFIG.SMOOTH_CORRECTION_FACTOR);
+        
+        // 保存快照用于后续时间线插值
+        Snapshot.prevTime[eid] = Snapshot.currentTime[eid];
+        Snapshot.prevX[eid] = Snapshot.currentX[eid];
+        Snapshot.prevY[eid] = Snapshot.currentY[eid];
+        Snapshot.currentTime[eid] = now;
+        Snapshot.currentX[eid] = sx;
+        Snapshot.currentY[eid] = sy;
+      } else {
+        // 小位移（<320px）：保存快照用于时间线插值
+        Snapshot.prevTime[eid] = Snapshot.currentTime[eid];
+        Snapshot.prevX[eid] = Snapshot.currentX[eid];
+        Snapshot.prevY[eid] = Snapshot.currentY[eid];
+        Snapshot.currentTime[eid] = now;
+        Snapshot.currentX[eid] = sx;
+        Snapshot.currentY[eid] = sy;
       }
+      
       Motion.direction[eid] = state.direction;
       // 动作变了才重置起始时刻：同一姿态的重复同步不能把动画打回第 0 帧
       if (Motion.pose[eid] !== state.pose) {
@@ -328,24 +384,83 @@ export class GameSession {
 
     for (const eid of this.ecs.entities()) {
       if (Local.flag[eid] === 1) continue;
-      const k = 1 - Math.exp(-dt * 14);
-      Position.x[eid] = Position.x[eid]! + (Target.x[eid]! - Position.x[eid]!) * k;
-      Position.y[eid] = Position.y[eid]! + (Target.y[eid]! - Position.y[eid]!) * k;
+      
+      // P1：时间线插值
+      const now = performance.now();
+      const currentTime = Snapshot.currentTime[eid]!;
+      const prevTime = Snapshot.prevTime[eid]!;
+      const timeDiff = currentTime - prevTime;
+      
+      // 检查是否有有效的快照对（时间差 > 0 且 < 1000ms）
+      if (timeDiff > 0 && timeDiff < 1000) {
+        const elapsedSinceSnapshot = now - currentTime;
+        const progress = elapsedSinceSnapshot / timeDiff;
+        
+        // 如果还在快照区间内，使用时间线插值
+        if (progress < 1) {
+          const clampedProgress = clamp(progress, 0, 1);
+          const snapshotX = Snapshot.prevX[eid]!;
+          const snapshotY = Snapshot.prevY[eid]!;
+          const targetX = Snapshot.currentX[eid]!;
+          const targetY = Snapshot.currentY[eid]!;
+          Position.x[eid] = lerp(snapshotX, targetX, clampedProgress);
+          Position.y[eid] = lerp(snapshotY, targetY, clampedProgress);
+        } else {
+          // 进度超过1，切换到指数插值向目标逼近
+          const k = 1 - Math.exp(-dt * MOVEMENT_CONFIG.INTERPOLATION_FACTOR);
+          Position.x[eid] = Position.x[eid]! + (Target.x[eid]! - Position.x[eid]!) * k;
+          Position.y[eid] = Position.y[eid]! + (Target.y[eid]! - Position.y[eid]!) * k;
+        }
+      } else {
+        // 没有有效快照，使用指数插值作为回退
+        const k = 1 - Math.exp(-dt * MOVEMENT_CONFIG.INTERPOLATION_FACTOR);
+        Position.x[eid] = Position.x[eid]! + (Target.x[eid]! - Position.x[eid]!) * k;
+        Position.y[eid] = Position.y[eid]! + (Target.y[eid]! - Position.y[eid]!) * k;
+      }
     }
 
     for (const netId of this.names.keys()) {
       const eid = this.ecs.get(netId);
       if (!eid) continue;
-      this.renderer.updateEntity(netId, Position.x[eid]!, Position.y[eid]!);
-      this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
+      const x = Position.x[eid]!;
+      const y = Position.y[eid]!;
+      
+      // 始终更新位置（同步网络状态）
+      this.renderer.updateEntity(netId, x, y);
+      
+      // 只对可见实体更新动画状态（setPose）以减少 CPU 开销
+      // 使用相机边界判定可见性，范围扩大至 256 纹素以确保边界附近的实体也能及时更新
+      const cameraBounds = this.renderer.getCameraBounds();
+      const isVisible = !cameraBounds || (
+        x >= cameraBounds.minX - 256 &&
+        x <= cameraBounds.maxX + 256 &&
+        y >= cameraBounds.minY - 256 &&
+        y <= cameraBounds.maxY + 256
+      );
+      
+      if (isVisible) {
+        this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
+      }
     }
 
     if (localEid) {
       this.renderer.updateCamera(Position.x[localEid]!, Position.y[localEid]!);
-      if (now - this.lastSend >= SEND_INTERVAL) {
-        this.lastSend = now;
+      
+      // 独立的网络发送时钟：不依赖帧率
+      this.movementSendTime += dtMs;
+      if (this.movementSendTime >= this.MOVEMENT_SEND_INTERVAL) {
+        this.movementSendTime -= this.MOVEMENT_SEND_INTERVAL; // 模运算避免累积错误
         const state = packState(Motion.direction[localEid]! as Direction, Motion.pose[localEid]! as Pose, Motion.moving[localEid] === 1);
-        this.net?.sendMove(quantizeCoord(Position.x[localEid]!), quantizeCoord(Position.y[localEid]!), state);
+        const clientSequence = ++this.clientMoveSequence;
+        // 使用 performance.now() 的低 32 位，适用于 RTT 估计
+        const clientTimestampMs = Math.floor(performance.now()) >>> 0;
+        this.net?.sendMove(
+          quantizeCoord(Position.x[localEid]!), 
+          quantizeCoord(Position.y[localEid]!), 
+          state,
+          clientSequence,
+          clientTimestampMs,
+        );
       }
     }
 

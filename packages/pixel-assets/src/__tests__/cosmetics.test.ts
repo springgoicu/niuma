@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 import { landmarksOf } from '../quadruped';
 import { COSMETIC_CATALOG, COSMETIC_SIZE, drawCosmetic, mirrorCosmetic, type CosmeticKind } from '../cosmetics';
-import { BACK_IDS, EYEWEAR_IDS, HEADWEAR_IDS, NECKWEAR_IDS } from '../../../shared-types/src/catalog';
+import { EYEWEAR_IDS, HAIR_IDS, HEADWEAR_IDS, NECKWEAR_IDS } from '../../../shared-types/src/catalog';
 
 const CATALOGS = {
   head: HEADWEAR_IDS,
   eyes: EYEWEAR_IDS,
   neck: NECKWEAR_IDS,
-  back: BACK_IDS,
+  hair: HAIR_IDS,
 } as const;
 
 const KINDS = Object.keys(COSMETIC_CATALOG) as CosmeticKind[];
@@ -31,7 +31,6 @@ describe('配件目录', () => {
 
   it('每个 id 在支持的朝向都有实际像素', () => {
     for (const kind of KINDS) {
-      if (kind === 'back') continue;
       for (const id of COSMETIC_CATALOG[kind]) {
         const dirs = kind === 'eyes' ? (['down', 'side'] as const) : (['down', 'side', 'up'] as const);
         for (const dir of dirs) {
@@ -41,7 +40,23 @@ describe('配件目录', () => {
     }
   });
 
-  it('图标不铺满 16×16：配件靠留白控制视觉重量', () => {
+  it('图标是纯灰度：染色只该改色相，不该和烘焙配色打架', () => {
+    for (const kind of KINDS) {
+      for (const id of COSMETIC_CATALOG[kind]) {
+        for (const dir of ['down', 'side', 'up'] as const) {
+          if (kind === 'eyes' && dir === 'up') continue;
+          const data = drawCosmetic(kind, id, dir);
+          for (let i = 0; i < data.length; i += 4) {
+            if (!data[i + 3]) continue;
+            expect(data[i]).toBe(data[i + 1]!);
+            expect(data[i]).toBe(data[i + 2]!);
+          }
+        }
+      }
+    }
+  });
+
+  it('图标不铺满画布：配件靠留白控制视觉重量', () => {
     for (const kind of KINDS) {
       for (const id of COSMETIC_CATALOG[kind]) {
         const count = opaquePixels(drawCosmetic(kind, id, 'down'));

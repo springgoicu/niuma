@@ -15,11 +15,14 @@ export const TAIL_IDS = ['tuft', 'long'] as const;
  * 这三处怎么摆都读不出来，ADR-0007 换成头顶、眼线、颈线三处承载。
  * 顺序与旧目录对齐（intern→grad / dev→cap / pm→beret / ops→helmet / boss→top），
  * 旧档的字节值会落到语义相近的帽子上，而不是随机一件。
+ *
+ * ADR-0011：原本挂在身后的背包（laptop / briefcase）在大头比例下完全被躯干挡住，
+ * 槽位改画发型；字节编号仍是 [30]，旧档的 1/2 会落到寸头 / 齐刘海。
  */
 export const HEADWEAR_IDS = ['none', 'grad', 'cap', 'beret', 'helmet', 'top'] as const;
 export const EYEWEAR_IDS = ['none', 'round', 'sun', 'monocle'] as const;
 export const NECKWEAR_IDS = ['none', 'scarf', 'collar', 'phones'] as const;
-export const BACK_IDS = ['none', 'laptop', 'briefcase'] as const;
+export const HAIR_IDS = ['none', 'buzz', 'bangs', 'ponytail', 'afro', 'slick'] as const;
 
 export type PatternId = (typeof PATTERN_IDS)[number];
 export type SnoutId = (typeof SNOUT_IDS)[number];
@@ -29,7 +32,7 @@ export type TailId = (typeof TAIL_IDS)[number];
 export type HeadwearId = (typeof HEADWEAR_IDS)[number];
 export type EyewearId = (typeof EYEWEAR_IDS)[number];
 export type NeckwearId = (typeof NECKWEAR_IDS)[number];
-export type BackId = (typeof BACK_IDS)[number];
+export type HairId = (typeof HAIR_IDS)[number];
 
 export function catalogIndexOf(catalog: readonly string[], value: string | undefined): number {
   if (!value) return 0;

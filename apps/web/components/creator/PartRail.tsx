@@ -1,26 +1,27 @@
 'use client';
 
-import { BACK_IDS, EYEWEAR_IDS, HEADWEAR_IDS, NECKWEAR_IDS, PATTERN_IDS, SNOUT_IDS, TAIL_IDS } from '@niuma/shared-types';
-import { useCreatorStore, extraLabel, extraOptions, type CosmeticKind } from '@/lib/creator-store';
+import { EYEWEAR_IDS, HAIR_IDS, HEADWEAR_IDS, NECKWEAR_IDS, PATTERN_IDS, SNOUT_IDS, TAIL_IDS } from '@niuma/shared-types';
+import {
+  PART_META,
+  extraOptions,
+  partItemLabel,
+  partValue,
+  useCreatorStore,
+  type CosmeticKind,
+  type PartKey,
+} from '@/lib/creator-store';
 
-const PATTERN_LABELS = ['无斑纹', '奶牛斑块', '马蹄踏雪'];
-const SNOUT_LABELS = ['宽牛吻', '狭长马吻'];
-const TAIL_LABELS = ['短尾穗', '长尾'];
-const HEADWEAR_LABELS = ['不戴', '学士帽', '鸭舌帽', '贝雷帽', '安全帽', '礼帽'];
-const EYEWEAR_LABELS = ['不戴', '圆框眼镜', '墨镜', '单眼镜'];
-const NECKWEAR_LABELS = ['不戴', '围巾', '项圈', '挂脖耳机'];
-const BACK_LABELS = ['空手', '电脑包', '公文包'];
-
+/** 选项按钮：中文标签走正文字体，1px 描边，选中只换色相不换体积 */
 function Chip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`cursor-pointer border-2 px-2.5 py-1.5 text-left font-mono text-[11px] transition-colors duration-150 ${
+      className={`flex h-8 cursor-pointer items-center border px-2.5 text-left text-[12px] leading-none transition-colors duration-150 ${
         active
-          ? 'border-mint-400 bg-mint-400/10 text-mint-400'
-          : 'border-ink-600 bg-ink-950/60 text-mist-300 hover:border-ink-500 hover:text-mist-100'
+          ? 'border-mint-400/70 bg-mint-400/[0.08] text-mint-400'
+          : 'border-ink-700 bg-ink-950/40 text-mist-300 hover:border-ink-500 hover:bg-ink-800/60 hover:text-mist-100'
       }`}
     >
       {label}
@@ -28,20 +29,47 @@ function Chip({ active, label, onClick }: { active: boolean; label: string; onCl
   );
 }
 
-function Group({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+/** 分组标题同时是「聚焦」入口：点标题也能把右侧面板切到这一项 */
+function Group({
+  title,
+  hint,
+  focused,
+  onFocus,
+  children,
+}: {
+  title: string;
+  hint: string;
+  focused: boolean;
+  onFocus: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="mt-6">
-      <div className="flex items-baseline justify-between">
-        <h3 className="font-mono text-[10px] uppercase tracking-[0.22em] text-mist-500">{title}</h3>
-        <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-500">{hint}</span>
+    <section className="mt-5">
+      <div className="flex items-baseline justify-between gap-2 border-b border-ink-700/70 pb-2">
+        <button type="button" onClick={onFocus} className="group flex cursor-pointer items-center gap-2 text-left">
+          <span
+            className={`h-1 w-1 shrink-0 transition-colors duration-150 ${focused ? 'bg-mint-400' : 'bg-ink-500'}`}
+            aria-hidden
+          />
+          <h3
+            className={`text-[12px] font-medium tracking-[0.06em] transition-colors duration-150 ${
+              focused ? 'text-mint-400' : 'text-mist-100 group-hover:text-mint-400'
+            }`}
+          >
+            {title}
+          </h3>
+        </button>
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-mist-400">{hint}</span>
       </div>
-      <div className="mt-2.5 grid grid-cols-2 gap-2">{children}</div>
+      <div className="mt-2.5 grid grid-cols-2 gap-1.5">{children}</div>
     </section>
   );
 }
 
 export function PartRail() {
   const appearance = useCreatorStore((s) => s.appearance);
+  const activePart = useCreatorStore((s) => s.activePart);
+  const setActivePart = useCreatorStore((s) => s.setActivePart);
   const setSpecies = useCreatorStore((s) => s.setSpecies);
   const setPattern = useCreatorStore((s) => s.setPattern);
   const setSnout = useCreatorStore((s) => s.setSnout);
@@ -49,103 +77,88 @@ export function PartRail() {
   const setTail = useCreatorStore((s) => s.setTail);
   const setCosmetic = useCreatorStore((s) => s.setCosmetic);
 
-  const extras = extraOptions(appearance.species);
-  const currentExtra = appearance.species === 'cow' ? appearance.parts.hornId ?? 1 : appearance.parts.maneId ?? 1;
+  const partGroup = (part: PartKey, catalog: readonly string[], pick: (id: string, index: number) => void) => {
+    const current = partValue(appearance, part);
+    // 角与鬃毛共用一个槽位，标题按物种读，别让牛长「鬃毛」
+    const title = part === 'extra' ? (appearance.species === 'cow' ? '角' : '鬃毛') : PART_META[part].label;
+    return (
+      <Group
+        title={title}
+        hint={PART_META[part].hint}
+        focused={activePart === part}
+        onFocus={() => setActivePart(part)}
+      >
+        {catalog.map((id, index) => (
+          <Chip
+            key={id}
+            active={current === id}
+            label={partItemLabel(appearance.species, part, id)}
+            onClick={() => {
+              pick(id, index);
+              setActivePart(part);
+            }}
+          />
+        ))}
+      </Group>
+    );
+  };
 
-  const cosmeticGroup = (title: string, hint: string, kind: CosmeticKind, catalog: readonly string[], labels: string[], current: string | undefined) => (
-    <Group title={title} hint={hint}>
-      {catalog.map((id, index) => (
-        <Chip
-          key={id}
-          active={(current ?? 'none') === id}
-          label={labels[index] ?? id}
-          onClick={() => setCosmetic(kind, id)}
-        />
-      ))}
-    </Group>
-  );
+  const cosmeticGroup = (kind: CosmeticKind, catalog: readonly string[]) =>
+    partGroup(kind, catalog, (id) => setCosmetic(kind, id));
 
   return (
-    <aside className="panel panel-scan p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-xl font-semibold tracking-wide text-mist-100">工种</h2>
-        <span className="tag">species</span>
+    <aside className="panel p-5">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="font-display text-[17px] font-semibold tracking-[0.08em] text-mist-100">工种</h2>
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-mist-400">species</span>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        {(['cow', 'horse'] as const).map((species) => (
-          <button
-            key={species}
-            type="button"
-            aria-pressed={appearance.species === species}
-            onClick={() => setSpecies(species)}
-            className={`cursor-pointer border-2 px-4 py-4 text-left transition-colors duration-150 ${
-              appearance.species === species
-                ? 'border-mint-400 bg-mint-400/10'
-                : 'border-ink-600 bg-ink-950/60 hover:border-ink-500'
-            }`}
-          >
-            <span className="block font-display text-3xl font-bold leading-none text-mist-100">
-              {species === 'cow' ? '牛' : '马'}
-            </span>
-            <span className="mt-2 block font-mono text-[9px] uppercase tracking-[0.2em] text-mist-500">
-              {species === 'cow' ? 'bos taurus' : 'equus ferus'}
-            </span>
-          </button>
-        ))}
+      <div className="mt-3.5 grid grid-cols-2 gap-1.5">
+        {(['cow', 'horse'] as const).map((species) => {
+          const active = appearance.species === species;
+          return (
+            <button
+              key={species}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setSpecies(species)}
+              className={`relative flex cursor-pointer flex-col border px-3.5 py-3 text-left transition-colors duration-150 ${
+                active
+                  ? 'border-mint-400/70 bg-mint-400/[0.07]'
+                  : 'border-ink-700 bg-ink-950/40 hover:border-ink-500 hover:bg-ink-800/50'
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`absolute right-2.5 top-2.5 h-1.5 w-1.5 transition-colors duration-150 ${
+                  active ? 'bg-mint-400' : 'bg-ink-600'
+                }`}
+              />
+              <span className="block font-display text-[30px] font-bold leading-none text-mist-100">
+                {species === 'cow' ? '牛' : '马'}
+              </span>
+              <span className="mt-2 block font-mono text-[10px] uppercase tracking-[0.14em] text-mist-400">
+                {species === 'cow' ? 'bos taurus' : 'equus ferus'}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      <Group title="斑纹" hint="pattern">
-        {PATTERN_IDS.map((_, index) => (
-          <Chip
-            key={index}
-            active={appearance.parts.patternId === index}
-            label={PATTERN_LABELS[index] ?? `#${index}`}
-            onClick={() => setPattern(index)}
-          />
-        ))}
-      </Group>
+      <div className="mt-2">
+        {partGroup('pattern', PATTERN_IDS, (_id, index) => setPattern(index))}
+        {partGroup('snout', SNOUT_IDS, (_id, index) => setSnout(index))}
+        {partGroup('extra', extraOptions(appearance.species), (_id, index) => setExtra(index))}
+        {partGroup('tail', TAIL_IDS, (_id, index) => setTail(index))}
 
-      <Group title="口鼻" hint="snout">
-        {SNOUT_IDS.map((_, index) => (
-          <Chip
-            key={index}
-            active={appearance.parts.snoutId === index}
-            label={SNOUT_LABELS[index] ?? `#${index}`}
-            onClick={() => setSnout(index)}
-          />
-        ))}
-      </Group>
+        {cosmeticGroup('headwear', HEADWEAR_IDS)}
+        {cosmeticGroup('eyewear', EYEWEAR_IDS)}
+        {cosmeticGroup('neckwear', NECKWEAR_IDS)}
+        {cosmeticGroup('hairstyle', HAIR_IDS)}
+      </div>
 
-      <Group title={appearance.species === 'cow' ? '角' : '鬃毛'} hint="extra">
-        {extras.map((_, index) => (
-          <Chip
-            key={index}
-            active={currentExtra === index}
-            label={extraLabel(appearance.species, index)}
-            onClick={() => setExtra(index)}
-          />
-        ))}
-      </Group>
-
-      <Group title="尾巴" hint="tail">
-        {TAIL_IDS.map((_, index) => (
-          <Chip
-            key={index}
-            active={appearance.parts.tailId === index}
-            label={TAIL_LABELS[index] ?? `#${index}`}
-            onClick={() => setTail(index)}
-          />
-        ))}
-      </Group>
-
-      {cosmeticGroup('头饰', 'head', 'headwear', HEADWEAR_IDS, HEADWEAR_LABELS, appearance.cosmetics.headwear)}
-      {cosmeticGroup('眼镜', 'eyes', 'eyewear', EYEWEAR_IDS, EYEWEAR_LABELS, appearance.cosmetics.eyewear)}
-      {cosmeticGroup('颈饰', 'neck', 'neckwear', NECKWEAR_IDS, NECKWEAR_LABELS, appearance.cosmetics.neckwear)}
-      {cosmeticGroup('背上', 'back', 'backItem', BACK_IDS, BACK_LABELS, appearance.cosmetics.backItem)}
-
-      <p className="mt-6 border-t-2 border-ink-700 pt-4 font-mono text-[10px] leading-relaxed text-mist-500">
-        角与鬃毛共用一个线协议字节槽位，按物种解释；切换物种会保留配色，但配件回到默认。
+      <p className="mt-6 border-t border-ink-700/70 pt-4 text-[11px] leading-[1.7] text-mist-400">
+        角与鬃毛共用一个线协议字节槽位，按物种解释；每个属性都有自己的颜色，点分组标题可把右侧面板切到这一项。
       </p>
     </aside>
   );

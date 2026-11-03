@@ -1,22 +1,26 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink-950: #070a08;
-  --color-ink-900: #0b0f0d;
-  --color-ink-800: #141a16;
-  --color-ink-700: #1c2520;
-  --color-ink-600: #24302a;
-  --color-ink-500: #33413a;
-  --color-mist-100: #e6ede6;
-  --color-mist-300: #9fb0a1;
-  --color-mist-500: #66756a;
+  /* 暖褐底：从冷灰绿转暖后，画布里的奶油草地不再和界面对打（ADR-0013） */
+  --color-ink-950: #0f0c09;
+  --color-ink-900: #14100c;
+  --color-ink-800: #1b1611;
+  --color-ink-700: #221b16;
+  --color-ink-600: #2e241d;
+  --color-ink-500: #3d3026;
+  --color-mist-100: #f4ede1;
+  --color-mist-300: #c8b8a2;
+  /* 小字微文案专用：在 ink-900 上 6.2:1，mist-500 只有 4.5:1 刚好压 AA 线 */
+  --color-mist-400: #a2917a;
+  --color-mist-500: #857463;
+  /* 全站唯一冷色强调：焦点环、选中态、主按钮都靠它，暖底上的一点冷光 */
   --color-mint-400: #4fe3c1;
   --color-mint-500: #2fb59a;
-  --color-lime-400: #a8ff6b;
-  --color-amber-400: #ffc53d;
-  --color-ember-500: #ff6b3d;
-  --color-signal-500: #ff3d5a;
-  --color-sky-400: #5ac8fa;
+  --color-lime-400: #cfe08a;
+  --color-amber-400: #f2c879;
+  --color-ember-500: #e07a4a;
+  --color-signal-500: #e06a5a;
+  --color-sky-400: #6fb6c9;
 
   --font-display: "Oswald", "Noto Sans SC", ui-sans-serif, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
@@ -38,9 +42,38 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  /* 浏览器自带的滚动条属于别的设计系统：换成园区自己的墨绿细杆 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-ink-950);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-ink-500);
+    border: 2px solid var(--color-ink-950);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-mist-500);
+  }
+
+  input,
+  textarea {
+    caret-color: var(--color-mint-400);
+  }
+
+  a,
+  button {
+    text-underline-offset: 0.25em;
+  }
+
   ::selection {
     background: var(--color-mint-400);
-    color: #04120e;
+    color: #06211a;
   }
 
   :focus-visible {
@@ -59,8 +92,11 @@
     position: relative;
     border: 2px solid var(--color-ink-600);
     background:
-      linear-gradient(180deg, rgba(28, 37, 32, 0.94), rgba(11, 15, 13, 0.96));
-    box-shadow: 0 0 0 1px rgba(79, 227, 193, 0.06), 0 18px 40px -28px rgba(0, 0, 0, 0.9);
+      linear-gradient(180deg, rgba(43, 35, 28, 0.94), rgba(20, 16, 12, 0.96));
+    box-shadow:
+      inset 0 1px 0 rgba(244, 237, 225, 0.05),
+      0 0 0 1px rgba(79, 227, 193, 0.06),
+      0 18px 40px -28px rgba(10, 6, 3, 0.9);
   }
 
   .panel-scan::after {
@@ -70,8 +106,8 @@
     pointer-events: none;
     background-image: repeating-linear-gradient(
       0deg,
-      rgba(0, 0, 0, 0.22) 0px,
-      rgba(0, 0, 0, 0.22) 1px,
+      rgba(26, 14, 6, 0.24) 0px,
+      rgba(26, 14, 6, 0.24) 1px,
       transparent 1px,
       transparent 4px
     );
@@ -94,7 +130,7 @@
     overflow: hidden;
     border: 2px solid var(--color-mint-400);
     background: var(--color-mint-400);
-    color: #04120e;
+    color: #06211a;
     padding: 0.85rem 1.6rem;
     font-family: var(--font-mono);
     font-size: 0.8rem;

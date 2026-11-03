@@ -4,9 +4,12 @@ const FRAME = SPRITE_LAYOUT.frame.w;
 const COLUMNS = SPRITE_LAYOUT.frame.columns;
 const ROWS = SPRITE_LAYOUT.frame.rows;
 
-/** 只允许 48 的整数倍：非整数倍放大时 CSS mask 会落在半像素上，像素块就糊了 */
+/**
+ * 只允许帧边长的整数倍：非整数倍放大时 CSS mask 会落在半像素上，像素块就糊了。
+ * 上限 6 是给 64 帧留的余量（64×6 = 384），再大落地页首屏就放不下了。
+ */
 export function spriteZoom(size: number): number {
-  return Math.min(4, Math.max(1, Math.round(size / FRAME)));
+  return Math.min(6, Math.max(1, Math.round(size / FRAME)));
 }
 
 interface SpriteMaskProps {

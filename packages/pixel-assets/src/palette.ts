@@ -4,7 +4,16 @@
  * 但保持单批次绘制、零每帧开销。
  */
 
-export type LayerName = 'body' | 'pattern' | 'bodyLight' | 'hoof' | 'eyes' | 'eyeLight' | 'extra' | 'snout';
+export type LayerName =
+  | 'body'
+  | 'pattern'
+  | 'bodyLight'
+  | 'hoof'
+  | 'eyes'
+  | 'eyeLight'
+  | 'extra'
+  | 'snout'
+  | 'tail';
 
 export const S = {
   None: 0,
@@ -24,6 +33,9 @@ export const S = {
   SnoutShade: 14,
   BodyLight: 15,
   EyeLight: 16,
+  Tail: 17,
+  TailShade: 18,
+  TailOutline: 19,
 } as const;
 
 export type Slot = number;
@@ -35,35 +47,42 @@ interface SlotInfo {
 
 /**
  * 索引即 slot 值；未列出的 slot 视为透明。
- * luma 是 tint 之前的明度：相邻档差拉开到 ≥60，放大 3–4 倍时才看得出体积，
- * 否则一坨中间调会让造型发糊。
  *
- * BodyLight / EyeLight 是纯白：tint 只能乘、不能提亮，想让背线和眼神光比本体更亮，
- * 只能给它们单独开一层，再由客户端把主体色/眼睛色往白里混一份当 tint。
+ * 明度阶梯只有「本体 / 阴影」两档（外加一档远端肢体），因为 tint 是乘法：
+ * 旧表 255/176/112 在深色身体上（马身 0xA96C3C × 0.44 ≈ 0x4A2F1A）会被压成一坨近黑，
+ * 放大 3 倍后看不出体积。新表把阴影拉到 0.81、远端拉到 0.62，深色主体仍留得住色相。
+ *
+ * BodyLight / EyeLight 仍是纯白：tint 只能乘、不能提亮，想让月牙高光与眼神光比本体更亮，
+ * 只能给它们单独开一层，再由客户端把主体色往白里混一份当 tint。
  */
 export const SLOT_TABLE: Array<SlotInfo | null> = [
   null,
   { layer: 'body', luma: 255 },
-  { layer: 'body', luma: 176 },
-  { layer: 'body', luma: 112 },
-  { layer: 'body', luma: 56 },
+  { layer: 'body', luma: 206 },
+  { layer: 'body', luma: 158 },
+  { layer: 'body', luma: 44 },
   { layer: 'pattern', luma: 255 },
-  { layer: 'pattern', luma: 150 },
+  { layer: 'pattern', luma: 200 },
   { layer: 'hoof', luma: 236 },
-  { layer: 'hoof', luma: 132 },
+  { layer: 'hoof', luma: 160 },
   { layer: 'eyes', luma: 255 },
-  { layer: 'eyes', luma: 140 },
+  { layer: 'eyes', luma: 150 },
   { layer: 'extra', luma: 255 },
-  { layer: 'extra', luma: 142 },
-  // 口鼻在游戏里跟身体共用同一 tint，只能靠明度区分，所以压到 232 才看得出吻部
-  { layer: 'snout', luma: 232 },
-  { layer: 'snout', luma: 168 },
+  { layer: 'extra', luma: 190 },
+  // 口鼻在游戏里跟身体共用同一 tint，只能靠明度区分；差距太小就只剩描边在撑
+  { layer: 'snout', luma: 246 },
+  { layer: 'snout', luma: 198 },
   { layer: 'bodyLight', luma: 255 },
   { layer: 'eyeLight', luma: 255 },
+  // ADR-0011：尾巴从 body 层拆出来独立染色，描边也归 tail 层，否则尾巴的边会被身体色带跑
+  { layer: 'tail', luma: 255 },
+  { layer: 'tail', luma: 200 },
+  { layer: 'tail', luma: 56 },
 ];
 
-/** 叠放顺序：高光压在斑纹之上、眼睛之下，眼神光紧随眼睛 */
+/** 叠放顺序：尾巴在身后最先画；高光压在斑纹之上、眼睛之下，眼神光紧随眼睛 */
 export const LAYERS: LayerName[] = [
+  'tail',
   'body',
   'pattern',
   'bodyLight',
@@ -73,6 +92,11 @@ export const LAYERS: LayerName[] = [
   'extra',
   'snout',
 ];
+
+/** 描边槽：主体描边与尾巴描边（ADR-0011 把尾巴的边拆成独立槽，才能各自染色） */
+export function isOutlineSlot(slot: Slot): boolean {
+  return slot === S.Outline || slot === S.TailOutline;
+}
 
 export function slotLayer(slot: number): LayerName | null {
   return SLOT_TABLE[slot]?.layer ?? null;

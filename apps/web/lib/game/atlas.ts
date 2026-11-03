@@ -20,6 +20,8 @@ export interface SpeciesLayers {
   eyeLight?: string[];
   extra: string[];
   snout: string[];
+  /** v5：尾巴从 body 层拆出来独立染色，按 tailId 索引 */
+  tail?: string[];
 }
 
 export interface SpriteManifest {

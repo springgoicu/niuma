@@ -5,9 +5,21 @@
  * 因此「加一帧」只需要改这一处，不需要再去 web 里找 `* 8`。
  */
 
-export const FRAME_SIZE = 48;
+/**
+ * 帧边长 64：48 的画布上角色只有约 41 texel 高，头、躯干、四条腿互相挤，
+ * 只能靠「前后腿错 2px」糊成两根柱子；64 才画得开四段腿与两道关节。
+ * 只改帧边长、不改列数：16 列预算与 CLIPS 时长表是动画契约，一动全端跟着抖。
+ */
+export const FRAME_SIZE = 64;
 export const COLUMNS = 16;
 export const ROWS = 4;
+
+/**
+ * 脚底原点：帧内像素坐标。生成器按它落脚底线与配件挂点，
+ * 客户端按 origin.y / FRAME_SIZE 设精灵锚点——之前这个 45/48 在客户端被写死过一次，
+ * 现在它是唯一真相，写进 manifest 与 sprite-layout.generated.ts。
+ */
+export const ORIGIN = { x: FRAME_SIZE / 2, y: 59 } as const;
 
 export type PoseName = 'idle' | 'walk' | 'sit' | 'lie' | 'emote';
 
@@ -23,6 +35,15 @@ export interface ClipSpec {
   loopFrom: number;
   loop: boolean;
 }
+
+/**
+ * 眨眼列：生成器按列号把眼睛画成闭合态（`spec.column === BLINK_COLUMN`）。
+ *
+ * 它必须仍然被 idle 的 frames 覆盖——`__tests__/layout.test.ts` 要求每一列
+ * 恰好属于一个动作。但客户端播放时会把这一列从循环里剔除，改由 35s 调度注入：
+ * 原来 1.9s 循环一次眨眼，比真眨眼密得多，看起来像在抽搐（ADR-0013）。
+ */
+export const BLINK_COLUMN = 2;
 
 /**
  * 动作预算（16 列刚好铺满）：

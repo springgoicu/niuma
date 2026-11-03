@@ -21,10 +21,13 @@ export function SaveBar() {
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-ink-600 bg-ink-900/95 backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-4 px-5 py-4 sm:px-8">
-        <div className="flex min-w-[220px] flex-1 items-center gap-3">
-          <label htmlFor="niuma-name" className="font-mono text-[10px] uppercase tracking-[0.2em] text-mist-500">
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700/80 bg-ink-900/[0.94] shadow-[0_-24px_48px_-32px_rgba(0,0,0,0.95)] backdrop-blur-md">
+      <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-4 gap-y-3 px-5 py-3.5 sm:px-8">
+        <div className="flex min-w-[240px] flex-1 items-center gap-2.5">
+          <label
+            htmlFor="niuma-name"
+            className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-400"
+          >
             工牌名
           </label>
           <input
@@ -33,21 +36,21 @@ export function SaveBar() {
             maxLength={16}
             onChange={(event) => setName(event.target.value)}
             placeholder="输入你的工牌名"
-            className="field max-w-[240px]"
             autoComplete="off"
+            className="h-9 w-full max-w-[220px] border border-ink-700 bg-ink-950 px-2.5 font-mono text-[12px] text-mist-100 outline-none transition-colors duration-150 placeholder:text-mist-500 focus:border-mint-400"
           />
           <button
             type="button"
             onClick={() => setName(randomNickname())}
             aria-label="随机生成昵称"
-            className="grid h-[42px] w-[42px] cursor-pointer place-items-center border-2 border-ink-600 text-mist-300 transition-colors hover:border-mint-400 hover:text-mint-400"
+            className="grid h-9 w-9 shrink-0 cursor-pointer place-items-center border border-ink-700 text-mist-300 transition-colors duration-150 hover:border-mint-400/70 hover:text-mint-400"
           >
-            <Dices className="h-4 w-4" />
+            <Dices className="h-3.5 w-3.5" />
           </button>
         </div>
 
-        <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-500">
-          <ShieldOff className="h-3.5 w-3.5 text-amber-400" />
+        <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-mist-400">
+          <ShieldOff className="h-3.5 w-3.5 shrink-0 text-amber-400" />
           仅存于当前标签页 · 关闭即清空
         </p>
 

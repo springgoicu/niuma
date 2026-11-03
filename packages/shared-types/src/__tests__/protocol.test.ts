@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   APPEARANCE_BYTES,
+  APPEARANCE_COLOR_KEYS,
   DIRECTION,
   LIMIT_KIND,
   MOVE_PACKET_BYTES,
@@ -33,6 +34,7 @@ import {
   encodeSync,
   decodeQueueRejected,
   decodeQueueStatus,
+  normalizeColor,
   packState,
   quantizeCoord,
   sanitizeAppearance,
@@ -52,7 +54,7 @@ describe('move packet', () => {
   });
 
   it('rejects a truncated packet instead of silently decoding', () => {
-    expect(() => decodeMove(new Uint8Array(7))).toThrow(/8 bytes/);
+    expect(() => decodeMove(new Uint8Array(7))).toThrow(/8 or 14 bytes/);
   });
 
   it('reuses the caller-owned object on the hot path', () => {
@@ -60,6 +62,21 @@ describe('move packet', () => {
     const result = decodeMove(encodeMove({ id: 7, x: 8, y: 16, state: 3 }), target);
     expect(result).toBe(target);
     expect(target).toEqual({ id: 7, x: 8, y: 16, state: 3 });
+  });
+
+  it('can encode and decode with clientSequence and clientTimestampMs', () => {
+    // 使用一个 u32 可以表示的时间戳值
+    const clientTimestampMs = 1699079559; // 低于 2^32
+    const packet = { id: 42, x: 1234, y: 5678, state: 0b00100101, clientSequence: 12345, clientTimestampMs };
+    const encoded = encodeMove(packet);
+    expect(encoded.byteLength).toBe(14); // 8 base + 6 timing
+    const decoded = decodeMove(encoded);
+    expect(decoded.id).toBe(42);
+    expect(decoded.x).toBe(1234);
+    expect(decoded.y).toBe(5678);
+    expect(decoded.state).toBe(0b00100101);
+    expect(decoded.clientSequence).toBe(12345);
+    expect(decoded.clientTimestampMs).toBe(clientTimestampMs);
   });
 });
 
@@ -99,9 +116,27 @@ describe('state byte', () => {
 });
 
 describe('appearance codec', () => {
-  it('always encodes to 20 bytes', () => {
+  it('always encodes to 32 bytes', () => {
     expect(encodeAppearance(DEFAULT_APPEARANCE.cow).byteLength).toBe(APPEARANCE_BYTES);
-    expect(encodeAppearance(DEFAULT_APPEARANCE.horse).byteLength).toBe(20);
+    expect(encodeAppearance(DEFAULT_APPEARANCE.horse).byteLength).toBe(32);
+  });
+
+  it('keeps 11 independent colour slots on the wire', () => {
+    expect(APPEARANCE_COLOR_KEYS.length).toBe(11);
+    const colors = { ...DEFAULT_APPEARANCE.cow.colors };
+    APPEARANCE_COLOR_KEYS.forEach((key, index) => {
+      // 每槽取不同值，错位一格就会在下面往返时暴露
+      colors[key] = (0x204060 + index * 0x0a0b0c) & 0xffffff;
+    });
+    const decoded = decodeAppearance(encodeAppearance({ ...DEFAULT_APPEARANCE.cow, colors }));
+    const normalized = sanitizeAppearance({ ...DEFAULT_APPEARANCE.cow, colors });
+    for (const key of APPEARANCE_COLOR_KEYS) {
+      expect(decoded.colors[key]).toBe(normalized.colors[key]);
+    }
+  });
+
+  it('rejects a legacy 20 byte buffer instead of reading past it', () => {
+    expect(() => decodeAppearance(new Uint8Array(20))).toThrow();
   });
 
   it('round-trips both species losslessly in 565 space', () => {
@@ -114,23 +149,29 @@ describe('appearance codec', () => {
   it('drops unknown cosmetics and out-of-range parts instead of trusting the client', () => {
     const dirty = sanitizeAppearance({
       species: 'cow',
-      colors: { body: 0xffffff, pattern: -1, hoof: 0x123456, eyes: 0, extra: 0 },
+      colors: { ...DEFAULT_APPEARANCE.cow.colors, body: 0xffffff, pattern: -1, hoof: 0x123456, eyes: 0 },
       parts: { patternId: 99, snoutId: -4, tailId: 88, hornId: 42 },
-      cosmetics: { headwear: '<script>', eyewear: 'sun', neckwear: 'scarf', backItem: 'briefcase' },
+      cosmetics: { headwear: '<script>', eyewear: 'sun', neckwear: 'scarf', hairstyle: 'afro' },
     });
     expect(dirty.parts.patternId).toBeLessThan(3);
     expect(dirty.parts.tailId).toBeLessThan(2);
     expect(dirty.parts.hornId).toBeLessThan(4);
+    expect(dirty.colors.pattern).toBe(0);
+    expect(dirty.colors.hoof).toBe(normalizeColor(0x123456));
     expect(dirty.cosmetics.headwear).toBe('none');
     expect(dirty.cosmetics.eyewear).toBe('sun');
     expect(dirty.cosmetics.neckwear).toBe('scarf');
+    expect(dirty.cosmetics.hairstyle).toBe('afro');
   });
 
   it('falls back to none when a cosmetic byte is past the end of its catalog', () => {
     const bytes = encodeAppearance(DEFAULT_APPEARANCE.cow);
-    // 16 是眼镜槽：旧协议里这一格是领带（0-4），4 在新目录里已越界，必须回落 none 而不是抛错
-    bytes[16] = 4;
-    expect(decodeAppearance(bytes).cosmetics.eyewear).toBe('none');
+    // 28 是眼镜槽、30 是发型槽（27 头饰 / 29 颈饰 / 31 保留）；越界必须回落 none 而不是抛错
+    bytes[28] = 9;
+    bytes[30] = 9;
+    const decoded = decodeAppearance(bytes);
+    expect(decoded.cosmetics.eyewear).toBe('none');
+    expect(decoded.cosmetics.hairstyle).toBe('none');
   });
 
   it('keeps local preview identical to the wire colour', () => {

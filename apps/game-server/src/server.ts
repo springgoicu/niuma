@@ -18,6 +18,8 @@ import {
   encodeQueueStatus,
   encodeWelcome,
   findFreePoint,
+  isBlocked,
+  isOnLand,
   quantizeCoord,
   readOpCode,
   WORLD_CENTER,
@@ -42,13 +44,21 @@ interface SocketData {
 
 const MOVE_SCRATCH = { id: 0, x: 0, y: 0, state: 0 };
 
-/** 出生点在广场内散布；落进花坛/水面时由 findFreePoint 就近挪到空地 */
+/**
+ * 出生点在广场内散布；落进花坛/水面时由 findFreePoint 就近挪到空地。
+ * 压测会把半径放大到 3000，采样点可能落海：先拒绝采样重抽，避免整批人被兜底塞回广场。
+ */
 function spawnPoint(radius: number): { x: number; y: number } {
-  const angle = Math.random() * Math.PI * 2;
-  const distance = Math.sqrt(Math.random()) * radius;
-  const x = WORLD_CENTER.x + Math.cos(angle) * distance;
-  const y = WORLD_CENTER.y + Math.sin(angle) * distance;
-  return findFreePoint(x, y);
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.sqrt(Math.random()) * radius;
+    const x = WORLD_CENTER.x + Math.cos(angle) * distance;
+    const y = WORLD_CENTER.y + Math.sin(angle) * distance;
+    // 连障碍一起拒：湖心/河心的点到岸边超过环搜索半径，会被兜底塞回广场
+    if (!isOnLand(x, y) || isBlocked(x, y)) continue;
+    return findFreePoint(x, y);
+  }
+  return findFreePoint(WORLD_CENTER.x, WORLD_CENTER.y);
 }
 
 export function startGameServer(config: ServerConfig) {

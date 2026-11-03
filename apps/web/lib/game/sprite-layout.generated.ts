@@ -11,12 +11,16 @@ export interface GeneratedClip {
 }
 
 export const SPRITE_LAYOUT = {
-  "version": 3,
+  "version": 5,
   "frame": {
-    "w": 48,
-    "h": 48,
+    "w": 64,
+    "h": 64,
     "columns": 16,
     "rows": 4
+  },
+  "origin": {
+    "x": 32,
+    "y": 59
   },
   "directions": [
     "down",
@@ -104,13 +108,18 @@ export const SPRITE_LAYOUT = {
       "loop": false
     }
   },
-  "cosmeticSize": 16
+  "cosmeticSize": 20,
+  "blinkColumn": 2
 } satisfies {
   version: number;
   frame: { w: number; h: number; columns: number; rows: number };
+  /** 脚底原点（帧内像素坐标）：客户端精灵锚点与配件挂点的唯一真相 */
+  origin: { x: number; y: number };
   directions: readonly string[];
   clips: Record<string, GeneratedClip>;
   cosmeticSize: number;
+  /** 眨眼列：客户端不进 idle 循环，改由 35s 调度注入 */
+  blinkColumn: number;
 };
 
 export type SpritePoseName = keyof typeof SPRITE_LAYOUT.clips;

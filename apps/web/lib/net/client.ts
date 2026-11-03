@@ -201,9 +201,16 @@ export class NetClient {
     this.pingTimer = null;
   }
 
-  sendMove(x: number, y: number, state: number): void {
+  sendMove(x: number, y: number, state: number, clientSequence?: number, clientTimestampMs?: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeMove({ id: this.selfId, x, y, state }));
+    this.socket.send(encodeMove({ 
+      id: this.selfId, 
+      x, 
+      y, 
+      state,
+      clientSequence,
+      clientTimestampMs,
+    }));
   }
 
   sendAction(entityId: number, action: number): void {

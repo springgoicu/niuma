@@ -5,5 +5,6 @@ export * from './catalog';
 export * from './appearance-codec';
 export * from './protocol';
 export * from './world/geometry';
+export * from './world/river';
 export * from './world/layout';
 export * from './world/collision';

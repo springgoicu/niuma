@@ -14,8 +14,11 @@ export const VIEW_RADIUS = 900;
 /** 空间哈希单元边长（像素），与视野半径同阶以减少跨格抖动 */
 export const CELL_SIZE = 512;
 
-/** 玩家移动速度（像素/秒） */
-export const MOVE_SPEED = 132;
+/**
+ * 玩家移动速度（像素/秒）。
+ * 世界按 1.25 放大后同比提到 165：同一段路走的秒数不变，手感不会变「拖」。
+ */
+export const MOVE_SPEED = 165;
 /** 单 Tick 允许的最大位移（像素），含 15% 抖动容差 */
 export const MAX_STEP = (MOVE_SPEED * TICK_MS) / 1000;
 export const MAX_STEP_TOLERANCE = MAX_STEP * 1.15;
@@ -27,14 +30,21 @@ export const MAX_PACKET_BYTES = 2048;
 export const MAX_ENTITIES = 1024;
 export const MAX_SYNC_ENTRIES = 255;
 
-/** 移动包固定 8 字节：op + id + x + y + state */
+/** 移动包固定长度：op(1) + id(2) + x(2) + y(2) + state(1) = 8 字节基础版本
+ *  新版本添加：sequence(2) + timestamp(4) = 14 字节总长
+ *  兼容性：server 需处理两种长度
+ */
 export const MOVE_PACKET_BYTES = 8;
+export const MOVE_PACKET_WITH_TIMING_BYTES = 14;
 /** 同步包内每条实体增量 */
 export const SYNC_ENTRY_BYTES = 7;
 /** 同步包头部：op(1) + tick(4) + count(2) */
 export const SYNC_HEADER_BYTES = 7;
-/** 外观压缩后固定长度 */
-export const APPEARANCE_BYTES = 20;
+/**
+ * 外观压缩后固定长度（ADR-0011）：
+ * [0] species | [1..22] 11×u16 RGB565 | [23..26] parts | [27..30] 配件索引 | [31] reserved
+ */
+export const APPEARANCE_BYTES = 32;
 
 /**
  * 排队快照：op(1) + ticket(4) + position(2) + length(2) + etaSec(2) + capacity(2)

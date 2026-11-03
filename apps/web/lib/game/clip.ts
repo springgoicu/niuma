@@ -41,9 +41,35 @@ function compileClip(clip: GeneratedClip): ClipTrack {
   };
 }
 
-export function buildClipTracks(clips: Record<string, GeneratedClip> = SPRITE_LAYOUT.clips): ClipTracks {
+/** 眨眼列：由生成物给出，客户端不再手写「第 2 列」这种魔法数 */
+export const BLINK_COLUMN = SPRITE_LAYOUT.blinkColumn;
+
+/**
+ * 待机：把眨眼列从循环里剔除。
+ *
+ * 生成器仍然按列号画闭眼帧、`CLIPS.idle` 也仍然拥有这一列
+ * （layout.test 要求每列恰好属于一个动作），但播放层不再每 1.9s 眨一次——
+ * 那个频率看起来像在抽搐。眨眼改由 `ponyMotion` 每 35s 注入一帧。
+ */
+function compileIdle(clip: GeneratedClip, blinkColumn: number): ClipTrack {
+  const frames: number[] = [];
+  const frameMs: number[] = [];
+  clip.frames.forEach((frame, index) => {
+    if (frame === blinkColumn) return;
+    frames.push(frame);
+    frameMs.push(clip.frameMs[index] ?? 200);
+  });
+  return compileClip({ ...clip, frames, frameMs, loopFrom: 0 });
+}
+
+export function buildClipTracks(
+  clips: Record<string, GeneratedClip> = SPRITE_LAYOUT.clips,
+  blinkColumn: number = BLINK_COLUMN,
+): ClipTracks {
   const tracks: Record<string, ClipTrack> = {};
-  for (const [name, clip] of Object.entries(clips)) tracks[name] = compileClip(clip);
+  for (const [name, clip] of Object.entries(clips)) {
+    tracks[name] = name === 'idle' ? compileIdle(clip, blinkColumn) : compileClip(clip);
+  }
   return tracks;
 }
 

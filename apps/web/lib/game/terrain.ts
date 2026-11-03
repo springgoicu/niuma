@@ -2,54 +2,128 @@
 
 import { Container, Graphics, Sprite, TilingSprite, type Application, type Texture } from 'pixi.js';
 import {
+  ISLAND,
+  ISLAND_SAND,
+  ISLAND_SHALLOW,
   LAKE_SHORE,
+  RIVER_SHORE,
   WORLD_HEIGHT,
   WORLD_LAYOUT,
   WORLD_WIDTH,
   distanceSqToPolygon,
+  isWaterAt,
   pointInPolygon,
+  rectContains,
   type FenceSegment,
   type LakeShape,
+  type Point,
   type WorldRect,
 } from '@niuma/shared-types';
+import {
+  CORNER_RADIUS,
+  contourPolygon,
+  offsetContour,
+  organicContour,
+  polygonContour,
+  roundedRectContour,
+  traceContour,
+  type ContourPoint,
+} from './autotile';
+import { WILDFLOWER_KINDS, bloomDecalKind, scatterDecals, type DecalPlacement } from './decals';
 import { seeded } from './seeded';
+import {
+  EDGE_STYLE,
+  MATERIAL,
+  buildMaterialGrid,
+  edgeGlyphs,
+  type MaterialGrid,
+  type MaterialId,
+} from './terrain-edge';
 import { TERRAIN_COLORS as C } from './terrain-palette';
 import {
+  PROP_SHADOW,
+  TREE_H,
+  makeDecalAtlas,
   makeDirtTexture,
   makeGrassTexture,
   makePlanterTexture,
   makePlazaTexture,
+  makePropShadowTexture,
   makeReedTexture,
   makeRockTexture,
+  makeSeaTexture,
   makeTreeTextures,
   makeWaterTexture,
+  type DecalAtlas,
+  type TreeTextures,
 } from './terrain-textures';
 
 /**
- * 地形视图：把 shared-types 的静态布局铺成 Pixi 图层。
+ * 地形视图（本项目的 MapRenderer）：把 shared-types 的静态布局铺成 Pixi 图层。
  *
- * 图层纪律：
- * - 地面（草地 / 林地 / 广场 / 土路 / 岸线 / 水面 / 桥）全部在 `ground`，角色永远压在它们上面；
- * - 树与围栏进调用方传入的 y 排序容器，和角色统一按脚底 y 决前后；
- * - 所有纹理在构造期一次性生成，`update` 只滚 `tilePosition`，`cull` 只翻 `renderable`。
+ * 地面过渡用「位掩码 + 解析轮廓 + 遮罩平铺」而不是 47 张 autotile 拼贴：
+ * 拼贴块内部的材质相位无法和外层 TilingSprite 对齐，接缝处会露出半块砖（ADR-0013 / ADR-0016）。
+ *
+ * 帧循环纪律：所有纹理、轮廓与边缘图元在构造期一次性生成，
+ * `update` 只滚 `tilePosition`，`cull` 只翻 `renderable`，`occlude` 只改 `alpha`。
  */
 
 type TextureFactory = Application['renderer'];
 
-const WATER_TILE = 32;
+/** 必须与 makeWaterTexture 的 size 一致：回绕模数用错，水面每隔几秒会跳一下 */
+const WATER_TILE = 48;
+/** 必须与 makeSeaTexture 的 size 一致 */
+const SEA_TILE = 96;
+/** 必须与 makeDirtTexture / makePlazaTexture 的 size 一致 */
+const DIRT_TILE = 128;
+const PLAZA_TILE = 256;
+/** 海面平铺超出世界矩形的余量：超宽视口贴到岛边也不会看到硬边 */
+const SEA_EXTENT = 2048;
 /** 水面滚动的最小时间片：湖慢河快靠 `every` 区分 */
 const WATER_TICK_MS = 140;
-const FENCE_POST_GAP = 56;
+/** 立柱间距 84：角色 48 texel 高，原 56 会让立柱比人还密 */
+const FENCE_POST_GAP = 84;
+/** 花海花朵密度：普通草地 0.12，花海要密到看得出「一片」 */
+const FLOWER_FIELD_CHANCE = 0.4;
+/** 全岛零散野花：只做点缀，压到普通贴花的五分之一 */
+const WILDFLOWER_CHANCE = 0.025;
+/** 芦苇离岸距离：站在沙带外缘，不压到水面 */
+const REED_OFFSET = 15;
+
+/** 角色的包围盒（texel）：遮挡判定用它去和树冠盒求交 */
+const PONY_HALF_W = 13;
+const PONY_HEIGHT = 48;
+/** 树冠相对树根的高度范围：树干 28–36 高，树冠从 108 一直盖到 26 */
+const CANOPY_TOP = TREE_H;
+const CANOPY_BOTTOM = 26;
+/** 树冠网格索引的单元边长 */
+const OCCLUSION_CELL = 128;
 
 interface TerrainTextures {
   grass: Texture;
   plaza: Texture;
   dirt: Texture;
   water: Texture;
-  trees: Texture[];
+  sea: Texture;
+  trees: TreeTextures[];
   rock: Texture;
   reed: Texture;
   planter: Texture;
+  decals: DecalAtlas;
+  /** 树 / 花箱 / 石头的底座投影，全部按 0x1E2846 @0.2 烘焙 */
+  shadows: { tree: Texture; planter: Texture; rock: Texture };
+}
+
+/** 一段待绘制的边缘：底色全部画完之后再统一出图，草缘永远最后压上 */
+interface EdgeJob {
+  self: MaterialId;
+  other: MaterialId;
+  contour: ContourPoint[];
+  /** 是否画内缘暗边；岸沙带这类「以海岸线为中线」的带状材质没有内侧边 */
+  rim: boolean;
+  /** 强制齿的生长方向；缺省由「对面是不是草」推断 */
+  grow?: 'in' | 'out';
+  seed: number;
 }
 
 interface WaterSurface {
@@ -57,6 +131,19 @@ interface WaterSurface {
   axis: 'x' | 'y';
   /** 每 N 个时间片滚动 1px */
   every: number;
+  /** 平铺周期；水面与海面尺寸不同，回绕必须各用各的 */
+  tile: number;
+}
+
+export interface TerrainOptions {
+  /**
+   * `?flat=1`：退回「矩形 TilingSprite」的旧画法。
+   * 圆角轮廓与草缘一旦在线上出现观感回归，这一个开关就能把地形切回原样，
+   * 不用回滚整次发布（ADR-0013 的灰度开关）。
+   */
+  flat?: boolean;
+  /** `?edge=0`：只关边缘层（草尖/圆弧/内缘暗边），底色与轮廓照旧 */
+  edge?: boolean;
 }
 
 interface Cullable {
@@ -67,123 +154,426 @@ interface Cullable {
   padY: number;
 }
 
+interface CanopyEntry {
+  sprite: Sprite;
+  /** 世界坐标下的树冠盒 */
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  /** 树根 y：角色只有站在这条线以上（y 更小）才可能被遮住 */
+  baseY: number;
+}
+
+/** 折线 / 多边形展开成 Pixi Graphics 需要的扁平数组 */
+function flattenPoints(points: ReadonlyArray<Point>): number[] {
+  const flat: number[] = [];
+  for (const [x, y] of points) flat.push(x, y);
+  return flat;
+}
+
+/** 海岸线折线展开成 Pixi 需要的扁平数组 */
+function islandPolygon(): number[] {
+  return flattenPoints(ISLAND.points);
+}
+
+/**
+ * 河岸沙带只画岛内的一段：河口处沙带自然断开，
+ * 不会在入海口横一条把河封死的沙坝。
+ */
+function clipBankToLand(bank: ReadonlyArray<Point>): Point[] {
+  return bank.filter(([x, y]) => pointInPolygon(x, y, ISLAND.points));
+}
+
+/** 128px 单元的空间哈希键：坐标恒为正，直接位拼 */
+function cellKey(x: number, y: number): number {
+  return (Math.floor(x / OCCLUSION_CELL) << 16) ^ Math.floor(y / OCCLUSION_CELL);
+}
+
+/**
+ * 地形视图：本项目的 MapRenderer。
+ *
+ * 三层结构（与 ADR-0013 的图层纪律一致）：
+ * - `base`：材质底色与轮廓遮罩（海 → 浅滩 → 草 → 沙 → 广场 → 土路 → 水 → 桥）；
+ * - `edge`：位掩码驱动的边缘层，等所有底色画完才统一生成，草缘永远最后压上；
+ * - `decals`：程序化贴花，压在地面之上、尘土与角色之下。
+ *
+ * 帧循环纪律不变：所有轮廓、图元、纹理在构造期一次生成，
+ * `update` 只滚 `tilePosition`，`cull` 只翻 `renderable`，`occlude` 只改 `alpha`。
+ */
 export class TerrainView {
-  readonly ground = new Container();
+  readonly base = new Container();
+  readonly edge = new Container();
+  /** 贴花层：地面之上、尘土与角色之下 */
+  readonly decals = new Container();
   private readonly textures: TerrainTextures;
   private readonly surfaces: WaterSurface[] = [];
   private readonly cullables: Cullable[] = [];
+  private readonly canopies: CanopyEntry[] = [];
+  private readonly canopyGrid = new Map<number, CanopyEntry[]>();
+  private readonly litCanopies = new Set<CanopyEntry>();
+  private readonly nextLit = new Set<CanopyEntry>();
+  /** 边缘任务：底色阶段只登记，底色全部落盘后再统一出图 */
+  private readonly edges: EdgeJob[] = [];
+  private sorted: Container | null = null;
+  private grid: MaterialGrid | null = null;
+  private readonly edgeEnabled: boolean;
   private waterElapsed = 0;
   private waterFrame = 0;
 
-  constructor(renderer: TextureFactory) {
+  constructor(
+    renderer: TextureFactory,
+    private readonly options: TerrainOptions = {},
+  ) {
+    // 材质网格有 66k 格，只有真的要画边缘时才开始算
+    this.edgeEnabled = !this.options.flat && this.options.edge !== false;
     this.textures = {
       grass: makeGrassTexture(renderer),
       plaza: makePlazaTexture(renderer),
       dirt: makeDirtTexture(renderer),
       water: makeWaterTexture(renderer),
+      sea: makeSeaTexture(renderer),
       trees: makeTreeTextures(renderer),
       rock: makeRockTexture(renderer),
       reed: makeReedTexture(renderer),
       planter: makePlanterTexture(renderer),
+      decals: makeDecalAtlas(renderer),
+      shadows: {
+        tree: makePropShadowTexture(renderer, PROP_SHADOW.tree.w, PROP_SHADOW.tree.h),
+        planter: makePropShadowTexture(renderer, PROP_SHADOW.planter.w, PROP_SHADOW.planter.h),
+        rock: makePropShadowTexture(renderer, PROP_SHADOW.rock.w, PROP_SHADOW.rock.h),
+      },
     };
   }
 
   /** `sorted` 必须已开启 sortableChildren，树与围栏会按脚底 y 插进去 */
   build(sorted: Container): void {
+    this.sorted = sorted;
+    this.addSea();
+    this.addShoreShelf();
     this.addGrass();
+    this.addShoreSand();
     this.addForestFloor();
+    this.addFlowerMeadow();
     this.addPlaza();
     this.addPaths();
     for (const lake of WORLD_LAYOUT.lakes) this.addLake(lake);
     this.addRivers();
     this.addBridges();
+    // 底色全部就位后再画边缘：草缘压在土、石、水、沙的暗边之上
+    this.flushEdges();
     this.addDecor();
+    this.addDecals();
     this.addTrees(sorted);
     this.addPlanters(sorted);
     for (const segment of WORLD_LAYOUT.fence.segments) this.addFence(sorted, segment);
   }
 
+  /** 深海铺在最底层，外扩一圈：任何视口都不会露出世界外的黑色 */
+  private addSea(): void {
+    const sea = new TilingSprite({
+      texture: this.textures.sea,
+      width: WORLD_WIDTH + SEA_EXTENT * 2,
+      height: WORLD_HEIGHT + SEA_EXTENT * 2,
+    });
+    sea.position.set(-SEA_EXTENT, -SEA_EXTENT);
+    this.base.addChild(sea);
+    // 海面比湖面慢：每 10 个时间片滚 1px
+    this.surfaces.push({ sprite: sea, axis: 'x', every: 10, tile: SEA_TILE });
+  }
+
+  /** 浅滩：中心线两侧各 72px，内侧随后被草地盖住，只留外海一侧的浅水 */
+  private addShoreShelf(): void {
+    const shelf = new Graphics();
+    // bevel：海岸线是直角折线，miter 会在海湾拐角扎出上百像素的长刺
+    shelf.poly(islandPolygon()).stroke({ width: ISLAND_SHALLOW * 2, color: C.shoreShallow, join: 'bevel' });
+    this.base.addChild(shelf);
+  }
+
+  /**
+   * 沙滩：压在海陆交界线上，一半在水里一半在陆地。
+   * 沙滩没有自己的矩形，它的两条边都在同一条海岸线上——内缘朝草地、外缘朝浅滩，
+   * 各自偏移 26px 后单独登记边缘，草才会从陆地一侧长进沙里。
+   */
+  private addShoreSand(): void {
+    const sand = new Graphics();
+    sand.poly(islandPolygon()).stroke({ width: ISLAND_SAND * 2, color: C.sand, join: 'bevel' });
+    this.base.addChild(sand);
+
+    if (!this.edgeEnabled) return;
+    // 用未倒角的原始海岸线做偏移：圆角半径 12 < 沙带宽 26，
+    // 先倒角再内缩会让圆弧上的每个点各走各的法线，在角上收成一个结
+    const ring: ContourPoint[] = ISLAND.points.map(([x, y]) => ({ x, y }));
+    // 陆地侧：草压着沙长。沙在轮廓外侧、草在内侧，齿必须朝外才是「盖进沙里」；
+    // 沙的暗边会落在草上，所以这条线不画内缘
+    this.edges.push({
+      self: MATERIAL.sand,
+      other: MATERIAL.grass,
+      contour: offsetContour(ring, -ISLAND_SAND),
+      rim: false,
+      grow: 'out',
+      seed: 0x5a4d31,
+    });
+    // 海侧：沙探进浅滩，补一条湿沙暗边
+    this.edges.push({
+      self: MATERIAL.sand,
+      other: MATERIAL.shallow,
+      contour: offsetContour(ring, ISLAND_SAND),
+      rim: true,
+      seed: 0x6b5e42,
+    });
+  }
+
+  /** 草地按海岸线裁成岛：铺满世界矩形，再用多边形遮罩切掉海面 */
   private addGrass(): void {
     const grass = new TilingSprite({
       texture: this.textures.grass,
       width: WORLD_WIDTH,
       height: WORLD_HEIGHT,
     });
-    this.ground.addChild(grass);
+    const mask = new Graphics();
+    mask.poly(islandPolygon()).fill(0xffffff);
+    this.base.addChild(mask);
+    grass.mask = mask;
+    this.base.addChild(grass);
   }
 
-  /** 林下地面：整块压暗，四边抖出参差的锯齿，避免成一块硬矩形 */
+  /**
+   * 林下地面：草地之上的一层半透明草色，不是另一种地面。
+   * 透明让 256px 草纹透上来，整张图才不会出现「草地被切成几块」。
+   */
   private addForestFloor(): void {
     WORLD_LAYOUT.forests.forEach((forest, index) => {
-      const random = seeded(0x1f3a + index * 7919);
       const { x, y, w, h } = forest.rect;
       const g = new Graphics();
-      g.rect(x, y, w, h).fill(C.forestFloor);
-      for (let px = x; px < x + w; px += 24) {
-        const top = 6 + Math.round(random() * 14);
-        const bottom = 6 + Math.round(random() * 14);
-        g.rect(px, y - top, 18, top).fill(C.forestFloor);
-        g.rect(px + 10, y + h, 18, bottom).fill(C.forestFloor);
+      if (this.options.flat) {
+        g.rect(x, y, w, h).fill({ color: C.forestFloor, alpha: 0.55 });
+      } else {
+        const contour = organicContour(forest.rect, 0x1f3a + index * 7919, 9, 24);
+        traceContour(g, contour);
+        g.fill({ color: C.forestFloor, alpha: 0.55 });
+        // Pixi 8 的 alignment：1 = 内侧，0.5 = 居中，0 = 外侧
+        g.poly(contourPolygon(contour)).stroke({ color: C.grassDeep, width: 3, alignment: 1, alpha: 0.45 });
       }
-      for (let py = y; py < y + h; py += 24) {
-        const left = 6 + Math.round(random() * 14);
-        const right = 6 + Math.round(random() * 14);
-        g.rect(x - left, py, left, 18).fill(C.forestFloor);
-        g.rect(x + w, py + 10, right, 18).fill(C.forestFloor);
-      }
-      this.ground.addChild(g);
+      this.base.addChild(g);
+    });
+  }
+
+  /**
+   * 花海底色：草甸本身还是草，只是一层更亮更暖的绿。
+   * 真正让它成为「花海」的是叠在上面的花朵贴花。
+   */
+  private addFlowerMeadow(): void {
+    WORLD_LAYOUT.flowerFields.forEach((field, index) => {
+      const g = new Graphics();
+      const contour = organicContour(field.rect, 0x6f1d + index * 3571, 10, 26);
+      traceContour(g, contour);
+      g.fill({ color: C.meadowTint, alpha: 0.4 });
+      g.poly(contourPolygon(contour)).stroke({ color: C.meadowShade, width: 2, alignment: 1, alpha: 0.5 });
+      this.base.addChild(g);
     });
   }
 
   private addPlaza(): void {
     const plaza = WORLD_LAYOUT.plaza;
-    const curb = new Graphics();
-    curb.rect(plaza.x - 6, plaza.y - 6, plaza.w + 12, plaza.h + 12).fill(C.plazaCurb);
-    this.ground.addChild(curb);
+    const contour = roundedRectContour(plaza, CORNER_RADIUS);
 
-    const tiles = new TilingSprite({ texture: this.textures.plaza, width: plaza.w, height: plaza.h });
-    tiles.position.set(plaza.x, plaza.y);
-    this.ground.addChild(tiles);
+    if (!this.options.flat) {
+      // 路缘：轮廓外一圈石色，广场才有「砌起来」的厚度
+      const curb = new Graphics();
+      // alignment 0 = 描边落在轮廓外侧（Pixi 8 的 1 才是内侧）
+      curb.poly(contourPolygon(contour)).stroke({ color: C.plazaCurb, width: 10, alignment: 0, join: 'round' });
+      this.base.addChild(curb);
+    }
+
+    // 草缘放到路缘石外沿（10px），否则草尖会戳在石板上
+    this.paintRegion(MATERIAL.plaza, MATERIAL.grass, plaza, this.textures.plaza, PLAZA_TILE, contour, 10);
   }
 
+  /** 四条土路：原来是直接铺矩形，这就是「90° 直角硬拼」的根因 */
   private addPaths(): void {
     for (const path of WORLD_LAYOUT.paths) {
-      const tiles = new TilingSprite({ texture: this.textures.dirt, width: path.w, height: path.h });
-      tiles.position.set(path.x, path.y);
-      this.ground.addChild(tiles);
+      this.paintRegion(
+        MATERIAL.dirt,
+        MATERIAL.grass,
+        path,
+        this.textures.dirt,
+        DIRT_TILE,
+        roundedRectContour(path, CORNER_RADIUS),
+      );
     }
   }
 
+  /**
+   * 一片地面材质：底色 + 轮廓遮罩，并登记边缘任务。
+   *
+   * 边缘不在这里画：底色全部落盘后由 `flushEdges` 统一出图，
+   * 草缘才能压在所有材质的暗边之上——这正是「草自然覆盖泥地」的层序。
+   */
+  private paintRegion(
+    self: MaterialId,
+    other: MaterialId,
+    rect: WorldRect,
+    texture: Texture,
+    tileSize: number,
+    contour: ContourPoint[],
+    /** 边缘轮廓相对材质轮廓的外扩量：广场要把草缘放到路缘石外沿 */
+    edgeOutset: number = 0,
+  ): void {
+    const tiles = new TilingSprite({ texture, width: rect.w, height: rect.h });
+    tiles.position.set(rect.x, rect.y);
+    // 平铺相位按世界坐标对齐：几条路交在一起时纹理不会各自从 0 起算
+    tiles.tilePosition.set(rect.x % tileSize, rect.y % tileSize);
+
+    if (this.options.flat) {
+      this.base.addChild(tiles);
+      return;
+    }
+
+    const mask = new Graphics();
+    traceContour(mask, contour);
+    mask.fill(0xffffff);
+    tiles.mask = mask;
+    this.base.addChild(mask, tiles);
+
+    if (this.edgeEnabled) {
+      this.edges.push({
+        self,
+        other,
+        contour: edgeOutset === 0 ? contour : offsetContour(contour, edgeOutset),
+        rim: true,
+        seed: 0x9e37 + rect.x * 31 + rect.y,
+      });
+    }
+  }
+
+  /**
+   * 边缘层：底色全部落盘后统一出图，顺序就是「谁压谁」。
+   *
+   * 1. 本体色相压暗的内缘（alignment 1 = 内侧），替代硬黑描边；
+   * 2. 对面是草时，2px 草色骑在轮廓上——这是「草盖住泥」的连续底边；
+   * 3. 位掩码驱动的草尖与外凸圆弧，全部 1×1 / 1×N 整数 rect，不引入抗锯齿。
+   */
+  private flushEdges(): void {
+    if (!this.edgeEnabled || this.edges.length === 0) return;
+    const grid = this.materialGrid();
+    for (const job of this.edges) {
+      const g = new Graphics();
+      const flat = contourPolygon(job.contour);
+      const style = EDGE_STYLE[job.self];
+
+      if (job.rim) {
+        g.poly(flat).stroke({ color: style.rim, width: style.rimWidth, alignment: 1, join: 'round' });
+      }
+      if (job.other === MATERIAL.grass) {
+        g.poly(flat).stroke({ color: C.grassTuft, width: 2, alignment: 0.5, join: 'round' });
+      }
+      for (const glyph of edgeGlyphs(job.contour, {
+        self: job.self,
+        other: job.other,
+        grow: job.grow,
+        seed: job.seed,
+        grid,
+      })) {
+        g.rect(glyph.x, glyph.y, glyph.w, glyph.h).fill(glyph.color);
+      }
+      this.edge.addChild(g);
+    }
+    this.edges.length = 0;
+  }
+
+  /** 材质网格按需构建：`?edge=0` 时一格都不算 */
+  private materialGrid(): MaterialGrid {
+    this.grid ??= buildMaterialGrid();
+    return this.grid;
+  }
+
   private addLake(lake: LakeShape): void {
-    const flat: number[] = [];
-    for (const [x, y] of lake.points) flat.push(x, y);
+    const flat = flattenPoints(lake.points);
+    // 圆角只作用于水面遮罩与草缘：碰撞仍是原始多边形，误差在几像素内
+    const contour = polygonContour(lake.points, 12);
 
     // 岸线画在轮廓上：外侧 LAKE_SHORE 宽留成沙滩，内侧被水面盖住
     const shore = new Graphics();
-    shore.poly(flat).stroke({ width: LAKE_SHORE * 2, color: C.sand });
-    shore.poly(flat).stroke({ width: 4, color: C.sandLight });
-    this.ground.addChild(shore);
+    shore.poly(flat).stroke({ width: LAKE_SHORE * 2, color: C.sand, join: 'round' });
+    shore.poly(flat).stroke({ width: 4, color: C.sandLight, join: 'round' });
+    this.base.addChild(shore);
 
     const water = this.addWaterSurface(lake.rect, 'x', 3);
     const mask = new Graphics();
-    mask.poly(flat).fill(0xffffff);
-    this.ground.addChild(mask);
+    traceContour(mask, contour);
+    mask.fill(0xffffff);
+    this.base.addChild(mask);
     water.mask = mask;
+
+    if (this.edgeEnabled) {
+      this.edges.push({ self: MATERIAL.water, other: MATERIAL.sand, contour, rim: true, seed: 0x4c1a2f });
+      // 沙带外缘：草从草地一侧盖进沙里，湖岸才不会是一条硬色边。
+      // 同样用原始多边形偏移，避免 12px 圆角被 22px 外扩拉出结
+      this.edges.push({
+        self: MATERIAL.sand,
+        other: MATERIAL.grass,
+        contour: offsetContour(
+          lake.points.map(([x, y]) => ({ x, y })),
+          LAKE_SHORE,
+        ),
+        rim: false,
+        grow: 'in',
+        seed: 0x5e2b17,
+      });
+    }
   }
 
+  /**
+   * 河道：一条连续的水面多边形，不再逐段铺矩形。
+   * 沙滩沿左右岸画两条开口折线——河口不封口，河水直接汇进海面。
+   */
   private addRivers(): void {
     for (const river of WORLD_LAYOUT.rivers) {
-      this.addWaterSurface(river.rect, 'y', 1);
+      const shore = new Graphics();
+      for (const bank of [river.leftBank, river.rightBank]) {
+        const land = clipBankToLand(bank);
+        if (land.length < 2) continue;
+        const flat = flattenPoints(land);
+        // 外侧 RIVER_SHORE 宽留成沙滩，内侧被水面盖住
+        shore.poly(flat).stroke({ width: RIVER_SHORE * 2, color: C.sand, join: 'round' });
+        shore.poly(flat).stroke({ width: 4, color: C.sandLight, join: 'round' });
+      }
+      this.base.addChild(shore);
+
+      const contour = polygonContour(river.polygon, 10);
+      const water = this.addWaterSurface(river.rect, 'y', 1);
+      const mask = new Graphics();
+      traceContour(mask, contour);
+      mask.fill(0xffffff);
+      this.base.addChild(mask);
+      water.mask = mask;
+
+      if (this.edgeEnabled) {
+        this.edges.push({ self: MATERIAL.water, other: MATERIAL.sand, contour, rim: true, seed: 0x7d31a5 });
+        // 河岸沙带外缘：河口处探针会命中水，齿自然在入海口收住
+        this.edges.push({
+          self: MATERIAL.sand,
+          other: MATERIAL.grass,
+          contour: offsetContour(
+            river.polygon.map(([x, y]) => ({ x, y })),
+            RIVER_SHORE,
+          ),
+          rim: false,
+          grow: 'in',
+          seed: 0x6a1f43,
+        });
+      }
     }
   }
 
   private addWaterSurface(rect: WorldRect, axis: 'x' | 'y', every: number): TilingSprite {
     const water = new TilingSprite({ texture: this.textures.water, width: rect.w, height: rect.h });
     water.position.set(rect.x, rect.y);
-    // 平铺偏移按世界坐标对齐：河流由多个阶梯矩形拼成，逐段从 0 起算会看到波纹错位
+    // 平铺偏移按世界坐标对齐：湖与河共用同一相位，接水处波纹不会各算各的
     water.tilePosition.set(rect.x % WATER_TILE, rect.y % WATER_TILE);
-    this.ground.addChild(water);
-    this.surfaces.push({ sprite: water, axis, every });
+    this.base.addChild(water);
+    this.surfaces.push({ sprite: water, axis, every, tile: WATER_TILE });
     return water;
   }
 
@@ -192,15 +582,15 @@ export class TerrainView {
       const g = new Graphics();
       g.rect(bridge.x, bridge.y, bridge.w, bridge.h).fill(C.bridgeWood);
       // 木板缝垂直于通行方向：桥是东西向的，缝就竖着排
-      for (let x = bridge.x + 6; x < bridge.x + bridge.w; x += 10) {
+      for (let x = bridge.x + 8; x < bridge.x + bridge.w; x += 14) {
         g.rect(x, bridge.y, 1, bridge.h).fill(C.bridgeSeam);
       }
       // 两侧栏杆压在桥沿上
-      g.rect(bridge.x, bridge.y - 4, bridge.w, 4).fill(C.fenceDark);
-      g.rect(bridge.x, bridge.y - 4, bridge.w, 2).fill(C.bridgeRail);
-      g.rect(bridge.x, bridge.y + bridge.h, bridge.w, 4).fill(C.fenceDark);
-      g.rect(bridge.x, bridge.y + bridge.h + 2, bridge.w, 2).fill(C.bridgeRail);
-      this.ground.addChild(g);
+      g.rect(bridge.x, bridge.y - 5, bridge.w, 5).fill(C.fenceDark);
+      g.rect(bridge.x, bridge.y - 5, bridge.w, 3).fill(C.bridgeRail);
+      g.rect(bridge.x, bridge.y + bridge.h, bridge.w, 5).fill(C.fenceDark);
+      g.rect(bridge.x, bridge.y + bridge.h + 3, bridge.w, 3).fill(C.bridgeRail);
+      this.base.addChild(g);
     }
   }
 
@@ -214,49 +604,175 @@ export class TerrainView {
         const y = lake.rect.y + random() * lake.rect.h;
         if (pointInPolygon(x, y, lake.points)) continue;
         const distance = distanceSqToPolygon(x, y, lake.points);
-        if (distance < 144 || distance > 46 * 46) continue;
-        this.addDecal(random() > 0.45 ? 'reed' : 'rock', x, y);
+        if (distance < 225 || distance > 58 * 58) continue;
+        this.addDecalSprite(random() > 0.45 ? 'reed' : 'rock', x, y);
         placed += 1;
       }
     }
+    // 河岸：沿两条岸线每隔一个站点放一丛，外法线朝水面外挑 15px
     for (const river of WORLD_LAYOUT.rivers) {
-      for (let i = 0; i < 6; i += 1) {
-        const x = random() > 0.5 ? river.rect.x - 10 : river.rect.x + river.rect.w + 10;
-        const y = river.rect.y + random() * river.rect.h;
-        this.addDecal('reed', x, y);
+      const banks: Array<{ bank: ReadonlyArray<Point>; outward: 1 | -1 }> = [
+        { bank: river.leftBank, outward: 1 },
+        { bank: river.rightBank, outward: -1 },
+      ];
+      for (const { bank, outward } of banks) {
+        for (let i = 1; i < bank.length - 1; i += 2) {
+          const [x, y] = bank[i]!;
+          if (!pointInPolygon(x, y, ISLAND.points)) continue;
+          const [prevX, prevY] = bank[i - 1]!;
+          const [nextX, nextY] = bank[i + 1]!;
+          const dx = nextX - prevX;
+          const dy = nextY - prevY;
+          const length = Math.sqrt(dx * dx + dy * dy) || 1;
+          const rx = x + (dy / length) * REED_OFFSET * outward;
+          const ry = y + (-dx / length) * REED_OFFSET * outward;
+          if (WORLD_LAYOUT.bridges.some((bridge) => rectContains(bridge, rx, ry))) continue;
+          if (random() > 0.7) continue;
+          this.addDecalSprite(random() > 0.35 ? 'reed' : 'rock', rx, ry);
+        }
       }
     }
   }
 
-  private addDecal(kind: 'rock' | 'reed', x: number, y: number): void {
+  private addDecalSprite(kind: 'rock' | 'reed', x: number, y: number): void {
+    const px = Math.round(x);
+    const py = Math.round(y);
+    if (kind === 'rock') this.addPropShadow(px, py, this.textures.shadows.rock);
     const sprite = new Sprite(kind === 'rock' ? this.textures.rock : this.textures.reed);
     sprite.anchor.set(0.5, 1);
-    sprite.position.set(Math.round(x), Math.round(y));
-    this.ground.addChild(sprite);
+    sprite.position.set(px, py);
+    // 碎石与芦苇按脚底 y 进排序层：人走过去时前后关系才对
+    if (this.sorted) {
+      sprite.zIndex = py;
+      this.sorted.addChild(sprite);
+    } else {
+      this.base.addChild(sprite);
+    }
+    this.cullables.push({ sprite, x: px, y: py, padX: 12, padY: 26 });
+  }
+
+  /**
+   * 底座投影：压 0.2 一档的冷靛蓝椭圆，让大物件「坐」在地上。
+   * zIndex 取 y - 0.5，永远排在同位置物体之下，又不会掉到更靠上的物件下面。
+   */
+  private addPropShadow(x: number, y: number, texture: Texture): void {
+    if (!this.sorted) return;
+    const shadow = new Sprite(texture);
+    shadow.anchor.set(0.5, 0.5);
+    shadow.position.set(Math.round(x), Math.round(y) - 1);
+    shadow.zIndex = y - 0.5;
+    this.sorted.addChild(shadow);
+    this.cullables.push({ sprite: shadow, x, y, padX: 32, padY: 14 });
+  }
+
+  /**
+   * 贴花层：草地基底（三叶草 / 雏菊 / 草尖 / 石粒）+ 全岛零散野花 + 三片花海。
+   * 三层共用同一张图集与同一套视口裁剪，帧循环里只翻 renderable。
+   */
+  private addDecals(): void {
+    const bounds = { x: ISLAND.bounds.x, y: ISLAND.bounds.y, w: ISLAND.bounds.w, h: ISLAND.bounds.h };
+    this.addDecalSprites(
+      scatterDecals(bounds, (x, y) => this.decalAllowed(x, y), 0x5eed1a),
+    );
+    this.addDecalSprites(
+      scatterDecals(bounds, (x, y) => this.decalAllowed(x, y), 0x1a7f3c, WILDFLOWER_CHANCE, WILDFLOWER_KINDS),
+    );
+    for (const field of WORLD_LAYOUT.flowerFields) {
+      this.addDecalSprites(
+        scatterDecals(
+          field.rect,
+          (x, y) => this.grassDecorAllowed(x, y),
+          0x3c9e + field.palette * 7919,
+          FLOWER_FIELD_CHANCE,
+          [bloomDecalKind(field.palette)],
+        ),
+      );
+    }
+  }
+
+  private addDecalSprites(placements: readonly DecalPlacement[]): void {
+    const { frames } = this.textures.decals;
+    for (const placement of placements) {
+      const sprite = new Sprite(frames[placement.kind] ?? frames[0]!);
+      sprite.anchor.set(0.5, 1);
+      sprite.position.set(placement.x, placement.y);
+      if (placement.flip) sprite.scale.x = -1;
+      this.decals.addChild(sprite);
+      this.cullables.push({ sprite, x: placement.x, y: placement.y, padX: 10, padY: 20 });
+    }
+  }
+
+  /** 草地贴花只长在草地上：水面、广场、土路、桥面都不生成 */
+  private grassDecorAllowed(x: number, y: number): boolean {
+    if (!pointInPolygon(x, y, ISLAND.points)) return false;
+    for (const path of WORLD_LAYOUT.paths) if (rectContains(path, x, y)) return false;
+    if (rectContains(WORLD_LAYOUT.plaza, x, y)) return false;
+    for (const bridge of WORLD_LAYOUT.bridges) if (rectContains(bridge, x, y)) return false;
+    if (isWaterAt(x, y)) return false;
+    return true;
+  }
+
+  /** 基础层不进花海：花海由 addDecals 单独按配色撒，避免三种花混成噪点 */
+  private decalAllowed(x: number, y: number): boolean {
+    if (!this.grassDecorAllowed(x, y)) return false;
+    for (const field of WORLD_LAYOUT.flowerFields) if (rectContains(field.rect, x, y)) return false;
+    return true;
   }
 
   private addTrees(sorted: Container): void {
-    for (const forest of WORLD_LAYOUT.forests) {
-      for (const tree of forest.trees) {
-        const sprite = new Sprite(this.textures.trees[tree.variant % this.textures.trees.length]!);
-        sprite.anchor.set(0.5, 1);
-        sprite.position.set(tree.x, tree.y);
-        sprite.zIndex = tree.y;
-        sorted.addChild(sprite);
-        // 树冠向上长 60px、向两边各探 20px，裁剪范围要覆盖到
-        this.cullables.push({ sprite, x: tree.x, y: tree.y, padX: 26, padY: 72 });
-      }
+    const trees = [
+      ...WORLD_LAYOUT.forests.flatMap((forest) => forest.trees),
+      ...WORLD_LAYOUT.wildTrees,
+    ];
+    for (const tree of trees) {
+      const parts = this.textures.trees[tree.variant % this.textures.trees.length]!;
+      this.addPropShadow(tree.x, tree.y, this.textures.shadows.tree);
+      const trunk = this.treeSprite(sorted, parts.trunk, tree.x, tree.y);
+      // 树干与树冠同帧同锚点、同 zIndex：角色在树后时两层都在其上，
+      // 遮挡只把树冠 alpha 压到 0.85，树干保持不透明（ADR-0013）。
+      const canopy = this.treeSprite(sorted, parts.canopy, tree.x, tree.y);
+      // 树冠向上长到 108px、向两边各探 36px，裁剪范围要覆盖到
+      this.cullables.push({ sprite: trunk, x: tree.x, y: tree.y, padX: 36, padY: 112 });
+      this.cullables.push({ sprite: canopy, x: tree.x, y: tree.y, padX: 36, padY: 112 });
+      this.trackCanopy(canopy, tree.x, tree.y);
     }
+  }
+
+  private treeSprite(sorted: Container, texture: Texture, x: number, y: number): Sprite {
+    const sprite = new Sprite(texture);
+    sprite.anchor.set(0.5, 1);
+    sprite.position.set(x, y);
+    sprite.zIndex = y;
+    sorted.addChild(sprite);
+    return sprite;
+  }
+
+  /** 只登记树冠：遮挡判定只关心树冠，树干永远不透明 */
+  private trackCanopy(sprite: Sprite, x: number, y: number): void {
+    const entry: CanopyEntry = {
+      sprite,
+      left: x - 36,
+      right: x + 36,
+      top: y - CANOPY_TOP,
+      bottom: y - CANOPY_BOTTOM,
+      baseY: y,
+    };
+    this.canopies.push(entry);
+    const key = cellKey(x, y);
+    const bucket = this.canopyGrid.get(key);
+    if (bucket) bucket.push(entry);
+    else this.canopyGrid.set(key, [entry]);
   }
 
   private addPlanters(sorted: Container): void {
     for (const planter of WORLD_LAYOUT.planters) {
+      this.addPropShadow(planter.x, planter.y, this.textures.shadows.planter);
       const sprite = new Sprite(this.textures.planter);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(planter.x, planter.y);
       sprite.zIndex = planter.y;
       sorted.addChild(sprite);
-      this.cullables.push({ sprite, x: planter.x, y: planter.y, padX: 18, padY: 34 });
+      this.cullables.push({ sprite, x: planter.x, y: planter.y, padX: 24, padY: 46 });
     }
   }
 
@@ -271,8 +787,9 @@ export class TerrainView {
     }
     const from = Math.min(segment.y1, segment.y2);
     const to = Math.max(segment.y1, segment.y2);
-    for (let y = from; y < to; y += 96) {
-      const end = Math.min(y + 96, to);
+    // 竖向栏板按 120px 分段：一段越短，人绕过立柱时的前后判定越准
+    for (let y = from; y < to; y += 120) {
+      const end = Math.min(y + 120, to);
       const g = this.drawFenceSpan(segment.x1, y, end - y, false);
       // 竖向栏板按分段下沿排序：走过的人各归各的前后
       g.zIndex = end;
@@ -284,24 +801,24 @@ export class TerrainView {
   private drawFenceSpan(x: number, y: number, length: number, horizontal: boolean): Graphics {
     const g = new Graphics();
     if (horizontal) {
-      g.rect(x, y - 13, length, 4).fill(C.fenceDark);
-      g.rect(x, y - 13, length, 2).fill(C.fenceRail);
-      g.rect(x, y - 6, length, 4).fill(C.fenceDark);
-      g.rect(x, y - 6, length, 2).fill(C.fenceRail);
-      for (let post = 0; post <= length - 5; post += FENCE_POST_GAP) {
-        g.rect(x + post, y - 20, 6, 20).fill(C.fenceDark);
-        g.rect(x + post + 1, y - 19, 4, 18).fill(C.fenceRail);
-        g.rect(x + post + 1, y - 19, 1, 18).fill(C.fenceLight);
+      g.rect(x, y - 16, length, 5).fill(C.fenceDark);
+      g.rect(x, y - 16, length, 3).fill(C.fenceRail);
+      g.rect(x, y - 8, length, 5).fill(C.fenceDark);
+      g.rect(x, y - 8, length, 3).fill(C.fenceRail);
+      for (let post = 0; post <= length - 7; post += FENCE_POST_GAP) {
+        g.rect(x + post, y - 26, 8, 26).fill(C.fenceDark);
+        g.rect(x + post + 1, y - 25, 6, 24).fill(C.fenceRail);
+        g.rect(x + post + 1, y - 25, 2, 24).fill(C.fenceLight);
       }
       return g;
     }
-    g.rect(x - 13, y, 4, length).fill(C.fenceDark);
-    g.rect(x - 13, y, 2, length).fill(C.fenceLight);
-    g.rect(x - 6, y, 4, length).fill(C.fenceDark);
-    g.rect(x - 6, y, 2, length).fill(C.fenceLight);
-    for (let post = 0; post <= length - 6; post += FENCE_POST_GAP) {
-      g.rect(x - 10, y + post, 12, 6).fill(C.fenceDark);
-      g.rect(x - 9, y + post + 1, 10, 4).fill(C.fenceRail);
+    g.rect(x - 16, y, 5, length).fill(C.fenceDark);
+    g.rect(x - 16, y, 3, length).fill(C.fenceLight);
+    g.rect(x - 8, y, 5, length).fill(C.fenceDark);
+    g.rect(x - 8, y, 3, length).fill(C.fenceLight);
+    for (let post = 0; post <= length - 8; post += FENCE_POST_GAP) {
+      g.rect(x - 13, y + post, 15, 8).fill(C.fenceDark);
+      g.rect(x - 12, y + post + 1, 13, 6).fill(C.fenceRail);
     }
     return g;
   }
@@ -316,15 +833,62 @@ export class TerrainView {
         if (this.waterFrame % surface.every !== 0) continue;
         const { sprite } = surface;
         if (surface.axis === 'y') {
-          sprite.tilePosition.y = (sprite.tilePosition.y + 1) % WATER_TILE;
+          sprite.tilePosition.y = (sprite.tilePosition.y + 1) % surface.tile;
         } else {
-          sprite.tilePosition.x = (sprite.tilePosition.x + 1) % WATER_TILE;
+          sprite.tilePosition.x = (sprite.tilePosition.x + 1) % surface.tile;
         }
       }
     }
   }
 
-  /** 视口裁剪：树与围栏不进画面就翻 renderable，排序与绘制都省掉 */
+  /**
+   * 树冠遮挡：角色站在树后（脚底 y 小于树根）且包围盒与树冠盒相交时，
+   * 只把树冠压到 0.85，树干保持不透明。
+   *
+   * 每帧只处理「进入 / 离开」的差异；命中查询走 128px 空间索引，
+   * 60 个角色 × 邻近 8 棵树 ≈ 数百次比较，且不产生任何分配。
+   */
+  occlude(positions: Float32Array, count: number): void {
+    if (this.canopies.length === 0) return;
+    this.nextLit.clear();
+
+    for (let i = 0; i < count; i += 1) {
+      const px = positions[i * 2]!;
+      const py = positions[i * 2 + 1]!;
+      const left = px - PONY_HALF_W;
+      const right = px + PONY_HALF_W;
+      const top = py - PONY_HEIGHT;
+
+      const fromX = Math.floor(left / OCCLUSION_CELL);
+      const toX = Math.floor(right / OCCLUSION_CELL);
+      const fromY = Math.floor(top / OCCLUSION_CELL);
+      const toY = Math.floor(py / OCCLUSION_CELL);
+      for (let cy = fromY; cy <= toY; cy += 1) {
+        for (let cx = fromX; cx <= toX; cx += 1) {
+          const bucket = this.canopyGrid.get((cx << 16) ^ cy);
+          if (!bucket) continue;
+          for (const entry of bucket) {
+            // 站在树前面（y 更大）的人本来就该压住整棵树，不需要透明
+            if (py >= entry.baseY) continue;
+            if (right < entry.left || left > entry.right) continue;
+            if (py < entry.top || top > entry.bottom) continue;
+            this.nextLit.add(entry);
+          }
+        }
+      }
+    }
+
+    for (const entry of this.litCanopies) {
+      if (!this.nextLit.has(entry)) entry.sprite.alpha = 1;
+    }
+    for (const entry of this.nextLit) {
+      if (!this.litCanopies.has(entry)) entry.sprite.alpha = 0.85;
+    }
+    this.litCanopies.clear();
+    for (const entry of this.nextLit) this.litCanopies.add(entry);
+  }
+
+  /** 视口裁剪：贴花与树不进画面就翻 renderable，排序与绘制都省掉 */
   cull(minX: number, minY: number, maxX: number, maxY: number): void {
     for (const entry of this.cullables) {
       const top = entry.y - entry.padY;
@@ -337,14 +901,24 @@ export class TerrainView {
   }
 
   destroy(): void {
-    this.ground.destroy({ children: true });
-    for (const tree of this.textures.trees) tree.destroy(true);
+    this.base.destroy({ children: true });
+    this.edge.destroy({ children: true });
+    this.decals.destroy({ children: true });
+    for (const tree of this.textures.trees) {
+      tree.trunk.destroy(true);
+      tree.canopy.destroy(true);
+    }
     this.textures.grass.destroy(true);
     this.textures.plaza.destroy(true);
     this.textures.dirt.destroy(true);
     this.textures.water.destroy(true);
+    this.textures.sea.destroy(true);
     this.textures.rock.destroy(true);
     this.textures.reed.destroy(true);
     this.textures.planter.destroy(true);
+    this.textures.decals.texture.destroy(true);
+    this.textures.shadows.tree.destroy(true);
+    this.textures.shadows.planter.destroy(true);
+    this.textures.shadows.rock.destroy(true);
   }
 }
