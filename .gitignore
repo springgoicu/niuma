@@ -10,3 +10,5 @@ next-env.d.ts
 apps/web/public/sprites/*.png
 apps/web/public/sprites/*.json
 packages/pixel-assets/.proof/
+# 构建期生成的预压缩产物（next build 后由 scripts/precompress.mjs 产出，不入库）
+apps/web/public/**/*.gz
