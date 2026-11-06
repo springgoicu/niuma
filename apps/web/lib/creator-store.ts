@@ -13,6 +13,7 @@ import {
   PATTERN_IDS,
   SNOUT_IDS,
   TAIL_IDS,
+  clampNameLength,
   sanitizeAppearance,
   type AppearanceColorKey,
   type CharacterAppearance,
@@ -54,7 +55,8 @@ export const useCreatorStore = create<CreatorState>()(
     activePart: null,
     dirty: false,
 
-    setName: (name) => set({ name: name.slice(0, 16), dirty: true }),
+    // 按码点钳到 16 字符：slice 会把 emoji 的代理对切成半个
+    setName: (name) => set({ name: clampNameLength(name), dirty: true }),
 
     setSpecies: (species) =>
       set((state) => {

@@ -10,7 +10,7 @@ export interface FrameSpec {
   species: SpeciesName;
   /** 0 down / 1 left / 2 right / 3 up */
   direction: 0 | 1 | 2 | 3;
-  /** 0-15，含义见 layout.ts 的 CLIPS */
+  /** 0-33，含义见 layout.ts 的 CLIPS */
   column: number;
   /** 0 短尾 / 1 长尾 */
   tail: number;
@@ -270,6 +270,48 @@ function drawLeg(px: Px, o: LegOptions): void {
   px.rect(x - o.w / 2, bottom - o.hoofH, o.w + 0.6, 1, S.HoofShade);
 }
 
+interface RaisedLegOptions extends WaveAnim {
+  /** 肩点（与落地腿同一个挂点） */
+  x: number;
+  top: number;
+  w: number;
+  hoofH: number;
+  sock: boolean;
+}
+
+/**
+ * 举起来的前腿：从肩点斜向外上，末端横一块蹄子。
+ *
+ * `drawLeg` 只能从躯干底画到脚底线，蹄子必须落在地面上；挥手要的恰恰是
+ * 「蹄子离开地面、停在空中」，所以单独一条两段式肢体，形状语言与落地腿一致。
+ */
+function drawRaisedLeg(px: Px, o: RaisedLegOptions): void {
+  const w = o.w;
+  const endX = o.x + o.reach;
+  const endY = o.top - o.lift;
+  const midX = o.x + o.reach * 0.45;
+  const midY = o.top - o.lift * 0.62;
+
+  // 举腿会横过躯干：先在腿形外圈铺一道描边，跨过躯干时才读得出「这是一条腿」，
+  // 否则同色叠同色，正视/背视里就是胸口多了一道浅色带。
+  px.polygon(taper(o.x, o.top, midX, midY, w + 2, w * 0.9 + 2), S.Outline);
+  px.polygon(taper(midX, midY, endX, endY, w * 0.9 + 2, w * 0.84 + 2), S.Outline);
+  px.rect(endX - w / 2 - 1, endY - o.hoofH / 2 - 1, w + 2.6, o.hoofH + 2, S.Outline);
+
+  solid(px, S.Body, S.BodyShade, (slot, dx, dy) => {
+    px.polygon(taper(o.x + dx, o.top + dy, midX + dx, midY + dy, w, w * 0.9), slot);
+    px.polygon(taper(midX + dx, midY + dy, endX + dx, endY + dy, w * 0.9, w * 0.84), slot);
+  });
+
+  // 关节：与落地腿同一道 1px 暗线，抬起来也读得出「这是腿」
+  px.rect(midX - w * 0.42, midY, w * 0.84, 1, S.BodyShade);
+  if (o.sock) px.polygon(taper(midX, midY + 1, endX, endY, w * 0.8, w * 0.78), S.Pattern);
+
+  // 蹄面横着落在末端：抬腿时蹄底朝前，比竖着收一截更容易读成「挥手」
+  px.rect(endX - w / 2, endY - o.hoofH / 2, w + 0.6, o.hoofH, S.Hoof);
+  px.rect(endX - w / 2, endY - o.hoofH / 2, w + 0.6, 1, S.HoofShade);
+}
+
 /** 牛角 / 马鬃：变体 0 一律不画，所以 extra-0.png 是空图 */
 function drawHornOrMane(
   px: Px,
@@ -365,6 +407,35 @@ function stampBlobs(px: Px, species: SpeciesName, bodyCY: number, mask: Uint8Arr
   px.ellipseMasked(BODY_CX + 5.5, bodyCY + 1.8, 2.4, 2, S.Pattern, mask);
 }
 
+interface WaveAnim {
+  /** 前伸量：侧视朝面朝的方向，正视 / 背视朝屏幕左侧（负值） */
+  reach: number;
+  /** 上抬量：蹄子相对肩点的高度 */
+  lift: number;
+}
+
+/**
+ * 挥手三拍：抬 → 挥出 → 收回（ADR-0019）。
+ *
+ * 抬蹄与落蹄各占一拍，不能压成两帧：两帧来回读起来是「抖腿」而不是「打招呼」。
+ * 第三拍只留 1 的残余抬起，接回站姿时不会突然掉下去。
+ */
+const WAVE_REACH = [4, 7, 1] as const;
+const WAVE_LIFT = [2, 4, 1] as const;
+/** 躺姿的肩点本来就在躯干上，腿要抬得更高才出得来剪影 */
+const LIE_WAVE_REACH = [-2, -4, -1] as const;
+const LIE_WAVE_LIFT = [8, 10, 6] as const;
+/**
+ * 正视 / 背视：从肩线往外上方举，蹄子要甩到躯干轮廓之外。
+ * 只伸到胸口以内会和躯干同色叠在一起，读成「胸口多了一道浅色带」而不是一条腿。
+ */
+const FACING_WAVE_REACH = [-8, -10, -5] as const;
+const FACING_WAVE_LIFT = [5, 8, 3] as const;
+
+function waveAt(phase: number, reach: readonly number[], lift: readonly number[]): WaveAnim {
+  return { reach: reach[phase] ?? 0, lift: lift[phase] ?? 0 };
+}
+
 interface SideOptions {
   bodyCY: number;
   bodyW: number;
@@ -381,6 +452,8 @@ interface SideOptions {
   lying: boolean;
   /** 坐下时把后腿折成臀部的鼓包 */
   haunch: boolean;
+  /** 打招呼：抬起的近侧前腿；null 表示四条腿照常落地 */
+  wave: WaveAnim | null;
   blink: boolean;
 }
 
@@ -424,13 +497,29 @@ function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void
 
   if (!o.lying) {
     drawLeg(px, { ...legBase, x: hindX + 1 + a.legW + 1.2, far: false, bend: -0.8, ...o.hindNear });
-    drawLeg(px, { ...legBase, x: frontX - 1, far: false, bend: 0.8, ...o.frontNear });
+    if (o.wave) {
+      // 打招呼：近侧前腿离地举起，蹄子按三拍前伸 / 上抬；远侧前腿照常撑地
+      drawRaisedLeg(px, { x: frontX - 1, top: legBase.top, w: a.legW, hoofH: a.hoofH, sock, ...o.wave });
+    } else {
+      drawLeg(px, { ...legBase, x: frontX - 1, far: false, bend: 0.8, ...o.frontNear });
+    }
   }
 
   if (o.lying) {
     px.rect(o.headX - 14, FEET - a.hoofH, a.legW + 1.5, a.hoofH, S.Hoof);
     px.rect(o.headX - 14, FEET - a.hoofH, a.legW + 1.5, 1, S.HoofShade);
     px.roundRect(BODY_CX - o.bodyW / 2 + 4, bodyBottom - 1, 11, 6, 2.5, S.BodyShade);
+    if (o.wave) {
+      // 躺姿没有腿柱可抬：把贴地那截前蹄抬到躯干上方，躯干与头保持贴地不动
+      drawRaisedLeg(px, {
+        x: o.headX - 14 + a.legW / 2,
+        top: FEET - a.hoofH,
+        w: a.legW,
+        hoofH: a.hoofH,
+        sock,
+        ...o.wave,
+      });
+    }
   }
 
   if (o.haunch) {
@@ -512,7 +601,12 @@ function sideLegs(phase: number, moving: boolean) {
   };
 }
 
-/** 呼吸：待机、坐下、躺下都在第二帧把身体抬 1px，是「活着」的最低成本信号 */
+/**
+ * 呼吸：待机、坐下、躺下都在第二帧把身体抬 1px，是「活着」的最低成本信号。
+ *
+ * 叫唤（`emote` / `sitEmote` / `lieEmote`）不参与呼吸：叫唤只动嘴，
+ * 任何整体位移都会让「坐着叫唤」读成「坐着弹一下」，也会让像素回归测试失去意义。
+ */
 function breatheOffset(spec: FrameSpec, pose: PoseName, phase: number): number {
   if (spec.column === 1) return -1;
   if ((pose === 'sit' || pose === 'lie') && phase === 1) return -1;
@@ -531,8 +625,10 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
   const blink = spec.column === 2;
   const walk = pose === 'walk';
   const legs = sideLegs(walk ? phase : 0, walk);
+  /** 叫唤只动嘴：站/坐/躺三套姿势共用同一条「第二拍张嘴」的节奏 */
+  const openMouth = (pose === 'emote' || pose === 'sitEmote' || pose === 'lieEmote') && phase === 1;
 
-  if (pose === 'sit') {
+  if (pose === 'sit' || pose === 'sitEmote' || pose === 'sitWave') {
     // 坐下：后腿折成臀部，前腿直撑；尾巴落地。
     // 落座量 7 → 5.5、低头量 5 → 4：腿短了 2，原来的位移会让屁股悬在半空
     return {
@@ -546,14 +642,15 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
       frontFar: STILL,
       frontNear: STILL,
       tailSway: 0,
-      openMouth: false,
+      openMouth,
       lying: false,
       haunch: true,
+      wave: pose === 'sitWave' ? waveAt(phase, WAVE_REACH, WAVE_LIFT) : null,
       blink,
     };
   }
 
-  if (pose === 'lie') {
+  if (pose === 'lie' || pose === 'lieEmote' || pose === 'lieWave') {
     return {
       bodyCY: FEET - (a.bodyH * 0.72) / 2 - 2 + breathe,
       bodyW: a.bodyW + 1,
@@ -565,31 +662,35 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
       frontFar: STILL,
       frontNear: STILL,
       tailSway: 0,
-      openMouth: false,
+      openMouth,
       lying: true,
       haunch: false,
+      wave: pose === 'lieWave' ? waveAt(phase, LIE_WAVE_REACH, LIE_WAVE_LIFT) : null,
       blink,
     };
   }
 
-  // emote：先蹲、再蹦、落地；只挪躯干，脚底线不动。
-  // 蹦起 3px 就够——再高牛角会顶到帧顶，描边被裁掉反而糊
-  const hop = pose === 'emote' ? ([3, -3, 0][phase] ?? 0) : 0;
-  const emoteLegs: LegAnim = pose === 'emote' && phase === 1 ? { swing: 0, lift: 3 } : STILL;
+  // jump：先蹲、再蹦、落地；只挪躯干，脚底线不动。
+  // 腾空 -5 是帧顶安全上限：牛角尖端与 1px 描边在站立时已到 y≈6，再高就会被 64 帧裁掉。
+  // 剩下的落差交给客户端程序化抬升（renderer 的跳跃弧线），图集只负责「收腿离地」的姿势。
+  const jumping = pose === 'jump';
+  const hop = jumping ? ([3, -5, 0][phase] ?? 0) : 0;
+  const jumpLegs: LegAnim = jumping && phase === 1 ? { swing: 0, lift: 5 } : STILL;
   return {
     bodyCY: standBodyCY + bob + hop + breathe,
     bodyW: a.bodyW,
     bodyH: a.bodyH,
     headCY: standHeadCY + bob + hop + breathe,
     headX: HEAD_CX,
-    hindFar: pose === 'emote' ? emoteLegs : legs.hindFar,
-    hindNear: pose === 'emote' ? emoteLegs : legs.hindNear,
-    frontFar: pose === 'emote' ? emoteLegs : legs.frontFar,
-    frontNear: pose === 'emote' ? emoteLegs : legs.frontNear,
+    hindFar: jumping ? jumpLegs : legs.hindFar,
+    hindNear: jumping ? jumpLegs : legs.hindNear,
+    frontFar: jumping ? jumpLegs : legs.frontFar,
+    frontNear: jumping ? jumpLegs : legs.frontNear,
     tailSway: walk ? (TAIL_SWAY[phase] ?? 0) : 0,
-    openMouth: pose === 'emote' && phase !== 0,
+    openMouth,
     lying: false,
     haunch: false,
+    wave: pose === 'wave' ? waveAt(phase, WAVE_REACH, WAVE_LIFT) : null,
     blink,
   };
 }
@@ -610,6 +711,8 @@ interface FacingOptions {
   sit: boolean;
   legLift: [number, number];
   openMouth: boolean;
+  /** 打招呼：举起的近侧前腿与所在侧（0 = 屏幕左），null 表示四条腿都落地 */
+  wave: (WaveAnim & { side: 0 | 1 }) | null;
   blink: boolean;
 }
 
@@ -639,8 +742,10 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
       const nearX = shoulderX[side]!;
       // 后腿在外侧、更暗；前腿在内侧、更亮，正面才分得出四条腿
       px.polygon(taper(farX + legW / 2, o.legTop, farX + legW / 2, FEET - lift - a.hoofH, legW, legW * 0.9), S.BodyShade);
-      px.polygon(taper(nearX + legW / 2, o.legTop, nearX + legW / 2, FEET - lift - a.hoofH, legW, legW * 0.9), S.Body);
       px.rect(farX, FEET - lift - a.hoofH, legW, a.hoofH, S.HoofShade);
+      // 打招呼那一侧的前腿离地：不画落地柱，改由躯干之后的举腿分支接手
+      if (o.wave?.side === side) continue;
+      px.polygon(taper(nearX + legW / 2, o.legTop, nearX + legW / 2, FEET - lift - a.hoofH, legW, legW * 0.9), S.Body);
       px.rect(nearX, FEET - lift - a.hoofH, legW, a.hoofH, S.Hoof);
       px.rect(nearX, FEET - lift - a.hoofH, legW, 1, S.HoofShade);
     }
@@ -667,7 +772,10 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
   }
   if (spec.pattern === 2) {
     // 正面长袜：两条前腿下段换色，比侧面细一分，读的是「四条腿里有一对是白的」
-    for (const nearX of shoulderX) {
+    for (let side = 0; side < shoulderX.length; side += 1) {
+      // 举手那一侧的长袜由举腿分支自己画，这里再画一条落地柱会多出一条腿
+      if (o.wave?.side === side) continue;
+      const nearX = shoulderX[side]!;
       px.rect(nearX, bodyBottom - 1, legW, FEET - bodyBottom + 1, S.Pattern);
       px.rect(nearX, FEET - a.hoofH, legW, a.hoofH, S.Hoof);
       px.rect(nearX, FEET - a.hoofH, legW, 1, S.HoofShade);
@@ -679,6 +787,21 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
   // 宽度收到 bodyW-4、厚度 1.6：旧的 2.4 厚横杠正是「方块肩」的来源。
   const bodyTop = o.bodyCY - o.bodyH / 2;
   px.roundRect(BODY_CX, bodyTop + 1.4, o.bodyW - 4, 1.6, 0.8, S.BodyShade);
+
+  // 打招呼：举起的近侧前腿画在躯干之后，才压得住躯干轮廓；
+  // 坐姿 / 躺姿的躯干更低，肩点跟着上移一格，蹄子才不会撞到贴地那一排
+  if (o.wave) {
+    const { reach, lift, side } = o.wave;
+    drawRaisedLeg(px, {
+      x: shoulderX[side]! + legW / 2,
+      top: o.sit ? bodyBottom - 2 : bodyBottom - 3,
+      w: legW,
+      hoofH: a.hoofH,
+      sock: spec.pattern === 2,
+      reach,
+      lift,
+    });
+  }
 
   // 耳朵先画，再让头顶盖住根部，才像长在头上而不是贴上去
   if (spec.species === 'cow') {
@@ -751,11 +874,28 @@ function facingOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: numbe
   const standBodyCY = FEET - a.legH - a.bodyH / 2;
   const standHeadCY = standBodyCY - a.bodyH / 2 - 3.5;
   const bob = pose === 'walk' ? (phase % 2 === 0 ? 0 : 1) : 0;
-  const hop = pose === 'emote' ? ([3, -3, 0][phase] ?? 0) : 0;
+  // 与侧视同一条上限：腾空 -5，再高牛角会顶到帧顶
+  const hop = pose === 'jump' ? ([3, -5, 0][phase] ?? 0) : 0;
   const breathe = breatheOffset(spec, pose, phase);
-  const sit = pose === 'sit' || pose === 'lie';
+  // 正视 / 背视把坐与躺画成同一套「腿折在身下」，叫唤与挥手沿用各自的基座
+  const sit =
+    pose === 'sit' ||
+    pose === 'lie' ||
+    pose === 'sitEmote' ||
+    pose === 'lieEmote' ||
+    pose === 'sitWave' ||
+    pose === 'lieWave';
   const walkLift = pose === 'walk' ? phase % 2 : 0;
-  const emoteLift = pose === 'emote' && phase === 1 ? 3 : 0;
+  const jumpLift = pose === 'jump' && phase === 1 ? 5 : 0;
+  const openMouth = (pose === 'emote' || pose === 'sitEmote' || pose === 'lieEmote') && phase === 1;
+  // 正视 / 背视看不到哪条腿是「近侧」，统一举屏幕左侧那条前腿，四向看起来是同一个动作
+  const waving = pose === 'wave' || pose === 'sitWave' || pose === 'lieWave';
+  const faceWave = waveAt(phase, FACING_WAVE_REACH, FACING_WAVE_LIFT);
+  /**
+   * 背面看不见嘴：不补这一下，朝上叫唤会完全没有反馈。
+   * 只抬 1px 的头（耳、角跟着走），身体不动，读作「仰头叫一声」而不是蹦跳。
+   */
+  const backBarkLift = back && openMouth ? -1 : 0;
 
   return {
     bodyCY: sit ? standBodyCY + 9 + breathe : standBodyCY + bob + hop + breathe,
@@ -763,12 +903,13 @@ function facingOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: numbe
     // 这条差值就是头两侧能露出来的那 2–3px 肩线
     bodyW: a.bodyW * 1.14,
     bodyH: sit ? a.bodyH * 0.92 : a.bodyH,
-    headCY: sit ? standHeadCY + 11 + breathe : standHeadCY + bob + hop + breathe,
+    headCY: sit ? standHeadCY + 11 + breathe + backBarkLift : standHeadCY + bob + hop + breathe + backBarkLift,
     legTop: standBodyCY + a.bodyH / 2 - 3,
     back,
     sit,
-    legLift: [walkLift + emoteLift, 1 - walkLift + emoteLift],
-    openMouth: pose === 'emote' && phase !== 0,
+    legLift: [walkLift + jumpLift, 1 - walkLift + jumpLift],
+    openMouth,
+    wave: waving ? { ...faceWave, side: 0 } : null,
     blink: spec.column === 2,
   };
 }

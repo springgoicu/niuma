@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { COLUMNS } from '../layout';
 import { landmarksOf } from '../quadruped';
 import { COSMETIC_CATALOG, COSMETIC_SIZE, drawCosmetic, mirrorCosmetic, type CosmeticKind } from '../cosmetics';
 import { EYEWEAR_IDS, HAIR_IDS, HEADWEAR_IDS, NECKWEAR_IDS } from '../../../shared-types/src/catalog';
@@ -79,7 +80,7 @@ describe('配件目录', () => {
 describe('配件挂点', () => {
   it('背面没有眼睛，其余朝向都有', () => {
     for (const species of ['cow', 'horse'] as const) {
-      for (let column = 0; column < 16; column += 1) {
+      for (let column = 0; column < COLUMNS; column += 1) {
         expect(landmarksOf(species, 0, column).eye).not.toBeNull();
         expect(landmarksOf(species, 1, column).eye).not.toBeNull();
         expect(landmarksOf(species, 3, column).eye).toBeNull();
@@ -101,7 +102,7 @@ describe('配件挂点', () => {
 
   it('头顶永远在头心之上，颈点永远在头心之下', () => {
     for (const species of ['cow', 'horse'] as const) {
-      for (let column = 0; column < 16; column += 1) {
+      for (let column = 0; column < COLUMNS; column += 1) {
         const lm = landmarksOf(species, 2, column);
         expect(lm.headTop[1]).toBeLessThan(lm.head[1]);
         expect(lm.neck[1]).toBeGreaterThan(lm.head[1]);

@@ -76,5 +76,38 @@ export function ponyMotion(pose: PonyPoseName, elapsedMs: number, netId: number)
   return { bobTexels: 0, shadow: 1, blinking: false };
 }
 
+/**
+ * 跳跃弧线：图集只把角色抬高 5 纹素，单靠帧序列在 3 倍缩放下只有 15px，
+ * 读起来像「抖了一下」。这里在播放窗口内再叠一条整数纹素的抛物线，
+ * 落地归零——与图集的蹲/腾空/落地三帧叠加，蹲伏到顶点约 12 纹素。
+ *
+ * 纯函数、零分配：调用方每帧算一次数值，阴影档位由 lift 直接推导。
+ */
+export const JUMP_LIFT_PEAK = 7;
+/** 起跳占比：前 20% 仍是蹲伏帧，不该离地 */
+const JUMP_RISE_FROM = 0.2;
+/** 落地占比：75% 之后进入落地帧，必须已经贴地，否则尘土会飘在空中 */
+const JUMP_RISE_TO = 0.75;
+
+/**
+ * 跳跃窗口内的抬升纹素：0 或负整数，起落为 0，中段触顶 -PEAK。
+ * `durationMs` 传 `overlays.jumpMs`，与图集时长保持一致。
+ */
+export function jumpLiftTexels(phaseMs: number, durationMs: number): number {
+  if (!Number.isFinite(phaseMs) || phaseMs <= 0 || durationMs <= 0) return 0;
+  const t = phaseMs >= durationMs ? 1 : phaseMs / durationMs;
+  if (t <= JUMP_RISE_FROM || t >= JUMP_RISE_TO) return 0;
+  const u = (t - JUMP_RISE_FROM) / (JUMP_RISE_TO - JUMP_RISE_FROM);
+  return -Math.round(JUMP_LIFT_PEAK * Math.sin(Math.PI * u));
+}
+
+/** 腾空判定：抬到这个高度才把阴影摊平，避免起跳瞬间影子闪一下 */
+const AIRBORNE_LIFT = -4;
+
+/** 阴影档位：腾空摊开（0）/ 常态（1）。落地压缩交给图集的落地帧与扬尘 */
+export function jumpShadowFor(liftTexels: number): 0 | 1 {
+  return liftTexels <= AIRBORNE_LIFT ? 0 : 1;
+}
+
 /** 暴露给调用方的常量：服务端下发的 pose 字符串直接可用 */
 export const PONY_POSES: readonly PonyPoseName[] = ['idle', 'walk', 'sit', 'lie', 'emote'];

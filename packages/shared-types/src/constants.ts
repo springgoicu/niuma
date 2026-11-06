@@ -24,8 +24,15 @@ export const MAX_STEP = (MOVE_SPEED * TICK_MS) / 1000;
 export const MAX_STEP_TOLERANCE = MAX_STEP * 1.15;
 
 export const MAX_CHAT_CHARS = 160;
+/** 昵称字符数上限（按码点计）：输入框与协议共用 */
 export const MAX_NAME_CHARS = 16;
+/** 昵称字节上限：与 C2S_HELLO / S2C_SPAWN 的 u8 长度字段对齐 */
 export const MAX_NAME_BYTES = 48;
+/**
+ * 昵称在头顶的显示宽度上限：半角 1、全角 2，16 单位 = 8 个汉字。
+ * 名字比这个宽就会横跨两个身位，压住邻座的头顶——超出的部分换省略号。
+ */
+export const MAX_NAME_DISPLAY_UNITS = 16;
 export const MAX_PACKET_BYTES = 2048;
 export const MAX_ENTITIES = 1024;
 export const MAX_SYNC_ENTRIES = 255;
@@ -63,21 +70,24 @@ export const DIRECTION = {
   Up: 3,
 } as const;
 
+/**
+ * 基础姿态只有四种。叫唤与跳跃不是姿态，而是 state 字节里的两个一次性标志位
+ * （bit6 / bit7）：它们与姿态正交，播完自然回到原姿势，不需要服务端记忆与回滚（ADR-0018）。
+ */
 export const POSE = {
   Idle: 0,
   Walk: 1,
   Sit: 2,
   Lie: 3,
-  Emote: 4,
 } as const;
 
 export type Direction = (typeof DIRECTION)[keyof typeof DIRECTION];
 export type Pose = (typeof POSE)[keyof typeof POSE];
 
+/** 走 C2S_ACTION 的只有姿态切换；叫唤与跳随 20Hz 的 move 包上行，不再单独发包 */
 export const ACTION = {
   Sit: 0,
   Lie: 1,
-  Emote: 2,
 } as const;
 
 export type ActionId = (typeof ACTION)[keyof typeof ACTION];

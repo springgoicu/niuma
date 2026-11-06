@@ -160,8 +160,11 @@ export function startGameServer(config: ServerConfig) {
 
     if (op === OpCode.C2S_ACTION) {
       const { action } = decodeAction(data);
-      const pose = action === ACTION.Sit ? POSE.Sit : action === ACTION.Lie ? POSE.Lie : POSE.Emote;
-      player.applyState(player.direction, pose, false);
+      // 只有坐 / 躺走这个包：叫唤与跳随 20Hz 的 move 包上行（见 ADR-0018）
+      if (action !== ACTION.Sit && action !== ACTION.Lie) return;
+      const pose = action === ACTION.Sit ? POSE.Sit : POSE.Lie;
+      // 切姿势会中断叠加动作：服务端这里一并清位，避免残留张嘴/腾空/抬手帧
+      player.applyState(player.direction, pose, false, false, false, false);
       player.dirty = true;
       return;
     }

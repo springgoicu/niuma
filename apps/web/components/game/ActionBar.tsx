@@ -1,6 +1,6 @@
 'use client';
 
-import { Armchair, Keyboard, MessageSquare, Music4, Sandwich } from 'lucide-react';
+import { Armchair, Hand, Keyboard, MessageSquare, Music4, Rabbit, Sandwich } from 'lucide-react';
 import type { ActionKey } from '@/lib/game/input';
 
 interface ActionBarProps {
@@ -12,11 +12,13 @@ const ACTIONS: Array<{ key: string; label: string; hint: string; Icon: typeof Ar
   { key: 'sit', label: '坐下', hint: 'Z', Icon: Armchair, action: 'sit' },
   { key: 'lie', label: '躺平', hint: 'X', Icon: Sandwich, action: 'lie' },
   { key: 'emote', label: '叫唤', hint: 'C', Icon: Music4, action: 'emote' },
+  { key: 'wave', label: '打招呼', hint: 'E', Icon: Hand, action: 'wave' },
+  { key: 'jump', label: '跳一下', hint: 'Space', Icon: Rabbit, action: 'jump' },
 ];
 
 export function ActionBar({ onAction, onChat }: ActionBarProps) {
   return (
-    <div className="pointer-events-auto flex items-stretch gap-2 border-2 border-ink-600 bg-ink-900/92 p-2 backdrop-blur-sm">
+    <div className="pointer-events-auto flex flex-wrap items-stretch justify-center gap-2 border-2 border-ink-600 bg-ink-900/92 p-2 backdrop-blur-sm">
       {ACTIONS.map((item) => (
         <button
           key={item.key}

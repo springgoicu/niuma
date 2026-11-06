@@ -2,6 +2,12 @@
 
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Dices, ShieldOff } from 'lucide-react';
+import {
+  MAX_NAME_CHARS,
+  MAX_NAME_DISPLAY_UNITS,
+  displayWidth,
+  truncateName,
+} from '@niuma/shared-types';
 import { useCreatorStore } from '@/lib/creator-store';
 import { randomNickname, saveProfile } from '@/lib/profile';
 
@@ -13,12 +19,15 @@ export function SaveBar() {
   const markSaved = useCreatorStore((state) => state.markSaved);
 
   const handleSave = () => {
-    const finalName = name.trim() || randomNickname();
+    // 与协议同一把尺子：16 字符 / 48 字节，超宽的名字只影响头顶显示
+    const finalName = truncateName(name.trim() || randomNickname());
     setName(finalName);
     saveProfile({ name: finalName, appearance });
     markSaved();
     router.push('/play');
   };
+
+  const tooWide = displayWidth(name.trim()) > MAX_NAME_DISPLAY_UNITS;
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700/80 bg-ink-900/[0.94] shadow-[0_-24px_48px_-32px_rgba(0,0,0,0.95)] backdrop-blur-md">
@@ -33,7 +42,7 @@ export function SaveBar() {
           <input
             id="niuma-name"
             value={name}
-            maxLength={16}
+            maxLength={MAX_NAME_CHARS}
             onChange={(event) => setName(event.target.value)}
             placeholder="输入你的工牌名"
             autoComplete="off"
@@ -47,6 +56,14 @@ export function SaveBar() {
           >
             <Dices className="h-3.5 w-3.5" />
           </button>
+          {tooWide ? (
+            <span
+              className="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-amber-400"
+              title={`头顶只显示 ${MAX_NAME_DISPLAY_UNITS} 显示宽，超出部分以省略号代替`}
+            >
+              头顶截断
+            </span>
+          ) : null}
         </div>
 
         <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-mist-400">

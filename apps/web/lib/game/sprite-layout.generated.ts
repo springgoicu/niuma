@@ -11,11 +11,11 @@ export interface GeneratedClip {
 }
 
 export const SPRITE_LAYOUT = {
-  "version": 5,
+  "version": 7,
   "frame": {
     "w": 64,
     "h": 64,
-    "columns": 16,
+    "columns": 34,
     "rows": 4
   },
   "origin": {
@@ -93,16 +93,100 @@ export const SPRITE_LAYOUT = {
       "loopFrom": 0,
       "loop": true
     },
-    "emote": {
+    "jump": {
       "frames": [
         13,
         14,
         15
       ],
       "frameMs": [
-        120,
-        170,
-        150
+        100,
+        220,
+        120
+      ],
+      "loopFrom": 0,
+      "loop": false
+    },
+    "emote": {
+      "frames": [
+        16,
+        17,
+        18
+      ],
+      "frameMs": [
+        140,
+        160,
+        140
+      ],
+      "loopFrom": 0,
+      "loop": false
+    },
+    "sitEmote": {
+      "frames": [
+        19,
+        20,
+        21
+      ],
+      "frameMs": [
+        140,
+        160,
+        140
+      ],
+      "loopFrom": 0,
+      "loop": false
+    },
+    "lieEmote": {
+      "frames": [
+        22,
+        23,
+        24
+      ],
+      "frameMs": [
+        140,
+        160,
+        140
+      ],
+      "loopFrom": 0,
+      "loop": false
+    },
+    "wave": {
+      "frames": [
+        25,
+        26,
+        27
+      ],
+      "frameMs": [
+        220,
+        220,
+        220
+      ],
+      "loopFrom": 0,
+      "loop": false
+    },
+    "sitWave": {
+      "frames": [
+        28,
+        29,
+        30
+      ],
+      "frameMs": [
+        220,
+        220,
+        220
+      ],
+      "loopFrom": 0,
+      "loop": false
+    },
+    "lieWave": {
+      "frames": [
+        31,
+        32,
+        33
+      ],
+      "frameMs": [
+        220,
+        220,
+        220
       ],
       "loopFrom": 0,
       "loop": false

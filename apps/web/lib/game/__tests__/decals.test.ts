@@ -39,7 +39,7 @@ describe('贴花撒点', () => {
     expect(Math.abs(a.length - b.length) / a.length).toBeLessThan(0.25);
   });
 
-  it('被 allow 拒绝的位置一个都不生成（水面 / 广场 / 土路）', () => {
+  it('被 allow 拒绝的位置一个都不生成（水面 / 土路）', () => {
     const walled = scatterDecals(BOUNDS, (x) => x < BOUNDS.w / 2, 0x55);
     expect(walled.length).toBeGreaterThan(0);
     for (const placement of walled) expect(placement.x).toBeLessThan(BOUNDS.w / 2);

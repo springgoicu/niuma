@@ -3,7 +3,13 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Dices, ShieldOff } from 'lucide-react';
-import type { Species } from '@niuma/shared-types';
+import {
+  MAX_NAME_CHARS,
+  MAX_NAME_DISPLAY_UNITS,
+  displayWidth,
+  truncateName,
+  type Species,
+} from '@niuma/shared-types';
 import { defaultAppearance, randomNickname, saveProfile, type Profile } from '@/lib/profile';
 
 
@@ -13,12 +19,17 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
 
   const enter = () => {
     const profile: Profile = {
-      name: name.trim() || randomNickname(),
+      // 字符数与字节数的钳制只有协议一份实现，输入框不再自己 slice
+      name: truncateName(name.trim() || randomNickname()),
       appearance: defaultAppearance(species),
     };
     saveProfile(profile);
     onEnter(profile);
   };
+
+  // 字符数够用不代表宽度够用：16 个汉字是 32 宽，头顶只放得下 16
+  const nameWidth = displayWidth(name.trim());
+  const tooWide = nameWidth > MAX_NAME_DISPLAY_UNITS;
 
   return (
     <div className="absolute inset-0 z-40 grid place-items-center bg-ink-950/92 px-5 backdrop-blur-sm">
@@ -63,14 +74,23 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
           ))}
         </div>
 
-        <label htmlFor="join-name" className="mt-6 block font-mono text-[10px] uppercase tracking-[0.2em] text-mist-500">
-          工牌名
-        </label>
+        <div className="mt-6 flex items-baseline justify-between gap-3">
+          <label htmlFor="join-name" className="block font-mono text-[10px] uppercase tracking-[0.2em] text-mist-500">
+            工牌名
+          </label>
+          <span
+            className={`font-mono text-[9px] uppercase tracking-[0.14em] ${
+              tooWide ? 'text-amber-400' : 'text-mist-500'
+            }`}
+          >
+            {tooWide ? `头顶只显示 ${MAX_NAME_DISPLAY_UNITS} 宽 + …` : `显示宽度 ${nameWidth} / ${MAX_NAME_DISPLAY_UNITS}`}
+          </span>
+        </div>
         <div className="mt-2 flex gap-2">
           <input
             id="join-name"
             value={name}
-            maxLength={16}
+            maxLength={MAX_NAME_CHARS}
             onChange={(event) => setName(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') enter();

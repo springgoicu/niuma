@@ -97,14 +97,45 @@ describe('fixed point quantization', () => {
 });
 
 describe('state byte', () => {
-  it('packs direction, pose and moving flag without collisions', () => {
+  it('packs direction, pose and the four flags without collisions', () => {
     for (const direction of [DIRECTION.Down, DIRECTION.Left, DIRECTION.Right, DIRECTION.Up]) {
-      for (const pose of [POSE.Idle, POSE.Walk, POSE.Sit, POSE.Lie, POSE.Emote]) {
+      for (const pose of [POSE.Idle, POSE.Walk, POSE.Sit, POSE.Lie]) {
         for (const moving of [false, true]) {
-          const state = packState(direction, pose, moving);
-          expect(unpackState(state)).toEqual({ direction, pose, moving });
+          for (const emote of [false, true]) {
+            for (const jump of [false, true]) {
+              for (const wave of [false, true]) {
+                const state = packState(direction, pose, moving, emote, jump, wave);
+                expect(state).toBeLessThanOrEqual(0xff);
+                expect(unpackState(state)).toEqual({ direction, pose, moving, emote, jump, wave });
+              }
+            }
+          }
         }
       }
+    }
+  });
+
+  it('叫唤占 bit6、跳占 bit7、打招呼占 bit4：一次只置一位，互不吃掉', () => {
+    expect(packState(DIRECTION.Down, POSE.Idle, false, true, false)).toBe(0b01000000);
+    expect(packState(DIRECTION.Down, POSE.Idle, false, false, true)).toBe(0b10000000);
+    // 打招呼复用 pose 字段的高位：姿态只有 2 bit，bit4 恒为 0
+    expect(packState(DIRECTION.Down, POSE.Idle, false, false, false, true)).toBe(0b00010000);
+    // 三位同时为真也只影响各自那一位，姿态与移动标志原样保留
+    expect(unpackState(0b11010000 | packState(DIRECTION.Up, POSE.Sit, true))).toMatchObject({
+      direction: DIRECTION.Up,
+      pose: POSE.Sit,
+      moving: true,
+      emote: true,
+      jump: true,
+      wave: true,
+    });
+  });
+
+  it('姿势只占 bit2-3：bit4 置位不会被读成 pose=4', () => {
+    for (const pose of [POSE.Idle, POSE.Walk, POSE.Sit, POSE.Lie]) {
+      const state = packState(DIRECTION.Left, pose, false, false, false, true);
+      expect(unpackState(state).pose).toBe(pose);
+      expect(unpackState(state).wave).toBe(true);
     }
   });
 

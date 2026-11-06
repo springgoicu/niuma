@@ -22,11 +22,8 @@ export const TERRAIN_COLORS = {
   meadowTint: 0x8fb06a,
   meadowShade: 0x79a15c,
 
-  plazaBase: 0xd8cbb0,
-  plazaAlt: 0xd2c4a6,
+  /** 广场不再铺地砖（ADR-0017）：只留一圈石色路缘，深缝压外沿 */
   plazaSeam: 0xb3a284,
-  plazaHighlight: 0xe8dcc4,
-  plazaEdge: 0xc0b093,
   plazaCurb: 0xc9b998,
 
   /** 土路本体：低饱和粉彩暖棕；带一点灰，近看才不像橘色 */
@@ -101,7 +98,6 @@ export const EDGE_TINT = {
   grass: TERRAIN_COLORS.grassDeep,
   dirt: TERRAIN_COLORS.dirtEdge,
   sand: TERRAIN_COLORS.sandEdge,
-  plaza: TERRAIN_COLORS.plazaSeam,
   water: TERRAIN_COLORS.waterEdge,
   canopy: TERRAIN_COLORS.canopyEdge,
   trunk: TERRAIN_COLORS.trunkDark,
@@ -129,8 +125,8 @@ export const MINIMAP_COLORS = {
   flowerWhite: cssColor(TERRAIN_COLORS.flowerPetal),
   flowerGold: cssColor(TERRAIN_COLORS.petalGold),
   flowerRose: cssColor(TERRAIN_COLORS.petalRose),
-  plaza: cssColor(TERRAIN_COLORS.plazaBase),
-  plazaEdge: cssColor(TERRAIN_COLORS.plazaSeam),
+  /** 广场只画路缘：小地图与主视图都不能再出现浅色块 */
+  plazaCurb: cssColor(TERRAIN_COLORS.plazaCurb),
   dirt: cssColor(TERRAIN_COLORS.dirtBase),
   sand: cssColor(TERRAIN_COLORS.sandLight),
   water: cssColor(TERRAIN_COLORS.waterMid),

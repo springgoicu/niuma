@@ -27,7 +27,7 @@ import { TERRAIN_COLORS as C } from './terrain-palette';
  */
 
 /** 材质 ID：数值只用于 Uint8Array 存格，不参与渲染顺序 */
-export type MaterialId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type MaterialId = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 export const MATERIAL = {
   sea: 0,
@@ -35,21 +35,21 @@ export const MATERIAL = {
   sand: 2,
   grass: 3,
   dirt: 4,
-  plaza: 5,
-  water: 6,
-  bridge: 7,
+  water: 5,
+  bridge: 6,
 } as const satisfies Record<string, MaterialId>;
 
 /**
  * 绘制顺序 = 优先级从低到高。后画的盖先画的，与 `TerrainView.build()` 的既有层序一致。
  * 边缘层的绘制顺序与它无关：草缘永远最后压上（见 EDGE_DRAW_ORDER）。
+ *
+ * 广场不是材质（ADR-0017）：办公区地面就是草地，只靠一圈石色路缘与围栏标识。
  */
 export const PAINT_ORDER: readonly MaterialId[] = [
   MATERIAL.sea,
   MATERIAL.shallow,
   MATERIAL.grass,
   MATERIAL.sand,
-  MATERIAL.plaza,
   MATERIAL.dirt,
   MATERIAL.water,
   MATERIAL.bridge,
@@ -58,7 +58,6 @@ export const PAINT_ORDER: readonly MaterialId[] = [
 /** 边缘层的绘制顺序：按「被覆盖」的先后，草地相关的边缘最后画 */
 export const EDGE_DRAW_ORDER: readonly MaterialId[] = [
   MATERIAL.sand,
-  MATERIAL.plaza,
   MATERIAL.dirt,
   MATERIAL.water,
   MATERIAL.bridge,
@@ -69,7 +68,6 @@ export const EDGE_TILE = 32;
 
 const BRIDGES = WORLD_LAYOUT.bridges;
 const PATHS = WORLD_LAYOUT.paths;
-const PLAZA = WORLD_LAYOUT.plaza;
 const LAKES = WORLD_LAYOUT.lakes;
 const RIVERS = WORLD_LAYOUT.rivers;
 const ISLAND_POINTS = ISLAND.points;
@@ -78,7 +76,10 @@ const SHALLOW_SQ = ISLAND_SHALLOW * ISLAND_SHALLOW;
 
 /**
  * 某点的材质。顺序即优先级，先命中者胜：
- * 桥 > 水（湖/河）> 土路 > 广场 > 岸沙带 > 草地 > 浅滩 > 海。
+ * 桥 > 水（湖/河）> 土路 > 岸沙带 > 草地 > 浅滩 > 海。
+ *
+ * 广场不是材质（ADR-0017）：办公区地面就是草地，只靠一圈石色路缘与围栏标识，
+ * 判定里不再有 plaza 这一档，草缘与贴花在广场内外完全连续。
  *
  * 为什么水在土路之前：河道穿过土路时水面必须盖住路面（当前布局里只有桥头相交，
  * 但布局一改就会出现真的穿路），而桥又在最前面放行。
@@ -99,7 +100,6 @@ export function materialAt(x: number, y: number): MaterialId {
   for (const path of PATHS) {
     if (rectContains(path, x, y)) return MATERIAL.dirt;
   }
-  if (rectContains(PLAZA, x, y)) return MATERIAL.plaza;
 
   // 岸沙带以海岸线为中线的 26px 带：一半在水里一半在陆地
   const distance = distanceSqToPolygon(x, y, ISLAND_POINTS);
@@ -338,17 +338,6 @@ export const EDGE_STYLE: Record<MaterialId, EdgeStyle> = {
     scallop: C.grassAlt,
     scallopEvery: 46,
     scallopRadius: 4,
-  },
-  [MATERIAL.plaza]: {
-    rim: C.plazaSeam,
-    rimWidth: 1,
-    tooth: C.grassTuft,
-    toothDeep: C.grassDeep,
-    toothLen: [2, 3],
-    step: 7,
-    scallop: C.grassAlt,
-    scallopEvery: 52,
-    scallopRadius: 3,
   },
   [MATERIAL.water]: {
     rim: C.waterEdge,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { LogOut } from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
+import type { ActionKey } from '@/lib/game/input';
 import { GameSession } from '@/lib/game/session';
 import { defaultAppearance, loadProfile, saveProfile, type Profile } from '@/lib/profile';
 import { ActionBar } from './ActionBar';
@@ -70,7 +71,7 @@ export function GameViewport() {
 
   const getSession = useCallback(() => sessionRef.current, []);
   const handleChat = useCallback((text: string) => sessionRef.current?.sendChat(text), []);
-  const handleAction = useCallback((action: 'sit' | 'lie' | 'emote') => {
+  const handleAction = useCallback((action: ActionKey) => {
     sessionRef.current?.perform(action);
   }, []);
   const handleRetry = useCallback(() => {

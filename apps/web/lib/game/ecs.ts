@@ -31,6 +31,16 @@ export const Motion = {
   moving: new Uint8Array(CAPACITY),
   /** 当前动作的起始时刻（ms）：换动作时重置，动画从第 0 帧起播 */
   since: new Float64Array(CAPACITY),
+  /**
+   * 叫唤 / 跳 / 打招呼：与姿态正交的一次性叠加动作。
+   * 开关 + 各自起始时刻；姿态不因它们改变，所以播完天然回到原姿势（ADR-0018 / ADR-0019）。
+   */
+  emote: new Uint8Array(CAPACITY),
+  emoteSince: new Float64Array(CAPACITY),
+  jump: new Uint8Array(CAPACITY),
+  jumpSince: new Float64Array(CAPACITY),
+  wave: new Uint8Array(CAPACITY),
+  waveSince: new Float64Array(CAPACITY),
 };
 export const Local = { flag: new Uint8Array(CAPACITY) };
 
@@ -53,6 +63,12 @@ export class Ecs {
     Motion.pose[eid] = POSE.Idle;
     Motion.moving[eid] = 0;
     Motion.since[eid] = 0;
+    Motion.emote[eid] = 0;
+    Motion.emoteSince[eid] = 0;
+    Motion.jump[eid] = 0;
+    Motion.jumpSince[eid] = 0;
+    Motion.wave[eid] = 0;
+    Motion.waveSince[eid] = 0;
     // 初始化快照数据
     const now = performance.now();
     Snapshot.currentTime[eid] = now;

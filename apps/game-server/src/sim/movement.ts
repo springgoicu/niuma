@@ -18,7 +18,8 @@ const TOLERANCE = 1.25;
 const SLACK_PX = 3;
 
 function sanitizePose(pose: number): Pose {
-  if (pose > POSE.Emote) return POSE.Idle;
+  // 姿态只有四态；越界值（含已废弃的 Emote=4）一律按待机处理
+  if (pose > POSE.Lie) return POSE.Idle;
   return pose as Pose;
 }
 
@@ -66,7 +67,17 @@ export function applyMove(player: Player, packet: MovePacket, now: number): Move
 
   const state = unpackState(packet.state);
   const pose = sanitizePose(state.pose);
-  player.applyState(state.direction, pose, state.moving);
+  // 行走中不接叫唤与打招呼：图集没有行走张嘴帧，也没有行走挥手帧，套上去就是脚在滑。
+  // 跳跃是位移动作，行走中必须放行；到期由客户端按各自窗口清位，服务端不另设计时器（ADR-0018 / 0019）。
+  const stationary = pose !== POSE.Walk && !state.moving;
+  player.applyState(
+    state.direction,
+    pose,
+    state.moving,
+    stationary && state.emote,
+    state.jump,
+    stationary && state.wave,
+  );
   player.dirty = true;
 
   return { accepted: true, crossed: false, clamped };

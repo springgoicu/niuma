@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, MessageSquare, Send } from 'lucide-react';
+import { MAX_NAME_DISPLAY_UNITS, truncateToDisplayWidth } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 
 interface ChatDockProps {
@@ -74,7 +75,8 @@ export function ChatDock({ onSend }: ChatDockProps) {
                     message.self ? 'text-lime-400' : 'text-mint-400'
                   }`}
                 >
-                  {message.name}
+                  {/* 与头顶同一口径：全角算 2 宽，超出换省略号，不撑开 340px 面板 */}
+                  {truncateToDisplayWidth(message.name, MAX_NAME_DISPLAY_UNITS)}
                 </span>
                 <span className="text-mist-100">{message.text}</span>
               </p>

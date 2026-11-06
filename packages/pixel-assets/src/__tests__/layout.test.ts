@@ -59,6 +59,31 @@ describe('图集布局契约', () => {
     }
   });
 
+  it('一次性动作的长度与客户端播放窗口一致', () => {
+    // 窗口是客户端选帧的硬边界：动画比窗口短会在末帧停顿，比窗口长会被硬切
+    const expected: Record<string, number> = {
+      jump: 440,
+      emote: 440,
+      sitEmote: 440,
+      lieEmote: 440,
+      // 挥手要多一拍「挥出」：三帧各 220ms，合计 660ms（ADR-0019）
+      wave: 660,
+      sitWave: 660,
+      lieWave: 660,
+    };
+    for (const [pose, duration] of Object.entries(expected)) {
+      const clip = CLIPS[pose as keyof typeof CLIPS];
+      expect(clip.loop).toBe(false);
+      expect(clip.frameMs.reduce((sum, ms) => sum + ms, 0)).toBe(duration);
+    }
+  });
+
+  it('跳跃的腾空帧比蹲伏与落地都长：重心停在空中才读得出「跳」', () => {
+    const { frameMs } = CLIPS.jump;
+    expect(frameMs[1]).toBeGreaterThan(frameMs[0]!);
+    expect(frameMs[1]).toBeGreaterThan(frameMs[2]!);
+  });
+
   it('图集尺寸由帧尺寸与行列数推出，不额外留边', () => {
     expect(ATLAS_WIDTH).toBe(FRAME_SIZE * COLUMNS);
     expect(ATLAS_HEIGHT).toBe(FRAME_SIZE * ROWS);

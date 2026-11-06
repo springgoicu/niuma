@@ -22,6 +22,10 @@ export class Player {
   direction: Direction = DIRECTION.Down;
   pose: Pose = POSE.Idle;
   moving = false;
+  /** 叫唤 / 跳 / 打招呼：客户端上传的一次性标志，服务端只保存与回传，不做到期计时 */
+  emote = false;
+  jump = false;
+  wave = false;
   dirty = false;
   needsViewRefresh = false;
   lastMoveAt = 0;
@@ -46,6 +50,9 @@ export class Player {
     this.direction = DIRECTION.Down;
     this.pose = POSE.Idle;
     this.moving = false;
+    this.emote = false;
+    this.jump = false;
+    this.wave = false;
     this.dirty = false;
     this.needsViewRefresh = false;
     this.lastMoveAt = 0;
@@ -55,11 +62,22 @@ export class Player {
     this.known.clear();
   }
 
-  applyState(direction: Direction, pose: Pose, moving: boolean): void {
+  applyState(
+    direction: Direction,
+    pose: Pose,
+    moving: boolean,
+    emote = false,
+    jump = false,
+    wave = false,
+  ): void {
     this.direction = direction;
     this.pose = pose;
     this.moving = moving;
-    this.state = packState(direction, pose, moving);
+    this.emote = emote;
+    this.jump = jump;
+    this.wave = wave;
+    // state 是回传的唯一来源：一律重打包，不把客户端字节原样透传
+    this.state = packState(direction, pose, moving, emote, jump, wave);
   }
 }
 

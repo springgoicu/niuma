@@ -6,7 +6,7 @@ const LEFT_KEYS = new Set(['ArrowLeft', 'KeyA']);
 const RIGHT_KEYS = new Set(['ArrowRight', 'KeyD']);
 const BLOCKED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
 
-export type ActionKey = 'sit' | 'lie' | 'emote';
+export type ActionKey = 'sit' | 'lie' | 'emote' | 'jump' | 'wave';
 
 export class InputController {
   private readonly pressed = new Set<string>();
@@ -28,6 +28,10 @@ export class InputController {
       if (event.code === 'KeyZ') onAction('sit');
       else if (event.code === 'KeyX') onAction('lie');
       else if (event.code === 'KeyC') onAction('emote');
+      // E 贴着 WASD，且不在页面快捷键里：抬手打招呼
+      else if (event.code === 'KeyE') onAction('wave');
+      // 空格本来就在 BLOCKED 里（防止页面滚动），正好拿来当跳跃键
+      else if (event.code === 'Space') onAction('jump');
     };
 
     const onKeyUp = (event: KeyboardEvent) => {

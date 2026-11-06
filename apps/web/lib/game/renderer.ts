@@ -13,6 +13,7 @@ import { ISLAND, type CharacterAppearance } from '@niuma/shared-types';
 import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
 import { GroundFx, SHADOW_NORMAL } from './fx';
+import { bubbleTopY, headTopYOf, nameBottomY, nameplateText, NAME_STROKE_WIDTH } from './nameplate';
 import { PonyRenderer } from './pony';
 import type { PonyMotion } from './pony-motion';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetrics } from './pixel-scale';
@@ -23,14 +24,11 @@ import { TerrainView } from './terrain';
 const BASE_CSS_PER_TEXEL = 3;
 
 /**
- * 所有「角色上方多远」的偏移都由生成物推导：
- * 角色顶在脚底之上 (frame.h - origin.y) 个纹素，昵称与气泡贴着头顶往外让几像素。
- * 这几个数字以前是 -47 / -54 / 48 / 96 手推的，网格一换必错。
+ * 裁剪只关心帧尺寸；「昵称与气泡离头顶多远」交给 nameplate.ts。
+ * 那个高度来自 manifest 的头顶锚点，不能再由帧底余量（frame.h - origin.y）反推：
+ * 帧底余量是脚底到帧底的 5 纹素，按它摆会把名字画在膝盖上。
  */
 const FRAME_H = SPRITE_LAYOUT.frame.h;
-const HEAD_ROOM = FRAME_H - SPRITE_LAYOUT.origin.y;
-const LABEL_OFFSET_Y = -HEAD_ROOM + 2;
-const BUBBLE_OFFSET_Y = -HEAD_ROOM - 5;
 /** 裁剪余量：半帧宽 + 一帧高（树冠另算，由地形自己按纹理高度给） */
 const CULL_PAD_X = SPRITE_LAYOUT.frame.w;
 const CULL_PAD_Y = FRAME_H;
@@ -47,7 +45,7 @@ const NAME_STYLE = {
   fontSize: 9,
   fill: 0xf4ede1,
   // 描边是暖深褐而不是炭黑：暖底画面上纯黑描边会立刻把观感拉回马赛克
-  stroke: { color: 0x2b2118, width: 4 },
+  stroke: { color: 0x2b2118, width: NAME_STROKE_WIDTH },
   letterSpacing: 0.4,
 };
 
@@ -62,8 +60,14 @@ class EntityView {
   private readonly bubbleBg = new Graphics();
   private readonly shadows: Texture[];
   private shadowIndex = SHADOW_NORMAL;
+  /** 跳跃弧线的抬升纹素（0 或负值）：本体与昵称同步抬高，阴影留在地面 */
+  private jumpLift = 0;
   bubbleUntil = 0;
   private lastColumn = -1;
+  /** 昵称文字底边（相对脚底）：换装改变头顶高度后重算 */
+  private nameBottom: number;
+  /** 上次气泡高度：换装重排时直接复用，不必重新测量文字 */
+  private bubbleHeight = 0;
   
   // 气泡保护和性能优化字段
   private lastBubbleUpdateTime = 0;
@@ -75,7 +79,7 @@ class EntityView {
   readonly bubble = new Container();
 
   constructor(
-    atlas: Atlas,
+    private readonly atlas: Atlas,
     name: string,
     appearance: CharacterAppearance,
     devicePxPerTexel: number,
@@ -90,9 +94,12 @@ class EntityView {
     shadowSprite.anchor.set(0.5, 0.5);
 
     this.body = new PonyRenderer(atlas, appearance, 1);
-    this.label = new Text({ text: name, style: NAME_STYLE, resolution: devicePxPerTexel });
+    // 昵称底边贴着头顶外侧：头顶高度来自图集锚点，帽檐与犄角再由外观分档让位
+    this.nameBottom = nameBottomY(headTopYOf(atlas.manifest, appearance.species), appearance);
+    // 头顶只放得下 16 显示宽：再长的昵称换省略号，否则会压到邻座的名字与气泡
+    this.label = new Text({ text: nameplateText(name), style: NAME_STYLE, resolution: devicePxPerTexel });
     this.label.anchor.set(0.5, 1);
-    this.label.position.set(0, LABEL_OFFSET_Y);
+    this.label.position.set(0, this.nameBottom);
 
     this.bubbleText = new Text({
       text: '',
@@ -129,7 +136,8 @@ class EntityView {
 
   setPosition(x: number, y: number): void {
     this.root.position.set(x, y);
-    this.labels.position.set(x, y);
+    // 昵称与气泡跟着跳跃抬升：不然人跳起来会「穿」过自己的名字
+    this.labels.position.set(x, y + this.jumpLift);
   }
 
   /** 换列时顺手判定落脚：跨到接触帧才扬尘，站着不动不会一路冒土 */
@@ -144,9 +152,44 @@ class EntityView {
   /** 微动效：整数纹素起伏 + 阴影形态切换（换 texture，不做浮点缩放） */
   applyMotion(motion: PonyMotion): void {
     this.body.setBob(motion.bobTexels);
-    if (motion.shadow === this.shadowIndex) return;
-    this.shadowIndex = motion.shadow;
-    this.shadow.texture = this.shadows[motion.shadow] ?? this.shadows[SHADOW_NORMAL]!;
+    this.setShadow(motion.shadow);
+  }
+
+  /**
+   * 跳跃弧线：本体与昵称一起抬高，接触阴影留在地面。
+   * 抬升量已经是整数纹素，这里不再做任何浮点缩放（ADR-0013）。
+   */
+  applyJump(liftTexels: number, shadow: number): void {
+    const lift = Math.round(liftTexels);
+    if (lift !== this.jumpLift) {
+      this.jumpLift = lift;
+      this.body.setBob(lift);
+      this.labels.position.y = this.root.position.y + lift;
+    }
+    this.setShadow(shadow);
+  }
+
+  /** 阴影换纹理而不是缩放：三档形态预烘焙，来回切不会出现亚像素毛边 */
+  private setShadow(index: number): void {
+    if (index === this.shadowIndex) return;
+    this.shadowIndex = index;
+    this.shadow.texture = this.shadows[index] ?? this.shadows[SHADOW_NORMAL]!;
+  }
+
+  /** 换装会改变头顶高度（帽子 / 发型 / 角）：昵称与气泡立即重新让位，不用重新入场 */
+  setAppearance(appearance: CharacterAppearance): void {
+    this.body.setAppearance(appearance);
+    const nameBottom = nameBottomY(headTopYOf(this.atlas.manifest, appearance.species), appearance);
+    if (nameBottom === this.nameBottom) return;
+    this.nameBottom = nameBottom;
+    this.label.position.y = nameBottom;
+    if (this.bubble.visible) this.layoutBubble(this.bubbleHeight);
+  }
+
+  /** 气泡整体叠在昵称上沿之外：底边与名字保持固定间隙，不向人物方向回落 */
+  private layoutBubble(height: number): void {
+    this.bubbleHeight = height;
+    this.bubble.position.set(0, Math.round(bubbleTopY(this.nameBottom, this.label.height, height)));
   }
 
   showBubble(text: string, now: number, duration = 6000): void {
@@ -184,7 +227,7 @@ class EntityView {
     this.bubbleBg.rect(right - 1, 0, 1, height).fill(0xb9a68c);
 
     this.bubbleText.position.set(-Math.round(textW / 2), 2);
-    this.bubble.position.set(0, BUBBLE_OFFSET_Y - height);
+    this.layoutBubble(height);
     this.bubble.visible = true;
     this.bubble.alpha = 1; // 重置透明度
     this.bubbleUntil = now + duration;
@@ -311,6 +354,10 @@ export class GameRenderer {
     const frames = walk?.frames ?? [];
     // 接触帧 = 每个步幅的第一帧；六拍走一圈扬两次尘
     this.dustFrames = new Set(frames.length > 0 ? [frames[0]!, frames[Math.floor(frames.length / 2)]!] : []);
+    // 跳跃末帧是落地：复用同一条扬尘通路，不另建粒子系统
+    const jump = this.atlas.manifest.clips.jump;
+    const landing = jump ? jump.frames[jump.frames.length - 1] : undefined;
+    if (landing !== undefined) this.dustFrames.add(landing);
   }
 
   async addEntity(id: number, name: string, appearance: CharacterAppearance): Promise<void> {
@@ -396,8 +443,13 @@ export class GameRenderer {
     this.views.get(id)?.applyMotion(motion);
   }
 
+  /** 跳跃弧线：抬升本体与昵称、切换阴影档位；lift 为 0 时即回到地面 */
+  setJump(id: number, liftTexels: number, shadow: number): void {
+    this.views.get(id)?.applyJump(liftTexels, shadow);
+  }
+
   setAppearance(id: number, appearance: CharacterAppearance): void {
-    this.views.get(id)?.body.setAppearance(appearance);
+    this.views.get(id)?.setAppearance(appearance);
   }
 
   showBubble(id: number, text: string): void {

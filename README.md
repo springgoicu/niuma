@@ -11,7 +11,7 @@
 | Monorepo | pnpm 10 + Turborepo 2 + TypeScript 5（strict） |
 | Web | Next.js 15 App Router · React 19 · Tailwind CSS v4 · Zustand 5 |
 | 渲染 | PixiJS 8（WebGPU 优先，自动回落 WebGL2）· bitecs 0.4（SoA + TypedArray） |
-| 美术 | 程序化生成 64×64 分层像素图集，16 列帧预算（走 6 拍 / 待机呼吸 + 眨眼 / 坐躺 / 叫唤） |
+| 美术 | 程序化生成 64×64 分层像素图集，34 列帧预算（走 6 拍 / 待机呼吸 + 眨眼 / 坐躺 / 跳 / 站坐躺三套叫唤 / 站坐躺三套挥手） |
 | 服务 | Bun `Bun.serve` WebSocket（内部即 uWebSockets）· 20Hz 固定 Tick |
 | 协议 | 手写二进制帧，移动包固定 **8 字节**；无 JSON、无轮询 |
 | 数据 | 进程内存（唯一真相）+ 浏览器会话缓存；无数据库、无 ORM |
@@ -59,8 +59,11 @@ docs/adr             关键决策记录
 
 角色是 `packages/pixel-assets` 里的程序化像素画，不依赖任何外部美术工具：
 
-- **网格与帧预算**在 `src/layout.ts` 一处定义：64×64 帧、每方向 16 列，idle 0-2、walk 3-8（六拍 80ms）、
-  sit 9-10、lie 11-12、emote 13-15。生成器按列作画，客户端按同一份布局切片与播放。
+- **网格与帧预算**在 `src/layout.ts` 一处定义：64×64 帧、每方向 34 列，idle 0-2、walk 3-8（六拍 80ms）、
+  sit 9-10、lie 11-12、jump 13-15、emote 16-18、sitEmote 19-21、lieEmote 22-24、
+  wave 25-27、sitWave 28-30、lieWave 31-33。
+  生成器按列作画，客户端按同一份布局切片与播放。叫唤、跳与打招呼是姿态之外的叠加动作
+  （ADR-0018 / ADR-0019）：按 E 抬前蹄挥手，站 / 坐 / 躺各一套，行走中不接。
 - **画法**是硬朗卡通：每个形体只有「本体 + 一档阴影」，阴影靠整块偏移而不是逐列扫描，
   描边统一 1px 并补对角针孔。牛与马共用 48 texel 的站立总高（差 1.3），
   靠躯干 23 : 19、腿 17.5 : 20、颈 8.2 : 10.5、吻 10 : 6.8 分开剪影（见 ADR-0010）。
@@ -126,7 +129,8 @@ docs/adr             关键决策记录
 ```
 
 - 坐标：1/8 像素定点，u16 覆盖 8192×8192 世界
-- state：`dir(2b) | pose(3b) | moving(1b)`
+- state：`dir(2b) | pose(2b) | wave(1b) | moving(1b) | emote(1b) | jump(1b)`；
+  后三位是一次性叠加动作，与姿态正交，播完由客户端清位（ADR-0018 / ADR-0019）
 - 同步包：`[op][tick u32][count u16]` + 每个实体 7 字节
 - 外观：32 字节定长（物种 1 + RGB565 十一色 22 + 部件 4 + 配件 4 + 保留 1），配件槽为 头饰 / 眼镜 / 颈饰 / 发型
 - 排队：位次快照 16 字节（ticket u32 + 位次 / 队列长度 / 预计等待 / 容量 u16 + 主导维度 u8 + 水位千分比 u16），拒绝包 2 字节
@@ -193,5 +197,5 @@ BENCH_BOTS=120 BENCH_QUEUE_PROBE=1 BENCH_MS=20000 pnpm bench
 
 不含多地图/分线、好友私聊、Redis 分片、完整反作弊、移动端虚拟摇杆；
 地图只有一座手写海岛，地形碰撞是静态几何，不含寻路、可破坏物与游泳；美术是脚本生成的像素画，
-替换 `apps/web/public/sprites/` 下的图集与 `manifest.json`（`version: 4`：64×64 帧、`origin`、
+替换 `apps/web/public/sprites/` 下的图集与 `manifest.json`（`version: 7`：64×64 帧、34 列、`origin`、
 20×20 配件与 clips 结构）即可接入正式美术。

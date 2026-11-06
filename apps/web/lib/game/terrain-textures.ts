@@ -13,8 +13,11 @@ import { TERRAIN_COLORS as C } from './terrain-palette';
  * 色温纪律（ADR-0013）：所有形体只有「本体 + 一档暗边」，
  * 暗边一律取本体色相压暗（EDGE_TINT），不出现纯黑。
  *
+ * 地面纪律（ADR-0017）：所有地面材质都走「底色 + `organicBlob` 单像素行色簇 + 1px 噪点」，
+ * 没有任何一格与平铺边界平行的直边——广场不再铺装，只留路缘。
+ *
  * 尺度基准（ADR-0010）：角色从 41 texel 长到 48 texel，地形件按 1.25 一起放大。
- * 树高 = 角色 ×2.25、地砖边长为角色身高的 1/3、围栏齐胸。
+ * 树高 = 角色 ×2.25、路缘宽 10px、围栏齐胸。
  */
 
 type TextureFactory = Application['renderer'];
@@ -38,136 +41,152 @@ function bake(renderer: TextureFactory, draw: (g: Graphics) => void, options: Ba
   return texture;
 }
 
-/** 平铺图案要跨过边界时补画一条：否则 256 的图块接缝处会出现半块砖 */
+/** 平铺图案跨过边界时分块补画，避免纹理接缝露出直切边 */
 function wrappedRect(g: Graphics, x: number, y: number, w: number, h: number, size: number, fill: number): void {
   const left = ((x % size) + size) % size;
-  g.rect(left, y, w, h).fill(fill);
-  if (left + w > size) g.rect(0, y, left + w - size, h).fill(fill);
+  const top = ((y % size) + size) % size;
+  const horizontal: Array<[number, number]> =
+    left + w > size ? [[left, size - left], [0, left + w - size]] : [[left, w]];
+  const vertical: Array<[number, number]> =
+    top + h > size ? [[top, size - top], [0, top + h - size]] : [[top, h]];
+  for (const [px, pw] of horizontal) {
+    for (const [py, ph] of vertical) g.rect(px, py, pw, ph).fill(fill);
+  }
 }
 
 /**
- * 草地基底：整块 64px 有机色块 + 草簇。
+ * 平铺用的有机斑块：单像素行组成的柔和色簇。
+ * 种子固定、边缘起伏，靠 `wrappedRect` 在平铺边界无缝衔接——
+ * 草 / 土 / 水 / 海共用这一份，各材质只差半径、行高与配色。
+ */
+function organicBlob(
+  g: Graphics,
+  centerX: number,
+  centerY: number,
+  radiusX: number,
+  radiusY: number,
+  size: number,
+  color: number,
+  random: () => number,
+): void {
+  for (let row = -radiusY; row <= radiusY; row += 1) {
+    const falloff = Math.sqrt(Math.max(0, 1 - (row / radiusY) ** 2));
+    const width = Math.max(1, Math.round(radiusX * 2 * falloff + (random() - 0.5) * 4));
+    const offset = Math.round((random() - 0.5) * 3);
+    wrappedRect(g, centerX + offset - Math.floor(width / 2), centerY + row, width, 1, size, color);
+  }
+}
+
+/**
+ * 草地基底：低对比的圆润色簇 + 零散草叶。
  * 对比压得比暗调时代更平——细节交给贴花层，地面只负责退到背景里。
  */
 export function makeGrassTexture(renderer: TextureFactory): Texture {
-  const size = 256;
-  const patch = 64;
+  const size = 512;
   return bake(renderer, (g) => {
     g.rect(0, 0, size, size).fill(C.grassBase);
     const random = seeded(0x51ed270b);
-    // 色块不再对齐网格：每块随机偏移 ±12，平铺时看不出周期
-    for (let y = 0; y < size; y += patch) {
-      for (let x = 0; x < size; x += patch) {
-        if (random() > 0.55) continue;
-        const ox = Math.round((random() - 0.5) * 24);
-        const oy = Math.round((random() - 0.5) * 24);
-        wrappedRect(g, x + ox, y + oy, patch, patch, size, C.grassAlt);
-      }
+    // 大小不一、彼此交叠的色簇打散平铺感，不沿固定格线拼方块
+    for (let i = 0; i < 54; i += 1) {
+      organicBlob(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        12 + Math.floor(random() * 22),
+        7 + Math.floor(random() * 13),
+        size,
+        C.grassAlt,
+        random,
+      );
     }
-    // 少量深色下层草叶：只在暗调基底上做体积，不参与明度对比
-    for (let i = 0; i < 160; i += 1) {
-      const x = Math.floor(random() * (size - 2));
-      const y = Math.floor(random() * (size - 2));
+    // 细节密度按纹理面积等比缩放，仍然只是远看不抢眼的像素颗粒
+    for (let i = 0; i < 640; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
       g.rect(x, y, 1, 1).fill(C.grassDeep);
     }
-    for (let i = 0; i < 420; i += 1) {
-      const x = Math.floor(random() * (size - 2));
-      const y = Math.floor(random() * (size - 2));
+    for (let i = 0; i < 1680; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
       g.rect(x, y, 1, random() > 0.55 ? 2 : 1).fill(C.grassTuft);
     }
-    for (let i = 0; i < 34; i += 1) {
-      const x = Math.floor(random() * (size - 3));
-      const y = Math.floor(random() * (size - 3));
+    for (let i = 0; i < 136; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
       g.rect(x, y, 2, 1).fill(C.grassStone);
     }
   });
 }
 
 /**
- * 办公广场地砖：64×32 大板、上下错缝、只有 1px 深缝，取消每块砖的亮边。
- * 地面越「有图案」，角色越出不来。
+ * 土路：暖棕底上叠大小不一的有机色簇，再用 1px 石子与短车辙打散。
+ * 没有任何一条边与平铺边界平行，所以看不出「一块块」的拼贴。
  */
-export function makePlazaTexture(renderer: TextureFactory): Texture {
-  const size = 256;
-  const bw = 64;
-  const bh = 32;
-  return bake(renderer, (g) => {
-    g.rect(0, 0, size, size).fill(C.plazaSeam);
-    for (let row = 0; row * bh < size; row += 1) {
-      const y = row * bh;
-      const offset = (row % 2) * (bw / 2);
-      for (let brick = -1; brick * bw < size + bw; brick += 1) {
-        const x = brick * bw + offset;
-        // 两种板面只差一档明度：有错缝就已经够了，再拉对比地面就抢戏
-        const tone = (row + brick) % 2 === 0 ? C.plazaBase : C.plazaAlt;
-        wrappedRect(g, x + 1, y + 1, bw - 2, bh - 2, size, tone);
-        wrappedRect(g, x + 1, y + 1, bw - 2, 1, size, C.plazaHighlight);
-      }
-    }
-
-    const speckles: Array<[number, number, number, number]> = [
-      [24, 58, 2, 1],
-      [78, 22, 1, 2],
-      [140, 74, 2, 2],
-      [206, 40, 1, 1],
-      [40, 150, 2, 1],
-      [176, 166, 1, 1],
-      [112, 214, 2, 2],
-      [244, 232, 1, 1],
-    ];
-    for (const [x, y, w, h] of speckles) g.rect(x, y, w, h).fill(C.plazaEdge);
-
-    // 线缆槽：一条横贯的地槽，两端各留 8px 让平铺接缝对齐
-    g.rect(8, 122, size - 16, 4).fill(C.plazaSeam);
-    g.rect(8, 126, size - 16, 1).fill(C.plazaHighlight);
-
-    // 纸屑、咖啡渍、通风口：各来一处，密度低才不抢角色
-    g.rect(196, 92, 5, 4).fill(C.plazaEdge);
-    g.rect(197, 93, 3, 1).fill(C.plazaSeam);
-    g.rect(60, 196, 9, 5).fill(C.bridgeSeam);
-    g.rect(62, 195, 6, 1).fill(C.plazaEdge);
-    g.rect(150, 20, 8, 8).fill(C.fenceDark);
-    for (let i = 0; i < 3; i += 1) g.rect(151, 22 + i * 2, 6, 1).fill(C.trunkDark);
-  });
-}
-
-/** 土路：车辙方向不固定，只用碎石与深浅斑，纵横都看不出接缝 */
 export function makeDirtTexture(renderer: TextureFactory): Texture {
   const size = 128;
   return bake(renderer, (g) => {
     g.rect(0, 0, size, size).fill(C.dirtBase);
     const random = seeded(0x2c9fd3a1);
-    for (let i = 0; i < 26; i += 1) {
+    // 浅棕斑簇：半径与位置全按种子走，彼此交叠成软边
+    for (let i = 0; i < 30; i += 1) {
+      organicBlob(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        7 + Math.floor(random() * 13),
+        3 + Math.floor(random() * 6),
+        size,
+        C.dirtAlt,
+        random,
+      );
+    }
+    // 车辙：2~5px 的短划，纵向也叠少量，看不出固定走向
+    for (let i = 0; i < 140; i += 1) {
       const x = Math.floor(random() * size);
       const y = Math.floor(random() * size);
-      g.rect(x, y, 40 + Math.floor(random() * 24), 24 + Math.floor(random() * 16)).fill(C.dirtAlt);
+      const length = 2 + Math.floor(random() * 4);
+      if (random() > 0.82) wrappedRect(g, x, y, 1, length, size, C.dirtRut);
+      else wrappedRect(g, x, y, length, 1, size, C.dirtRut);
     }
-    for (let i = 0; i < 110; i += 1) {
-      const x = Math.floor(random() * (size - 4));
-      const y = Math.floor(random() * (size - 2));
-      g.rect(x, y, 1 + Math.floor(random() * 3), 1).fill(C.dirtRut);
-    }
-    for (let i = 0; i < 40; i += 1) {
-      const x = Math.floor(random() * (size - 2));
-      const y = Math.floor(random() * (size - 2));
-      g.rect(x, y, 1 + Math.floor(random() * 2), 1).fill(C.dirtPebble);
+    // 石子：1px 为主，偶尔 2px
+    for (let i = 0; i < 88; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
+      wrappedRect(g, x, y, random() > 0.72 ? 2 : 1, 1, size, C.dirtPebble);
     }
   });
 }
 
-/** 水面：48px 起平铺，波纹错行排布，滚动时不会看到接缝（与 terrain.ts 的 WATER_TILE 必须同值） */
+/** 水面：96px 平铺，波纹是短弧而不是横贯整块的直杠（与 terrain.ts 的 WATER_TILE 必须同值） */
 export function makeWaterTexture(renderer: TextureFactory): Texture {
-  const size = 48;
+  const size = 96;
   return bake(renderer, (g) => {
     g.rect(0, 0, size, size).fill(C.waterDeep);
-    for (let band = 0; band < 4; band += 1) {
-      const y = band * 12;
-      const offset = (band % 2) * 12;
-      g.rect(0, y, size, 1).fill(C.waterMid);
-      g.rect(offset, y + 2, 18, 1).fill(C.waterCrest);
-      g.rect(offset + 27, y + 2, 9, 1).fill(C.waterCrest);
-      g.rect(offset + 3, y + 3, 6, 1).fill(C.waterFoam);
-      g.rect(offset + 33, y + 3, 3, 1).fill(C.waterFoam);
+    const random = seeded(0x37a7c29d);
+    // 波纹：扁平的有机色簇，长度随位置变化，平铺边界靠 wrappedRect 收口
+    for (let i = 0; i < 30; i += 1) {
+      organicBlob(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        5 + Math.floor(random() * 11),
+        1 + Math.floor(random() * 2),
+        size,
+        C.waterMid,
+        random,
+      );
+    }
+    // 浪脊：贴在波纹上沿的短高光，偶尔再补一撮泡沫
+    for (let i = 0; i < 28; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
+      const length = 2 + Math.floor(random() * 5);
+      wrappedRect(g, x, y, length, 1, size, C.waterCrest);
+      if (random() > 0.72) wrappedRect(g, x + 1, y + 1, 2, 1, size, C.waterFoam);
+    }
+    // 零星泡沫点：让水面有颗粒，不靠条纹撑细节
+    for (let i = 0; i < 36; i += 1) {
+      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, C.waterFoam);
     }
   });
 }
@@ -181,17 +200,28 @@ export function makeSeaTexture(renderer: TextureFactory): Texture {
   return bake(renderer, (g) => {
     g.rect(0, 0, size, size).fill(C.seaBase);
     const random = seeded(0x5ea5a17);
-    for (let band = 0; band < 6; band += 1) {
-      const y = band * 16;
-      const offset = (band % 2) * 24;
-      g.rect(0, y, size, 1).fill(C.seaMid);
-      g.rect(offset, y + 4, 14, 1).fill(C.seaCrest);
-      g.rect(offset + 58, y + 6, 9, 1).fill(C.seaCrest);
+    // 深海波纹：比湖面更扁更稀的有机色簇，不再有横贯整块的直线
+    for (let i = 0; i < 16; i += 1) {
+      organicBlob(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        9 + Math.floor(random() * 15),
+        1 + Math.floor(random() * 2),
+        size,
+        C.seaMid,
+        random,
+      );
     }
-    for (let i = 0; i < 48; i += 1) {
-      const x = Math.floor(random() * (size - 4));
-      const y = Math.floor(random() * (size - 2));
-      g.rect(x, y, 1 + Math.floor(random() * 3), 1).fill(C.seaFoam);
+    // 浪脊：4~9px 的短高光，疏到只做点缀
+    for (let i = 0; i < 14; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
+      wrappedRect(g, x, y, 4 + Math.floor(random() * 6), 1, size, C.seaCrest);
+    }
+    // 泡沫点：海面只在海岸附近进视野，颗粒压到最低
+    for (let i = 0; i < 44; i += 1) {
+      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, C.seaFoam);
     }
   });
 }
@@ -208,14 +238,15 @@ export const TREE_H = 108;
 const TREE_CENTER = TREE_W / 2;
 const TREE_FRAME = new Rectangle(0, 0, TREE_W, TREE_H);
 
-/** 四种树形：行宽不同、树干高度不同，凑近看才不像复制粘贴 */
+/** 四种不对称树冠轮廓：宽度随高度变化，避免规整的锥形堆叠 */
 const TREE_PROFILES: number[][] = [
-  [0.16, 0.32, 0.5, 0.66, 0.8, 0.9, 0.96, 1, 1, 0.98, 0.94, 0.88, 0.8, 0.7, 0.58, 0.44, 0.3, 0.18],
-  [0.2, 0.4, 0.58, 0.72, 0.86, 0.94, 1, 0.99, 0.94, 0.86, 0.76, 0.64, 0.52, 0.4, 0.28, 0.16],
-  [0.12, 0.28, 0.46, 0.62, 0.78, 0.9, 0.98, 1, 0.98, 0.94, 0.86, 0.76, 0.64, 0.5, 0.36, 0.22],
-  [0.24, 0.46, 0.66, 0.82, 0.94, 1, 0.98, 0.92, 0.82, 0.7, 0.56, 0.42, 0.28, 0.16],
+  [0.12, 0.2, 0.3, 0.42, 0.56, 0.7, 0.83, 0.94, 1, 0.98, 0.94, 0.91, 0.96, 1, 0.98, 0.94, 0.88, 0.81, 0.74, 0.66, 0.57, 0.46, 0.32, 0.18],
+  [0.18, 0.3, 0.44, 0.59, 0.74, 0.87, 0.96, 1, 0.96, 0.9, 0.83, 0.77, 0.82, 0.9, 0.97, 0.94, 0.88, 0.81, 0.73, 0.64, 0.54, 0.42, 0.28, 0.14],
+  [0.1, 0.19, 0.3, 0.43, 0.57, 0.71, 0.84, 0.95, 0.99, 0.94, 0.87, 0.8, 0.76, 0.82, 0.91, 0.99, 0.97, 0.91, 0.83, 0.74, 0.64, 0.52, 0.36, 0.2],
+  [0.16, 0.28, 0.42, 0.57, 0.72, 0.85, 0.96, 1, 0.97, 0.92, 0.86, 0.8, 0.76, 0.8, 0.88, 0.95, 0.98, 0.94, 0.86, 0.77, 0.67, 0.55, 0.4, 0.23],
 ];
-const TREE_ROW_HEIGHT = 4;
+const TREE_ROW_HEIGHT = 3;
+const TREE_CANOPY_WIDTHS = [58, 62, 64, 60] as const;
 
 export interface TreeTextures {
   trunk: Texture;
@@ -224,7 +255,7 @@ export interface TreeTextures {
 
 function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures {
   const profile = TREE_PROFILES[variant % TREE_PROFILES.length]!;
-  const canopyWidth = 56 + (variant % 2) * 6;
+  const canopyWidth = TREE_CANOPY_WIDTHS[variant % TREE_CANOPY_WIDTHS.length]!;
   const trunkWidth = 7 + (variant % 2) * 3;
   const trunkHeight = 28 + (variant % 3) * 4;
   const trunkX = Math.round(TREE_CENTER - trunkWidth / 2);
@@ -254,21 +285,31 @@ function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures 
   const canopy = bake(
     renderer,
     (g) => {
+      let centerShift = 0;
       profile.forEach((ratio, index) => {
         const width = Math.max(6, Math.round(ratio * canopyWidth));
         const y = trunkTop - (index + 1) * TREE_ROW_HEIGHT;
-        const x = Math.round(TREE_CENTER - width / 2);
-        // 先铺 1px 暗边再压主体，剪影才立得住
-        g.rect(x - 2, y, width + 4, TREE_ROW_HEIGHT).fill(C.canopyEdge);
+        const drift = random();
+        centerShift = Math.max(-2, Math.min(2, centerShift + (drift > 0.7 ? 1 : drift < 0.3 ? -1 : 0)));
+        const x = Math.round(TREE_CENTER + centerShift - width / 2);
+        // 叶簇外沿保留一档暗色，轮廓高低变化而不是齐刷刷叠成层层方片
+        const overhang = random() > 0.76 ? 2 : 1;
+        g.rect(x - overhang, y, width + overhang * 2, TREE_ROW_HEIGHT).fill(C.canopyEdge);
         g.rect(x, y, width, TREE_ROW_HEIGHT).fill(C.canopyMid);
-        g.rect(x, y, width, 1).fill(C.canopyLight);
-        g.rect(x, y + TREE_ROW_HEIGHT - 1, width, 1).fill(C.canopyDeep);
+        if (random() > 0.34) {
+          const highlightX = x + 1 + Math.floor(random() * Math.max(1, width - 4));
+          g.rect(highlightX, y, 2 + Math.floor(random() * 3), 1).fill(C.canopyLight);
+        }
+        if (random() > 0.48) {
+          const shadeX = x + 1 + Math.floor(random() * Math.max(1, width - 3));
+          g.rect(shadeX, y + TREE_ROW_HEIGHT - 1, 2 + Math.floor(random() * 2), 1).fill(C.canopyDeep);
+        }
 
-        // 受光的颜色斑块：随机撒，但只在行内，形状不会碎成噪点
-        const marks = 2 + Math.floor(random() * 4);
+        // 受光斑点分散成小叶簇，不沿每一行横向排成条纹
+        const marks = 1 + Math.floor(random() * 3);
         for (let m = 0; m < marks; m += 1) {
           const mx = x + 2 + Math.floor(random() * Math.max(1, width - 5));
-          const my = y + Math.floor(random() * 3);
+          const my = y + Math.floor(random() * TREE_ROW_HEIGHT);
           const bright = random() > 0.45;
           g.rect(mx, my, random() > 0.6 ? 3 : 1, 1).fill(bright ? C.canopyGlow : C.canopyDeep);
         }
@@ -276,7 +317,7 @@ function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures 
       // 树冠底缘：向下收一档暗边，和树干之间才有厚度
       const bottomY = trunkTop - TREE_ROW_HEIGHT;
       const bottomWidth = Math.round(profile[profile.length - 1]! * canopyWidth);
-      g.rect(Math.round(TREE_CENTER - bottomWidth / 2) - 1, bottomY + 1, bottomWidth + 2, 2).fill(C.canopyDeep);
+      g.rect(Math.round(TREE_CENTER + centerShift - bottomWidth / 2) - 1, bottomY + 1, bottomWidth + 2, 2).fill(C.canopyDeep);
     },
     { frame: TREE_FRAME },
   );

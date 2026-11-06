@@ -408,7 +408,7 @@ export interface GeneratedClip {
 
 export const SPRITE_LAYOUT = ${JSON.stringify(
     {
-      version: 5,
+      version: 7,
       frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
       origin: ORIGIN,
       directions: DIRECTIONS,
@@ -477,14 +477,15 @@ function cosmeticIcon(kind: CosmeticKind, id: string, dir: string): Uint8Array |
 }
 
 async function main(): Promise<void> {
-  // 输出目录整体重建：v5 删掉了 body-N / back-* 这些旧产物，留着会被误读成仍在用的图层
+  // 输出目录整体重建：换版本后旧产物（如 v5 的 body-N / back-*）留着会被误读成仍在用的图层
   await rm(OUT_DIR, { recursive: true, force: true });
   await mkdir(OUT_DIR, { recursive: true });
   const started = Date.now();
 
   const manifest: Record<string, unknown> = {
-    // v5：配件转灰度（靠 tint 染色）、尾巴独立图层、背包槽改发型；v4 的图集不再兼容
-    version: 5,
+    // v7：新增打招呼 —— 25-33 为站/坐/躺三套抬前蹄挥手；
+    // v6 的图集列数（25）与 v7（34）不兼容
+    version: 7,
     frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
     directions: DIRECTIONS,
     clips: CLIPS,

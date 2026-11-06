@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { PONY_POSES, ponyMotion, type PonyPoseName } from '../pony-motion';
+import {
+  JUMP_LIFT_PEAK,
+  PONY_POSES,
+  jumpLiftTexels,
+  jumpShadowFor,
+  ponyMotion,
+  type PonyPoseName,
+} from '../pony-motion';
 
 describe('角色微动效', () => {
   it('位移只允许 0 或 -1：永远抬高，绝不陷进地面', () => {
@@ -91,5 +98,42 @@ describe('角色微动效', () => {
     };
     const phases = new Set([1, 2, 3, 4, 5, 6].map(phaseOf));
     expect(phases.size).toBeGreaterThan(1);
+  });
+});
+
+describe('跳跃弧线', () => {
+  const DURATION = 440;
+
+  it('起落都贴地，全程只抬高不下沉且为整数', () => {
+    expect(jumpLiftTexels(-10, DURATION)).toBe(0);
+    expect(jumpLiftTexels(0, DURATION)).toBe(0);
+    expect(jumpLiftTexels(DURATION, DURATION)).toBe(0);
+    expect(jumpLiftTexels(DURATION + 200, DURATION)).toBe(0);
+    for (let t = 0; t <= DURATION; t += 4) {
+      const lift = jumpLiftTexels(t, DURATION);
+      expect(lift).toBeLessThanOrEqual(0);
+      expect(Number.isInteger(lift)).toBe(true);
+    }
+  });
+
+  it('中段触顶 -7：比图集的 5 纹素腾空多出一倍落差', () => {
+    let peak = 0;
+    for (let t = 0; t <= DURATION; t += 2) peak = Math.min(peak, jumpLiftTexels(t, DURATION));
+    expect(peak).toBe(-JUMP_LIFT_PEAK);
+  });
+
+  it('先升后降：不会中途二次起跳', () => {
+    const samples: number[] = [];
+    for (let t = 0; t <= DURATION; t += 10) samples.push(jumpLiftTexels(t, DURATION));
+    const minIndex = samples.indexOf(Math.min(...samples));
+    for (let i = 1; i <= minIndex; i += 1) expect(samples[i]!).toBeLessThanOrEqual(samples[i - 1]!);
+    for (let i = minIndex + 1; i < samples.length; i += 1) expect(samples[i]!).toBeGreaterThanOrEqual(samples[i - 1]!);
+  });
+
+  it('阴影只在真正腾空时摊开', () => {
+    expect(jumpShadowFor(0)).toBe(1);
+    expect(jumpShadowFor(-3)).toBe(1);
+    expect(jumpShadowFor(-4)).toBe(0);
+    expect(jumpShadowFor(-JUMP_LIFT_PEAK)).toBe(0);
   });
 });

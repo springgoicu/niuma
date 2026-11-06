@@ -3,6 +3,7 @@ import {
   APPEARANCE_BYTES,
   MAX_CHAT_CHARS,
   MAX_NAME_BYTES,
+  MAX_NAME_CHARS,
   MOVE_PACKET_BYTES,
   MOVE_PACKET_WITH_TIMING_BYTES,
   QUEUE_REJECT_BYTES,
@@ -145,15 +146,25 @@ export function readOpCode(data: Uint8Array): number {
   return data.byteLength > 0 ? data[0]! : 0;
 }
 
+/**
+ * 昵称钳制：字符数与字节数两把尺子同时生效。
+ *
+ * 只按字节截断会漏掉「16 个汉字」这条产品规则（48 字节刚好兜不住 4 字节 emoji 的组合），
+ * 只按字符截断又会让 u8 长度字段溢出——两个条件都得在协议层守住，服务端才是权威。
+ */
 export function truncateName(name: string): string {
   const cleaned = name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
   const fallback = cleaned.length > 0 ? cleaned : '无名牛马';
   let out = '';
+  let chars = 0;
   let bytes = 0;
+  // 按码点遍历：slice 会把 emoji 的代理对切成半个字符
   for (const ch of fallback) {
+    if (chars >= MAX_NAME_CHARS) break;
     const size = textEncoder.encode(ch).length;
     if (bytes + size > MAX_NAME_BYTES) break;
     out += ch;
+    chars += 1;
     bytes += size;
   }
   return out.length > 0 ? out : '无名牛马';

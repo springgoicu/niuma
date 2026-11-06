@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { ArrowRight, Coffee, CornerDownRight, Terminal } from 'lucide-react';
-import { SpriteStack } from './SpriteMask';
+import { CharacterSprite } from './CharacterSprite';
 
 const METRICS = [
   ['20 Hz', '权威 tick'],
@@ -92,24 +92,9 @@ export function Hero() {
               </div>
               <div className="absolute bottom-[86px] left-1/2 h-1.5 w-8 -translate-x-1/2 bg-ink-500" />
 
-              {/* 角色 */}
+              {/* 角色：与物种档案同一张默认外观图，只差放大倍数 */}
               <div className="absolute bottom-[86px] right-14 animate-float">
-                <SpriteStack
-                  layers={[
-                    // 每层只占自己那些像素，必须全部叠上，否则眼睛与口鼻会变成透明洞
-                    { src: '/sprites/cow/tail-0.png', color: '#4fe3c1' },
-                    { src: '/sprites/cow/body.png', color: '#4fe3c1' },
-                    { src: '/sprites/cow/bodyLight.png', color: '#9df2da' },
-                    { src: '/sprites/cow/hoof.png', color: '#2fb59a' },
-                    { src: '/sprites/cow/snout-0.png', color: '#f4ede1' },
-                    { src: '/sprites/cow/eyes.png', color: '#2b2118' },
-                    { src: '/sprites/cow/eyeLight.png', color: '#eafaf1' },
-                    { src: '/sprites/cow/extra-1.png', color: '#f4ede1' },
-                  ]}
-                  frame={0}
-                  size={192}
-                  color="#4fe3c1"
-                />
+                <CharacterSprite species="cow" size={192} />
               </div>
 
               {/* 咖啡与绿植 */}

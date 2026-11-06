@@ -17,11 +17,13 @@ import {
   type Direction,
   type Pose,
   type QueueStatusPacket,
+  type SpawnPacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
-import { buildClipTracks, clipDuration, frameAt, phaseOffset } from './clip';
+import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
 import { Ecs, Local, Motion, POSE, Position, Snapshot, Target } from './ecs';
 import { InputController, type ActionKey } from './input';
+import { jumpLiftTexels, jumpShadowFor } from './pony-motion';
 import { GameRenderer } from './renderer';
 
 export interface ChatEntry {
@@ -59,11 +61,8 @@ export interface SessionCallbacks {
   onRequestChat(): void;
 }
 
-const POSE_NAMES = ['idle', 'walk', 'sit', 'lie', 'emote'];
 const SEND_INTERVAL = 50;
 const STATS_INTERVAL = 500;
-/** 叫唤是一次性动作：播完由本地回落待机，并把新状态广播出去 */
-const EMOTE_MS = 440;
 
 /** P1：网络同步改进 - 时间线插值配置 */
 const MOVEMENT_CONFIG = {
@@ -90,7 +89,15 @@ export class GameSession {
   private readonly renderer = new GameRenderer();
   private readonly ecs = new Ecs();
   private readonly tracks = buildClipTracks();
-  private readonly emoteMs = Math.max(EMOTE_MS, clipDuration(this.tracks.emote));
+  /** 叠加动作轨表：叫唤按姿态分三条，跳一条；帧循环里只做下标访问 */
+  private readonly overlays = buildOverlayTracks(this.tracks);
+  /** wire 姿态（Idle/Walk/Sit/Lie）→ 基础轨，顺序与 shared-types 的 POSE 一致 */
+  private readonly baseTracks: ReadonlyArray<ClipTrack> = [
+    this.tracks.idle!,
+    this.tracks.walk!,
+    this.tracks.sit!,
+    this.tracks.lie!,
+  ];
   private readonly input = new InputController();
   private readonly names = new Map<number, string>();
   private net: NetClient | null = null;
@@ -136,7 +143,7 @@ export class GameSession {
         );
       },
       onWelcome: (packet) => this.handleWelcome(packet.entityId, packet.x, packet.y, profile),
-      onSpawn: (packet) => this.handleSpawn(packet.id, packet.name, packet.appearance, packet.x, packet.y),
+      onSpawn: (packet) => this.handleSpawn(packet),
       onDespawn: (id) => this.handleDespawn(id),
       onSync: (_tick, entities) => this.handleSync(entities),
       onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
@@ -169,10 +176,22 @@ export class GameSession {
     this.callbacks.onStatus('online', this.renderer.backend);
   }
 
-  private handleSpawn(id: number, name: string, appearance: CharacterAppearance, x: number, y: number): void {
+  private handleSpawn(packet: SpawnPacket): void {
+    const { id, name, appearance } = packet;
     if (this.names.has(id)) return;
     this.names.set(id, name);
-    this.ecs.spawn(id, dequantizeCoord(x), dequantizeCoord(y));
+    const eid = this.ecs.spawn(id, dequantizeCoord(packet.x), dequantizeCoord(packet.y));
+    // 迟到入场也要画对：spawn 包里带着当前姿态与叠加位，否则会先看到「站着的他」再等他动
+    const state = unpackState(packet.state);
+    Motion.direction[eid] = state.direction;
+    Motion.pose[eid] = state.pose;
+    Motion.since[eid] = this.elapsed;
+    Motion.emote[eid] = state.emote ? 1 : 0;
+    Motion.emoteSince[eid] = this.elapsed;
+    Motion.jump[eid] = state.jump ? 1 : 0;
+    Motion.jumpSince[eid] = this.elapsed;
+    Motion.wave[eid] = state.wave ? 1 : 0;
+    Motion.waveSince[eid] = this.elapsed;
     void this.renderer.addEntity(id, name, appearance);
   }
 
@@ -255,7 +274,22 @@ export class GameSession {
         Motion.since[eid] = this.elapsed;
       }
       Motion.moving[eid] = state.moving ? 1 : 0;
+      // 叠加动作按位同步：上升沿起播、位清零立即停。丢包最多漏掉一次，不会永久张嘴 / 抬手
+      this.applyOverlayBit(eid, Motion.emote, Motion.emoteSince, state.emote);
+      this.applyOverlayBit(eid, Motion.jump, Motion.jumpSince, state.jump);
+      this.applyOverlayBit(eid, Motion.wave, Motion.waveSince, state.wave);
     }
+  }
+
+  /** 远端叠加位：只在 0 → 1 的那一刻记起始时刻，1 → 0 立刻停 */
+  private applyOverlayBit(eid: number, flag: Uint8Array, since: Float64Array, active: boolean): void {
+    if (!active) {
+      flag[eid] = 0;
+      return;
+    }
+    if (flag[eid] === 1) return;
+    flag[eid] = 1;
+    since[eid] = this.elapsed;
   }
 
   private handleChat(entityId: number, msgId: number, text: string): void {
@@ -299,42 +333,85 @@ export class GameSession {
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
-    if (action === 'sit') {
-      Motion.pose[eid] = POSE.Sit;
-      Motion.since[eid] = this.elapsed;
-      this.net?.sendAction(this.localId, ACTION.Sit);
-    } else if (action === 'lie') {
-      Motion.pose[eid] = POSE.Lie;
-      Motion.since[eid] = this.elapsed;
-      this.net?.sendAction(this.localId, ACTION.Lie);
-    } else {
-      // 连按也要能重新播：起始时刻强制归零
-      Motion.pose[eid] = POSE.Emote;
-      Motion.since[eid] = this.elapsed;
-      this.net?.sendAction(this.localId, ACTION.Emote);
+
+    if (action === 'sit' || action === 'lie') {
+      const pose = action === 'sit' ? POSE.Sit : POSE.Lie;
+      if (Motion.pose[eid] !== pose) {
+        Motion.pose[eid] = pose;
+        Motion.since[eid] = this.elapsed;
+      }
+      // 切姿势会打断叠加动作
+      Motion.emote[eid] = 0;
+      Motion.jump[eid] = 0;
+      Motion.wave[eid] = 0;
+      Motion.moving[eid] = 0;
+      this.net?.sendAction(this.localId, action === 'sit' ? ACTION.Sit : ACTION.Lie);
+      return;
     }
+
+    if (action === 'jump') {
+      // 坐 / 躺先起身再跳：跳跃是位移动作，躺着原地起跳读不懂。
+      // 行走中直接起跳：pose 与 moving 都不动，跳跃帧播完自然接回走路循环。
+      if (Motion.pose[eid] !== POSE.Walk && Motion.pose[eid] !== POSE.Idle) {
+        Motion.pose[eid] = POSE.Idle;
+        Motion.since[eid] = this.elapsed;
+      }
+      this.startOverlay(eid, 'jump');
+      return;
+    }
+
+    // 叫唤与打招呼只在站定时触发：图集没有行走叫唤 / 挥手帧，套到脚步上就是滑步
+    if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) return;
+    this.startOverlay(eid, action === 'wave' ? 'wave' : 'emote');
     Motion.moving[eid] = 0;
   }
 
-  /** 当前该画哪一列：动作 → 时间轴 → 每实体相位偏移 */
-  private columnFor(netId: number, eid: number): number {
-    const pose = this.resolvePose(eid);
-    const track = this.tracks[POSE_NAMES[pose] ?? 'idle'] ?? this.tracks.idle!;
-    return frameAt(track, this.elapsed - Motion.since[eid]! + phaseOffset(netId, track));
+  /** 三个叠加动作互斥：后按的打断先按的，连按从第 0 帧重播 */
+  private startOverlay(eid: number, kind: 'emote' | 'jump' | 'wave'): void {
+    Motion.emote[eid] = kind === 'emote' ? 1 : 0;
+    Motion.jump[eid] = kind === 'jump' ? 1 : 0;
+    Motion.wave[eid] = kind === 'wave' ? 1 : 0;
+    if (kind === 'jump') Motion.jumpSince[eid] = this.elapsed;
+    else if (kind === 'wave') Motion.waveSince[eid] = this.elapsed;
+    else Motion.emoteSince[eid] = this.elapsed;
   }
 
   /**
-   * 叫唤是一次性动作：本地播完自动回待机，下一个同步包就把 Idle 广播出去。
-   * 远端不在这里回收——服务端会一直重发 Emote，本地回收会和重发打架，变成无限循环。
+   * 当前该画哪一列：叠加动作（跳 > 叫唤）→ 基础姿态 → 时间轴 → 每实体相位偏移。
+   * 姿态从不因叠加动作改写，所以「坐着叫唤完还是坐着」不需要任何回滚逻辑。
    */
-  private resolvePose(eid: number): number {
-    const pose = Motion.pose[eid]!;
-    if (pose !== POSE.Emote) return pose;
-    if (eid !== this.ecs.get(this.localId)) return pose;
-    if (this.elapsed - Motion.since[eid]! < this.emoteMs) return pose;
-    Motion.pose[eid] = POSE.Idle;
-    Motion.since[eid] = this.elapsed;
-    return POSE.Idle;
+  private columnFor(netId: number, eid: number): number {
+    const pose = Motion.pose[eid]! as Pose;
+    const jumping = Motion.jump[eid] === 1;
+    const emoting = Motion.emote[eid] === 1;
+    const waving = Motion.wave[eid] === 1;
+    const overlay = overlayTrackFor(this.overlays, pose, emoting, jumping, waving);
+    const track = overlay ?? this.baseTracks[pose] ?? this.tracks.idle!;
+    // 起始时刻与 overlayTrackFor 的优先级同序：跳 > 打招呼 > 叫唤（三者互斥，正常只命中一个）
+    const since =
+      overlay === null
+        ? Motion.since[eid]!
+        : jumping
+          ? Motion.jumpSince[eid]!
+          : waving
+            ? Motion.waveSince[eid]!
+            : Motion.emoteSince[eid]!;
+    return frameAt(track, this.elapsed - since + phaseOffset(netId, track));
+  }
+
+  /** 叠加动作到期自动清位：下一包 sync 就把位降下去，远端不会残留张嘴 / 抬手帧 */
+  private expireOverlays(): void {
+    for (const eid of this.ecs.entities()) {
+      if (Motion.emote[eid] === 1 && this.elapsed - Motion.emoteSince[eid]! >= this.overlays.emoteMs) {
+        Motion.emote[eid] = 0;
+      }
+      if (Motion.jump[eid] === 1 && this.elapsed - Motion.jumpSince[eid]! >= this.overlays.jumpMs) {
+        Motion.jump[eid] = 0;
+      }
+      if (Motion.wave[eid] === 1 && this.elapsed - Motion.waveSince[eid]! >= this.overlays.waveMs) {
+        Motion.wave[eid] = 0;
+      }
+    }
   }
 
   private tick = (ticker: { deltaMS: number }): void => {
@@ -343,6 +420,7 @@ export class GameSession {
     const now = performance.now();
     this.elapsed += dtMs;
     this.frames += 1;
+    this.expireOverlays();
 
     const localEid = this.ecs.get(this.localId);
     if (localEid) {
@@ -361,6 +439,10 @@ export class GameSession {
         Motion.direction[localEid] = directionFromVector(vector.x, vector.y, Motion.direction[localEid] as Direction);
         // 顶在围栏上时原地踏步会露馅：没有实际位移就当站定
         if (advanced) {
+          // 走动打断叫唤与打招呼（都没有行走帧）；跳跃是位移动作，不能在这里清位，
+          // 否则「边走边跳」按下即被自己掐掉
+          Motion.emote[localEid] = 0;
+          Motion.wave[localEid] = 0;
           if (Motion.pose[localEid] !== POSE.Walk) {
             Motion.pose[localEid] = POSE.Walk;
             Motion.since[localEid] = this.elapsed;
@@ -440,6 +522,10 @@ export class GameSession {
       
       if (isVisible) {
         this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
+        // 跳跃弧线：图集只负责姿势与 5 纹素腾空，剩下的落差与阴影由客户端叠
+        const jumping = Motion.jump[eid] === 1;
+        const lift = jumping ? jumpLiftTexels(this.elapsed - Motion.jumpSince[eid]!, this.overlays.jumpMs) : 0;
+        this.renderer.setJump(netId, lift, jumpShadowFor(lift));
       }
     }
 
@@ -450,7 +536,14 @@ export class GameSession {
       this.movementSendTime += dtMs;
       if (this.movementSendTime >= this.MOVEMENT_SEND_INTERVAL) {
         this.movementSendTime -= this.MOVEMENT_SEND_INTERVAL; // 模运算避免累积错误
-        const state = packState(Motion.direction[localEid]! as Direction, Motion.pose[localEid]! as Pose, Motion.moving[localEid] === 1);
+        const state = packState(
+          Motion.direction[localEid]! as Direction,
+          Motion.pose[localEid]! as Pose,
+          Motion.moving[localEid] === 1,
+          Motion.emote[localEid] === 1,
+          Motion.jump[localEid] === 1,
+          Motion.wave[localEid] === 1,
+        );
         const clientSequence = ++this.clientMoveSequence;
         // 使用 performance.now() 的低 32 位，适用于 RTT 估计
         const clientTimestampMs = Math.floor(performance.now()) >>> 0;

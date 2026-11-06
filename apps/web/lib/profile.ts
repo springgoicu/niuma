@@ -1,6 +1,12 @@
 'use client';
 
-import { DEFAULT_APPEARANCE, sanitizeAppearance, type CharacterAppearance, type Species } from '@niuma/shared-types';
+import {
+  DEFAULT_APPEARANCE,
+  sanitizeAppearance,
+  truncateName,
+  type CharacterAppearance,
+  type Species,
+} from '@niuma/shared-types';
 
 const STORAGE_KEY = 'niuma:profile:v1';
 
@@ -15,7 +21,8 @@ export interface Profile {
 export function saveProfile(profile: Profile): void {
   if (typeof window === 'undefined') return;
   const payload: Profile = {
-    name: profile.name.slice(0, 16) || '无名牛马',
+    // 与协议同一把尺子：16 字符 / 48 字节，别再写死 slice(0, 16)
+    name: truncateName(profile.name),
     appearance: sanitizeAppearance(profile.appearance),
   };
   window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -28,7 +35,7 @@ export function loadProfile(): Profile | null {
   try {
     const parsed = JSON.parse(raw) as Partial<Profile>;
     return {
-      name: typeof parsed.name === 'string' && parsed.name.length > 0 ? parsed.name.slice(0, 16) : '无名牛马',
+      name: typeof parsed.name === 'string' && parsed.name.length > 0 ? truncateName(parsed.name) : '无名牛马',
       appearance: sanitizeAppearance(parsed.appearance),
     };
   } catch (error) {

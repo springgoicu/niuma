@@ -47,7 +47,6 @@ import {
   makeDirtTexture,
   makeGrassTexture,
   makePlanterTexture,
-  makePlazaTexture,
   makePropShadowTexture,
   makeReedTexture,
   makeRockTexture,
@@ -71,12 +70,11 @@ import {
 type TextureFactory = Application['renderer'];
 
 /** 必须与 makeWaterTexture 的 size 一致：回绕模数用错，水面每隔几秒会跳一下 */
-const WATER_TILE = 48;
+const WATER_TILE = 96;
 /** 必须与 makeSeaTexture 的 size 一致 */
 const SEA_TILE = 96;
-/** 必须与 makeDirtTexture / makePlazaTexture 的 size 一致 */
+/** 必须与 makeDirtTexture 的 size 一致 */
 const DIRT_TILE = 128;
-const PLAZA_TILE = 256;
 /** 海面平铺超出世界矩形的余量：超宽视口贴到岛边也不会看到硬边 */
 const SEA_EXTENT = 2048;
 /** 水面滚动的最小时间片：湖慢河快靠 `every` 区分 */
@@ -101,7 +99,6 @@ const OCCLUSION_CELL = 128;
 
 interface TerrainTextures {
   grass: Texture;
-  plaza: Texture;
   dirt: Texture;
   water: Texture;
   sea: Texture;
@@ -139,7 +136,8 @@ export interface TerrainOptions {
   /**
    * `?flat=1`：退回「矩形 TilingSprite」的旧画法。
    * 圆角轮廓与草缘一旦在线上出现观感回归，这一个开关就能把地形切回原样，
-   * 不用回滚整次发布（ADR-0013 的灰度开关）。
+   * 不用回滚整次发布（ADR-0013 的灰度开关）。广场自 ADR-0017 起不铺装，
+   * 这个开关只影响土路的轮廓与草缘。
    */
   flat?: boolean;
   /** `?edge=0`：只关边缘层（草尖/圆弧/内缘暗边），底色与轮廓照旧 */
@@ -194,7 +192,7 @@ function cellKey(x: number, y: number): number {
  * 地形视图：本项目的 MapRenderer。
  *
  * 三层结构（与 ADR-0013 的图层纪律一致）：
- * - `base`：材质底色与轮廓遮罩（海 → 浅滩 → 草 → 沙 → 广场 → 土路 → 水 → 桥）；
+ * - `base`：材质底色与轮廓遮罩（海 → 浅滩 → 草 → 沙 → 土路 → 水 → 桥，广场只画路缘，ADR-0017）；
  * - `edge`：位掩码驱动的边缘层，等所有底色画完才统一生成，草缘永远最后压上；
  * - `decals`：程序化贴花，压在地面之上、尘土与角色之下。
  *
@@ -229,7 +227,6 @@ export class TerrainView {
     this.edgeEnabled = !this.options.flat && this.options.edge !== false;
     this.textures = {
       grass: makeGrassTexture(renderer),
-      plaza: makePlazaTexture(renderer),
       dirt: makeDirtTexture(renderer),
       water: makeWaterTexture(renderer),
       sea: makeSeaTexture(renderer),
@@ -349,7 +346,7 @@ export class TerrainView {
       if (this.options.flat) {
         g.rect(x, y, w, h).fill({ color: C.forestFloor, alpha: 0.55 });
       } else {
-        const contour = organicContour(forest.rect, 0x1f3a + index * 7919, 9, 24);
+        const contour = organicContour(forest.rect, 0x1f3a + index * 7919, 14, 24);
         traceContour(g, contour);
         g.fill({ color: C.forestFloor, alpha: 0.55 });
         // Pixi 8 的 alignment：1 = 内侧，0.5 = 居中，0 = 外侧
@@ -374,20 +371,20 @@ export class TerrainView {
     });
   }
 
+  /** 办公区路缘：整片广场地面就是草地，这里只画一圈石色边圈出范围 */
   private addPlaza(): void {
     const plaza = WORLD_LAYOUT.plaza;
     const contour = roundedRectContour(plaza, CORNER_RADIUS);
+    const flat = contourPolygon(contour);
 
-    if (!this.options.flat) {
-      // 路缘：轮廓外一圈石色，广场才有「砌起来」的厚度
-      const curb = new Graphics();
-      // alignment 0 = 描边落在轮廓外侧（Pixi 8 的 1 才是内侧）
-      curb.poly(contourPolygon(contour)).stroke({ color: C.plazaCurb, width: 10, alignment: 0, join: 'round' });
-      this.base.addChild(curb);
-    }
-
-    // 草缘放到路缘石外沿（10px），否则草尖会戳在石板上
-    this.paintRegion(MATERIAL.plaza, MATERIAL.grass, plaza, this.textures.plaza, PLAZA_TILE, contour, 10);
+    // 广场不是铺装（ADR-0017）：地面就是 `addGrass` 铺满全岛的那张草纹，
+    // 这里只留一圈石色路缘标出办公区。外圈 2px 深缝压住草与石的交界，
+    // 内侧 10px 面层向外收，围栏与花箱继续承担「办公区」的辨识。
+    const curb = new Graphics();
+    // alignment 0 = 描边落在轮廓外侧（Pixi 8 的 1 才是内侧）
+    curb.poly(flat).stroke({ color: C.plazaSeam, width: 12, alignment: 0, join: 'round' });
+    curb.poly(flat).stroke({ color: C.plazaCurb, width: 10, alignment: 0, join: 'round' });
+    this.base.addChild(curb);
   }
 
   /** 四条土路：原来是直接铺矩形，这就是「90° 直角硬拼」的根因 */
@@ -417,8 +414,6 @@ export class TerrainView {
     texture: Texture,
     tileSize: number,
     contour: ContourPoint[],
-    /** 边缘轮廓相对材质轮廓的外扩量：广场要把草缘放到路缘石外沿 */
-    edgeOutset: number = 0,
   ): void {
     const tiles = new TilingSprite({ texture, width: rect.w, height: rect.h });
     tiles.position.set(rect.x, rect.y);
@@ -440,7 +435,7 @@ export class TerrainView {
       this.edges.push({
         self,
         other,
-        contour: edgeOutset === 0 ? contour : offsetContour(contour, edgeOutset),
+        contour,
         rim: true,
         seed: 0x9e37 + rect.x * 31 + rect.y,
       });
@@ -541,7 +536,7 @@ export class TerrainView {
       }
       this.base.addChild(shore);
 
-      const contour = polygonContour(river.polygon, 10);
+      const contour = polygonContour(river.polygon, 16);
       const water = this.addWaterSurface(river.rect, 'y', 1);
       const mask = new Graphics();
       traceContour(mask, contour);
@@ -702,11 +697,10 @@ export class TerrainView {
     }
   }
 
-  /** 草地贴花只长在草地上：水面、广场、土路、桥面都不生成 */
+  /** 草地贴花只长在草地上：水面、土路、桥面都不生成（广场已是草地，ADR-0017） */
   private grassDecorAllowed(x: number, y: number): boolean {
     if (!pointInPolygon(x, y, ISLAND.points)) return false;
     for (const path of WORLD_LAYOUT.paths) if (rectContains(path, x, y)) return false;
-    if (rectContains(WORLD_LAYOUT.plaza, x, y)) return false;
     for (const bridge of WORLD_LAYOUT.bridges) if (rectContains(bridge, x, y)) return false;
     if (isWaterAt(x, y)) return false;
     return true;
@@ -909,7 +903,6 @@ export class TerrainView {
       tree.canopy.destroy(true);
     }
     this.textures.grass.destroy(true);
-    this.textures.plaza.destroy(true);
     this.textures.dirt.destroy(true);
     this.textures.water.destroy(true);
     this.textures.sea.destroy(true);

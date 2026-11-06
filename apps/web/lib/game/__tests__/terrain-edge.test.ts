@@ -14,15 +14,15 @@ import {
 const RIVER_INSIDE = { x: 2488, y: 3000 };
 const BRIDGE_INSIDE = { x: 2450, y: 4090 };
 const PATH_INSIDE = { x: 4096, y: 4800 };
-const PLAZA_INSIDE = { x: 4096, y: 3800 };
+const OFFICE_LAWN = { x: 4096, y: 3800 };
 const GRASS_INSIDE = { x: 2000, y: 3000 };
 
 describe('材质判定', () => {
-  it('优先级：桥压水、水压土、广场压草', () => {
+  it('优先级：桥压水、水压土、土路压草；办公区地面就是草（ADR-0017）', () => {
     expect(materialAt(BRIDGE_INSIDE.x, BRIDGE_INSIDE.y)).toBe(MATERIAL.bridge);
     expect(materialAt(RIVER_INSIDE.x, RIVER_INSIDE.y)).toBe(MATERIAL.water);
     expect(materialAt(PATH_INSIDE.x, PATH_INSIDE.y)).toBe(MATERIAL.dirt);
-    expect(materialAt(PLAZA_INSIDE.x, PLAZA_INSIDE.y)).toBe(MATERIAL.plaza);
+    expect(materialAt(OFFICE_LAWN.x, OFFICE_LAWN.y)).toBe(MATERIAL.grass);
     expect(materialAt(GRASS_INSIDE.x, GRASS_INSIDE.y)).toBe(MATERIAL.grass);
   });
 

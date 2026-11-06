@@ -1,5 +1,6 @@
 export * from './types';
 export * from './constants';
+export * from './name';
 export * from './quantize';
 export * from './catalog';
 export * from './appearance-codec';

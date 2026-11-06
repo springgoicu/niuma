@@ -1,8 +1,17 @@
 import Link from 'next/link';
 import { ArrowRight, Boxes, Database, EyeOff, Gauge, MousePointerClick, Network } from 'lucide-react';
+import { CharacterSprite, type SiteSpecies } from './CharacterSprite';
 
+interface SpeciesProfile {
+  key: SiteSpecies;
+  name: string;
+  latin: string;
+  color: string;
+  blurb: string;
+  stats: ReadonlyArray<readonly [string, number]>;
+}
 
-const SPECIES = [
+const SPECIES: SpeciesProfile[] = [
   {
     key: 'cow',
     name: '牛',
@@ -104,14 +113,8 @@ export function SpeciesSection() {
                   </h3>
                 </div>
                 <div className="relative shrink-0 transition-transform duration-300 group-hover:-translate-y-1">
-                  <img
-                    src={`/sprites/preview-${species.key}.png`}
-                    alt={`${species.name}的默认外观`}
-                    width={144}
-                    height={144}
-                    className="pixelated h-24 w-24 sm:h-36 sm:w-36"
-                    style={{ imageRendering: 'pixelated' }}
-                  />
+                  {/* 与首屏同一张图、同一套整数倍放大，只有尺寸不同 */}
+                  <CharacterSprite species={species.key} size={128} alt={`${species.name}的默认外观`} />
                 </div>
               </div>
 

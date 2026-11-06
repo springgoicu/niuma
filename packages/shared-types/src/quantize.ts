@@ -28,15 +28,53 @@ export function clampWorldY(y: number): number {
   return y < 0 ? 0 : y > WORLD_HEIGHT - 1 ? WORLD_HEIGHT - 1 : y;
 }
 
-/** 位打包：bit0-1 朝向，bit2-4 姿态，bit5 移动标志 */
-export function packState(direction: Direction, pose: Pose, moving: boolean): number {
-  return ((direction & 0b11) | ((pose & 0b111) << 2) | (moving ? 0b100000 : 0)) & 0xff;
+/**
+ * 位打包：bit0-1 朝向，bit2-3 姿态，bit4 打招呼，bit5 移动标志，bit6 叫唤，bit7 跳。
+ *
+ * 叫唤 / 跳 / 打招呼是一次性叠加动作，与姿态正交：位只在播放窗口内为真，
+ * 客户端到期自己清位，服务端只负责回传（ADR-0018 / ADR-0019）。
+ *
+ * 姿态只有 0-3 四个值，原来的 3 bit 字段高位（bit4）恒为 0，
+ * 因此第三个叠加位直接复用这一位，包长与 opcode 都不变。
+ * 混布降级：旧客户端会把 bit4 读进 pose 得到 4，回落 idle；旧服务端 sanitizePose 归 Idle 并丢位。
+ */
+export function packState(
+  direction: Direction,
+  pose: Pose,
+  moving: boolean,
+  emote = false,
+  jump = false,
+  wave = false,
+): number {
+  return (
+    ((direction & 0b11) |
+      ((pose & 0b11) << 2) |
+      (wave ? 0b10000 : 0) |
+      (moving ? 0b100000 : 0) |
+      (emote ? 0b1000000 : 0) |
+      (jump ? 0b10000000 : 0)) &
+    0xff
+  );
 }
 
-export function unpackState(state: number): { direction: Direction; pose: Pose; moving: boolean } {
+export function unpackState(state: number): {
+  direction: Direction;
+  pose: Pose;
+  moving: boolean;
+  emote: boolean;
+  jump: boolean;
+  wave: boolean;
+} {
   const direction = (state & 0b11) as Direction;
-  const pose = ((state >> 2) & 0b111) as Pose;
-  return { direction, pose, moving: (state & 0b100000) !== 0 };
+  const pose = ((state >> 2) & 0b11) as Pose;
+  return {
+    direction,
+    pose,
+    moving: (state & 0b100000) !== 0,
+    emote: (state & 0b1000000) !== 0,
+    jump: (state & 0b10000000) !== 0,
+    wave: (state & 0b10000) !== 0,
+  };
 }
 
 /** 由速度向量推导朝向：横向优先于纵向，保持八向输入下的稳定表现 */

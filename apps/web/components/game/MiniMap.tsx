@@ -96,9 +96,8 @@ function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number):
   ctx.fillStyle = M.dirt;
   for (const path of WORLD_LAYOUT.paths) fillWorldRect(ctx, path, camX, camY);
 
-  ctx.fillStyle = M.plaza;
-  fillWorldRect(ctx, WORLD_LAYOUT.plaza, camX, camY);
-  ctx.strokeStyle = M.plazaEdge;
+  // 广场只剩一圈路缘（ADR-0017）：地面与野地同色，不再填浅色块
+  ctx.strokeStyle = M.plazaCurb;
   ctx.lineWidth = 1;
   ctx.strokeRect(
     screenX(WORLD_LAYOUT.plaza.x, camX) + 0.5,

@@ -1,5 +1,6 @@
 'use client';
 
+import { POSE, type Pose } from '@niuma/shared-types';
 import { SPRITE_LAYOUT, type GeneratedClip } from './sprite-layout.generated';
 
 /**
@@ -73,9 +74,75 @@ export function buildClipTracks(
   return tracks;
 }
 
-/** 一次性动作（叫唤）播完要停下的时长，调用方用它决定何时回落到待机 */
+/** 一次性动作（叫唤 / 跳 / 打招呼）播完要停下的时长，调用方用它决定何时回落到原姿态 */
 export function clipDuration(track: ClipTrack | undefined): number {
   return track ? track.durationMs : 0;
+}
+
+/** 叠加动作的播放窗口：与图集里一次性动作的逐帧时长合计对齐（440ms） */
+export const OVERLAY_MS = 440;
+
+export interface OverlayTracks {
+  /** 按 wire 姿态索引（Idle/Walk/Sit/Lie）：行走没有叫唤帧，恒为 null */
+  readonly emoteByPose: ReadonlyArray<ClipTrack | null>;
+  /** 打招呼同样按姿态分三条；行走没有挥手帧，Idle 位之外的 Walk 恒为 null */
+  readonly waveByPose: ReadonlyArray<ClipTrack | null>;
+  readonly jump: ClipTrack | null;
+  /** 播放窗口：取窗口常量与图集实际长度的较大值，避免末帧停顿或硬切 */
+  readonly emoteMs: number;
+  readonly waveMs: number;
+  readonly jumpMs: number;
+}
+
+/**
+ * 叠加动作的轨表：一次编译、帧循环里只做数组下标。
+ * 叫唤与打招呼各按姿态分三条（站/坐/躺），跳只有一条（坐/躺时客户端先起身）。
+ */
+export function buildOverlayTracks(tracks: ClipTracks): OverlayTracks {
+  const emoteByPose: Array<ClipTrack | null> = [
+    tracks.emote ?? null,
+    null,
+    tracks.sitEmote ?? null,
+    tracks.lieEmote ?? null,
+  ];
+  const waveByPose: Array<ClipTrack | null> = [
+    tracks.wave ?? null,
+    null,
+    tracks.sitWave ?? null,
+    tracks.lieWave ?? null,
+  ];
+  const jump = tracks.jump ?? null;
+  return {
+    emoteByPose,
+    waveByPose,
+    jump,
+    emoteMs: Math.max(OVERLAY_MS, ...emoteByPose.map((track) => clipDuration(track ?? undefined))),
+    // 挥手是三拍 660ms：窗口必须跟着图集走，否则末拍「收回」会被硬切
+    waveMs: Math.max(OVERLAY_MS, ...waveByPose.map((track) => clipDuration(track ?? undefined))),
+    jumpMs: Math.max(OVERLAY_MS, clipDuration(jump ?? undefined)),
+  };
+}
+
+/**
+ * 当前该用哪条叠加轨：跳 > 打招呼 > 叫唤。
+ *
+ * 跳是位移动作，行走中也播（位移不中断）；打招呼与叫唤在行走中仍回落基础轨——
+ * 图集没有行走挥手 / 张嘴帧，套上去就是滑步。
+ * 三者互斥由客户端置位时保证，这里只按优先级兜底。
+ * 返回 null 表示「不覆盖姿态」，调用方回落到基础姿态轨。
+ */
+export function overlayTrackFor(
+  overlays: OverlayTracks,
+  pose: Pose,
+  emoting: boolean,
+  jumping: boolean,
+  waving: boolean,
+): ClipTrack | null {
+  if (jumping) return overlays.jump;
+  if (pose === POSE.Walk) return null;
+  if (waving) return overlays.waveByPose[pose] ?? null;
+  if (!emoting) return null;
+  return overlays.emoteByPose[pose] ?? null;
 }
 
 /**
