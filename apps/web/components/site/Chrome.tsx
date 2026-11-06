@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { ArrowUpRight, Github, Radio } from 'lucide-react';
+import { MobileNav } from './MobileNav';
 
 const NAV = [
   { href: '#species', label: '物种档案' },
@@ -35,14 +36,15 @@ export function TopNav() {
           ))}
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <span className="tag hidden lg:inline-flex">
             <Radio className="h-3 w-3 text-mint-400" />
             in-memory
           </span>
-          <Link href="/create" className="btn-primary px-5 py-2 text-[11px]">
+          <Link href="/create" className="btn-primary px-3 py-2 text-[11px] sm:px-5">
             打卡上班
           </Link>
+          <MobileNav items={NAV} />
         </div>
       </div>
     </header>

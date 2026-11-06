@@ -72,7 +72,7 @@ export function PlayerCard({ name, species, compact = false }: { name: string; s
   );
 }
 
-export function OnlineBadge() {
+export function OnlineBadge({ compact = false }: { compact?: boolean }) {
   const nearby = useGameUi((state) => state.nearby);
   const status = useGameUi((state) => state.status);
   const detail = useGameUi((state) => state.detail);
@@ -87,9 +87,11 @@ export function OnlineBadge() {
         <Users className="h-3.5 w-3.5" />
         视野内 {nearby}
       </span>
-      <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500">
-        {status === 'online' ? 'aoi 900px' : detail || status}
-      </span>
+      {!compact && (
+        <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500">
+          {status === 'online' ? 'aoi 900px' : detail || status}
+        </span>
+      )}
     </div>
   );
 }

@@ -98,14 +98,14 @@ export function QueueGate({ onRetry }: { onRetry: () => void }) {
   const filled = Math.round(ratio * SEGMENTS);
 
   return (
-    <div className="absolute inset-0 z-40 flex items-end justify-center bg-ink-950/94 sm:items-center sm:px-5">
+    <div className="absolute inset-0 z-40 flex items-end justify-center overflow-y-auto bg-ink-950/94 sm:items-center sm:px-5">
       <div className="grid-bg pointer-events-none absolute inset-0 opacity-40" aria-hidden />
 
       <section
         role="status"
         aria-live="polite"
         aria-label="园区排队"
-        className={`panel panel-scan relative w-full max-w-[520px] origin-bottom transition-[opacity,transform] duration-[260ms] ease-[var(--ease-out-expo)] ${
+        className={`panel panel-scan relative mt-auto w-full max-w-[520px] origin-bottom transition-[opacity,transform] duration-[260ms] ease-[var(--ease-out-expo)] sm:my-auto ${
           shown && !leaving ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'
         }`}
       >

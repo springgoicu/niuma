@@ -7,12 +7,13 @@ import { useGameUi } from '@/lib/game-ui';
 
 interface ChatDockProps {
   onSend: (text: string) => void;
+  compact?: boolean;
 }
 
 const MAX_INPUT_LENGTH = 160;
 const CHAR_WARNING_THRESHOLD = 140;
 
-export function ChatDock({ onSend }: ChatDockProps) {
+export function ChatDock({ onSend, compact = false }: ChatDockProps) {
   const messages = useGameUi((state) => state.messages);
   const open = useGameUi((state) => state.chatOpen);
   const setOpen = useGameUi((state) => state.setChatOpen);
@@ -40,7 +41,9 @@ export function ChatDock({ onSend }: ChatDockProps) {
   const isNearLimit = charCount > CHAR_WARNING_THRESHOLD;
 
   return (
-    <div className="pointer-events-auto w-[340px] max-w-[calc(100vw-2rem)] border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm">
+    <div
+      className={`pointer-events-auto max-w-[calc(100vw-2rem)] border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm ${compact ? 'w-[250px]' : 'w-[340px]'}`}
+    >
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -62,7 +65,7 @@ export function ChatDock({ onSend }: ChatDockProps) {
 
       {open && (
         <>
-          <div ref={listRef} className="max-h-[220px] space-y-2 overflow-y-auto px-3 py-3">
+          <div ref={listRef} className={`space-y-2 overflow-y-auto px-3 py-3 ${compact ? 'max-h-[96px]' : 'max-h-[220px]'}`}>
             {messages.length === 0 && (
               <p className="font-mono text-[11px] leading-relaxed text-mist-500">
                 频道很安静。按 Enter 说点什么，附近 900px 内的牛马都能看到。
@@ -106,7 +109,7 @@ export function ChatDock({ onSend }: ChatDockProps) {
               <button
                 type="submit"
                 aria-label="发送"
-                className="grid h-8 w-8 cursor-pointer place-items-center border-2 border-mint-400 bg-mint-400/10 text-mint-400 transition-colors hover:bg-mint-400 hover:text-ink-950"
+                className="grid h-9 w-9 shrink-0 cursor-pointer place-items-center border-2 border-mint-400 bg-mint-400/10 text-mint-400 transition-colors hover:bg-mint-400 hover:text-ink-950"
               >
                 <Send className="h-3.5 w-3.5" />
               </button>

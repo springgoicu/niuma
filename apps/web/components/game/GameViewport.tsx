@@ -106,7 +106,8 @@ export function GameViewport() {
 
   return (
     <div
-      className="relative h-dvh w-full touch-none select-none overflow-hidden bg-ink-950"
+      className="no-callout relative h-dvh w-full touch-none select-none overflow-hidden bg-ink-950"
+      onContextMenu={(event) => event.preventDefault()}
       style={rotated ? LANDSCAPE_STAGE_STYLE : undefined}
     >
       <div ref={hostRef} className="absolute inset-0" aria-label="游戏视口" />
@@ -116,15 +117,19 @@ export function GameViewport() {
       {profile && (
         <>
           <div
-            className={`pointer-events-none absolute inset-0 flex flex-col justify-between ${isTouch ? 'p-3' : 'p-4'}`}
+            className={`pointer-events-none absolute inset-0 flex flex-col justify-between ${isTouch ? 'game-safe' : 'p-4'}`}
           >
             <div className="flex items-start justify-between gap-3">
-              <PlayerCard name={profile.name} species={profile.appearance.species} compact={isTouch} />
-              <div className="flex flex-col items-end gap-2">
-                <OnlineBadge />
+              <div className="flex min-w-0 flex-col items-start gap-2">
+                <PlayerCard name={profile.name} species={profile.appearance.species} compact={isTouch} />
+                {isTouch && <ChatDock onSend={handleChat} compact />}
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <OnlineBadge compact={isTouch} />
                 <Link
                   href="/"
-                  className="pointer-events-auto flex items-center gap-1.5 border-2 border-ink-600 bg-ink-900/92 px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500"
+                  aria-label="打卡下班"
+                  className="pointer-events-auto flex min-h-9 items-center gap-1.5 border-2 border-ink-600 bg-ink-900/92 px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500"
                 >
                   <LogOut className="h-3 w-3" />
                   打卡下班
@@ -134,10 +139,7 @@ export function GameViewport() {
 
             {isTouch ? (
               <div className="flex items-end justify-between gap-3">
-                <div className="flex items-end gap-3">
-                  <Joystick onMove={handleMove} />
-                  <ChatDock onSend={handleChat} />
-                </div>
+                <Joystick onMove={handleMove} rotated={rotated} />
                 <TouchActions onAction={handleAction} onChat={() => setChatOpen(true)} />
               </div>
             ) : (
@@ -155,7 +157,7 @@ export function GameViewport() {
           {seatHint && (
             <div
               role="status"
-              className="pointer-events-none absolute bottom-24 left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm"
+              className={`pointer-events-none absolute left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${isTouch ? 'bottom-36' : 'bottom-24'}`}
             >
               {seatHint}
             </div>

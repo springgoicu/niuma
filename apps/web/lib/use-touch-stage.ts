@@ -4,10 +4,14 @@ import { useEffect, useState } from 'react';
 
 /** 触屏设备（主输入为粗指针）：决定是否显示虚拟摇杆与按钮 */
 export function useIsTouch(): boolean {
-  const [touch, setTouch] = useState(false);
+  const detect = () =>
+    typeof window !== 'undefined' &&
+    (window.matchMedia('(pointer: coarse)').matches ||
+      (window.matchMedia('(any-pointer: coarse)').matches && !window.matchMedia('(any-hover: hover)').matches));
+  const [touch, setTouch] = useState(detect);
   useEffect(() => {
     const query = window.matchMedia('(pointer: coarse)');
-    const sync = () => setTouch(query.matches);
+    const sync = () => setTouch(detect());
     sync();
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
@@ -20,7 +24,9 @@ export function useIsTouch(): boolean {
  * 锁定失败则由调用方用 CSS 旋转舞台兜底。返回 true 表示当前应当旋转。
  */
 export function useLandscapeStage(enabled: boolean): boolean {
-  const [portrait, setPortrait] = useState(false);
+  const [portrait, setPortrait] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches,
+  );
 
   useEffect(() => {
     const query = window.matchMedia('(orientation: portrait)');

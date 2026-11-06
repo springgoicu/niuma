@@ -37,7 +37,7 @@ export function CreatorShell() {
   }, [hydrate]);
 
   return (
-    <div className="min-h-dvh bg-ink-900 pb-40 sm:pb-32">
+    <div className="min-h-dvh bg-ink-900 pb-32 sm:pb-32">
       <header className="fixed inset-x-0 top-0 z-40 border-b border-ink-700/80 bg-ink-900/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-[1560px] items-center justify-between gap-4 px-5 sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
@@ -48,14 +48,14 @@ export function CreatorShell() {
               <ArrowLeft className="h-3.5 w-3.5 transition-transform duration-200 group-hover:-translate-x-0.5" />
               返回园区
             </Link>
-            <span className="h-3 w-px shrink-0 bg-ink-600" aria-hidden />
-            <span className="truncate font-display text-[13px] font-semibold tracking-[0.3em] text-mist-100">
+            <span className="hidden h-3 w-px shrink-0 bg-ink-600 sm:block" aria-hidden />
+            <span className="hidden truncate font-display text-[13px] font-semibold tracking-[0.3em] text-mist-100 sm:inline">
               工位 404
             </span>
           </div>
 
           <div className="flex shrink-0 items-center gap-2.5">
-            <span className="tag border-ink-600 text-[9px]">{species === 'cow' ? 'cow / 牛' : 'horse / 马'}</span>
+            <span className="tag hidden border-ink-600 text-[9px] sm:inline-flex">{species === 'cow' ? 'cow / 牛' : 'horse / 马'}</span>
             <SaveState dirty={dirty} />
           </div>
         </div>

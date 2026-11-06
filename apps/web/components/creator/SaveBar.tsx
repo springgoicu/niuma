@@ -31,8 +31,8 @@ export function SaveBar() {
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700/80 bg-ink-900/[0.94] shadow-[0_-24px_48px_-32px_rgba(0,0,0,0.95)] backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-4 gap-y-3 px-5 py-3.5 sm:px-8">
-        <div className="flex min-w-[240px] flex-1 items-center gap-2.5">
+      <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-4 gap-y-3 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-8 sm:py-3.5">
+        <div className="flex w-full min-w-0 items-center gap-2.5 sm:w-auto sm:min-w-[240px] sm:flex-1">
           <label
             htmlFor="niuma-name"
             className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-400"
@@ -46,13 +46,13 @@ export function SaveBar() {
             onChange={(event) => setName(event.target.value)}
             placeholder="输入你的工牌名"
             autoComplete="off"
-            className="h-9 w-full max-w-[220px] border border-ink-700 bg-ink-950 px-2.5 font-mono text-[12px] text-mist-100 outline-none transition-colors duration-150 placeholder:text-mist-500 focus:border-mint-400"
+            className="h-11 min-w-0 flex-1 border border-ink-700 bg-ink-950 px-2.5 font-mono text-[12px] text-mist-100 outline-none transition-colors duration-150 placeholder:text-mist-500 focus:border-mint-400 sm:h-9 sm:max-w-[220px] sm:flex-none sm:w-full"
           />
           <button
             type="button"
             onClick={() => setName(randomNickname())}
             aria-label="随机生成昵称"
-            className="grid h-9 w-9 shrink-0 cursor-pointer place-items-center border border-ink-700 text-mist-300 transition-colors duration-150 hover:border-mint-400/70 hover:text-mint-400"
+            className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center border border-ink-700 text-mist-300 transition-colors duration-150 hover:border-mint-400/70 hover:text-mint-400 sm:h-9 sm:w-9"
           >
             <Dices className="h-3.5 w-3.5" />
           </button>
@@ -66,12 +66,12 @@ export function SaveBar() {
           ) : null}
         </div>
 
-        <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-mist-400">
+        <p className="hidden items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-mist-400 sm:flex">
           <ShieldOff className="h-3.5 w-3.5 shrink-0 text-amber-400" />
           仅存于当前标签页 · 关闭即清空
         </p>
 
-        <button type="button" onClick={handleSave} className="btn-primary group">
+        <button type="button" onClick={handleSave} className="btn-primary group w-full sm:w-auto">
           保存并上岗
           <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
         </button>

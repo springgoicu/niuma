@@ -32,9 +32,9 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
   const tooWide = nameWidth > MAX_NAME_DISPLAY_UNITS;
 
   return (
-    <div className="absolute inset-0 z-40 grid place-items-center bg-ink-950/92 px-5 backdrop-blur-sm">
+    <div className="absolute inset-0 z-40 flex overflow-y-auto bg-ink-950/92 px-5 py-4 backdrop-blur-sm">
       <div className="pointer-events-none absolute inset-0 grid-bg opacity-40" />
-      <div className="panel panel-scan relative w-full max-w-[520px] p-7">
+      <div className="panel panel-scan relative m-auto w-full max-w-[520px] p-5 sm:p-7">
         <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-mint-400">// 入职登记</p>
         <h1 className="mt-3 font-display text-4xl font-bold tracking-tight text-mist-100">打卡进入园区</h1>
         <p className="mt-3 text-sm leading-relaxed text-mist-300">

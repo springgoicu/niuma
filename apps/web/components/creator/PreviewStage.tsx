@@ -73,7 +73,7 @@ export function PreviewStage({ className = '' }: { className?: string }) {
   }, [direction]);
 
   return (
-    <section className={`panel relative flex min-h-[540px] flex-col overflow-hidden ${className}`}>
+    <section className={`panel relative flex min-h-[420px] flex-col overflow-hidden sm:min-h-[540px] ${className}`}>
       <header className="flex items-center justify-between gap-3 border-b border-ink-700/80 px-5 py-3">
         <div className="flex items-center gap-2.5">
           <span className="h-1.5 w-1.5 animate-blink bg-mint-400" />
@@ -102,7 +102,7 @@ export function PreviewStage({ className = '' }: { className?: string }) {
           <span className="absolute bottom-0 right-0 h-2.5 w-2.5 border-b border-r border-mint-400/25" />
         </div>
 
-        <div ref={hostRef} className="relative h-full min-h-[420px] w-full" aria-label="角色实时预览" />
+        <div ref={hostRef} className="relative h-full min-h-[300px] w-full sm:min-h-[420px]" aria-label="角色实时预览" />
 
         {!ready && (
           <div className="absolute inset-0 grid place-items-center">

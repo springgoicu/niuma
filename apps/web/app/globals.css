@@ -85,6 +85,50 @@
   button {
     font: inherit;
   }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
+  button,
+  a {
+    touch-action: manipulation;
+  }
+
+  /* iOS 聚焦 <16px 的输入框会自动放大页面 */
+  @media (pointer: coarse) {
+    input,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+}
+
+@layer utilities {
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .game-safe {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+  }
+  .no-callout {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+@media (hover: none) {
+  .btn-primary:hover::after {
+    transform: translateX(-120%);
+  }
 }
 
 @layer components {

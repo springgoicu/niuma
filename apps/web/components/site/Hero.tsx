@@ -18,7 +18,7 @@ export function Hero() {
         style={{ background: 'radial-gradient(circle, #4fe3c1 0%, transparent 70%)' }}
       />
 
-      <div className="relative mx-auto grid max-w-[1440px] items-center gap-14 px-5 pt-16 pb-20 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:pt-24 lg:pb-28">
+      <div className="relative mx-auto grid max-w-[1440px] items-center gap-10 px-5 pt-12 pb-16 sm:gap-14 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:pt-24 lg:pb-28">
         <div>
           <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.28em] text-mint-400">
             <span className="h-2 w-2 animate-blink bg-mint-400" />
@@ -85,20 +85,20 @@ export function Hero() {
               <div className="absolute bottom-[70px] right-10 h-4 w-2 bg-ink-700" />
 
               {/* 显示器 */}
-              <div className="absolute bottom-[92px] left-1/2 h-16 w-24 -translate-x-1/2 border-2 border-ink-500 bg-ink-800 shadow-[0_0_28px_rgba(79,227,193,0.28)]">
+              <div className="absolute bottom-[92px] left-6 h-16 w-24 border-2 border-ink-500 bg-ink-800 shadow-[0_0_28px_rgba(79,227,193,0.28)] sm:left-1/2 sm:-translate-x-1/2">
                 <div className="m-1 h-1.5 w-8 bg-mint-400/80" />
                 <div className="mx-1 h-1 w-12 bg-mint-400/35" />
                 <div className="mx-1 mt-1 h-1 w-9 bg-mint-400/25" />
               </div>
-              <div className="absolute bottom-[86px] left-1/2 h-1.5 w-8 -translate-x-1/2 bg-ink-500" />
+              <div className="absolute bottom-[86px] left-6 h-1.5 w-8 bg-ink-500 sm:left-1/2 sm:-translate-x-1/2" />
 
               {/* 角色：与物种档案同一张默认外观图，只差放大倍数 */}
-              <div className="absolute bottom-[86px] right-14 animate-float">
+              <div className="absolute bottom-[86px] right-4 origin-bottom-right scale-[0.7] animate-float sm:right-14 sm:scale-100">
                 <CharacterSprite species="cow" size={192} />
               </div>
 
               {/* 咖啡与绿植 */}
-              <div className="absolute bottom-[86px] left-12 flex flex-col items-center">
+              <div className="absolute bottom-[86px] left-32 flex flex-col items-center sm:left-12">
                 <div className="h-3 w-3 border border-mist-500 bg-ink-700" />
                 <div className="h-1.5 w-4 bg-ink-600" />
               </div>
@@ -133,7 +133,7 @@ export function Hero() {
           </div>
 
           <div className="mt-4 flex items-center justify-between gap-3 border-2 border-ink-700 bg-ink-800/60 px-4 py-3">
-            <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mist-500">
+            <span className="flex min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mist-500 sm:tracking-[0.2em]">
               <Coffee className="h-3.5 w-3.5 text-amber-400" />
               本司咖啡免费，续命自费
             </span>

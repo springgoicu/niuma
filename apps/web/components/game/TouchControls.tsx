@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Armchair, Hand, MessageSquare, Music4, Rabbit, Sandwich } from 'lucide-react';
 import type { ActionKey } from '@/lib/game/input';
 
@@ -9,21 +9,56 @@ const DEAD_ZONE = 0.18;
 
 interface JoystickProps {
   onMove: (x: number, y: number) => void;
+  /** 舞台被 CSS 旋转 90° 时，屏幕坐标需要换算回舞台坐标 */
+  rotated?: boolean;
 }
 
 /** 左下角虚拟摇杆：输出 -1..1 的方向，松手即回零 */
-export function Joystick({ onMove }: JoystickProps) {
+export function Joystick({ onMove, rotated = false }: JoystickProps) {
   const padRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<number | null>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+
+  const release = useCallback(() => {
+    pointerRef.current = null;
+    setKnob({ x: 0, y: 0 });
+    onMoveRef.current(0, 0);
+  }, []);
+
+  useEffect(() => {
+    const reset = () => {
+      if (pointerRef.current !== null) release();
+    };
+    const onVisibility = () => {
+      if (document.hidden) reset();
+    };
+    window.addEventListener('blur', reset);
+    window.addEventListener('orientationchange', reset);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', reset);
+      window.removeEventListener('orientationchange', reset);
+      document.removeEventListener('visibilitychange', onVisibility);
+      onMoveRef.current(0, 0);
+    };
+  }, [release]);
+
+  // 旋转切换时，正在进行的拖动已无意义
+  useEffect(() => {
+    if (pointerRef.current !== null) release();
+  }, [rotated, release]);
 
   const update = (clientX: number, clientY: number) => {
     const pad = padRef.current;
     if (!pad) return;
     const rect = pad.getBoundingClientRect();
-    const radius = rect.width / 2;
-    let dx = clientX - (rect.left + radius);
-    let dy = clientY - (rect.top + radius);
+    const radius = Math.max(rect.width, rect.height) / 2;
+    const sx = clientX - (rect.left + rect.width / 2);
+    const sy = clientY - (rect.top + rect.height / 2);
+    let dx = rotated ? sy : sx;
+    let dy = rotated ? -sx : sy;
     const length = Math.hypot(dx, dy);
     if (length > radius) {
       dx = (dx / length) * radius;
@@ -35,7 +70,6 @@ export function Joystick({ onMove }: JoystickProps) {
     let x = 0;
     let y = 0;
     if (magnitude > DEAD_ZONE) {
-      // 死区外重新映射到 0..1，起步不跳变
       const scale = (magnitude - DEAD_ZONE) / (1 - DEAD_ZONE) / magnitude;
       x = nx * scale;
       y = ny * scale;
@@ -44,19 +78,16 @@ export function Joystick({ onMove }: JoystickProps) {
     onMove(x, y);
   };
 
-  const release = () => {
-    pointerRef.current = null;
-    setKnob({ x: 0, y: 0 });
-    onMove(0, 0);
-  };
-
   return (
     <div
       ref={padRef}
       role="application"
       aria-label="移动摇杆"
-      className="pointer-events-auto relative h-[124px] w-[124px] touch-none select-none rounded-full border-2 border-ink-600 bg-ink-900/80 backdrop-blur-sm"
+      className="pointer-events-auto no-callout relative h-[124px] w-[124px] shrink-0 touch-none select-none rounded-full border-2 border-ink-600 bg-ink-900/80 backdrop-blur-sm"
+      onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
+        if (pointerRef.current !== null) return;
+        event.preventDefault();
         pointerRef.current = event.pointerId;
         event.currentTarget.setPointerCapture(event.pointerId);
         update(event.clientX, event.clientY);
@@ -65,8 +96,15 @@ export function Joystick({ onMove }: JoystickProps) {
         if (pointerRef.current !== event.pointerId) return;
         update(event.clientX, event.clientY);
       }}
-      onPointerUp={release}
-      onPointerCancel={release}
+      onPointerUp={(event) => {
+        if (pointerRef.current === event.pointerId) release();
+      }}
+      onPointerCancel={(event) => {
+        if (pointerRef.current === event.pointerId) release();
+      }}
+      onLostPointerCapture={(event) => {
+        if (pointerRef.current === event.pointerId) release();
+      }}
     >
       <div className="pointer-events-none absolute inset-[30px] rounded-full border border-dashed border-ink-600" />
       <div
