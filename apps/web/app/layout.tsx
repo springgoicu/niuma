@@ -18,11 +18,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN">
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* 字体已自托管到 /public/fonts（拉丁子集），不再请求 Google Fonts：
+            国内访问 fonts.googleapis.com 常年超时，会直接拖垮 FCP/LCP */}
         <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;600;700&display=swap"
+          rel="preload"
+          href="/fonts/Oswald-700.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
         />
       </head>
       <body>{children}</body>

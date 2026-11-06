@@ -200,6 +200,16 @@ rm -rf "$WEB_NEW/$WEB_APP_REL/.next/static" "$WEB_NEW/$WEB_APP_REL/public"
 cp -a "$WS/apps/web/.next/static" "$WEB_NEW/$WEB_APP_REL/.next/static"
 cp -a "$WS/apps/web/public" "$WEB_NEW/$WEB_APP_REL/public"
 
+# 预压缩静态资源：nginx 用 gzip_static 直接吐 .gz，省掉每次请求的运行时压缩开销
+# 只压文本类；woff2/png 本身已压缩，再压只会变大
+if command -v gzip >/dev/null 2>&1; then
+  find "$WEB_NEW/$WEB_APP_REL/.next/static" "$WEB_NEW/$WEB_APP_REL/public" -type f \
+    \( -name '*.js' -o -name '*.css' -o -name '*.json' \
+       -o -name '*.svg' -o -name '*.txt' -o -name '*.webmanifest' \) \
+    -exec gzip -9 -k -f {} + 2>/dev/null || true
+  echo "✔ 静态资源已预压缩（gzip -9，原文件保留）"
+fi
+
 rm -rf "${WEB_DIR}.old"
 if [ -d "$WEB_DIR" ]; then
   mv "$WEB_DIR" "${WEB_DIR}.old"

@@ -24,9 +24,47 @@
 
   --font-display: "Oswald", "Noto Sans SC", ui-sans-serif, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* 中文不再远程加载字体（Google Fonts 在国内常年不通，会阻塞首屏），改用系统字体栈 */
+  --font-sans: "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
 
   --ease-out-expo: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ============ 自托管字体（拉丁子集，同源加载，无外部依赖） ============ */
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Oswald-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/Oswald-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/Oswald-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-600.woff2") format("woff2");
 }
 
 @layer base {
