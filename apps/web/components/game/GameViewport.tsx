@@ -13,10 +13,28 @@ import { ConnectionBanner, OnlineBadge, PlayerCard } from './Hud';
 import { JoinGate } from './JoinGate';
 import { MiniMap } from './MiniMap';
 import { QueueGate } from './QueueGate';
+import { Joystick, TouchActions } from './TouchControls';
+import { useIsTouch, useLandscapeStage } from '@/lib/use-touch-stage';
+
+/**
+ * 竖屏触屏时把舞台横过来（系统横屏锁失败的兜底）：
+ * 舞台宽高互换，再绕左上角旋转 90° 并平移回视口内。
+ */
+const LANDSCAPE_STAGE_STYLE = {
+  position: 'fixed',
+  top: 0,
+  left: 0,
+  width: '100dvh',
+  height: '100dvw',
+  transformOrigin: '0 0',
+  transform: 'translate(100dvw, 0) rotate(90deg)',
+} as const;
 
 export function GameViewport() {
   const hostRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<GameSession | null>(null);
+  const isTouch = useIsTouch();
+  const rotated = useLandscapeStage(isTouch);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [checked, setChecked] = useState(false);
 
@@ -77,6 +95,9 @@ export function GameViewport() {
   const handleAction = useCallback((action: ActionKey) => {
     sessionRef.current?.perform(action);
   }, []);
+  const handleMove = useCallback((x: number, y: number) => {
+    sessionRef.current?.setMoveVector(x, y);
+  }, []);
   const handleRetry = useCallback(() => {
     useGameUi.getState().setRejected(0);
     useGameUi.getState().setQueue(null);
@@ -84,16 +105,21 @@ export function GameViewport() {
   }, []);
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-ink-950">
+    <div
+      className="relative h-dvh w-full touch-none select-none overflow-hidden bg-ink-950"
+      style={rotated ? LANDSCAPE_STAGE_STYLE : undefined}
+    >
       <div ref={hostRef} className="absolute inset-0" aria-label="游戏视口" />
 
       {checked && !profile && <JoinGate onEnter={setProfile} />}
 
       {profile && (
         <>
-          <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-4">
+          <div
+            className={`pointer-events-none absolute inset-0 flex flex-col justify-between ${isTouch ? 'p-3' : 'p-4'}`}
+          >
             <div className="flex items-start justify-between gap-3">
-              <PlayerCard name={profile.name} species={profile.appearance.species} />
+              <PlayerCard name={profile.name} species={profile.appearance.species} compact={isTouch} />
               <div className="flex flex-col items-end gap-2">
                 <OnlineBadge />
                 <Link
@@ -106,13 +132,23 @@ export function GameViewport() {
               </div>
             </div>
 
-            <div className="flex items-end justify-between gap-4">
-              <ChatDock onSend={handleChat} />
-              <div className="hidden flex-1 justify-center md:flex">
-                <ActionBar onAction={handleAction} onChat={() => setChatOpen(true)} />
+            {isTouch ? (
+              <div className="flex items-end justify-between gap-3">
+                <div className="flex items-end gap-3">
+                  <Joystick onMove={handleMove} />
+                  <ChatDock onSend={handleChat} />
+                </div>
+                <TouchActions onAction={handleAction} onChat={() => setChatOpen(true)} />
               </div>
-              <MiniMap getSession={getSession} />
-            </div>
+            ) : (
+              <div className="flex items-end justify-between gap-4">
+                <ChatDock onSend={handleChat} />
+                <div className="hidden flex-1 justify-center md:flex">
+                  <ActionBar onAction={handleAction} onChat={() => setChatOpen(true)} />
+                </div>
+                <MiniMap getSession={getSession} />
+              </div>
+            )}
           </div>
 
           <QueueGate onRetry={handleRetry} />

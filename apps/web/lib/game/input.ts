@@ -10,6 +10,7 @@ export type ActionKey = 'sit' | 'lie' | 'emote' | 'jump' | 'wave';
 
 export class InputController {
   private readonly pressed = new Set<string>();
+  private touch = { x: 0, y: 0 };
   private detachFns: Array<() => void> = [];
 
   attach(onAction: (action: ActionKey) => void, onChat: () => void): void {
@@ -70,7 +71,20 @@ export class InputController {
       x *= inv;
       y *= inv;
     }
+    // 触屏摇杆与键盘叠加：合成后长度钳到 1，避免双输入时比键盘跑得更快
+    x += this.touch.x;
+    y += this.touch.y;
+    const length = Math.hypot(x, y);
+    if (length > 1) {
+      x /= length;
+      y /= length;
+    }
     return { x, y };
+  }
+
+  /** 触屏摇杆的方向，取值范围 -1..1（屏幕坐标，y 向下为正） */
+  setTouchVector(x: number, y: number): void {
+    this.touch = { x, y };
   }
 
   clear(): void {

@@ -3,7 +3,7 @@
 import { Activity, Cpu, Gauge, Users, Wifi, WifiOff } from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
 
-export function PlayerCard({ name, species }: { name: string; species: string }) {
+export function PlayerCard({ name, species, compact = false }: { name: string; species: string; compact?: boolean }) {
   const fps = useGameUi((state) => state.fps);
   const ping = useGameUi((state) => state.ping);
   const x = useGameUi((state) => state.x);
@@ -12,7 +12,9 @@ export function PlayerCard({ name, species }: { name: string; species: string })
   const status = useGameUi((state) => state.status);
 
   return (
-    <div className="pointer-events-auto w-[268px] border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm">
+    <div
+      className={`pointer-events-auto border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm ${compact ? 'w-[190px]' : 'w-[268px]'}`}
+    >
       <div className="flex items-center justify-between border-b-2 border-ink-700 px-3 py-2">
         <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mist-500">
           <Cpu className="h-3.5 w-3.5 text-mint-400" />
@@ -23,9 +25,12 @@ export function PlayerCard({ name, species }: { name: string; species: string })
 
       <div className="px-3 py-3">
         <p className="truncate font-display text-xl font-semibold tracking-wide text-mist-100">{name}</p>
-        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-500">
-          floor 03 · corridor b
-        </p>
+        {!compact && (
+          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-500">floor 03 · corridor b</p>
+        )}
+      </div>
+      {!compact && (
+        <>
 
         <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 font-mono text-[10px]">
           <div className="flex items-center justify-between">
@@ -56,12 +61,13 @@ export function PlayerCard({ name, species }: { name: string; species: string })
             </dd>
           </div>
         </dl>
-      </div>
 
       <div className="flex items-center justify-between border-t-2 border-ink-700 px-3 py-2 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500">
         <span>renderer</span>
         <span className="text-mint-400">{backend}</span>
       </div>
+        </>
+      )}
     </div>
   );
 }

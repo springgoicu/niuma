@@ -424,6 +424,11 @@ export class GameSession {
     if (this.localId) this.renderer.setAppearance(this.localId, appearance);
   }
 
+  /** 触屏摇杆：把屏幕摇杆方向交给输入层，与键盘共用同一条移动通路 */
+  setMoveVector(x: number, y: number): void {
+    this.input.setTouchVector(x, y);
+  }
+
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
