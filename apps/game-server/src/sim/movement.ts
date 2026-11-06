@@ -8,8 +8,10 @@ import {
   unpackState,
   type MovePacket,
   type Pose,
+  type SeatStateEntry,
 } from '@niuma/shared-types';
 import type { Player } from './world';
+import type { SeatRegistry } from './seats';
 
 /** 允许的时间窗下限，避免同一毫秒内连发被误判 */
 const MIN_WINDOW_MS = 8;
@@ -27,6 +29,8 @@ export interface MoveResult {
   accepted: boolean;
   crossed: boolean;
   clamped: boolean;
+  /** 本包导致的座位释放（移动或改姿态起身），调用方需广播 */
+  released: SeatStateEntry[];
 }
 
 /**
@@ -34,16 +38,34 @@ export interface MoveResult {
  * 超速不踢人，只把坐标沿原方向截断到允许距离——避免误伤高延迟玩家。
  * 
  * 支持新协议中的 clientSequence 防重复和 clientTimestampMs 用于延迟估计。
+ *
+ * 座位规则：入座后位置由座位锁定；上报的姿态不再是坐姿即视为起身，随后按正常移动处理。
  */
-export function applyMove(player: Player, packet: MovePacket, now: number): MoveResult {
+export function applyMove(player: Player, packet: MovePacket, now: number, seats?: SeatRegistry): MoveResult {
   // packet.id 仅用于协议完整性与日志，服务端一律以连接绑定的实体为准
   
   // 防重复：如果有序号且低于已处理的序号，直接丢弃
   if (packet.clientSequence !== undefined) {
     if (packet.clientSequence <= player.lastClientMoveSequence) {
-      return { accepted: false, crossed: false, clamped: false };
+      return { accepted: false, crossed: false, clamped: false, released: [] };
     }
     player.lastClientMoveSequence = packet.clientSequence;
+  }
+
+  const state = unpackState(packet.state);
+  const pose = sanitizePose(state.pose);
+  const released: SeatStateEntry[] = [];
+
+  if (player.seat !== 0) {
+    if (pose !== POSE.Sit) {
+      released.push(...(seats?.stand(player) ?? []));
+    } else {
+      // 坐姿中位置不动，只接受原地的叫唤 / 挥手；跳跃需要先起身，这里不接
+      const stationary = !state.moving;
+      player.applyState(player.direction, POSE.Sit, false, stationary && state.emote, false, stationary && state.wave);
+      player.dirty = true;
+      return { accepted: false, crossed: false, clamped: false, released };
+    }
   }
   
   const targetX = dequantizeCoord(packet.x);
@@ -65,8 +87,6 @@ export function applyMove(player: Player, packet: MovePacket, now: number): Move
   player.y = resolved.y;
   player.lastMoveAt = now;
 
-  const state = unpackState(packet.state);
-  const pose = sanitizePose(state.pose);
   // 行走中不接叫唤与打招呼：图集没有行走张嘴帧，也没有行走挥手帧，套上去就是脚在滑。
   // 跳跃是位移动作，行走中必须放行；到期由客户端按各自窗口清位，服务端不另设计时器（ADR-0018 / 0019）。
   const stationary = pose !== POSE.Walk && !state.moving;
@@ -80,5 +100,5 @@ export function applyMove(player: Player, packet: MovePacket, now: number): Move
   );
   player.dirty = true;
 
-  return { accepted: true, crossed: false, clamped };
+  return { accepted: true, crossed: false, clamped, released };
 }

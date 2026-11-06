@@ -354,6 +354,33 @@ export function decodeAction(data: Uint8Array): { entityId: number; action: numb
   return { entityId: reader.u16(), action: reader.u8() };
 }
 
+/** 座位变动：occupant = 0 表示空出；一包可以带多条，入场时服务端一次性下发全量占用 */
+export interface SeatStateEntry {
+  seatId: number;
+  occupant: number;
+}
+
+export function encodeSeatState(entries: readonly SeatStateEntry[]): Uint8Array {
+  const writer = new ByteWriter(3 + entries.length * 4);
+  writer.u8(OpCode.S2C_SEAT_STATE).u16(entries.length);
+  for (const entry of entries) writer.u16(entry.seatId).u16(entry.occupant);
+  return writer.finish();
+}
+
+export function decodeSeatState(data: Uint8Array): SeatStateEntry[] {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_SEAT_STATE) throw new Error('not a seat state packet');
+  const count = reader.u16();
+  if (reader.remaining !== count * 4) {
+    throw new Error(`seat state payload mismatch: ${reader.remaining} vs ${count * 4}`);
+  }
+  const entries: SeatStateEntry[] = new Array(count);
+  for (let i = 0; i < count; i += 1) {
+    entries[i] = { seatId: reader.u16(), occupant: reader.u16() };
+  }
+  return entries;
+}
+
 export function encodePing(timestamp: number): Uint8Array {
   const writer = new ByteWriter(5);
   writer.u8(OpCode.C2S_PING).u32(timestamp);

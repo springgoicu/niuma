@@ -32,6 +32,8 @@ export class Player {
   lastClientMoveSequence = -1; // 上次处理的移动包序号（用于防重复）
   chatWindowStart = 0;
   chatCount = 0;
+  /** 当前占用的座位 id，0 表示站立或地面坐 */
+  seat = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
   known = new Set<number>();
   /** 每人一个可复用发送缓冲，避免每 Tick 新建 */
@@ -53,6 +55,7 @@ export class Player {
     this.emote = false;
     this.jump = false;
     this.wave = false;
+    this.seat = 0;
     this.dirty = false;
     this.needsViewRefresh = false;
     this.lastMoveAt = 0;

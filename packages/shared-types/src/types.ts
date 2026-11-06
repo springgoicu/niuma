@@ -96,6 +96,7 @@ export const OpCode = {
   C2S_CHAT: 0x16,
   S2C_QUEUE_STATUS: 0x17,
   S2C_QUEUE_REJECTED: 0x18,
+  S2C_SEAT_STATE: 0x19,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];

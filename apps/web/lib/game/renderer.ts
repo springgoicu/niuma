@@ -9,13 +9,14 @@ import {
   Text,
   type Texture,
 } from 'pixi.js';
-import { ISLAND, type CharacterAppearance } from '@niuma/shared-types';
+import { ISLAND, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
 import { GroundFx, SHADOW_NORMAL } from './fx';
 import { bubbleTopY, headTopYOf, nameBottomY, nameplateText, NAME_STROKE_WIDTH } from './nameplate';
 import { PonyRenderer } from './pony';
 import type { PonyMotion } from './pony-motion';
+import { PropsView } from './props';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetrics } from './pixel-scale';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
@@ -267,6 +268,7 @@ export class GameRenderer {
   private readonly views = new Map<number, EntityView>();
   private atlas!: Atlas;
   private terrain?: TerrainView;
+  private props?: PropsView;
   /** 屏幕空间的乘算柔光层；`?light=0` 时整层不建 */
   private light?: AmbientLight;
   private shadowTextures: Texture[] = [];
@@ -342,6 +344,10 @@ export class GameRenderer {
     this.world.addChild(this.terrain.edge);
     // 贴花压在地面之上、尘土与角色之下
     this.world.addChild(this.terrain.decals);
+    // 室内地板与墙体、园区铺装：与地形同层，压在贴花之上、y 排序层之下
+    this.props = new PropsView();
+    this.props.build(this.sorted, this.app.renderer);
+    this.world.addChild(this.props.base);
 
     this.shadowTextures = GroundFx.shadowTextures(this.app.renderer);
     this.fx = new GroundFx(this.app.renderer);
@@ -552,6 +558,12 @@ export class GameRenderer {
     this.world.y = snapCss(screen.height / 2, dpr) - snapTexel(camY) * cssScale;
 
     // 只画看得见的树：余量按帧尺寸给，树冠那一截由地形自己补
+    this.props?.cull(
+      camX - halfW - CULL_PAD_X,
+      camY - halfH - CULL_PAD_Y,
+      camX + halfW + CULL_PAD_X,
+      camY + halfH + CULL_PAD_Y,
+    );
     this.terrain?.cull(
       camX - halfW - CULL_PAD_X,
       camY - halfH - CULL_PAD_Y,
@@ -572,6 +584,12 @@ export class GameRenderer {
 
   get entityCount(): number {
     return this.views.size;
+  }
+
+  /** 座位占用变化：对应工位的显示器随之点亮或熄灭 */
+  setSeatOccupied(seatId: number, occupied: boolean): void {
+    const seat = seatById(seatId);
+    if (seat) this.props?.setSeatOccupied(seat, occupied);
   }
 
   /**
@@ -596,6 +614,7 @@ export class GameRenderer {
     for (const texture of this.shadowTextures) texture.destroy(true);
     this.fx?.destroy();
     this.terrain?.destroy();
+    this.props?.destroy();
     this.app.destroy(true, { children: true });
   }
 }

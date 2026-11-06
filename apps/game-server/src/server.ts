@@ -16,6 +16,7 @@ import {
   encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
+  encodeSeatState,
   encodeWelcome,
   findFreePoint,
   isBlocked,
@@ -23,6 +24,7 @@ import {
   quantizeCoord,
   readOpCode,
   WORLD_CENTER,
+  type SeatStateEntry,
 } from '@niuma/shared-types';
 import { AdmissionController, type HelloPayload } from './admission/controller';
 import type { ServerConfig } from './config';
@@ -30,6 +32,7 @@ import { EgressMeter, RingSampler } from './metrics';
 import { SpatialGrid } from './spatial/grid';
 import { handleChat } from './sim/chat';
 import { applyMove } from './sim/movement';
+import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
 import { broadcastDespawn, refreshView, type Transport } from './sim/view';
 import { World } from './sim/world';
@@ -64,6 +67,7 @@ function spawnPoint(radius: number): { x: number; y: number } {
 export function startGameServer(config: ServerConfig) {
   const world = new World();
   const grid = new SpatialGrid();
+  const seats = new SeatRegistry();
   const sockets = new Map<number, ServerWebSocket<SocketData>>();
   const tickSampler = new RingSampler(1200);
   const moveSampler = new RingSampler(1200);
@@ -82,6 +86,13 @@ export function startGameServer(config: ServerConfig) {
       socket.send(data);
     },
   };
+
+  /** 座位变化广播给全园：占用变动很少，一包带多条即可 */
+  function broadcastSeats(changes: readonly SeatStateEntry[]): void {
+    if (changes.length === 0) return;
+    const packet = encodeSeatState(changes);
+    for (const other of world.players.values()) transport.send(other.wsId, packet);
+  }
 
   /** 真正入场：建实体、回 WELCOME、结算首帧视野。排队者放行时复用的就是这条路径 */
   function admit(ws: ServerWebSocket<SocketData>, payload: HelloPayload): void {
@@ -102,6 +113,8 @@ export function startGameServer(config: ServerConfig) {
         y: quantizeCoord(player.y),
       }),
     );
+    const occupied = seats.snapshot();
+    if (occupied.length > 0) ws.send(encodeSeatState(occupied));
     refreshView(player, world, grid, transport);
     console.log(`[game] + ${player.name}#${player.id} online=${world.size}`);
   }
@@ -151,7 +164,8 @@ export function startGameServer(config: ServerConfig) {
 
     if (op === OpCode.C2S_MOVE) {
       const packet = decodeMove(data, MOVE_SCRATCH);
-      const result = applyMove(player, packet, now);
+      const result = applyMove(player, packet, now, seats);
+      if (result.released.length > 0) broadcastSeats(result.released);
       if (!result.accepted) return;
       if (result.clamped) moveSampler.push(1);
       if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
@@ -160,11 +174,22 @@ export function startGameServer(config: ServerConfig) {
 
     if (op === OpCode.C2S_ACTION) {
       const { action } = decodeAction(data);
-      // 只有坐 / 躺走这个包：叫唤与跳随 20Hz 的 move 包上行（见 ADR-0018）
-      if (action !== ACTION.Sit && action !== ACTION.Lie) return;
-      const pose = action === ACTION.Sit ? POSE.Sit : POSE.Lie;
+      // 只有坐 / 躺 / 起身走这个包：叫唤与跳随 20Hz 的 move 包上行（见 ADR-0018）
+      if (action === ACTION.Stand) {
+        broadcastSeats(seats.stand(player));
+        return;
+      }
+      if (action === ACTION.Sit) {
+        // 入座可能吸附位置：先改坐标，再通知空间索引与视野
+        broadcastSeats(seats.sit(player, now));
+        if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+        return;
+      }
+      if (action !== ACTION.Lie) return;
+      // 座位上不能躺：先起身
+      if (player.seat !== 0) return;
       // 切姿势会中断叠加动作：服务端这里一并清位，避免残留张嘴/腾空/抬手帧
-      player.applyState(player.direction, pose, false, false, false, false);
+      player.applyState(player.direction, POSE.Lie, false, false, false, false);
       player.dirty = true;
       return;
     }
@@ -195,6 +220,7 @@ export function startGameServer(config: ServerConfig) {
     const player = world.get(ws.data.playerId);
     if (!player) return;
     const label = `${player.name}#${player.id}`;
+    broadcastSeats(seats.release(player));
     broadcastDespawn(player, world, transport);
     grid.remove(player.id);
     world.destroy(player.id);

@@ -27,7 +27,7 @@ interface BakeOptions {
   frame?: Rectangle;
 }
 
-function bake(renderer: TextureFactory, draw: (g: Graphics) => void, options: BakeOptions = {}): Texture {
+export function bake(renderer: TextureFactory, draw: (g: Graphics) => void, options: BakeOptions = {}): Texture {
   const g = new Graphics();
   draw(g);
   const texture = renderer.generateTexture({

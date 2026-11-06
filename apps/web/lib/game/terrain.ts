@@ -702,6 +702,8 @@ export class TerrainView {
     if (!pointInPolygon(x, y, ISLAND.points)) return false;
     for (const path of WORLD_LAYOUT.paths) if (rectContains(path, x, y)) return false;
     for (const bridge of WORLD_LAYOUT.bridges) if (rectContains(bridge, x, y)) return false;
+    for (const area of WORLD_LAYOUT.paved) if (rectContains(area, x, y)) return false;
+    for (const building of WORLD_LAYOUT.buildings) if (rectContains(building.rect, x, y)) return false;
     if (isWaterAt(x, y)) return false;
     return true;
   }

@@ -21,6 +21,9 @@ interface GameUiState {
   rejected: number;
   messages: ChatEntry[];
   chatOpen: boolean;
+  /** 座位提示文案；null 表示当前不在可坐的位置附近 */
+  seatHint: string | null;
+  setSeatHint: (hint: string | null) => void;
   setStatus: (status: ConnectionStatus, detail?: string) => void;
   setStats: (stats: SessionStats) => void;
   setQueue: (queue: QueueStatusPacket | null) => void;
@@ -45,6 +48,9 @@ export const useGameUi = create<GameUiState>((set) => ({
   rejected: 0,
   messages: [],
   chatOpen: false,
+  seatHint: null,
+
+  setSeatHint: (seatHint) => set({ seatHint }),
 
   setStatus: (status, detail = '') => set({ status, detail }),
 
@@ -77,6 +83,7 @@ export const useGameUi = create<GameUiState>((set) => ({
       ping: 0,
       messages: [],
       chatOpen: false,
+      seatHint: null,
       nearby: 0,
       queue: null,
       rejected: 0,

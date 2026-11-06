@@ -84,10 +84,14 @@ export const POSE = {
 export type Direction = (typeof DIRECTION)[keyof typeof DIRECTION];
 export type Pose = (typeof POSE)[keyof typeof POSE];
 
-/** 走 C2S_ACTION 的只有姿态切换；叫唤与跳随 20Hz 的 move 包上行，不再单独发包 */
+/**
+ * 动作：坐 / 躺 / 起身。叫唤与跳随 move 包上行（ADR-0018）。
+ * Sit 在附近有空闲座位时入座，否则落地坐；Stand 释放座位并回到站立。
+ */
 export const ACTION = {
   Sit: 0,
   Lie: 1,
+  Stand: 2,
 } as const;
 
 export type ActionId = (typeof ACTION)[keyof typeof ACTION];

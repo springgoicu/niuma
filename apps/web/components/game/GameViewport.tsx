@@ -26,6 +26,8 @@ export function GameViewport() {
   const setRejected = useGameUi((state) => state.setRejected);
   const pushMessage = useGameUi((state) => state.pushMessage);
   const setChatOpen = useGameUi((state) => state.setChatOpen);
+  const setSeatHint = useGameUi((state) => state.setSeatHint);
+  const seatHint = useGameUi((state) => state.seatHint);
 
   useEffect(() => {
     useGameUi.getState().reset();
@@ -57,6 +59,7 @@ export function GameViewport() {
       onStats: (stats) => setStats(stats),
       onChat: (entry) => pushMessage(entry),
       onRequestChat: () => setChatOpen(true),
+      onSeatHint: (hint) => setSeatHint(hint),
     });
     sessionRef.current = session;
     session.start(host, profile).catch((error: unknown) => {
@@ -67,7 +70,7 @@ export function GameViewport() {
       session.stop();
       sessionRef.current = null;
     };
-  }, [profile, setStatus, setStats, pushMessage, setChatOpen]);
+  }, [profile, setStatus, setStats, pushMessage, setChatOpen, setSeatHint]);
 
   const getSession = useCallback(() => sessionRef.current, []);
   const handleChat = useCallback((text: string) => sessionRef.current?.sendChat(text), []);
@@ -113,6 +116,14 @@ export function GameViewport() {
           </div>
 
           <QueueGate onRetry={handleRetry} />
+          {seatHint && (
+            <div
+              role="status"
+              className="pointer-events-none absolute bottom-24 left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm"
+            >
+              {seatHint}
+            </div>
+          )}
           <ConnectionBanner />
         </>
       )}

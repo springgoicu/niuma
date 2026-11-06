@@ -65,6 +65,19 @@ for (const tree of WORLD_LAYOUT.wildTrees) {
 for (const planter of WORLD_LAYOUT.planters) {
   blockers.push({ kind: 'circle', x: planter.x, y: planter.y, r: PLANTER_RADIUS, water: false });
 }
+for (const solid of WORLD_LAYOUT.solids) {
+  const { x, y, w, h } = solid;
+  blockers.push({
+    kind: 'polygon',
+    points: [
+      [x, y],
+      [x + w, y],
+      [x + w, y + h],
+      [x, y + h],
+    ],
+    water: false,
+  });
+}
 for (const lake of WORLD_LAYOUT.lakes) {
   blockers.push({ kind: 'polygon', points: lake.points, water: true });
 }

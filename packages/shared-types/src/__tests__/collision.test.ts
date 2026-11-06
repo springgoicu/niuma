@@ -26,7 +26,8 @@ describe('围栏与门洞', () => {
   });
 
   it('门洞之外的栏板挡住去路', () => {
-    const result = resolveMotion(3800, SOUTH - 80, 3800, SOUTH + 120);
+    // x=3600 落在两张南排桌子之间的走道上，只会被栏板挡住
+    const result = resolveMotion(3600, SOUTH - 80, 3600, SOUTH + 120);
     expect(result.y).toBeLessThan(SOUTH);
     expect(result.y).toBeGreaterThan(SOUTH - 30);
   });

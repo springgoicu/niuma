@@ -8,6 +8,7 @@ import {
   decodePong,
   decodeQueueRejected,
   decodeQueueStatus,
+  decodeSeatState,
   decodeSpawn,
   decodeSync,
   decodeWelcome,
@@ -20,6 +21,7 @@ import {
   type ChatPacket,
   type EntitySnapshot,
   type QueueStatusPacket,
+  type SeatStateEntry,
   type SpawnPacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
@@ -37,6 +39,8 @@ export interface NetHandlers {
   onSync(tick: number, entities: EntitySnapshot[]): void;
   onChat(packet: ChatPacket): void;
   onAppearance(id: number, appearance: CharacterAppearance): void;
+  /** 座位占用变化（入场时为全量快照，之后为增量） */
+  onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
 }
 
@@ -162,6 +166,9 @@ export class NetClient {
         this.handlers.onAppearance(packet.entityId, packet.appearance);
         break;
       }
+      case OpCode.S2C_SEAT_STATE:
+        this.handlers.onSeatState(decodeSeatState(data));
+        break;
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));
         break;

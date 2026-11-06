@@ -8,15 +8,19 @@ import {
   WORLD_WIDTH,
   dequantizeCoord,
   directionFromVector,
+  findNearestSeat,
   packState,
   quantizeCoord,
   regionAt,
   resolveMotion,
+  seatById,
   unpackState,
   type CharacterAppearance,
   type Direction,
   type Pose,
   type QueueStatusPacket,
+  type SeatInstance,
+  type SeatStateEntry,
   type SpawnPacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
@@ -59,10 +63,14 @@ export interface SessionCallbacks {
   onStats(stats: SessionStats): void;
   onChat(entry: ChatEntry): void;
   onRequestChat(): void;
+  /** 附近可用座位或当前入座提示；null 表示不显示 */
+  onSeatHint(hint: string | null): void;
 }
 
 const SEND_INTERVAL = 50;
 const STATS_INTERVAL = 500;
+/** 座位提示刷新间隔：足够跟手，又不必每帧扫描座位表 */
+const SEAT_HINT_INTERVAL = 150;
 
 /** P1：网络同步改进 - 时间线插值配置 */
 const MOVEMENT_CONFIG = {
@@ -100,6 +108,14 @@ export class GameSession {
   ];
   private readonly input = new InputController();
   private readonly names = new Map<number, string>();
+  /** 座位占用镜像：seatId → 占用者的 netId，以服务端广播为准 */
+  private readonly seatOwner = new Map<number, number>();
+  /** 本地所坐的座位（0 表示未入座）：预测后由服务端广播校正 */
+  private localSeat = 0;
+  /** 已发出入座请求且尚未起身：只有此时服务端的入座结果才会吸附本地角色 */
+  private sitIntent = false;
+  private seatHint: string | null = null;
+  private seatHintAt = 0;
   private net: NetClient | null = null;
   private localId = 0;
   private elapsed = 0;
@@ -148,6 +164,7 @@ export class GameSession {
       onSync: (_tick, entities) => this.handleSync(entities),
       onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
       onAppearance: (id, appearance) => this.renderer.setAppearance(id, appearance),
+      onSeatState: (entries) => this.handleSeatState(entries),
       onPing: (rtt) => {
         this.ping = rtt;
       },
@@ -292,6 +309,79 @@ export class GameSession {
     since[eid] = this.elapsed;
   }
 
+  /**
+   * 座位广播：镜像占用表并同步工位显示器。
+   * 本人的座位以服务端为准：被占走（抢座失败）则退回地面坐，服务端分到别的座位则吸附过去。
+   */
+  private handleSeatState(entries: ReadonlyArray<SeatStateEntry>): void {
+    for (const entry of entries) {
+      const seat = seatById(entry.seatId);
+      if (!seat) continue;
+      if (entry.occupant === 0) this.seatOwner.delete(entry.seatId);
+      else this.seatOwner.set(entry.seatId, entry.occupant);
+      this.renderer.setSeatOccupied(entry.seatId, entry.occupant !== 0);
+
+      if (entry.occupant === this.localId) {
+        if (this.sitIntent && this.localSeat !== entry.seatId) this.sitAt(seat);
+      } else if (entry.seatId === this.localSeat) {
+        // 预测的座位被别人先占走：本地退回地面坐，随后服务端若分到新座位会再吸附过去
+        this.localSeat = 0;
+      }
+    }
+  }
+
+  /** 吸附到座位：位置与朝向都按座位锚点，姿态为坐。叠加动作一并清掉 */
+  private sitAt(seat: SeatInstance): void {
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    this.localSeat = seat.id;
+    Position.x[eid] = seat.x;
+    Position.y[eid] = seat.y;
+    Target.x[eid] = seat.x;
+    Target.y[eid] = seat.y;
+    Motion.direction[eid] = seat.facing;
+    this.setLocalPose(eid, POSE.Sit);
+    this.clearOverlays(eid);
+    Motion.moving[eid] = 0;
+  }
+
+  /** 起身：本地立即回到站立，并通知服务端释放座位 */
+  private standUp(): void {
+    if (this.localSeat === 0) return;
+    this.localSeat = 0;
+    this.sitIntent = false;
+    const eid = this.ecs.get(this.localId);
+    if (eid) this.setLocalPose(eid, POSE.Idle);
+    this.net?.sendAction(this.localId, ACTION.Stand);
+  }
+
+  private setLocalPose(eid: number, pose: Pose): void {
+    if (Motion.pose[eid] !== pose) {
+      Motion.pose[eid] = pose;
+      Motion.since[eid] = this.elapsed;
+    }
+  }
+
+  private clearOverlays(eid: number): void {
+    Motion.emote[eid] = 0;
+    Motion.jump[eid] = 0;
+    Motion.wave[eid] = 0;
+  }
+
+  /** 附近有可坐的空闲座位，或正坐在座位上时，给出提示文案 */
+  private updateSeatHint(eid: number): void {
+    let hint: string | null = null;
+    if (this.localSeat !== 0) {
+      hint = '移动即可起身';
+    } else {
+      const seat = findNearestSeat(Position.x[eid]!, Position.y[eid]!, (id) => !this.seatOwner.has(id));
+      if (seat) hint = seat.kind === 'toilet' ? '按 Z 使用马桶' : '按 Z 坐到工位';
+    }
+    if (hint === this.seatHint) return;
+    this.seatHint = hint;
+    this.callbacks.onSeatHint(hint);
+  }
+
   private handleChat(entityId: number, msgId: number, text: string): void {
     this.renderer.showBubble(entityId, text);
     this.callbacks.onChat({
@@ -309,6 +399,10 @@ export class GameSession {
       this.renderer.removeEntity(id);
     }
     this.names.clear();
+    for (const seatId of this.seatOwner.keys()) this.renderer.setSeatOccupied(seatId, false);
+    this.seatOwner.clear();
+    this.localSeat = 0;
+    this.sitIntent = false;
     this.localId = 0;
   }
 
@@ -335,15 +429,21 @@ export class GameSession {
     if (!eid) return;
 
     if (action === 'sit' || action === 'lie') {
-      const pose = action === 'sit' ? POSE.Sit : POSE.Lie;
-      if (Motion.pose[eid] !== pose) {
-        Motion.pose[eid] = pose;
-        Motion.since[eid] = this.elapsed;
+      // 已经坐在座位上：Z 与 X 都不再生效，移动才会起身
+      if (this.localSeat !== 0) return;
+      if (action === 'sit') {
+        this.sitIntent = true;
+        const seat = findNearestSeat(Position.x[eid]!, Position.y[eid]!, (id) => !this.seatOwner.has(id));
+        if (seat) {
+          this.sitAt(seat);
+          this.net?.sendAction(this.localId, ACTION.Sit);
+          return;
+        }
       }
+      const pose = action === 'sit' ? POSE.Sit : POSE.Lie;
+      this.setLocalPose(eid, pose);
       // 切姿势会打断叠加动作
-      Motion.emote[eid] = 0;
-      Motion.jump[eid] = 0;
-      Motion.wave[eid] = 0;
+      this.clearOverlays(eid);
       Motion.moving[eid] = 0;
       this.net?.sendAction(this.localId, action === 'sit' ? ACTION.Sit : ACTION.Lie);
       return;
@@ -352,9 +452,9 @@ export class GameSession {
     if (action === 'jump') {
       // 坐 / 躺先起身再跳：跳跃是位移动作，躺着原地起跳读不懂。
       // 行走中直接起跳：pose 与 moving 都不动，跳跃帧播完自然接回走路循环。
+      this.standUp();
       if (Motion.pose[eid] !== POSE.Walk && Motion.pose[eid] !== POSE.Idle) {
-        Motion.pose[eid] = POSE.Idle;
-        Motion.since[eid] = this.elapsed;
+        this.setLocalPose(eid, POSE.Idle);
       }
       this.startOverlay(eid, 'jump');
       return;
@@ -426,6 +526,8 @@ export class GameSession {
     if (localEid) {
       const vector = this.input.vector();
       const moving = vector.x !== 0 || vector.y !== 0;
+      // 座位上一按方向键就起身：位置留在椅子旁，之后按正常移动走
+      if (moving && this.localSeat !== 0) this.standUp();
       if (moving) {
         const prevX = Position.x[localEid]!;
         const prevY = Position.y[localEid]!;
@@ -558,6 +660,14 @@ export class GameSession {
     }
 
     this.renderer.tickBubbles(dtMs);
+
+    if (localEid) {
+      this.seatHintAt += dtMs;
+      if (this.seatHintAt >= SEAT_HINT_INTERVAL) {
+        this.seatHintAt = 0;
+        this.updateSeatHint(localEid);
+      }
+    }
 
     if (now - this.statsAt >= STATS_INTERVAL) {
       const windowMs = now - this.statsAt;
