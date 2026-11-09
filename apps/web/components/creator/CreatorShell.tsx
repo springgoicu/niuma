@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { useCreatorStore } from '@/lib/creator-store';
 import { loadProfile } from '@/lib/profile';
 import { ColorConsole } from './ColorConsole';
+import { CreatorTabs, type CreatorTab } from './CreatorTabs';
 import { PartRail } from './PartRail';
 import { PreviewStage } from './PreviewStage';
 import { SaveBar } from './SaveBar';
@@ -30,6 +31,7 @@ export function CreatorShell() {
   const hydrate = useCreatorStore((state) => state.hydrate);
   const dirty = useCreatorStore((state) => state.dirty);
   const species = useCreatorStore((state) => state.appearance.species);
+  const [tab, setTab] = useState<CreatorTab>('species');
 
   useEffect(() => {
     const profile = loadProfile();
@@ -37,9 +39,13 @@ export function CreatorShell() {
   }, [hydrate]);
 
   return (
-    <div className="min-h-dvh bg-ink-900 pb-32 sm:pb-32">
-      <header className="fixed inset-x-0 top-0 z-40 border-b border-ink-700/80 bg-ink-900/85 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-[1560px] items-center justify-between gap-4 px-5 sm:px-8">
+    <div
+      // 头部高度是吸顶 / 内容上边距的唯一来源，刘海屏由 env() 撑开
+      className="min-h-dvh bg-ink-900 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-32"
+      style={{ '--creator-top': 'calc(3.5rem + env(safe-area-inset-top))' } as CSSProperties}
+    >
+      <header className="pt-safe fixed inset-x-0 top-0 z-40 border-b border-ink-700/80 bg-ink-900/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-[1560px] items-center justify-between gap-4 px-4 sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/"
@@ -61,20 +67,32 @@ export function CreatorShell() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1560px] px-5 pt-[88px] sm:px-8">
-        <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-4 border-b border-ink-700/70 pb-6">
-          <h1 className="font-display text-[clamp(26px,3.4vw,38px)] leading-[1.12] font-bold tracking-[-0.01em] text-mist-100">
+      <main className="mx-auto max-w-[1560px] px-4 pt-[calc(var(--creator-top)+1rem)] [@media(max-height:500px)]:pt-[calc(var(--creator-top)+0.5rem)] sm:px-8 sm:pt-[calc(var(--creator-top)+2rem)]">
+        <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-2 border-b border-ink-700/70 pb-4 [@media(max-height:500px)]:pb-2 sm:gap-y-4 sm:pb-6">
+          <h1 className="font-display text-[clamp(24px,3.4vw,38px)] leading-[1.12] font-bold tracking-[-0.01em] text-mist-100 [@media(max-height:500px)]:text-[20px]">
             捏一头能加班的{species === 'cow' ? '牛' : '马'}
           </h1>
-          <p className="max-w-[34ch] text-[13px] leading-relaxed text-mist-300">
+          <p className="hidden max-w-[34ch] text-[13px] leading-relaxed text-mist-300 sm:block [@media(max-height:500px)]:hidden">
             11 个色槽、8 个属性、6 款发型——随便调。这里没有 HR 审核，只有 20Hz 的 Tick。
           </p>
         </div>
 
-        <div className="mt-7 grid gap-5 xl:grid-cols-[288px_minmax(0,1fr)_368px]">
-          <PartRail />
-          <PreviewStage className="order-first xl:order-none" />
-          <ColorConsole />
+        <div className="mt-4 grid grid-cols-1 gap-4 xl:mt-7 xl:grid-cols-[288px_minmax(0,1fr)_368px] xl:gap-5">
+          {/* 预览常驻：手机吸顶在头部之下，桌面吸顶并收在与视口等高的列里，
+              不再被左栏的长列表拉成一张两屏高的画布 */}
+          {/* 横屏矮视口（<500px）放不下吸顶工作台，退回普通单列，靠滚动查看 */}
+          <div className="sticky top-[var(--creator-top)] z-30 flex h-[48dvh] max-h-[440px] min-h-[300px] flex-col bg-ink-900 shadow-[0_18px_24px_-24px_rgba(10,6,3,0.95)] [@media(max-height:500px)]:static [@media(max-height:500px)]:h-[248px] [@media(max-height:500px)]:max-h-[248px] [@media(max-height:500px)]:min-h-0 sm:h-[52dvh] sm:max-h-[560px] xl:top-[calc(var(--creator-top)+1.5rem)] xl:z-20 xl:col-start-2 xl:row-start-1 xl:h-[calc(100dvh-var(--creator-top)-6rem)] xl:max-h-none xl:min-h-0 xl:self-start xl:bg-transparent xl:shadow-none">
+            <PreviewStage />
+            <CreatorTabs value={tab} onChange={setTab} className="mt-2 shrink-0 xl:hidden" />
+          </div>
+
+          <PartRail
+            mobileTab={tab}
+            className={`xl:col-start-1 xl:row-start-1 ${tab === 'color' ? 'hidden xl:block' : ''}`}
+          />
+          <ColorConsole
+            className={`xl:col-start-3 xl:row-start-1 ${tab === 'color' ? '' : 'hidden xl:block'}`}
+          />
         </div>
 
         <div className="mt-6 flex items-start gap-2.5 border-t border-ink-700/70 pt-4">

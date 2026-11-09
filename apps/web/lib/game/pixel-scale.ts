@@ -40,6 +40,19 @@ export function sameMetrics(a: PixelMetrics, b: PixelMetrics): boolean {
   return a.dpr === b.dpr && a.devicePxPerTexel === b.devicePxPerTexel;
 }
 
+/**
+ * 按「最多允许多少 CSS 像素画一个纹素」反推档位，向下取整。
+ *
+ * 与 `pixelMetrics` 的差别只在这一步取整：固定版式用四舍五入保住观感，
+ * 自适应容器必须向下取整，宁可角色小一档，也不能让它撑出画布。
+ */
+export function fitMetrics(maxCssPerTexel: number, dpr: number = readDpr()): PixelMetrics {
+  const ratio = normalizeDpr(dpr);
+  const raw = Number.isFinite(maxCssPerTexel) ? maxCssPerTexel * ratio : 0;
+  const devicePxPerTexel = Math.min(MAX_DEVICE_PX, Math.max(MIN_DEVICE_PX, Math.floor(raw)));
+  return { dpr: ratio, devicePxPerTexel, cssScale: devicePxPerTexel / ratio };
+}
+
 /** CSS 长度吸附到整数设备像素上，避免整层画面落在半像素里被重采样 */
 export function snapCss(value: number, dpr: number = readDpr()): number {
   const ratio = normalizeDpr(dpr);

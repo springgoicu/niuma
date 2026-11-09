@@ -41,7 +41,8 @@ function Track({
 }) {
   const percent = Math.max(0, Math.min(1, value / max)) * 100;
   return (
-    <div className="group relative flex h-6 items-center focus-within:ring-1 focus-within:ring-mint-400">
+    // 触屏命中区 44px，滑轨本体仍是 2px 细线，不靠加粗表达可拖动
+    <div className="group relative flex h-11 items-center focus-within:ring-1 focus-within:ring-mint-400 xl:h-6">
       <div className="relative h-2 w-full border border-ink-700">
         <div className="absolute inset-0" style={{ background: gradient }} />
         <div
@@ -114,7 +115,7 @@ function ColorControls({ slot, label }: { slot: ColorSlot; label: string }) {
           onBlur={() => setDraft(toHexString(color))}
           aria-label={`${label}十六进制颜色`}
           spellCheck={false}
-          className="h-7 w-[88px] border border-ink-700 bg-ink-950 px-2 font-mono text-[11px] tabular-nums text-mist-100 outline-none transition-colors duration-150 focus:border-mint-400"
+          className="h-11 w-[104px] border border-ink-700 bg-ink-950 px-2 font-mono text-[11px] tabular-nums text-mist-100 outline-none transition-colors duration-150 focus:border-mint-400 xl:h-7 xl:w-[88px]"
         />
         <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-mist-400">
           565 · {toHexString(rgb565ToHex(hexToRgb565(color)))}
@@ -151,7 +152,7 @@ function GlobalRow({
         type="button"
         aria-expanded={expanded}
         onClick={onToggle}
-        className="flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 text-left"
+        className="flex min-h-11 w-full cursor-pointer items-center gap-3 px-3 py-2.5 text-left"
       >
         <span
           className="h-7 w-7 shrink-0 border border-ink-600"
@@ -222,7 +223,7 @@ function FocusCard({ part }: { part: PartKey }) {
   );
 }
 
-export function ColorConsole() {
+export function ColorConsole({ className = '' }: { className?: string }) {
   const activePart = useCreatorStore((state) => state.activePart);
   const setActivePart = useCreatorStore((state) => state.setActivePart);
   const setColor = useCreatorStore((state) => state.setColor);
@@ -239,7 +240,9 @@ export function ColorConsole() {
   const inGlobal = activePart === 'pattern' || activePart === 'extra';
 
   return (
-    <aside className="panel overscroll-contain p-5 xl:sticky xl:top-[72px] xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto">
+    <aside
+      className={`panel overscroll-contain p-4 sm:p-5 xl:sticky xl:top-[72px] xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto ${className}`}
+    >
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="font-display text-[17px] font-semibold tracking-[0.08em] text-mist-100">调色控制台</h2>
         <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-mist-400">rgb565</span>
@@ -318,7 +321,7 @@ export function ColorConsole() {
               title={toHexString(preset)}
               aria-label={`应用 ${toHexString(preset)} 到${presetTarget}`}
               onClick={() => setColor(presetSlot, preset)}
-              className="h-7 cursor-pointer border border-ink-700 transition-[transform,border-color] duration-150 hover:-translate-y-px hover:border-mint-400"
+              className="h-11 cursor-pointer border border-ink-700 transition-[transform,border-color] duration-150 hover:-translate-y-px hover:border-mint-400 xl:h-7"
               style={{ backgroundColor: toHexString(preset) }}
             />
           ))}

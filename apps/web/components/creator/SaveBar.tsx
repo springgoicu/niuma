@@ -31,11 +31,11 @@ export function SaveBar() {
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700/80 bg-ink-900/[0.94] shadow-[0_-24px_48px_-32px_rgba(0,0,0,0.95)] backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-4 gap-y-3 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-8 sm:py-3.5">
-        <div className="flex w-full min-w-0 items-center gap-2.5 sm:w-auto sm:min-w-[240px] sm:flex-1">
+      <div className="mx-auto flex max-w-[1560px] items-center gap-x-3 gap-y-2.5 px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] sm:flex-wrap sm:gap-x-4 sm:px-8 sm:py-3.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:min-w-[240px]">
           <label
             htmlFor="niuma-name"
-            className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-400"
+            className="sr-only shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-400 sm:not-sr-only"
           >
             工牌名
           </label>
@@ -58,7 +58,7 @@ export function SaveBar() {
           </button>
           {tooWide ? (
             <span
-              className="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-amber-400"
+              className="hidden shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-amber-400 sm:inline"
               title={`头顶只显示 ${MAX_NAME_DISPLAY_UNITS} 显示宽，超出部分以省略号代替`}
             >
               头顶截断
@@ -71,8 +71,13 @@ export function SaveBar() {
           仅存于当前标签页 · 关闭即清空
         </p>
 
-        <button type="button" onClick={handleSave} className="btn-primary group w-full sm:w-auto">
-          保存并上岗
+        <button
+          type="button"
+          onClick={handleSave}
+          className="btn-primary group h-11 shrink-0 px-4 text-[12px] sm:h-auto sm:px-6"
+        >
+          <span className="sm:hidden">上岗</span>
+          <span className="hidden sm:inline">保存并上岗</span>
           <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
         </button>
       </div>

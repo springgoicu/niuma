@@ -1,18 +1,29 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Loader2 } from 'lucide-react';
+import {
+  Armchair,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  BedDouble,
+  Footprints,
+  Loader2,
+  PersonStanding,
+  type LucideIcon,
+} from 'lucide-react';
 import { useCreatorStore, type Pose } from '@/lib/creator-store';
 import { CreatorPreview } from '@/lib/game/preview';
 
-const POSES: Array<{ id: Pose; label: string; key: string }> = [
-  { id: 'idle', label: '站立', key: 'IDLE' },
-  { id: 'walk', label: '走动', key: 'WALK' },
-  { id: 'sit', label: '坐下', key: 'SIT' },
-  { id: 'lie', label: '躺平', key: 'LIE' },
+const POSES: Array<{ id: Pose; label: string; Icon: LucideIcon }> = [
+  { id: 'idle', label: '站立', Icon: PersonStanding },
+  { id: 'walk', label: '走动', Icon: Footprints },
+  { id: 'sit', label: '坐下', Icon: Armchair },
+  { id: 'lie', label: '躺平', Icon: BedDouble },
 ];
 
-const DIRECTIONS = [
+const DIRECTIONS: Array<{ dir: number; label: string; Icon: LucideIcon }> = [
   { dir: 0, label: '朝下', Icon: ArrowDown },
   { dir: 1, label: '朝左', Icon: ArrowLeft },
   { dir: 2, label: '朝右', Icon: ArrowRight },
@@ -22,6 +33,8 @@ const DIRECTIONS = [
 /** 分段控件共用的按下态：底色 + 底部 2px 亮线，比整块描边安静 */
 const SEG_ACTIVE = 'bg-mint-400/[0.09] text-mint-400 shadow-[inset_0_-2px_0_0_var(--color-mint-400)]';
 const SEG_IDLE = 'text-mist-300 hover:bg-ink-800/60 hover:text-mist-100';
+/** 触屏一行工具栏：44px 高，宽度均分，八颗按钮在小屏也放得下 */
+const TOOL_BTN = 'flex h-11 min-w-0 flex-1 cursor-pointer items-center justify-center transition-colors duration-150';
 
 export function PreviewStage({ className = '' }: { className?: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -73,8 +86,9 @@ export function PreviewStage({ className = '' }: { className?: string }) {
   }, [direction]);
 
   return (
-    <section className={`panel relative flex min-h-[420px] flex-col overflow-hidden sm:min-h-[540px] ${className}`}>
-      <header className="flex items-center justify-between gap-3 border-b border-ink-700/80 px-5 py-3">
+    <section className={`panel relative flex min-h-0 flex-1 flex-col overflow-hidden xl:min-h-[540px] ${className}`}>
+      {/* 手机端把 44px 让给画布：标题条隐藏，只留右上角浮动读数 */}
+      <header className="hidden shrink-0 items-center justify-between gap-3 border-b border-ink-700/80 px-5 py-3 sm:flex [@media(max-height:500px)]:hidden">
         <div className="flex items-center gap-2.5">
           <span className="h-1.5 w-1.5 animate-blink bg-mint-400" />
           <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-mist-400">
@@ -84,25 +98,34 @@ export function PreviewStage({ className = '' }: { className?: string }) {
         <span className="tag border-ink-600 text-[9px]">{ready ? '60 fps' : 'loading'}</span>
       </header>
 
-      <div className="relative flex-1">
+      <div className="relative min-h-0 flex-1">
         <div className="pointer-events-none absolute inset-0 grid-bg opacity-40" />
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0"
           style={{
-            // 一片柔光落在角色脚下；硬停止的阶梯光晕会把边缘切成几道弧线
+            // 柔光落在角色脚底：自适应居中后脚底约在画布 84% 处
             background:
-              'radial-gradient(ellipse 44% 34% at 50% 58%, rgba(79,227,193,0.12) 0%, rgba(79,227,193,0.05) 46%, transparent 76%)',
+              'radial-gradient(ellipse 44% 34% at 50% 84%, rgba(79,227,193,0.12) 0%, rgba(79,227,193,0.05) 46%, transparent 76%)',
           }}
         />
-        <div aria-hidden className="pointer-events-none absolute inset-4">
+        <div aria-hidden className="pointer-events-none absolute inset-3 sm:inset-4">
           <span className="absolute left-0 top-0 h-2.5 w-2.5 border-l border-t border-mint-400/25" />
           <span className="absolute right-0 top-0 h-2.5 w-2.5 border-r border-t border-mint-400/25" />
           <span className="absolute bottom-0 left-0 h-2.5 w-2.5 border-b border-l border-mint-400/25" />
           <span className="absolute bottom-0 right-0 h-2.5 w-2.5 border-b border-r border-mint-400/25" />
         </div>
 
-        <div ref={hostRef} className="relative h-full min-h-[300px] w-full sm:min-h-[420px]" aria-label="角色实时预览" />
+        <span className="tag absolute right-3 top-3 z-10 border-ink-600 text-[9px] sm:hidden">
+          {ready ? '60 fps' : 'loading'}
+        </span>
+
+        <div
+          ref={hostRef}
+          className="relative h-full w-full"
+          aria-label="角色实时预览"
+          aria-busy={!ready}
+        />
 
         {!ready && (
           <div className="absolute inset-0 grid place-items-center">
@@ -114,7 +137,41 @@ export function PreviewStage({ className = '' }: { className?: string }) {
         )}
       </div>
 
-      <footer className="grid gap-4 border-t border-ink-700/80 px-5 py-4 sm:grid-cols-2 sm:gap-6">
+      {/* 手机：姿态与朝向并成一行，八颗按钮平分宽度、44px 高 */}
+      <footer className="shrink-0 border-t border-ink-700/80 px-2 py-0.5 sm:hidden">
+        <div className="flex items-stretch gap-1.5">
+          <div className="flex flex-1 divide-x divide-ink-700 border border-ink-700 bg-ink-950/40">
+            {POSES.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                aria-label={item.label}
+                aria-pressed={pose === item.id}
+                onClick={() => setPose(item.id)}
+                className={`${TOOL_BTN} ${pose === item.id ? SEG_ACTIVE : SEG_IDLE}`}
+              >
+                <item.Icon className="h-4 w-4" aria-hidden />
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-1 divide-x divide-ink-700 border border-ink-700 bg-ink-950/40">
+            {DIRECTIONS.map((item) => (
+              <button
+                key={item.dir}
+                type="button"
+                aria-label={item.label}
+                aria-pressed={direction === item.dir}
+                onClick={() => setDirection(item.dir)}
+                className={`${TOOL_BTN} ${direction === item.dir ? SEG_ACTIVE : SEG_IDLE}`}
+              >
+                <item.Icon className="h-4 w-4" aria-hidden />
+              </button>
+            ))}
+          </div>
+        </div>
+      </footer>
+
+      <footer className="hidden shrink-0 gap-4 border-t border-ink-700/80 px-5 py-4 sm:grid sm:grid-cols-2 sm:gap-6">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-mist-400">姿态</p>
           <div className="mt-2 inline-flex border border-ink-700 bg-ink-950/40">
