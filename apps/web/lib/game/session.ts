@@ -82,6 +82,15 @@ const MOVEMENT_CONFIG = {
   INTERPOLATION_FACTOR: 14,
   /** 平滑纠正的保守因子 */
   SMOOTH_CORRECTION_FACTOR: 0.3,
+  /**
+   * 本地玩家与服务端坐标的最大合法偏差（像素）。
+   *
+   * 服务端不自行推进位置，sync 里的坐标天然是「客户端上包位置」，
+   * 落后 RTT/2 + 一个 Tick + 发送间隔。按 165px/s 与 250ms 单向延迟算约 58px，
+   * 取 128px 给抖动与高延迟链路留余量；只有超过它才说明真的失步
+   * （限速截断、地形求解分叉、传送），此时一次性对齐。
+   */
+  LOCAL_DRIFT_LIMIT: 128,
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -227,14 +236,15 @@ export class GameSession {
       const state = unpackState(entry.state);
 
       if (entry.id === this.localId) {
+        // 本地预测是确定性的（与服务端共用 MOVE_SPEED + resolveMotion），
+        // 而 sync 坐标只是「客户端上包位置」的回声，必然落后一段网络与 Tick 时间。
+        // 逐包按比例拉回会把这层延迟变成 20Hz 位置锯齿，直接传到相机上；
+        // 因此移动中以本地预测为准，只在偏差超过合法延迟上限时一次性对齐（ADR-0021）。
         const dx = sx - Position.x[eid]!;
         const dy = sy - Position.y[eid]!;
-        if (Math.hypot(dx, dy) > 8) {
+        if (Math.hypot(dx, dy) > MOVEMENT_CONFIG.LOCAL_DRIFT_LIMIT) {
           Position.x[eid] = sx;
           Position.y[eid] = sy;
-        } else {
-          Position.x[eid] = Position.x[eid]! + dx * 0.35;
-          Position.y[eid] = Position.y[eid]! + dy * 0.35;
         }
         Target.x[eid] = Position.x[eid]!;
         Target.y[eid] = Position.y[eid]!;

@@ -12,6 +12,7 @@ import {
 import { ISLAND, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
+import { cameraFocus } from './camera';
 import { GroundFx, SHADOW_NORMAL } from './fx';
 import { bubbleTopY, headTopYOf, nameBottomY, nameplateText, NAME_STROKE_WIDTH } from './nameplate';
 import { PonyRenderer } from './pony';
@@ -33,13 +34,6 @@ const FRAME_H = SPRITE_LAYOUT.frame.h;
 /** 裁剪余量：半帧宽 + 一帧高（树冠另算，由地形自己按纹理高度给） */
 const CULL_PAD_X = SPRITE_LAYOUT.frame.w;
 const CULL_PAD_Y = FRAME_H;
-
-/** 视口比岛屿还宽时居中，否则把相机夹进包围盒；NaN 回落到中心 */
-function cameraAxis(value: number, start: number, length: number, half: number): number {
-  if (!Number.isFinite(value)) return start + length / 2;
-  if (half * 2 >= length) return start + length / 2;
-  return value < start + half ? start + half : value > start + length - half ? start + length - half : value;
-}
 
 const NAME_STYLE = {
   fontFamily: 'JetBrains Mono, monospace',
@@ -540,10 +534,11 @@ export class GameRenderer {
     const halfH = screen.height / cssScale / 2;
     // 相机夹在岛屿包围盒内：贴到海岸时角色不在正中，但画面不会露出世界外的黑
     const bounds = ISLAND.bounds;
-    // 相机位移强制向下取整：浮点坐标会让整层画面落在半像素里，
-    // nearest 采样也救不回被撕开的像素边（roundPixels 只吸附顶点，不吸附相机原点）
-    const camX = Math.floor(cameraAxis(x, bounds.x, bounds.w, halfW));
-    const camY = Math.floor(cameraAxis(y, bounds.y, bounds.h, halfH));
+    // 相机必须与角色用同一个吸附函数（snapTexel = round）：
+    // 相机 floor + 角色 round 会让两者每移动 1 世界像素错开 1 纹素，
+    // 表现为角色相对背景约 15Hz 横跳（ADR-0021）。
+    const camX = cameraFocus(x, bounds.x, bounds.w, halfW);
+    const camY = cameraFocus(y, bounds.y, bounds.h, halfH);
 
     // 缓存相机可见范围（用于实体筛选）
     this.cameraBounds = {
@@ -553,9 +548,10 @@ export class GameRenderer {
       maxY: camY + halfH,
     };
 
-    // 中心点与角色都落在整纹素栅格上：中心 → 设备像素，角色 → 世界像素
-    this.world.x = snapCss(screen.width / 2, dpr) - snapTexel(camX) * cssScale;
-    this.world.y = snapCss(screen.height / 2, dpr) - snapTexel(camY) * cssScale;
+    // 中心点与角色都落在整纹素栅格上：中心 → 设备像素，角色 → 世界像素。
+    // camX/camY 已是整数纹素，直接参与世界层位移，不能再二次吸附。
+    this.world.x = snapCss(screen.width / 2, dpr) - camX * cssScale;
+    this.world.y = snapCss(screen.height / 2, dpr) - camY * cssScale;
 
     // 只画看得见的树：余量按帧尺寸给，树冠那一截由地形自己补
     this.props?.cull(
