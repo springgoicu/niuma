@@ -9,8 +9,12 @@ export const WORLD_WIDTH = 8192;
 export const WORLD_HEIGHT = 8192;
 export const TILE_SIZE = 32;
 
-/** AOI 视野半径（像素） */
-export const VIEW_RADIUS = 900;
+/**
+ * AOI 视野半径（像素）。
+ * 世界倍率降到 1.5 后，2560 宽的屏上一屏就横跨 1707 世界像素，半对角线约 979，
+ * 900 会让屏幕四角的角色不出现在视野里（走到边上才突然出现）；提到 1000 盖住它。
+ */
+export const VIEW_RADIUS = 1000;
 /** 空间哈希单元边长（像素），与视野半径同阶以减少跨格抖动 */
 export const CELL_SIZE = 512;
 

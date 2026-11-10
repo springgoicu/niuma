@@ -22,8 +22,36 @@ import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetri
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
 
-/** 基准缩放：DPR 2 时每个纹素仍然是 6 个设备像素，观感不变 */
-const BASE_CSS_PER_TEXEL = 3;
+/**
+ * 世界倍率：1 纹素画 1.5 个 CSS 像素，角色站立 48 纹素 ≈ 72 CSS 像素（DPR 2）。
+ *
+ * 缩到 1.5 的前提是「每纹素占整数设备像素」（ADR-0005），而 1.5 × DPR 并不总是整数，
+ * 所以各屏的实际高度散落在 64–96 之间，只有 DPR 2 正好是 72：
+ *   DPR 1 → 2.0（96px）、1.25 → 1.6（76.8）、1.5 → 1.333（64）、2 → 1.5（72）、3 → 1.667（80）
+ * 宁可接受这档差异，也不让纹素落在半像素上——半像素会让 1px 描边在相邻纹素之间轮流糊开。
+ */
+const DEFAULT_CSS_PER_TEXEL = 1.5;
+/**
+ * 大厅的纹素下限。DPR 1 的屏幕上 `round(1.5 × 1) = 2`，沿用默认下限 3 会被夹回 3，
+ * 等于在 100% 缩放的桌面上「什么都没改」。预览台不走这个值。
+ */
+const MIN_DEVICE_PX_PER_TEXEL = 2;
+/** `?zoom=` 回退开关的合法区间：`?zoom=3` 即退回改动前的倍率 */
+const CSS_PER_TEXEL_MIN = 1;
+const CSS_PER_TEXEL_MAX = 4;
+
+/**
+ * 灰度开关（与 `?flat=1` / `?light=0` 同一写法）：线上观感回归时一键退回旧倍率，
+ * 不用回滚整次发布。非法值一律回落到默认倍率。
+ */
+function readCssPerTexel(): number {
+  if (typeof window === 'undefined') return DEFAULT_CSS_PER_TEXEL;
+  const raw = new URLSearchParams(window.location.search).get('zoom');
+  if (raw === null) return DEFAULT_CSS_PER_TEXEL;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_CSS_PER_TEXEL;
+  return Math.min(CSS_PER_TEXEL_MAX, Math.max(CSS_PER_TEXEL_MIN, value));
+}
 
 /**
  * 裁剪只关心帧尺寸；「昵称与气泡离头顶多远」交给 nameplate.ts。
@@ -271,7 +299,9 @@ export class GameRenderer {
   /** 树冠遮挡的输入缓冲：脚底坐标 (x, y) 成对写入，容量 512 人 */
   private readonly occluders = new Float32Array(1024);
   private lightEnabled = true;
-  private metrics: PixelMetrics = pixelMetrics(BASE_CSS_PER_TEXEL, 1);
+  private metrics: PixelMetrics = pixelMetrics(DEFAULT_CSS_PER_TEXEL, 1, MIN_DEVICE_PX_PER_TEXEL);
+  /** 本实例实际使用的倍率：默认值或 `?zoom=` 覆盖值 */
+  private cssPerTexel = DEFAULT_CSS_PER_TEXEL;
   backend = 'initializing';
   private ready = false;
   private destroyed = false;
@@ -286,7 +316,8 @@ export class GameRenderer {
 
   async init(host: HTMLElement): Promise<void> {
     const dpr = readDpr();
-    this.metrics = pixelMetrics(BASE_CSS_PER_TEXEL, dpr);
+    this.cssPerTexel = readCssPerTexel();
+    this.metrics = pixelMetrics(this.cssPerTexel, dpr, MIN_DEVICE_PX_PER_TEXEL);
     await this.app.init({
       preference: 'webgpu',
       background: 0x14100c,
@@ -570,7 +601,7 @@ export class GameRenderer {
 
   /** 拖窗口到另一块屏（DPR 变化）时重建缩放与文字位图 */
   private syncMetrics(): void {
-    const next = pixelMetrics(BASE_CSS_PER_TEXEL, readDpr());
+    const next = pixelMetrics(this.cssPerTexel, readDpr(), MIN_DEVICE_PX_PER_TEXEL);
     if (sameMetrics(next, this.metrics)) return;
     this.metrics = next;
     this.world.scale.set(next.cssScale);

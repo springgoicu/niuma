@@ -7,8 +7,8 @@ import { MINIMAP_COLORS as M } from '@/lib/game/terrain-palette';
 import type { GameSession } from '@/lib/game/session';
 
 const SIZE = 168;
-/** 画布正好覆盖 AOI 视野半径，地形与玩家共用同一套世界变换 */
-const VIEW_RADIUS = 900;
+/** 画布正好覆盖 AOI 视野半径，地形与玩家共用同一套世界变换（与 shared-types 的 VIEW_RADIUS 同步） */
+const VIEW_RADIUS = 1000;
 const SCALE = SIZE / (VIEW_RADIUS * 2);
 const REFRESH_MS = 250;
 

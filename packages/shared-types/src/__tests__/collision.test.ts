@@ -196,13 +196,13 @@ describe('海岛边界', () => {
 
   it('从岸边向海走会被挡住', () => {
     const north = resolveMotion(3950, 2900, 3950, 1000);
-    expect(north.y).toBeGreaterThan(2700);
+    expect(north.y).toBeGreaterThan(2450);
 
     const west = resolveMotion(900, 2000, 600, 2000);
     expect(west.x).toBeGreaterThan(780);
 
-    const south = resolveMotion(6000, 7800, 6000, 8200);
-    expect(south.y).toBeLessThan(7930);
+    const south = resolveMotion(6000, 7400, 6000, 8200);
+    expect(south.y).toBeLessThan(7620);
   });
 
   it('所有静态地形都在岸线以内，且离海至少 24px', () => {

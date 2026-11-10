@@ -4,15 +4,20 @@ import { DECAL_CELL, DECAL_CHANCE, DECAL_KINDS, hashCell, scatterDecals } from '
 const BOUNDS = { x: 0, y: 0, w: 64 * 40, h: 64 * 40 };
 
 describe('贴花撒点', () => {
-  it('命中概率落在需求的 8%–15% 带内', () => {
-    expect(DECAL_CHANCE).toBeGreaterThanOrEqual(0.08);
-    expect(DECAL_CHANCE).toBeLessThanOrEqual(0.15);
+  /**
+   * 大厅倍率降到 1.5 后，一屏能看到的草地面积翻了四倍，
+   * 原来的 8%–15% 会让整片草地显得很秃，命中率整体抬到 18%–28%；
+   * 格距仍是 64（32px 采样格的整数倍），加密靠概率不靠改格。
+   */
+  it('命中概率落在加密后的 18%–28% 带内', () => {
+    expect(DECAL_CHANCE).toBeGreaterThanOrEqual(0.18);
+    expect(DECAL_CHANCE).toBeLessThanOrEqual(0.28);
 
     const placements = scatterDecals(BOUNDS, () => true, 0x6d2b79f5);
     const cells = (BOUNDS.w / DECAL_CELL) * (BOUNDS.h / DECAL_CELL);
     const rate = placements.length / cells;
-    expect(rate).toBeGreaterThan(0.08);
-    expect(rate).toBeLessThan(0.15);
+    expect(rate).toBeGreaterThan(0.18);
+    expect(rate).toBeLessThan(0.28);
   });
 
   it('位置哈希是纯函数：同一格永远同一个值，换格才换数', () => {

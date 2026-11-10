@@ -104,10 +104,10 @@ const stallPartitions: SolidRect[] = [4485, 4580, 4675].map((px) => ({
 
 const MEETING_TABLE: SolidRect = { kind: 'fixture', x: 3300, y: 6455, w: 200, h: 90 };
 
-/** 广场两台售货机的碰撞矩形，与 PLAZA_PROPS 中的 vending 位置一致 */
+/** 广场两台售货机的碰撞矩形，与 PLAZA_PROPS 中的 vending 位置一致（贴图 34×48，底座 32×24） */
 export const PLAZA_SOLIDS: SolidRect[] = [
-  { kind: 'fixture', x: 4592, y: 3686, w: 40, h: 28 },
-  { kind: 'fixture', x: 4592, y: 4466, w: 40, h: 28 },
+  { kind: 'fixture', x: 4596, y: 3690, w: 32, h: 24 },
+  { kind: 'fixture', x: 4596, y: 4470, w: 32, h: 24 },
 ];
 
 /** 会议桌两侧的椅子：北侧 3 把朝南，南侧 3 把朝北 */
@@ -138,6 +138,14 @@ export const CAMPUS_PROPS: PropInstance[] = [
   { kind: 'bin', x: 4690, y: 6700 },
   { kind: 'bike', x: 4880, y: 6980 },
   { kind: 'table', x: 4000, y: 6660 },
+  // 庭院两端各加一张野餐桌：铺装庭院是 1900×740 的大平面，只有一张桌子太旷
+  { kind: 'table', x: 3250, y: 6950 },
+  { kind: 'table', x: 4900, y: 6900 },
+  // 四角绿植把庭院边界「点」出来，站在门口就能看出这里是院子
+  { kind: 'plant', x: 3150, y: 6350 },
+  { kind: 'plant', x: 4950, y: 6350 },
+  { kind: 'plant', x: 3500, y: 7030 },
+  { kind: 'plant', x: 4750, y: 7030 },
   { kind: 'sink', x: 4420, y: 6600 },
   { kind: 'sink', x: 4500, y: 6600 },
   { kind: 'sink', x: 4660, y: 6600 },

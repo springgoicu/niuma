@@ -27,11 +27,23 @@ export function readDpr(): number {
   return normalizeDpr(window.devicePixelRatio);
 }
 
-export function pixelMetrics(baseCssPerTexel: number, dpr: number = readDpr()): PixelMetrics {
+/**
+ * `minDevicePx` 单独开放给大厅：世界倍率降到 1.5 之后，DPR 1 的屏幕上
+ * `round(1.5 × 1) = 2` 会被默认下限 3 夹回去，等于在 100% 缩放的桌面上什么都没改。
+ * 预览台与 `fitMetrics` 仍走默认下限，两处结果一字不动。
+ */
+export function pixelMetrics(
+  baseCssPerTexel: number,
+  dpr: number = readDpr(),
+  minDevicePx: number = MIN_DEVICE_PX,
+): PixelMetrics {
   const ratio = normalizeDpr(dpr);
+  const floor = Number.isFinite(minDevicePx)
+    ? Math.min(MAX_DEVICE_PX, Math.max(1, Math.round(minDevicePx)))
+    : MIN_DEVICE_PX;
   const devicePxPerTexel = Math.min(
     MAX_DEVICE_PX,
-    Math.max(MIN_DEVICE_PX, Math.round(baseCssPerTexel * ratio)),
+    Math.max(floor, Math.round(baseCssPerTexel * ratio)),
   );
   return { dpr: ratio, devicePxPerTexel, cssScale: devicePxPerTexel / ratio };
 }

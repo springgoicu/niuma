@@ -30,6 +30,12 @@ const DIRECTIONS: Array<{ dir: number; label: string; Icon: LucideIcon }> = [
   { dir: 3, label: '朝上', Icon: ArrowUp },
 ];
 
+/**
+ * 默认看侧面：正面（朝下）只能看出对称度，侧面才看得清口鼻长度、尾巴与鬃毛的走向。
+ * 取「朝右」而非「朝左」，与大厅里本地角色入场时的朝向保持一致。
+ */
+const DEFAULT_DIRECTION = 2;
+
 /** 分段控件共用的按下态：底色 + 底部 2px 亮线，比整块描边安静 */
 const SEG_ACTIVE = 'bg-mint-400/[0.09] text-mint-400 shadow-[inset_0_-2px_0_0_var(--color-mint-400)]';
 const SEG_IDLE = 'text-mist-300 hover:bg-ink-800/60 hover:text-mist-100';
@@ -40,7 +46,7 @@ export function PreviewStage({ className = '' }: { className?: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<CreatorPreview | null>(null);
   const [ready, setReady] = useState(false);
-  const [direction, setDirection] = useState(0);
+  const [direction, setDirection] = useState(DEFAULT_DIRECTION);
   const pose = useCreatorStore((s) => s.pose);
   const setPose = useCreatorStore((s) => s.setPose);
 
@@ -56,7 +62,6 @@ export function PreviewStage({ className = '' }: { className?: string }) {
       .then(() => {
         if (cancelled) return;
         preview.setPose(useCreatorStore.getState().pose);
-        preview.setDirection(0);
         setReady(true);
       })
       .catch((error: unknown) => {
@@ -81,6 +86,8 @@ export function PreviewStage({ className = '' }: { className?: string }) {
     };
   }, []);
 
+  // 朝向只由这个 effect 落盘：挂载时即刻写入默认的侧面朝向，
+  // 放在 init 回调里写会在图集加载完成时把用户提前点的方向冲掉。
   useEffect(() => {
     previewRef.current?.setDirection(direction);
   }, [direction]);

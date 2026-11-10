@@ -27,10 +27,10 @@ describe('材质判定', () => {
   });
 
   it('海岸三段：岸沙带 → 浅滩 → 海，宽度按 ISLAND_SAND / ISLAND_SHALLOW 收口', () => {
-    // 北岸线 y = 150，向内 0 / 40 / 110 分别落在沙、浅滩、海
-    expect(materialAt(2000, 150)).toBe(MATERIAL.sand);
-    expect(materialAt(2000, 110)).toBe(MATERIAL.shallow);
-    expect(materialAt(2000, 40)).toBe(MATERIAL.sea);
+    // 北岸线收到 y = 456，向海 0 / 40 / 110 分别落在沙、浅滩、海
+    expect(materialAt(2000, 456)).toBe(MATERIAL.sand);
+    expect(materialAt(2000, 416)).toBe(MATERIAL.shallow);
+    expect(materialAt(2000, 346)).toBe(MATERIAL.sea);
   });
 
   it('非有限坐标回落到海，不会把 NaN 传进多边形判定', () => {

@@ -338,7 +338,7 @@ export function makeTreeTextures(renderer: TextureFactory): TreeTextures[] {
 
 export const PROP_SHADOW = {
   tree: { w: 46, h: 18 },
-  planter: { w: 30, h: 12 },
+  planter: { w: 22, h: 10 },
   rock: { w: 18, h: 8 },
 } as const;
 
@@ -366,21 +366,30 @@ export function makeRockTexture(renderer: TextureFactory): Texture {
   });
 }
 
-/** 广场花箱：矮木箱 + 一丛灌木，站在它后面会被挡住半个身子 */
+/**
+ * 广场花箱：矮木箱 + 一丛灌木，站在它后面会被挡住半个身子。
+ *
+ * 34×44 → 26×34：旧尺寸几乎与角色（48 纹素）等高，摆四个就像四件家具；
+ * 现在齐腰高，成组摆在路角才像「小物」。固定画框保证锚点与裁剪余量可推导。
+ */
 export function makePlanterTexture(renderer: TextureFactory): Texture {
-  return bake(renderer, (g) => {
-    g.rect(4, 26, 30, 18).fill(C.fenceDark);
-    g.rect(5, 27, 28, 16).fill(C.bridgeWood);
-    g.rect(5, 27, 28, 3).fill(C.fenceLight);
-    g.rect(5, 41, 28, 2).fill(C.bridgeSeam);
+  return bake(
+    renderer,
+    (g) => {
+      g.rect(2, 20, 22, 14).fill(C.fenceDark);
+      g.rect(3, 21, 20, 12).fill(C.bridgeWood);
+      g.rect(3, 21, 20, 2).fill(C.fenceLight);
+      g.rect(3, 31, 20, 2).fill(C.bridgeSeam);
 
-    g.rect(7, 12, 24, 15).fill(C.canopyEdge);
-    g.rect(8, 10, 22, 15).fill(C.canopyMid);
-    g.rect(9, 9, 20, 3).fill(C.canopyLight);
-    g.rect(12, 14, 6, 3).fill(C.canopyGlow);
-    g.rect(22, 17, 4, 3).fill(C.canopyGlow);
-    g.rect(11, 21, 16, 4).fill(C.canopyDeep);
-  });
+      g.rect(4, 10, 18, 12).fill(C.canopyEdge);
+      g.rect(5, 8, 16, 12).fill(C.canopyMid);
+      g.rect(6, 7, 14, 2).fill(C.canopyLight);
+      g.rect(9, 12, 6, 2).fill(C.canopyGlow);
+      g.rect(16, 15, 3, 2).fill(C.canopyGlow);
+      g.rect(8, 17, 12, 3).fill(C.canopyDeep);
+    },
+    { frame: new Rectangle(0, 0, 26, 34) },
+  );
 }
 
 /** 芦苇：水边三根错落的茎 */

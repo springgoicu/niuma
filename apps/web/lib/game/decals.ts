@@ -21,14 +21,18 @@ export const WILDFLOWER_KINDS: readonly number[] = [BLOOM_KIND_BASE, BLOOM_KIND_
  * 三条纪律：
  * 1. 用位置哈希而不是顺序随机——同一格在任何时候算出来的值都一样，
  *    视口来回移动不会让同一片草地的三叶草换位置；
- * 2. 基础层命中概率 0.12（需求的 8%–15% 带内），花海与野花层各自覆写概率与种类池；
+ * 2. 基础层命中概率 0.24（大厅倍率降到 1.5 后视口面积翻四倍，原来的 0.12 会显得草地很秃），
+ *    花海与野花层各自覆写概率与种类池；
  * 3. 是否允许生成由调用方注入（岛内、非水面、非土路），
  *    这样地形规则变了不用改这个模块。
  */
 
-/** 栅格边长：与 32px 采样格成整数倍，贴花不会压在 autotile 的草缘上 */
+/**
+ * 栅格边长：与 32px 采样格成整数倍，贴花不会压在 autotile 的草缘上。
+ * 加密只动概率不动格距——56 / 72 都不是 32 的倍数，改了要连带重算草缘（ADR-0015）。
+ */
 export const DECAL_CELL = 64;
-export const DECAL_CHANCE = 0.12;
+export const DECAL_CHANCE = 0.24;
 
 export interface DecalPlacement {
   /** 索引到 DECAL_KINDS */

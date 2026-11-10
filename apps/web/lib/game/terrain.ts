@@ -768,7 +768,7 @@ export class TerrainView {
       sprite.position.set(planter.x, planter.y);
       sprite.zIndex = planter.y;
       sorted.addChild(sprite);
-      this.cullables.push({ sprite, x: planter.x, y: planter.y, padX: 24, padY: 46 });
+      this.cullables.push({ sprite, x: planter.x, y: planter.y, padX: 16, padY: 36 });
     }
   }
 

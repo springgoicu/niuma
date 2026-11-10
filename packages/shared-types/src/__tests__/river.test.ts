@@ -91,6 +91,6 @@ describe('河道几何', () => {
 
   it('河面归到「周报河」区域', () => {
     expect(regionAt(2500, 3000)).toBe('周报河');
-    expect(regionAt(2500, 200)).toBe('周报河');
+    expect(regionAt(2500, 500)).toBe('周报河');
   });
 });

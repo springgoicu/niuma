@@ -83,18 +83,24 @@ const COLOR = {
   potRim: 0xe8856d,
 } as const;
 
-/** 装饰贴图尺寸（px）：锚点在底边中心 */
+/**
+ * 装饰贴图尺寸（px）：锚点在底边中心。
+ *
+ * 全部按「角色 48 纹素」重新收过一档：旧尺寸（花箱 34×44、售货机 42×60）几乎与角色等高，
+ * 站在旁边像一件家具而不是一件小物。缩小只能改这里的数字与 drawProp 的手写坐标，
+ * 不能用 sprite.scale——非整数纹素会把 1px 描边糊开（ADR-0005）。
+ */
 const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
-  lamp: { w: 16, h: 46 },
-  bench: { w: 46, h: 22 },
-  bin: { w: 16, h: 20 },
-  sign: { w: 32, h: 42 },
-  board: { w: 46, h: 30 },
-  sink: { w: 22, h: 24 },
-  vending: { w: 42, h: 60 },
-  bike: { w: 46, h: 24 },
-  table: { w: 48, h: 40 },
-  plant: { w: 18, h: 26 },
+  lamp: { w: 14, h: 40 },
+  bench: { w: 40, h: 18 },
+  bin: { w: 14, h: 18 },
+  sign: { w: 24, h: 32 },
+  board: { w: 34, h: 24 },
+  sink: { w: 20, h: 22 },
+  vending: { w: 34, h: 48 },
+  bike: { w: 38, h: 20 },
+  table: { w: 40, h: 34 },
+  plant: { w: 16, h: 22 },
 };
 
 const DESK_SPRITE = { w: 96, h: 66 };
@@ -104,9 +110,12 @@ const TOILET_SPRITE = { w: 22, h: 28 };
 /** 桌椅与马桶的精灵相对入座锚点下沉 6px：椅面落在角色臀下，而不是悬空 */
 const SEAT_SINK = 6;
 
-/** 售货机的碰撞矩形尺寸，与 layout 中 PLAZA_SOLIDS 保持一致：这类碰撞体由精灵承担 */
-const VENDING_W = 40;
-const VENDING_H = 28;
+/**
+ * 售货机的碰撞矩形尺寸，与 layout 中 PLAZA_SOLIDS 保持一致：这类碰撞体由精灵承担。
+ * 精灵从 42×60 收到 34×48，底座碰撞同比收到 32×24。
+ */
+const VENDING_W = 32;
+const VENDING_H = 24;
 
 function rect(g: Graphics, x: number, y: number, w: number, h: number, color: number): void {
   g.rect(x, y, w, h).fill(color);
@@ -141,84 +150,84 @@ function drawPlantPot(g: Graphics, cx: number, bottom: number, scale = 1): void 
 
 function drawProp(kind: PropKind, g: Graphics): void {
   const { w, h } = PROP_SIZE[kind];
-  shadow(g, w / 2, h - 1, Math.max(7, w / 2 - 2), 2.5);
+  shadow(g, w / 2, h - 1, Math.max(6, w / 2 - 2), 2);
   switch (kind) {
     case 'lamp':
       // 灯罩先晕一圈暖光，再画实体灯头
-      g.circle(8, 7, 11).fill({ color: COLOR.lampGlow, alpha: 0.28 });
-      rect(g, 7, 10, 2, h - 10, COLOR.metal);
-      g.roundRect(3, 4, 10, 6, 3).fill(COLOR.outline);
-      g.roundRect(4, 5, 8, 4, 2).fill(COLOR.gold);
-      rect(g, 5, 6, 2, 1, COLOR.lampGlow);
+      g.circle(7, 5, 9).fill({ color: COLOR.lampGlow, alpha: 0.28 });
+      rect(g, 6, 8, 2, h - 8, COLOR.metal);
+      g.roundRect(2, 1, 10, 6, 3).fill(COLOR.outline);
+      g.roundRect(3, 2, 8, 4, 2).fill(COLOR.gold);
+      rect(g, 4, 3, 2, 1, COLOR.lampGlow);
       return;
     case 'bench':
-      rect(g, 3, 9, 40, 1, COLOR.outline);
-      box(g, 2, 4, 42, 4, COLOR.woodLight);
-      box(g, 2, 10, 42, 5, COLOR.woodDark);
-      box(g, 6, 15, 3, 6, COLOR.woodDark);
-      box(g, 37, 15, 3, 6, COLOR.woodDark);
+      rect(g, 2, 7, 36, 1, COLOR.outline);
+      box(g, 1, 3, 38, 4, COLOR.woodLight);
+      box(g, 1, 8, 38, 4, COLOR.woodDark);
+      box(g, 4, 12, 3, 5, COLOR.woodDark);
+      box(g, 33, 12, 3, 5, COLOR.woodDark);
       return;
     case 'bin':
-      box(g, 2, 5, 12, 14, COLOR.binBody);
-      box(g, 1, 2, 14, 4, COLOR.binLid);
-      rect(g, 5, 9, 6, 2, COLOR.wallCap);
+      box(g, 2, 4, 10, 13, COLOR.binBody);
+      box(g, 1, 2, 12, 3, COLOR.binLid);
+      rect(g, 4, 8, 6, 1, COLOR.wallCap);
       return;
     case 'sign':
-      box(g, 14, 16, 4, 24, COLOR.woodDark);
-      box(g, 2, 2, 28, 16, COLOR.signPaper, COLOR.signEdge);
+      box(g, 10, 13, 3, 18, COLOR.woodDark);
+      box(g, 1, 1, 22, 13, COLOR.signPaper, COLOR.signEdge);
       // 一个小箭头：指路的牌子才像牌子
-      rect(g, 8, 8, 12, 2, COLOR.mintDark);
-      g.poly([20, 5, 25, 9, 20, 13]).fill(COLOR.mintDark);
+      rect(g, 6, 6, 9, 2, COLOR.mintDark);
+      g.poly([15, 4, 19, 7, 15, 10]).fill(COLOR.mintDark);
       return;
     case 'board':
-      box(g, 0, 0, 46, 30, COLOR.boardFrame);
-      rect(g, 2, 2, 42, 26, COLOR.boardFace);
+      box(g, 0, 0, 34, 24, COLOR.boardFrame);
+      rect(g, 2, 2, 30, 20, COLOR.boardFace);
       // 白板上的三道彩色笔迹
-      rect(g, 8, 9, 16, 2, COLOR.skyDark);
-      rect(g, 8, 15, 22, 2, COLOR.peachDark);
-      rect(g, 8, 21, 10, 2, COLOR.mintDark);
-      dot(g, 36, 10, 2, COLOR.butter);
+      rect(g, 6, 7, 11, 2, COLOR.skyDark);
+      rect(g, 6, 11, 16, 2, COLOR.peachDark);
+      rect(g, 6, 15, 8, 2, COLOR.mintDark);
+      dot(g, 27, 7, 2, COLOR.butter);
       return;
     case 'sink':
-      box(g, 0, 11, 22, 13, COLOR.fixture, COLOR.fixtureEdge);
-      box(g, 4, 6, 14, 7, COLOR.ceramic, COLOR.ceramicEdge);
-      rect(g, 10, 1, 2, 6, COLOR.gold);
+      box(g, 0, 10, 20, 11, COLOR.fixture, COLOR.fixtureEdge);
+      box(g, 4, 5, 12, 6, COLOR.ceramic, COLOR.ceramicEdge);
+      rect(g, 9, 1, 2, 5, COLOR.gold);
       return;
     case 'vending':
-      box(g, 0, 0, 42, 60, COLOR.vendingBody);
-      box(g, 4, 6, 26, 38, COLOR.vendingGlass, COLOR.vendingBase);
+      box(g, 0, 0, 34, 48, COLOR.vendingBody);
+      box(g, 3, 5, 22, 30, COLOR.vendingGlass, COLOR.vendingBase);
       // 货道：三行糖果色饮料
       for (let row = 0; row < 3; row += 1) {
-        const y = 10 + row * 11;
-        dot(g, 9, y + 3, 3, [COLOR.peach, COLOR.butter, COLOR.mint][row]!);
-        dot(g, 17, y + 3, 3, [COLOR.sky, COLOR.lilac, COLOR.peach][row]!);
-        dot(g, 25, y + 3, 3, [COLOR.mint, COLOR.sky, COLOR.butter][row]!);
+        const y = 9 + row * 9;
+        dot(g, 8, y, 2, [COLOR.peach, COLOR.butter, COLOR.mint][row]!);
+        dot(g, 14, y, 2, [COLOR.sky, COLOR.lilac, COLOR.peach][row]!);
+        dot(g, 20, y, 2, [COLOR.mint, COLOR.sky, COLOR.butter][row]!);
       }
-      box(g, 33, 16, 6, 6, COLOR.vendingBase);
-      rect(g, 34, 18, 4, 1, COLOR.gold);
-      box(g, 4, 49, 34, 7, COLOR.vendingBase);
+      box(g, 26, 13, 5, 5, COLOR.vendingBase);
+      rect(g, 27, 15, 3, 1, COLOR.gold);
+      box(g, 3, 39, 28, 6, COLOR.vendingBase);
       return;
     case 'bike':
       // 两辆小单车：车轮是圆环，车架是一条线
-      for (const cx of [11, 33]) {
-        g.circle(cx, 17, 6).stroke({ width: 2, color: COLOR.outline });
-        g.circle(cx, 17, 4).stroke({ width: 1, color: COLOR.lilacDark });
+      for (const cx of [9, 29]) {
+        g.circle(cx, 14, 5).stroke({ width: 2, color: COLOR.outline });
+        g.circle(cx, 14, 3.5).stroke({ width: 1, color: COLOR.lilacDark });
       }
-      rect(g, 11, 15, 22, 1, COLOR.outline);
-      rect(g, 22, 8, 1, 9, COLOR.outline);
+      rect(g, 9, 13, 20, 1, COLOR.outline);
+      rect(g, 19, 7, 1, 7, COLOR.outline);
       return;
     case 'table':
       // 野餐桌 + 一把彩色遮阳伞
-      rect(g, 23, 6, 2, 26, COLOR.outline);
-      g.ellipse(24, 7, 19, 6).fill(COLOR.outline);
-      g.ellipse(24, 6, 18, 5).fill(COLOR.peach);
-      g.ellipse(24, 6, 18, 2.5).fill(COLOR.butter);
-      box(g, 2, 26, 44, 4, COLOR.woodLight);
-      box(g, 5, 30, 4, 9, COLOR.woodDark);
-      box(g, 39, 30, 4, 9, COLOR.woodDark);
+      rect(g, 19, 6, 2, 21, COLOR.outline);
+      g.ellipse(20, 6, 16, 5).fill(COLOR.outline);
+      g.ellipse(20, 6, 15, 4).fill(COLOR.peach);
+      g.ellipse(20, 6, 15, 2).fill(COLOR.butter);
+      box(g, 1, 22, 38, 4, COLOR.woodLight);
+      box(g, 4, 26, 4, 7, COLOR.woodDark);
+      box(g, 32, 26, 4, 7, COLOR.woodDark);
       return;
     case 'plant':
-      drawPlantPot(g, w / 2, h - 1, 1.2);
+      drawPlantPot(g, w / 2, h - 1, 1);
       return;
   }
 }
@@ -347,6 +356,11 @@ export class PropsView {
   /** 与 WORLD_LAYOUT.desks 同下标：seat.desk 直接索引 */
   private readonly desks: DeskSprite[] = [];
   private readonly textures: Texture[] = [];
+  /**
+   * 每种装饰只烘焙一次：加密道具之后同类道具会有几十个，
+   * 逐个烘焙等于几十张同内容的纹理，显存与初始化时间都会被放大。
+   */
+  private readonly propTextures = new Map<PropKind, Texture>();
 
   /** 构造期一次性生成全部贴图与精灵；`sorted` 必须已开启 sortableChildren */
   build(sorted: Container, renderer: TextureFactory): void {
@@ -394,10 +408,19 @@ export class PropsView {
     for (const prop of WORLD_LAYOUT.props) this.addProp(sorted, renderer, prop);
   }
 
+  private propTexture(renderer: TextureFactory, kind: PropKind): Texture {
+    const cached = this.propTextures.get(kind);
+    if (cached) return cached;
+    const size = PROP_SIZE[kind];
+    const texture = bake(renderer, (g) => drawProp(kind, g), { frame: new Rectangle(0, 0, size.w, size.h) });
+    this.propTextures.set(kind, texture);
+    this.textures.push(texture);
+    return texture;
+  }
+
   private addProp(sorted: Container, renderer: TextureFactory, prop: PropInstance): void {
     const size = PROP_SIZE[prop.kind];
-    const texture = bake(renderer, (g) => drawProp(prop.kind, g), { frame: new Rectangle(0, 0, size.w, size.h) });
-    this.textures.push(texture);
+    const texture = this.propTexture(renderer, prop.kind);
     const sprite = new Sprite(texture);
     sprite.anchor.set(0.5, 1);
     sprite.position.set(prop.x, prop.y);
