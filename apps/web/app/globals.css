@@ -156,6 +156,13 @@
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
     padding-left: max(0.75rem, env(safe-area-inset-left));
   }
+  /* 舞台被 CSS 顺时针旋转 90°：设备的安全区跟着一起转，刘海与 Home 条才不会压住摇杆 */
+  .game-safe-rotated {
+    padding-top: max(0.75rem, env(safe-area-inset-right));
+    padding-right: max(0.75rem, env(safe-area-inset-bottom));
+    padding-bottom: max(0.75rem, env(safe-area-inset-left));
+    padding-left: max(0.75rem, env(safe-area-inset-top));
+  }
   .no-callout {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
