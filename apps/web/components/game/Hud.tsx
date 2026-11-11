@@ -1,7 +1,46 @@
 'use client';
 
-import { Activity, Cpu, Gauge, Users, Wifi, WifiOff } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Activity, Cpu, Gauge, Users, Volume2, VolumeX, Wifi, WifiOff } from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
+import { sfx } from '@/lib/game/sfx';
+
+const SFX_STORAGE_KEY = 'niuma:sfx:muted';
+
+/**
+ * 叫唤静音开关：偏好只存本地，不参与任何服务端状态。
+ * 初值固定为「有声」，挂载后再读存储，避免 SSR 水合不一致。
+ */
+export function SfxToggle({ compact = false }: { compact?: boolean }) {
+  const [muted, setMuted] = useState(false);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(SFX_STORAGE_KEY) === '1';
+    setMuted(stored);
+    sfx.setMuted(stored);
+  }, []);
+
+  const toggle = () => {
+    const next = sfx.toggle();
+    setMuted(next);
+    window.localStorage.setItem(SFX_STORAGE_KEY, next ? '1' : '0');
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={muted}
+      aria-label={muted ? '开启叫唤音效' : '关闭叫唤音效'}
+      title={muted ? '叫唤音效已关闭' : '叫唤音效已开启'}
+      className={`pointer-events-auto grid place-items-center border-2 border-ink-600 bg-ink-900/92 text-mist-500 backdrop-blur-sm transition-colors hover:border-mint-400/60 hover:text-mint-400 focus-visible:border-mint-400 focus-visible:outline-none ${
+        compact ? 'h-9 w-9' : 'h-11 w-11'
+      }`}
+    >
+      {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+    </button>
+  );
+}
 
 export function PlayerCard({ name, species, compact = false }: { name: string; species: string; compact?: boolean }) {
   const fps = useGameUi((state) => state.fps);

@@ -10,16 +10,16 @@ import {
   decodeQueueStatus,
   decodeSeatState,
   decodeSpawn,
-  decodeSync,
   decodeWelcome,
   encodeChatSend,
   encodeHello,
-  encodeMove,
+  encodeMoveInto,
   encodePing,
   encodeSetAppearance,
+  ByteWriter,
   type CharacterAppearance,
   type ChatPacket,
-  type EntitySnapshot,
+  type MovePacket,
   type QueueStatusPacket,
   type SeatStateEntry,
   type SpawnPacket,
@@ -36,7 +36,11 @@ export interface NetHandlers {
   onRejected(reason: number): void;
   onSpawn(packet: SpawnPacket): void;
   onDespawn(id: number, reason: number): void;
-  onSync(tick: number, entities: EntitySnapshot[]): void;
+  /**
+   * 同步包的原始字节。交给会话自己用 `readSync` 逐条消费：
+   * 中转一层数组会在 200 人同屏时每秒造出 4000 个短命对象。
+   */
+  onSync(data: Uint8Array): void;
   onChat(packet: ChatPacket): void;
   onAppearance(id: number, appearance: CharacterAppearance): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
@@ -69,6 +73,9 @@ export class NetClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPingAt = 0;
   private selfId = 0;
+  /** 上行移动包复用：缓冲与对象都只建一次 */
+  private readonly moveWriter = new ByteWriter(16);
+  private readonly movePacket: MovePacket = { id: 0, x: 0, y: 0, state: 0 };
 
   setEntityId(id: number): void {
     this.selfId = id;
@@ -153,11 +160,9 @@ export class NetClient {
         this.handlers.onDespawn(packet.id, packet.reason);
         break;
       }
-      case OpCode.S2C_SYNC_ENTITIES: {
-        const packet = decodeSync(data);
-        this.handlers.onSync(packet.tick, packet.entities);
+      case OpCode.S2C_SYNC_ENTITIES:
+        this.handlers.onSync(data);
         break;
-      }
       case OpCode.S2C_CHAT_BROADCAST:
         this.handlers.onChat(decodeChatBroadcast(data));
         break;
@@ -210,14 +215,17 @@ export class NetClient {
 
   sendMove(x: number, y: number, state: number, clientSequence?: number, clientTimestampMs?: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeMove({ 
-      id: this.selfId, 
-      x, 
-      y, 
-      state,
-      clientSequence,
-      clientTimestampMs,
-    }));
+    // 复用同一块缓冲与同一个包对象：20Hz 上行不该每次造两份垃圾
+    const packet = this.movePacket;
+    packet.id = this.selfId;
+    packet.x = x;
+    packet.y = y;
+    packet.state = state;
+    packet.clientSequence = clientSequence;
+    packet.clientTimestampMs = clientTimestampMs;
+    this.moveWriter.reset();
+    encodeMoveInto(this.moveWriter, packet);
+    this.socket.send(this.moveWriter.finish());
   }
 
   sendAction(entityId: number, action: number): void {

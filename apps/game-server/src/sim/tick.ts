@@ -40,13 +40,17 @@ export function runTick(world: World, grid: SpatialGrid, transport: Transport, t
     const x = quantizeCoord(player.x);
     const y = quantizeCoord(player.y);
 
-    writeSyncEntry(player.syncWriter, { id: player.id, x, y, state: player.state });
+    const id = player.id;
+    const state = player.state;
+    writeSyncEntry(player.syncWriter, id, x, y, state);
     player.syncCount += 1;
 
-    for (const id of player.known) {
-      const viewer = world.get(id);
+    // 只写标量：这一圈在 200 人全同屏时是每 Tick 4 万次，
+    // 任何一次对象构造都会变成每秒 80 万个短命对象。
+    for (const viewerId of player.known) {
+      const viewer = world.get(viewerId);
       if (!viewer) continue;
-      writeSyncEntry(viewer.syncWriter, { id: player.id, x, y, state: player.state });
+      writeSyncEntry(viewer.syncWriter, id, x, y, state);
       viewer.syncCount += 1;
     }
   }

@@ -4,6 +4,7 @@ import {
   MAX_ENTITIES,
   POSE,
   ByteWriter,
+  buildSpawnBody,
   packState,
   type CharacterAppearance,
   type Direction,
@@ -38,8 +39,31 @@ export class Player {
   known = new Set<number>();
   /** 每人一个可复用发送缓冲，避免每 Tick 新建 */
   syncWriter = new ByteWriter(2048);
+  /**
+   * 入场包缓冲。每个玩家同一时刻只有一份在飞，所以按人持有就不会出现
+   * 「一次循环里反复覆写同一个缓冲再发出去」的别名问题。
+   */
+  spawnWriter = new ByteWriter(320);
   /** 本 Tick 已写入同步包的实体数量 */
   syncCount = 0;
+  /** 名字 + 外观编码后的不变部分，见 `spawnBody` */
+  private spawnBodyCache: Uint8Array | null = null;
+
+  /**
+   * 入场资料的「不变部分」。名字与外观在一局内不变，缓存后入场补发从
+   * O(视野人数) 次编码降到 O(1) 次——这是 200 人同秒涌入那次长帧的根因。
+   */
+  get spawnBody(): Uint8Array {
+    if (this.spawnBodyCache === null) {
+      this.spawnBodyCache = buildSpawnBody(this.name, this.appearance);
+    }
+    return this.spawnBodyCache;
+  }
+
+  /** 名字或外观变更后必须调用，否则新入场者会看到上一套帽子与配色 */
+  markSpawnDirty(): void {
+    this.spawnBodyCache = null;
+  }
 
   reset(): void {
     this.id = 0;
@@ -62,6 +86,7 @@ export class Player {
     this.lastClientMoveSequence = -1;
     this.chatWindowStart = 0;
     this.chatCount = 0;
+    this.spawnBodyCache = null;
     this.known.clear();
   }
 

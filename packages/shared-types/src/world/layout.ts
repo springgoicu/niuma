@@ -20,7 +20,6 @@ import {
 import { buildRiver, type RiverShape } from './river';
 import {
   CAMPUS_BUILDINGS,
-  CAMPUS_PATH,
   CAMPUS_PROPS,
   CAMPUS_RECT,
   CAMPUS_SEATS,
@@ -29,10 +28,17 @@ import {
   CHAIR_GAP,
   DESK_H,
   DESK_W,
+  DOOR_PAVING,
+  LOUNGE,
+  LOUNGE_PROPS,
+  LOUNGE_SEATS,
   MEETING_ROOM,
   PLAZA_PROPS,
   PLAZA_SOLIDS,
   RESTROOM,
+  WORKSTATIONS,
+  WORKROOM,
+  WORK_PROPS,
   type BuildingSpec,
   type DeskInstance,
   type PropInstance,
@@ -40,7 +46,7 @@ import {
   type SolidRect,
 } from './campus';
 
-export { CHAIR_GAP, DESK_H, DESK_W } from './campus';
+export { CHAIR_GAP, DESK_H, DESK_W, isSelfSolidProp, seatPose } from './campus';
 export type { BuildingSpec, DeskInstance, PropInstance, SeatInstance, SolidRect, SeatKind, PropKind, SolidKind } from './campus';
 
 export interface LakeShape {
@@ -114,13 +120,13 @@ export interface WorldLayout {
   regions: RegionSpec[];
   /** 工位桌（中心点）：桌面碰撞见 solids，显示器点亮由占座状态驱动 */
   desks: DeskInstance[];
-  /** 可入座的座位（工位椅 + 卫生间马桶），id 从 1 开始，0 表示无座位 */
+  /** 可入座的座位（工位椅、会议椅、马桶、床、沙发、凳子），id 从 1 开始，0 表示无座位 */
   seats: SeatInstance[];
-  /** 装饰与小设施（灯、长椅、垃圾桶、标识、水槽、售货机等），渲染端按 kind 选贴图 */
+  /** 装饰与小设施（灯、长椅、垃圾桶、标识、水槽、售货机、饮水机、咖啡机等），渲染端按 kind 选贴图 */
   props: PropInstance[];
   /** 墙体、桌面、隔断、售货机等轴对齐碰撞矩形 */
   solids: SolidRect[];
-  /** 室内空间（会议室、卫生间）：渲染端画地板 */
+  /** 室内空间（会议室、卫生间、工作区、休息室）：渲染端按 floor 画地板 */
   buildings: BuildingSpec[];
   /** 铺装地面：贴花层不进入 */
   paved: WorldRect[];
@@ -148,36 +154,38 @@ export const ISLAND_SAND = 26;
 export const ISLAND_SHALLOW = 72;
 
 /**
- * 海岸线（顺时针，屏幕坐标 y 向下）：陆地收到内容包围盒外 60–80px，
- * 四处海湾切掉没有内容的大片空草地——北湾、东湾、南中湾、西南湾各留一个开口，
- * 保证海湾与外海连通，不会看成四个湖。
+ * 海岸线（顺时针，屏幕坐标 y 向下）。
  *
- * 与旧版（6900×7780）相比，内容整体向内收了一圈：林地与湖先向内平移，
- * 海岸线再按新的内容包围盒重画，岛缩到 6470×7164（面积约 −12%）。
- * 东湾的深度比旧版更深（2900–5650）：那片草地本来是东侧最大的一块空地。
+ * ADR-0024：以世界中心为原点对上一版（6470×7164）做一次 0.84 的收缩，
+ * 岛收到 5436×6018（面积约 −29%），广场到研发园的步行距离同比缩短约四分之一。
+ * 收缩只作用于**地形与聚簇位置**，广场、围栏、房间与工位的内部尺寸一律不动。
+ *
+ * 四个海湾的开口全部保留：北湾（x 3092–4598）、东湾（x 6242–6746 / y 3092–5402）、
+ * 南中湾（x 3092–5066 / y 6800–7056，内壁从连比例值再抬了一档，给研发园留出陆地）、
+ * 西南湾（x 1310–2554 / y 4352–7056）。
  *
  * 全部轴对齐手写：与地形一样禁止 Math.random / Math.sin / Math.cos，
  * 否则 Bun(JSC) 与浏览器(V8) 的末位差异会让双端各画一条海岸线。
  */
 const ISLAND_POINTS: Point[] = [
-  [780, 456],
-  [2900, 456],
-  [2900, 2500],
-  [4700, 2500],
-  [4700, 456],
-  [7250, 456],
-  [7250, 2900],
-  [6650, 2900],
-  [6650, 5650],
-  [7250, 5650],
-  [7250, 7620],
-  [5250, 7620],
-  [5250, 7150],
-  [2900, 7150],
-  [2900, 7620],
-  [2260, 7620],
-  [2260, 4400],
-  [780, 4400],
+  [1310, 1038],
+  [3092, 1038],
+  [3092, 2756],
+  [4598, 2756],
+  [4598, 1038],
+  [6746, 1038],
+  [6746, 3092],
+  [6242, 3092],
+  [6242, 5402],
+  [6746, 5402],
+  [6746, 7056],
+  [5066, 7056],
+  [5066, 6800],
+  [3092, 6800],
+  [3092, 7056],
+  [2554, 7056],
+  [2554, 4352],
+  [1310, 4352],
 ];
 
 export const ISLAND: IslandShape = {
@@ -199,8 +207,8 @@ export function isOnLand(x: number, y: number, radius = 0): boolean {
 }
 
 /**
- * 尺度总则（ADR-0010）：角色站立高 48 texel，广场/围栏/道路/水域全部按 1.25 放大，
- * 走完整张地图的时长靠 MOVE_SPEED 同比提到 165px/s 拉回来。
+ * 尺度总则（ADR-0010 / ADR-0022 / ADR-0024）：角色站立高 48 texel，
+ * 广场/围栏/道路/水域按 1.25 放大后，靠 MOVE_SPEED 165px/s 把通行时间拉回来。
  * 坐标一律手写偶数，保持以 (4096,4096) 为中心对称。
  */
 
@@ -235,94 +243,91 @@ const FENCE_SEGMENTS: FenceSegment[] = [
 
 /**
  * 土路：四个门洞向外延伸，路宽 128（≈2.7 个角色宽）。
- * 北、东两条尽头没有目标的支路同比缩短（540→400 / 640→480）：
- * 海岸内收之后它们再长一截就只剩空草地了。
+ * 南向长路直抵研发园北缘；东、西两条支路按收缩后的空地长度重新量过，
+ * 西支路的起点跟着木桥东移到 2888，桥与路之间不再留一条走不过去的草缝。
  */
 const PATHS: WorldRect[] = [
-  { x: 4032, y: 4700, w: 128, h: 1200 },
-  { x: 4032, y: 3040, w: 128, h: 400 },
-  { x: 4980, y: 4032, w: 480, h: 128 },
-  { x: 2640, y: 4032, w: 576, h: 128 },
-  CAMPUS_PATH,
+  { x: 4032, y: 4788, w: 128, h: 1132 },
+  { x: 4032, y: 3020, w: 128, h: 384 },
+  { x: 4976, y: 4032, w: 266, h: 128 },
+  { x: 2888, y: 4032, w: 328, h: 128 },
 ];
 
 /**
- * 湖面轮廓：以 (5751, 5601) 为中心、812×525 的椭圆，20 个顶点手写，
+ * 湖面轮廓：上一版围 (5751,5601) 的 20 点椭圆按 0.84 收缩后手写落表，
  * 保证双端顶点完全一致（用三角函数生成会引入引擎间末位差异）。
- * 相对旧轮廓整体左移 350，把广场东侧与东岸林地之间那块空草地收掉一半。
+ * 收缩后的包围盒约 4804–6170 × 4920–5802，仍在东岸林地与南向主路之间。
  */
 const LAKE_POINTS: Point[] = [
-  [6564, 5601],
-  [6524, 5764],
-  [6408, 5910],
-  [6228, 6026],
-  [6002, 6100],
-  [5751, 6126],
-  [5500, 6100],
-  [5274, 6026],
-  [5094, 5910],
-  [4978, 5764],
-  [4938, 5601],
-  [4978, 5438],
-  [5094, 5292],
-  [5274, 5176],
-  [5500, 5102],
-  [5751, 5076],
-  [6002, 5102],
-  [6228, 5176],
-  [6408, 5292],
-  [6524, 5438],
+  [6170, 5360],
+  [6136, 5498],
+  [6038, 5620],
+  [5888, 5718],
+  [5698, 5780],
+  [5486, 5802],
+  [5276, 5780],
+  [5086, 5718],
+  [4934, 5620],
+  [4838, 5498],
+  [4804, 5360],
+  [4838, 5224],
+  [4934, 5102],
+  [5086, 5004],
+  [5276, 4942],
+  [5486, 4920],
+  [5698, 4942],
+  [5888, 5004],
+  [6038, 5102],
+  [6136, 5224],
 ];
 
 /** 岸线宽度：只影响渲染，碰撞边界仍是水面轮廓 */
 export const LAKE_SHORE = 22;
 
-/** 半河宽：总宽 224，与 304 宽的木桥两侧各留 40px */
+/** 半河宽：总宽 224，与 288 宽的木桥两侧各留 32px */
 export const RIVER_HALF_WIDTH = 112;
 /** 河岸沙带：与湖岸同档，只影响渲染，碰撞边界仍是水面多边形 */
 export const RIVER_SHORE = 24;
 
 /**
- * 河道中心线（手写，顺时针自北向南）：南北两端各探进海里 60–70px，
- * 河口不再断在草地中央。中段摆动幅度 ≤ 60px，远小于半个河宽，
- * 岸线只做缓弯，斜接不会扎刺；桥段（y 3920–4300）保持 x=2488 直行，
- * 水面恒定落在 x 2376–2600，现有木桥全程覆盖。
- *
- * 海岸内收后两端跟着缩短：北端 40 → 400（新北岸 y=456），南端 7990 → 7690（新南岸 y=7620）。
+ * 河道中心线（手写，顺时针自北向南）：南北两端各探进海里 50–60px，
+ * 河口不再断在草地中央。中段摆动幅度 ≤ 30px，远小于半个河宽，
+ * 岸线只做缓弯，斜接不会扎刺；桥段（y 4020–4172）保持 x=2746 直行，
+ * 水面恒定落在 x 2634–2858，木桥全程覆盖。
  */
 const RIVER_STATIONS: Point[] = [
-  [2500, 400],
-  [2532, 620],
-  [2548, 900],
-  [2524, 1280],
-  [2484, 1660],
-  [2460, 2040],
-  [2468, 2420],
-  [2500, 2800],
-  [2504, 3180],
-  [2478, 3560],
-  [2488, 3920],
-  [2488, 4100],
-  [2488, 4300],
-  [2480, 4560],
-  [2460, 4940],
-  [2452, 5300],
-  [2462, 5680],
-  [2482, 6060],
-  [2470, 6440],
-  [2486, 6820],
-  [2488, 7200],
-  [2490, 7690],
+  [2756, 992],
+  [2782, 1176],
+  [2796, 1410],
+  [2776, 1730],
+  [2742, 2050],
+  [2722, 2372],
+  [2728, 2688],
+  [2756, 3008],
+  [2758, 3326],
+  [2736, 3646],
+  [2746, 3948],
+  [2746, 4100],
+  [2746, 4268],
+  [2738, 4486],
+  [2722, 4806],
+  [2716, 5108],
+  [2724, 5426],
+  [2740, 5746],
+  [2730, 6066],
+  [2746, 6384],
+  [2746, 6702],
+  [2750, 7114],
 ];
 
 const RIVERS: RiverShape[] = [buildRiver(RIVER_STATIONS, RIVER_HALF_WIDTH)];
 
 /**
  * 木桥：整段盖住河面，是河流唯一的通行口。
- * 两端各比河岸外扩 32px——放行判定看的是角色中心点，
+ * 宽度 288 = 河宽 224 + 两端各 32px——放行判定看的是角色中心点，
  * 桥面若刚好从水面开始，人会被「离岸 7px」的碰撞半径挡在桥头。
  */
-const BRIDGES: WorldRect[] = [{ x: 2336, y: 4006, w: 304, h: 180 }];
+const BRIDGES: WorldRect[] = [{ x: 2602, y: 4020, w: 288, h: 152 }];
 
 /** 花箱碰撞半径：比视觉尺寸略小（视觉 26×34），擦身而过不会觉得黏 */
 export const PLANTER_RADIUS = 12;
@@ -341,20 +346,19 @@ const PLANTERS: PlanterInstance[] = [
   { x: 3671, y: 4221 },
   { x: 4521, y: 3971 },
   { x: 4521, y: 4221 },
-  { x: 3944, y: 5150 },
+  { x: 3944, y: 5570 },
 ];
 
 /**
  * 南向长路旁的休息角：两张长椅夹一盏灯，指路牌与垃圾桶收口。
- * 这条 1200 长的路连接办公区与研发园，两侧原本只有草——
- * 视口放大四倍之后，这里会变成全图最长的一段空走廊。
+ * 两栋新房间占掉了原来的位置，整组南移到房间与研发园之间的那段空路旁。
  */
 const ROAD_PROPS: PropInstance[] = [
-  { kind: 'lamp', x: 3944, y: 5340 },
-  { kind: 'bench', x: 3820, y: 5320 },
-  { kind: 'bench', x: 3820, y: 5210 },
-  { kind: 'sign', x: 3700, y: 5260 },
-  { kind: 'bin', x: 3700, y: 5340 },
+  { kind: 'lamp', x: 3944, y: 5760 },
+  { kind: 'bench', x: 3820, y: 5740 },
+  { kind: 'bench', x: 3820, y: 5630 },
+  { kind: 'sign', x: 3700, y: 5680 },
+  { kind: 'bin', x: 3700, y: 5760 },
 ];
 
 /**
@@ -410,9 +414,13 @@ function officeWorkstations(): Array<{ desk: DeskInstance; seat: Omit<SeatInstan
   return out;
 }
 
-const WORKSTATIONS = officeWorkstations();
+const PLAZA_WORKSTATIONS = officeWorkstations();
+const PLAZA_DESKS: DeskInstance[] = PLAZA_WORKSTATIONS.map((station) => station.desk);
 
-const DESKS: DeskInstance[] = WORKSTATIONS.map((station) => station.desk);
+/** 工作区的工位桌追加在广场工位之后：椅子的 `desk` 下标按同一顺序续写 */
+const WORK_DESKS: DeskInstance[] = WORKSTATIONS.map((station) => station.desk);
+
+const DESKS: DeskInstance[] = [...PLAZA_DESKS, ...WORK_DESKS];
 
 const DESK_SOLIDS: SolidRect[] = DESKS.map((desk) => ({
   kind: 'desk',
@@ -422,10 +430,19 @@ const DESK_SOLIDS: SolidRect[] = DESKS.map((desk) => ({
   h: DESK_H,
 }));
 
-/** 座位表：先办公区工位，再研发园的会议椅与马桶；id = 下标 + 1 */
+/**
+ * 座位表：办公区工位 → 工作区工位 → 研发园会议椅与马桶 → 休息室床/沙发/凳子；id = 下标 + 1。
+ * 床位与凳子的区别只体现在 `kind` 上，入座姿态统一由 `seatPose` 决定。
+ */
 const SEAT_DRAFTS: Array<Omit<SeatInstance, 'id'>> = [
-  ...WORKSTATIONS.map((station, index) => ({ ...station.seat, kind: 'chair' as const, desk: index })),
+  ...PLAZA_WORKSTATIONS.map((station, index) => ({ ...station.seat, kind: 'chair' as const, desk: index })),
+  ...WORKSTATIONS.map((station, index) => ({
+    ...station.seat,
+    kind: 'chair' as const,
+    desk: PLAZA_DESKS.length + index,
+  })),
   ...CAMPUS_SEATS.map((seat) => ({ ...seat, desk: -1 })),
+  ...LOUNGE_SEATS.map((seat) => ({ ...seat, desk: -1 })),
 ];
 
 const SEATS: SeatInstance[] = SEAT_DRAFTS.map((seat, index) => ({ id: index + 1, ...seat }));
@@ -440,18 +457,21 @@ export function seatById(id: number): SeatInstance | undefined {
 }
 
 /**
- * 找最近的可用座位：`isFree` 由调用方提供（服务端查占用表，客户端查本地镜像）。
- * 没有可用座位时返回 undefined，调用方退化为地面坐。
+ * 找最近的可用座位：`isFree` 由调用方提供（服务端查占用表，客户端查本地镜像），
+ * `accept` 用来按种类过滤（Z 只找坐位，X 只找床），不传即不过滤。
+ * 没有可用座位时返回 undefined，调用方退化为地面坐 / 地面躺。
  */
 export function findNearestSeat(
   x: number,
   y: number,
   isFree: (seatId: number) => boolean,
   range: number = SIT_RANGE,
+  accept?: (seat: SeatInstance) => boolean,
 ): SeatInstance | undefined {
   let best: SeatInstance | undefined;
   let bestDistance = range * range;
   for (const seat of SEATS) {
+    if (accept && !accept(seat)) continue;
     const dx = seat.x - x;
     const dy = seat.y - y;
     const distance = dx * dx + dy * dy;
@@ -464,72 +484,65 @@ export function findNearestSeat(
 }
 
 /**
- * 三片林地随海岸一起内移：西林只下移（西岸本来就没有空余），
- * 东北林左移 500、东南林左上各 300。东南林的左缘卡在南中湾的东壁上（x = 5250），
- * 再往左就会有一列树长在湾里。
- *
- * 后面四片是补空的小树林：视口面积翻四倍之后，广场—研发园—湖之间的纯草地
- * 在屏幕上会连成一大片空白。四片都不与主林地、土路、花海、水面相交，
- * 落在空地上的树由 `isPlantable` 再过滤一次。
+ * 林地：上一版 7 片按 0.84 收缩并合并——原「办公区—研发园之间的林带」
+ * 与新工作区重叠，整片取消；其余六片的相对位置不变，靠 `isPlantable` 过滤水面与建筑。
  */
 const FOREST_RECTS: WorldRect[] = [
-  { x: 852, y: 526, w: 1438, h: 2126 },
-  { x: 4726, y: 650, w: 2376, h: 2126 },
-  { x: 5250, y: 5676, w: 1926, h: 1872 },
+  { x: 1372, y: 1098, w: 1206, h: 1786 },
+  { x: 4626, y: 1202, w: 1996, h: 1786 },
+  { x: 5066, y: 5424, w: 1618, h: 1572 },
   // 北湾以南、北门通道两侧的两小片
-  { x: 2950, y: 2560, w: 860, h: 760 },
-  { x: 4260, y: 2850, w: 640, h: 470 },
+  { x: 3134, y: 2806, w: 722, h: 638 },
+  { x: 4234, y: 3062, w: 538, h: 384 },
   // 东湾与湖之间的空地
-  { x: 5600, y: 3550, w: 950, h: 1300 },
-  // 办公区与研发园之间的林带，把那段长路夹出「林荫道」
-  { x: 4260, y: 5000, w: 620, h: 1100 },
+  { x: 5360, y: 3638, w: 798, h: 1092 },
 ];
 
 /**
  * 花海：三片开阔草甸上的不规则色块，白雏菊 / 金盏 / 暖粉各一片。
  * 全部避开广场、土路、林地、湖与河道，只做视觉分区，不参与碰撞。
+ * 原「广场东南」那片与新休息室冲突，已移到周报河西岸的空白草甸。
  */
 const FLOWER_FIELDS: FlowerPatch[] = [
-  { rect: { x: 1000, y: 2620, w: 980, h: 1320 }, palette: 0 },
-  { rect: { x: 5060, y: 2740, w: 900, h: 780 }, palette: 1 },
-  { rect: { x: 2900, y: 5000, w: 1000, h: 1200 }, palette: 2 },
+  { rect: { x: 1450, y: 2950, w: 760, h: 980 }, palette: 0 },
+  { rect: { x: 4906, y: 2958, w: 756, h: 654 }, palette: 1 },
+  { rect: { x: 2940, y: 4830, w: 320, h: 520 }, palette: 2 },
   // 白雏菊田与周报河之间的一条花带，把西岸水塘圈进草甸里
-  { rect: { x: 1750, y: 3960, w: 560, h: 300 }, palette: 0 },
-  // 周报河东岸的窄条：河、土路与南中湾之间的三角空地被它收掉
-  { rect: { x: 2700, y: 4300, w: 380, h: 620 }, palette: 1 },
+  { rect: { x: 2126, y: 3982, w: 470, h: 252 }, palette: 0 },
 ];
 
 /**
  * 两口小水塘：各 11 个顶点手写，绕中心做不规则收放，读起来像天然积水而不是圆规坑。
- * 西塘在白雏菊田与西岸之间的空地，南塘在西侧海岸与南中湾之间的窄带上。
- * 走 `lakes` 数组就等于自动接入水面碰撞、撒树留白、芦苇碎石与小地图。
+ * 西塘在白雏菊田与西岸之间的空地；南塘贴着周报河东岸（与河面连成一片水洼），
+ * 整体避开新研发园与南向主路。走 `lakes` 数组就等于自动接入水面碰撞、撒树留白、
+ * 芦苇碎石与小地图。
  */
 const POND_WEST_POINTS: Point[] = [
-  [1330, 4160],
-  [1352, 4258],
-  [1412, 4310],
-  [1498, 4318],
-  [1582, 4292],
-  [1642, 4230],
-  [1660, 4142],
-  [1618, 4062],
-  [1530, 4030],
-  [1436, 4048],
-  [1360, 4094],
+  [1772, 4150],
+  [1792, 4232],
+  [1842, 4276],
+  [1914, 4282],
+  [1984, 4260],
+  [2034, 4208],
+  [2050, 4134],
+  [2014, 4068],
+  [1940, 4040],
+  [1862, 4056],
+  [1798, 4094],
 ];
 
 const POND_SOUTH_POINTS: Point[] = [
-  [2430, 6100],
-  [2452, 6200],
-  [2512, 6258],
-  [2600, 6272],
-  [2684, 6250],
-  [2742, 6190],
-  [2760, 6100],
-  [2720, 6012],
-  [2630, 5980],
-  [2540, 5996],
-  [2470, 6046],
+  [2636, 5580],
+  [2656, 5664],
+  [2706, 5712],
+  [2780, 5724],
+  [2850, 5706],
+  [2898, 5654],
+  [2914, 5580],
+  [2880, 5506],
+  [2804, 5478],
+  [2728, 5492],
+  [2670, 5534],
 ];
 
 const LAKE: LakeShape = { points: LAKE_POINTS, rect: polygonBounds(LAKE_POINTS) };
@@ -574,6 +587,9 @@ const REGIONS: RegionSpec[] = [
   { name: '会议室', rect: MEETING_ROOM },
   { name: '卫生间', rect: RESTROOM },
   { name: '研发园', rect: CAMPUS_RECT },
+  // 两栋新房间在围栏之外，按优先级排在研发园之后（互不重叠，顺序只求可读）
+  { name: '工作区', rect: WORKROOM },
+  { name: '休息室', rect: LOUNGE },
 ];
 
 /**
@@ -600,7 +616,7 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * 树不能长进水里、路上、广场上，也不能贴到围栏上。
+ * 树不能长进水里、路上、广场上，也不能贴到围栏、房间与门前铺装上。
  * 留白随地形件一起 ×1.25：漏改这一处，树就会重新长进广场与门口。
  */
 function isPlantable(x: number, y: number): boolean {
@@ -608,6 +624,10 @@ function isPlantable(x: number, y: number): boolean {
   if (rectContains(rectExpanded(PLAZA, 60), x, y)) return false;
   if (rectContains(rectExpanded(FENCE_RECT, 70), x, y)) return false;
   if (rectContains(rectExpanded(CAMPUS_RECT, 40), x, y)) return false;
+  // 南向两栋房间与门前铺装：树不长进屋里，也不堵门
+  if (rectContains(rectExpanded(WORKROOM, 60), x, y)) return false;
+  if (rectContains(rectExpanded(LOUNGE, 60), x, y)) return false;
+  for (const paving of DOOR_PAVING) if (rectContains(rectExpanded(paving, 40), x, y)) return false;
   for (const path of PATHS) if (rectContains(rectExpanded(path, 55), x, y)) return false;
   for (const bridge of BRIDGES) if (rectContains(rectExpanded(bridge, 50), x, y)) return false;
   for (const field of FLOWER_FIELDS) if (rectContains(rectExpanded(field.rect, 40), x, y)) return false;
@@ -637,15 +657,13 @@ function scatterTrees(rect: WorldRect, seed: number, variantBase: number): TreeI
 
 /**
  * 孤树：草地上的散点地标，密度远低于林地。
- * 格距 240 + 抖动 ±100 后相邻格仍可能只隔 40，所以再加一道 170 的最小间距。
+ * 格距 + 抖动后相邻格仍可能只隔 40，所以再加一道 170 的最小间距。
+ *
+ * 岛缩到原来的七成之后，可种树的草地通量同比下降：
+ * 160/0.72 → 130/0.90 补回数量，170 的最小间距不动——那是两团树冠不糊成一片的下限。
  */
-/**
- * 240/0.42 → 160/0.6：海岛上剩下的大块草地都要看得见孤树，否则像荒滩。
- * 林地加密、水塘与花海各自吃掉一块之后，能种孤树的地方少了一半，
- * 格距与命中率要一起抬才补得回来；170 的最小间距不动——那是两团树冠不糊成一片的下限。
- */
-const WILD_TREE_CELL = 160;
-const WILD_TREE_CHANCE = 0.72;
+const WILD_TREE_CELL = 130;
+const WILD_TREE_CHANCE = 0.9;
 const WILD_TREE_JITTER = 100;
 const WILD_TREE_MIN_GAP = 170;
 /** 出生圈外才开始有孤树，广场四周留出干净的活动面 */
@@ -713,10 +731,10 @@ export const WORLD_LAYOUT: WorldLayout = {
   regions: REGIONS,
   desks: DESKS,
   seats: SEATS,
-  props: [...PLAZA_PROPS, ...CAMPUS_PROPS, ...ROAD_PROPS],
+  props: [...PLAZA_PROPS, ...ROAD_PROPS, ...CAMPUS_PROPS, ...WORK_PROPS, ...LOUNGE_PROPS],
   solids: [...DESK_SOLIDS, ...PLAZA_SOLIDS, ...CAMPUS_SOLIDS],
   buildings: CAMPUS_BUILDINGS,
-  paved: [CAMPUS_YARD],
+  paved: [CAMPUS_YARD, ...DOOR_PAVING],
 };
 
 /** 玩家所在区域名：区域表按优先级排列，未命中则落到野地 */

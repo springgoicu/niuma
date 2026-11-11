@@ -4,6 +4,8 @@ import {
   ACTION,
   MOVE_SPEED,
   QUEUE_REJECT_REASON,
+  SIT_RANGE,
+  STATE_BITS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   dequantizeCoord,
@@ -11,22 +13,28 @@ import {
   findNearestSeat,
   packState,
   quantizeCoord,
+  readSync,
   regionAt,
-  resolveMotion,
+  resolveMotionInto,
   seatById,
-  unpackState,
+  seatPose,
   type CharacterAppearance,
   type Direction,
+  type MotionTarget,
   type Pose,
   type QueueStatusPacket,
   type SeatInstance,
+  type SeatKind,
   type SeatStateEntry,
   type SpawnPacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
+import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
-import { Ecs, Local, Motion, POSE, Position, Snapshot, Target } from './ecs';
+import { Ecs, Local, Motion, POSE, Position } from './ecs';
+import { INTERP_DELAY_MS, type RemoteSample } from './interp';
 import { InputController, type ActionKey } from './input';
+import { nearestInteractiveProp, pickLine, snoreDue } from './interactions';
 import { jumpLiftTexels, jumpShadowFor } from './pony-motion';
 import { GameRenderer } from './renderer';
 
@@ -63,43 +71,35 @@ export interface SessionCallbacks {
   onStats(stats: SessionStats): void;
   onChat(entry: ChatEntry): void;
   onRequestChat(): void;
-  /** 附近可用座位或当前入座提示；null 表示不显示 */
-  onSeatHint(hint: string | null): void;
+  /** 附近可用座位、当前入座或被拦下的动作提示；null 表示不显示 */
+  onHint(hint: string | null): void;
+  /** 本地姿态、入座状态与座位种类：动作按钮据此显示激活 / 不可用态，只在变化时回调 */
+  onLocalState(state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }): void;
 }
 
-const SEND_INTERVAL = 50;
 const STATS_INTERVAL = 500;
 /** 座位提示刷新间隔：足够跟手，又不必每帧扫描座位表 */
 const SEAT_HINT_INTERVAL = 150;
+/** 本地预测的上行频率：20Hz 与 Tick 同频，服务端无需插值即可直接限速 */
+const MOVEMENT_SEND_INTERVAL = 50;
+/** 互动节流：连按 F 的两次气泡至少隔这么久 */
+const INTERACT_COOLDOWN_MS = 900;
+/** 瞬时提示的保留时长：房间里的环境提示晚一步再抢回这一行 */
+const HINT_HOLD_MS = 1600;
 
-/** P1：网络同步改进 - 时间线插值配置 */
-const MOVEMENT_CONFIG = {
-  /** 小于该距离时使用平滑插值 */
-  LARGE_DISPLACEMENT_THRESHOLD: 320,
-  /** 极端位移时瞬移的阈值（如 1000+） */
-  TELEPORT_THRESHOLD: 1000,
-  /** 指数插值系数 */
-  INTERPOLATION_FACTOR: 14,
-  /** 平滑纠正的保守因子 */
-  SMOOTH_CORRECTION_FACTOR: 0.3,
-  /**
-   * 本地玩家与服务端坐标的最大合法偏差（像素）。
-   *
-   * 服务端不自行推进位置，sync 里的坐标天然是「客户端上包位置」，
-   * 落后 RTT/2 + 一个 Tick + 发送间隔。按 165px/s 与 250ms 单向延迟算约 58px，
-   * 取 128px 给抖动与高延迟链路留余量；只有超过它才说明真的失步
-   * （限速截断、地形求解分叉、传送），此时一次性对齐。
-   */
-  LOCAL_DRIFT_LIMIT: 128,
-};
+/**
+ * 本地玩家与服务端坐标的最大合法偏差（像素）。
+ *
+ * 服务端不自行推进位置，sync 里的坐标天然是「客户端上包位置」，
+ * 落后 RTT/2 + 一个 Tick + 发送间隔。按 165px/s 与 250ms 单向延迟算约 58px，
+ * 取 128px 给抖动与高延迟链路留余量；只有超过它才说明真的失步
+ * （限速截断、地形求解分叉、传送），此时一次性对齐。
+ */
+const LOCAL_DRIFT_LIMIT = 128;
+const LOCAL_DRIFT_LIMIT_SQ = LOCAL_DRIFT_LIMIT * LOCAL_DRIFT_LIMIT;
 
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
-}
-
-/** 线性插值辅助函数 */
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
 }
 
 export class GameSession {
@@ -119,23 +119,40 @@ export class GameSession {
   private readonly names = new Map<number, string>();
   /** 座位占用镜像：seatId → 占用者的 netId，以服务端广播为准 */
   private readonly seatOwner = new Map<number, number>();
-  /** 本地所坐的座位（0 表示未入座）：预测后由服务端广播校正 */
+  /** 本地所坐 / 所躺的座位（0 表示未入座）：预测后由服务端广播校正 */
   private localSeat = 0;
-  /** 已发出入座请求且尚未起身：只有此时服务端的入座结果才会吸附本地角色 */
-  private sitIntent = false;
+  /** 已发出入座 / 上床请求且尚未起身：只有此时服务端的占座结果才会吸附本地角色 */
+  private seatIntent = false;
   private seatHint: string | null = null;
   private seatHintAt = 0;
+  /** 瞬时提示（被拦下 / 附近没东西）的展示截止时刻：期间不被环境提示覆盖 */
+  private hintUntil = 0;
+  /** 互动节流与台词轮转序号：连按同一台机器也要隔一拍 */
+  private interactAt = 0;
+  private interactCount = 0;
+  /** 躺床计时：lieAt 是躺下时刻，snoreAt 是上一次「Zzz…」 */
+  private lieAt = 0;
+  private snoreAt = 0;
+  /** 上次上报给 UI 的本地姿态与入座状态，用来去重 */
+  private localPose = -1;
+  private localSeated = false;
+  private localSeatKind: SeatKind | null = null;
   private net: NetClient | null = null;
   private localId = 0;
   private elapsed = 0;
-  private movementSendTime = 0; // 独立的移动发送计时器（ms）
-  private clientMoveSequence = 0; // 移动包序号计数器
-  private readonly MOVEMENT_SEND_INTERVAL = 50; // ms，目标 20Hz
+  private movementSendTime = 0;
+  private clientMoveSequence = 0;
   private statsAt = 0;
   private frames = 0;
   private fps = 60;
   private ping = 0;
   private disposed = false;
+  /** 采样输出槽：帧循环里复用，不产生分配 */
+  private readonly sample: RemoteSample = { x: 0, y: 0, state: 0 };
+  /** 位移解算输出槽：与服务端共用同一个零分配变体 */
+  private readonly motion: MotionTarget = { x: 0, y: 0 };
+  /** 收到同步包的本地时刻：一条包里的所有条目共用一个时间戳，避免逐条读时钟 */
+  private syncAt = 0;
 
   constructor(private readonly callbacks: SessionCallbacks) {}
 
@@ -170,7 +187,7 @@ export class GameSession {
       onWelcome: (packet) => this.handleWelcome(packet.entityId, packet.x, packet.y, profile),
       onSpawn: (packet) => this.handleSpawn(packet),
       onDespawn: (id) => this.handleDespawn(id),
-      onSync: (_tick, entities) => this.handleSync(entities),
+      onSync: (data) => this.handleSync(data),
       onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
       onAppearance: (id, appearance) => this.renderer.setAppearance(id, appearance),
       onSeatState: (entries) => this.handleSeatState(entries),
@@ -187,17 +204,24 @@ export class GameSession {
     this.callbacks.onStatus('connecting', '握手');
   }
 
-  private handleWelcome(entityId: number, x: number, y: number, profile: { name: string; appearance: CharacterAppearance }): void {
+  private handleWelcome(
+    entityId: number,
+    x: number,
+    y: number,
+    profile: { name: string; appearance: CharacterAppearance },
+  ): void {
     this.callbacks.onQueue(null);
     this.callbacks.onRejected(0);
     this.clearWorld();
     this.localId = entityId;
+    this.movementSendTime = 0;
+    this.clientMoveSequence = 0;
     this.names.set(entityId, profile.name);
     const eid = this.ecs.spawn(entityId, dequantizeCoord(x), dequantizeCoord(y));
     this.ecs.markLocal(entityId);
     Motion.direction[eid] = 2;
     this.net?.setEntityId(entityId);
-    void this.renderer.addEntity(entityId, profile.name, profile.appearance);
+    void this.renderer.addEntity(entityId, profile.name, profile.appearance, Position.x[eid]!, Position.y[eid]!);
     this.renderer.updateCamera(dequantizeCoord(x), dequantizeCoord(y));
     this.callbacks.onStatus('online', this.renderer.backend);
   }
@@ -206,19 +230,13 @@ export class GameSession {
     const { id, name, appearance } = packet;
     if (this.names.has(id)) return;
     this.names.set(id, name);
-    const eid = this.ecs.spawn(id, dequantizeCoord(packet.x), dequantizeCoord(packet.y));
-    // 迟到入场也要画对：spawn 包里带着当前姿态与叠加位，否则会先看到「站着的他」再等他动
-    const state = unpackState(packet.state);
-    Motion.direction[eid] = state.direction;
-    Motion.pose[eid] = state.pose;
-    Motion.since[eid] = this.elapsed;
-    Motion.emote[eid] = state.emote ? 1 : 0;
-    Motion.emoteSince[eid] = this.elapsed;
-    Motion.jump[eid] = state.jump ? 1 : 0;
-    Motion.jumpSince[eid] = this.elapsed;
-    Motion.wave[eid] = state.wave ? 1 : 0;
-    Motion.waveSince[eid] = this.elapsed;
-    void this.renderer.addEntity(id, name, appearance);
+    const x = dequantizeCoord(packet.x);
+    const y = dequantizeCoord(packet.y);
+    const eid = this.ecs.spawn(id, x, y);
+    // 先塞一帧快照：回放缓冲有时间戳，不塞的话这个人在延迟窗口内没有数据可采样。
+    // 坐标取自 spawn 包，姿态与叠加位则由随后的 sync 校正。
+    this.ecs.remote.push(eid, performance.now(), x, y, packet.state);
+    void this.renderer.addEntity(id, name, appearance, x, y);
   }
 
   private handleDespawn(id: number): void {
@@ -227,86 +245,40 @@ export class GameSession {
     this.renderer.removeEntity(id);
   }
 
-  private handleSync(entities: ReadonlyArray<{ id: number; x: number; y: number; state: number }>): void {
-    for (const entry of entities) {
-      const eid = this.ecs.get(entry.id);
-      if (eid === 0) continue;
-      const sx = dequantizeCoord(entry.x);
-      const sy = dequantizeCoord(entry.y);
-      const state = unpackState(entry.state);
-
-      if (entry.id === this.localId) {
-        // 本地预测是确定性的（与服务端共用 MOVE_SPEED + resolveMotion），
-        // 而 sync 坐标只是「客户端上包位置」的回声，必然落后一段网络与 Tick 时间。
-        // 逐包按比例拉回会把这层延迟变成 20Hz 位置锯齿，直接传到相机上；
-        // 因此移动中以本地预测为准，只在偏差超过合法延迟上限时一次性对齐（ADR-0021）。
-        const dx = sx - Position.x[eid]!;
-        const dy = sy - Position.y[eid]!;
-        if (Math.hypot(dx, dy) > MOVEMENT_CONFIG.LOCAL_DRIFT_LIMIT) {
-          Position.x[eid] = sx;
-          Position.y[eid] = sy;
-        }
-        Target.x[eid] = Position.x[eid]!;
-        Target.y[eid] = Position.y[eid]!;
-        continue;
-      }
-
-      Target.x[eid] = sx;
-      Target.y[eid] = sy;
-      
-      // P1：三层位移处理策略
-      const curX = Position.x[eid]!;
-      const curY = Position.y[eid]!;
-      const distance = Math.hypot(sx - curX, sy - curY);
-      const now = performance.now();
-      
-      if (distance > MOVEMENT_CONFIG.TELEPORT_THRESHOLD) {
-        // 极端位移（>1000px）：瞬移（如重生、传送）
-        Position.x[eid] = sx;
-        Position.y[eid] = sy;
-        // 重置快照
-        Snapshot.currentTime[eid] = now;
-        Snapshot.prevTime[eid] = now;
-        Snapshot.currentX[eid] = sx;
-        Snapshot.currentY[eid] = sy;
-        Snapshot.prevX[eid] = sx;
-        Snapshot.prevY[eid] = sy;
-      } else if (distance > MOVEMENT_CONFIG.LARGE_DISPLACEMENT_THRESHOLD) {
-        // 大位移（320-1000px）：平滑纠正而非瞬间跳变
-        const factor = Math.min(distance / MOVEMENT_CONFIG.LARGE_DISPLACEMENT_THRESHOLD, 1.0);
-        Position.x[eid] = lerp(curX, sx, factor * MOVEMENT_CONFIG.SMOOTH_CORRECTION_FACTOR);
-        Position.y[eid] = lerp(curY, sy, factor * MOVEMENT_CONFIG.SMOOTH_CORRECTION_FACTOR);
-        
-        // 保存快照用于后续时间线插值
-        Snapshot.prevTime[eid] = Snapshot.currentTime[eid];
-        Snapshot.prevX[eid] = Snapshot.currentX[eid];
-        Snapshot.prevY[eid] = Snapshot.currentY[eid];
-        Snapshot.currentTime[eid] = now;
-        Snapshot.currentX[eid] = sx;
-        Snapshot.currentY[eid] = sy;
-      } else {
-        // 小位移（<320px）：保存快照用于时间线插值
-        Snapshot.prevTime[eid] = Snapshot.currentTime[eid];
-        Snapshot.prevX[eid] = Snapshot.currentX[eid];
-        Snapshot.prevY[eid] = Snapshot.currentY[eid];
-        Snapshot.currentTime[eid] = now;
-        Snapshot.currentX[eid] = sx;
-        Snapshot.currentY[eid] = sy;
-      }
-      
-      Motion.direction[eid] = state.direction;
-      // 动作变了才重置起始时刻：同一姿态的重复同步不能把动画打回第 0 帧
-      if (Motion.pose[eid] !== state.pose) {
-        Motion.pose[eid] = state.pose as Pose;
-        Motion.since[eid] = this.elapsed;
-      }
-      Motion.moving[eid] = state.moving ? 1 : 0;
-      // 叠加动作按位同步：上升沿起播、位清零立即停。丢包最多漏掉一次，不会永久张嘴 / 抬手
-      this.applyOverlayBit(eid, Motion.emote, Motion.emoteSince, state.emote);
-      this.applyOverlayBit(eid, Motion.jump, Motion.jumpSince, state.jump);
-      this.applyOverlayBit(eid, Motion.wave, Motion.waveSince, state.wave);
-    }
+  /**
+   * 同步包：逐条写进回放缓冲，不建数组、不建对象。
+   *
+   * 本地玩家不进缓冲——它的位置由确定性预测给出，服务端的坐标只是回声。
+   */
+  private handleSync(data: Uint8Array): void {
+    this.syncAt = performance.now();
+    readSync(data, this.visitSync);
   }
+
+  /**
+   * `readSync` 的访问器。做成实例字段而不是每次传箭头函数：
+   * 每包新建一个闭包同样是 20Hz 的稳态分配。
+   */
+  private readonly visitSync = (id: number, qx: number, qy: number, state: number): void => {
+    const eid = this.ecs.get(id);
+    if (eid === 0) return;
+    const x = dequantizeCoord(qx);
+    const y = dequantizeCoord(qy);
+
+    if (id === this.localId) {
+      const dx = x - Position.x[eid]!;
+      const dy = y - Position.y[eid]!;
+      // 移动中以本地预测为准，只在偏差超过合法延迟上限时一次性对齐（ADR-0021）。
+      // 逐包按比例拉回会把这层延迟变成 20Hz 的位置锯齿，直接传到相机上。
+      if (dx * dx + dy * dy > LOCAL_DRIFT_LIMIT_SQ) {
+        Position.x[eid] = x;
+        Position.y[eid] = y;
+      }
+      return;
+    }
+
+    this.ecs.remote.push(eid, this.syncAt, x, y, state);
+  };
 
   /** 远端叠加位：只在 0 → 1 的那一刻记起始时刻，1 → 0 立刻停 */
   private applyOverlayBit(eid: number, flag: Uint8Array, since: Float64Array, active: boolean): void {
@@ -332,7 +304,7 @@ export class GameSession {
       this.renderer.setSeatOccupied(entry.seatId, entry.occupant !== 0);
 
       if (entry.occupant === this.localId) {
-        if (this.sitIntent && this.localSeat !== entry.seatId) this.sitAt(seat);
+        if (this.seatIntent && this.localSeat !== entry.seatId) this.sitAt(seat);
       } else if (entry.seatId === this.localSeat) {
         // 预测的座位被别人先占走：本地退回地面坐，随后服务端若分到新座位会再吸附过去
         this.localSeat = 0;
@@ -340,29 +312,58 @@ export class GameSession {
     }
   }
 
-  /** 吸附到座位：位置与朝向都按座位锚点，姿态为坐。叠加动作一并清掉 */
+  /**
+   * 吸附到座位：位置与朝向都按座位锚点，姿态由座位种类决定（床落躺、其余落坐）。
+   * 叠加动作一并清掉；上床时重置打呼计时，躺下 5s 后才第一次冒「Zzz…」。
+   */
   private sitAt(seat: SeatInstance): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
     this.localSeat = seat.id;
     Position.x[eid] = seat.x;
     Position.y[eid] = seat.y;
-    Target.x[eid] = seat.x;
-    Target.y[eid] = seat.y;
     Motion.direction[eid] = seat.facing;
-    this.setLocalPose(eid, POSE.Sit);
+    this.setLocalPose(eid, seatPose(seat.kind));
     this.clearOverlays(eid);
     Motion.moving[eid] = 0;
+    if (seat.kind === 'bed') {
+      this.lieAt = this.elapsed;
+      this.snoreAt = this.elapsed;
+    }
   }
 
-  /** 起身：本地立即回到站立，并通知服务端释放座位 */
+  /**
+   * 起身：本地立即回到站立，并通知服务端释放座位。
+   * 地面坐 / 躺也要把姿态归零（与服务端 `SeatRegistry.stand` 同一套语义，ADR-0023）。
+   */
   private standUp(): void {
-    if (this.localSeat === 0) return;
-    this.localSeat = 0;
-    this.sitIntent = false;
     const eid = this.ecs.get(this.localId);
-    if (eid) this.setLocalPose(eid, POSE.Idle);
+    const hadSeat = this.localSeat !== 0;
+    const posed = eid !== 0 && (Motion.pose[eid] === POSE.Sit || Motion.pose[eid] === POSE.Lie);
+    this.localSeat = 0;
+    this.seatIntent = false;
+    this.lieAt = 0;
+    this.snoreAt = 0;
+    // 只有「坐 / 躺 / 占座」才需要回到站立：行走中的跳跃不打断走路循环
+    if (!hadSeat && !posed) return;
+    if (eid) {
+      this.setLocalPose(eid, POSE.Idle);
+      Motion.moving[eid] = 0;
+    }
     this.net?.sendAction(this.localId, ACTION.Stand);
+  }
+
+  /** 就近找一类空座：`bed` 为 true 只找床，false 只找坐位 */
+  private findSeat(bed: boolean): SeatInstance | undefined {
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return undefined;
+    return findNearestSeat(
+      Position.x[eid]!,
+      Position.y[eid]!,
+      (id) => !this.seatOwner.has(id),
+      SIT_RANGE,
+      (seat) => (seat.kind === 'bed') === bed,
+    );
   }
 
   private setLocalPose(eid: number, pose: Pose): void {
@@ -378,18 +379,53 @@ export class GameSession {
     Motion.wave[eid] = 0;
   }
 
-  /** 附近有可坐的空闲座位，或正坐在座位上时，给出提示文案 */
+  /**
+   * 环境提示：已入座 → 附近床 → 附近坐位 → 附近可互动设施，只显示优先级最高的一条。
+   * 瞬时提示（被拦下 / 附近没东西）在 `hintUntil` 之前不被覆盖。
+   */
   private updateSeatHint(eid: number): void {
+    if (this.elapsed < this.hintUntil) return;
     let hint: string | null = null;
     if (this.localSeat !== 0) {
       hint = '移动即可起身';
     } else {
-      const seat = findNearestSeat(Position.x[eid]!, Position.y[eid]!, (id) => !this.seatOwner.has(id));
-      if (seat) hint = seat.kind === 'toilet' ? '按 Z 使用马桶' : '按 Z 坐到工位';
+      const x = Position.x[eid]!;
+      const y = Position.y[eid]!;
+      const isFree = (id: number) => !this.seatOwner.has(id);
+      const seat = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind !== 'bed');
+      const bed = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind === 'bed');
+      if (seat) hint = seat.kind === 'toilet' ? '按 Z 使用马桶' : '按 Z 坐下';
+      else if (bed) hint = '按 X 上床躺平';
+      else if (nearestInteractiveProp(x, y)) hint = '按 F 互动';
     }
     if (hint === this.seatHint) return;
     this.seatHint = hint;
-    this.callbacks.onSeatHint(hint);
+    this.callbacks.onHint(hint);
+  }
+
+  /**
+   * 躺床打呼：只在床位躺姿冒「Zzz…」，躺下 5s 后每 9s 一次。
+   * 起身 / 移动经 `standUp` 清掉计时，不需要另设状态机。
+   */
+  private updateSnore(eid: number): void {
+    if (this.localSeat === 0) return;
+    const seat = seatById(this.localSeat);
+    if (seat?.kind !== 'bed' || Motion.pose[eid] !== POSE.Lie) return;
+    if (!snoreDue(POSE.Lie, 'bed', this.elapsed - this.lieAt, this.elapsed - this.snoreAt)) return;
+    this.snoreAt = this.elapsed;
+    this.renderer.showBubble(this.localId, 'Zzz…');
+  }
+
+  /** 本地姿态镜像：只在变化时回调一次，动作条据此切换高亮与不可用态 */
+  private emitLocalState(eid: number): void {
+    const pose = Motion.pose[eid]!;
+    const seated = this.localSeat !== 0;
+    const seatKind = seated ? seatById(this.localSeat)?.kind ?? null : null;
+    if (pose === this.localPose && seated === this.localSeated && seatKind === this.localSeatKind) return;
+    this.localPose = pose;
+    this.localSeated = seated;
+    this.localSeatKind = seatKind;
+    this.callbacks.onLocalState({ pose: pose as Pose, seated, seatKind });
   }
 
   private handleChat(entityId: number, msgId: number, text: string): void {
@@ -412,8 +448,16 @@ export class GameSession {
     for (const seatId of this.seatOwner.keys()) this.renderer.setSeatOccupied(seatId, false);
     this.seatOwner.clear();
     this.localSeat = 0;
-    this.sitIntent = false;
+    this.seatIntent = false;
+    this.seatHint = null;
+    this.hintUntil = 0;
+    this.interactAt = 0;
+    this.lieAt = 0;
+    this.snoreAt = 0;
     this.localId = 0;
+    this.localPose = -1;
+    this.localSeated = false;
+    this.localSeatKind = null;
   }
 
   /** 被拒后由用户显式重试：重置拒绝态并立刻重连，不等指数退避 */
@@ -439,46 +483,126 @@ export class GameSession {
     this.input.setTouchVector(x, y);
   }
 
+  /**
+   * 动作入口：判定统一交给 `resolveInteraction`，这里只执行意图。
+   * 坐 / 躺 / 起身 / 被拦 / 互动只有一处规则，桌面动作条与触屏动作盘共用。
+   */
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
+    this.applyIntent(eid, resolveInteraction(action, this.interactionState(eid)));
+  }
 
-    if (action === 'sit' || action === 'lie') {
-      // 已经坐在座位上：Z 与 X 都不再生效，移动才会起身
-      if (this.localSeat !== 0) return;
-      if (action === 'sit') {
-        this.sitIntent = true;
-        const seat = findNearestSeat(Position.x[eid]!, Position.y[eid]!, (id) => !this.seatOwner.has(id));
-        if (seat) {
-          this.sitAt(seat);
-          this.net?.sendAction(this.localId, ACTION.Sit);
+  /** 把当前姿态、座位与附近设施打包成裁决输入（只在按键时调用，可接受两次座位扫描） */
+  private interactionState(eid: number): InteractionState {
+    const seat = this.localSeat !== 0 ? seatById(this.localSeat) : undefined;
+    const isFree = (id: number) => !this.seatOwner.has(id);
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    return {
+      pose: Motion.pose[eid] as Pose,
+      seated: this.localSeat !== 0,
+      seatKind: seat?.kind ?? null,
+      moving: Motion.moving[eid] === 1,
+      seatAvailable: findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind !== 'bed') !== undefined,
+      bedAvailable: findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind === 'bed') !== undefined,
+    };
+  }
+
+  private applyIntent(eid: number, intent: InteractionIntent): void {
+    switch (intent.kind) {
+      case 'sit-seat': {
+        const seat = this.findSeat(false);
+        if (!seat) {
+          this.sitGround(eid);
           return;
         }
+        this.seatIntent = true;
+        this.sitAt(seat);
+        this.net?.sendAction(this.localId, ACTION.Sit);
+        return;
       }
-      const pose = action === 'sit' ? POSE.Sit : POSE.Lie;
-      this.setLocalPose(eid, pose);
-      // 切姿势会打断叠加动作
-      this.clearOverlays(eid);
-      Motion.moving[eid] = 0;
-      this.net?.sendAction(this.localId, action === 'sit' ? ACTION.Sit : ACTION.Lie);
-      return;
-    }
-
-    if (action === 'jump') {
-      // 坐 / 躺先起身再跳：跳跃是位移动作，躺着原地起跳读不懂。
-      // 行走中直接起跳：pose 与 moving 都不动，跳跃帧播完自然接回走路循环。
-      this.standUp();
-      if (Motion.pose[eid] !== POSE.Walk && Motion.pose[eid] !== POSE.Idle) {
-        this.setLocalPose(eid, POSE.Idle);
+      case 'lie-bed': {
+        const bed = this.findSeat(true);
+        if (!bed) {
+          this.lieGround(eid);
+          return;
+        }
+        this.seatIntent = true;
+        this.sitAt(bed);
+        this.net?.sendAction(this.localId, ACTION.Lie);
+        return;
       }
-      this.startOverlay(eid, 'jump');
-      return;
+      case 'sit-ground':
+        this.sitGround(eid);
+        return;
+      case 'lie':
+        this.lieGround(eid);
+        return;
+      case 'stand':
+        this.standUp();
+        return;
+      case 'jump':
+        // 坐 / 躺先起身再跳：跳跃是位移动作，躺着原地起跳读不懂。
+        // 行走中直接起跳：pose 与 moving 都不动，跳跃帧播完自然接回走路循环。
+        this.standUp();
+        if (Motion.pose[eid] !== POSE.Walk && Motion.pose[eid] !== POSE.Idle) {
+          this.setLocalPose(eid, POSE.Idle);
+        }
+        this.startOverlay(eid, 'jump');
+        return;
+      case 'emote':
+      case 'wave':
+        // 叫唤与打招呼只在站定时触发：图集没有行走叫唤 / 挥手帧，套到脚步上就是滑步
+        if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) return;
+        this.startOverlay(eid, intent.kind === 'wave' ? 'wave' : 'emote');
+        Motion.moving[eid] = 0;
+        return;
+      case 'interact':
+        this.interact(eid);
+        return;
+      case 'blocked':
+        this.showHint(intent.hint);
+        return;
     }
+  }
 
-    // 叫唤与打招呼只在站定时触发：图集没有行走叫唤 / 挥手帧，套到脚步上就是滑步
-    if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) return;
-    this.startOverlay(eid, action === 'wave' ? 'wave' : 'emote');
+  private sitGround(eid: number): void {
+    this.setLocalPose(eid, POSE.Sit);
+    // 切姿势会打断叠加动作
+    this.clearOverlays(eid);
     Motion.moving[eid] = 0;
+    this.net?.sendAction(this.localId, ACTION.Sit);
+  }
+
+  private lieGround(eid: number): void {
+    this.setLocalPose(eid, POSE.Lie);
+    this.clearOverlays(eid);
+    Motion.moving[eid] = 0;
+    this.net?.sendAction(this.localId, ACTION.Lie);
+  }
+
+  /**
+   * 与最近的售货机 / 饮水机 / 咖啡机互动：只在本地冒一句气泡，不新增协议（ADR-0024）。
+   * 900ms 节流：连按 F 不刷屏，也不至于把台词吞掉。
+   */
+  private interact(eid: number): void {
+    if (this.elapsed < this.interactAt) return;
+    const prop = nearestInteractiveProp(Position.x[eid]!, Position.y[eid]!);
+    if (!prop) {
+      this.showHint('附近没有可互动的设施');
+      return;
+    }
+    this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+    this.renderer.showBubble(this.localId, pickLine(prop.kind, this.interactCount));
+    this.interactCount += 1;
+  }
+
+  /** 瞬时提示：1.6s 内不被环境提示覆盖，足够读完一句 */
+  private showHint(text: string): void {
+    this.hintUntil = this.elapsed + HINT_HOLD_MS;
+    this.seatHint = text;
+    this.callbacks.onHint(text);
   }
 
   /** 三个叠加动作互斥：后按的打断先按的，连按从第 0 帧重播 */
@@ -514,19 +638,146 @@ export class GameSession {
     return frameAt(track, this.elapsed - since + phaseOffset(netId, track));
   }
 
-  /** 叠加动作到期自动清位：下一包 sync 就把位降下去，远端不会残留张嘴 / 抬手帧 */
-  private expireOverlays(): void {
-    for (const eid of this.ecs.entities()) {
-      if (Motion.emote[eid] === 1 && this.elapsed - Motion.emoteSince[eid]! >= this.overlays.emoteMs) {
-        Motion.emote[eid] = 0;
-      }
-      if (Motion.jump[eid] === 1 && this.elapsed - Motion.jumpSince[eid]! >= this.overlays.jumpMs) {
-        Motion.jump[eid] = 0;
-      }
-      if (Motion.wave[eid] === 1 && this.elapsed - Motion.waveSince[eid]! >= this.overlays.waveMs) {
-        Motion.wave[eid] = 0;
-      }
+  /** 本地叠加动作到期清位：下一包 move 就把位降下去，远端不会残留张嘴 / 抬手帧 */
+  private expireLocalOverlays(eid: number): void {
+    if (Motion.emote[eid] === 1 && this.elapsed - Motion.emoteSince[eid]! >= this.overlays.emoteMs) {
+      Motion.emote[eid] = 0;
     }
+    if (Motion.jump[eid] === 1 && this.elapsed - Motion.jumpSince[eid]! >= this.overlays.jumpMs) {
+      Motion.jump[eid] = 0;
+    }
+    if (Motion.wave[eid] === 1 && this.elapsed - Motion.waveSince[eid]! >= this.overlays.waveMs) {
+      Motion.wave[eid] = 0;
+    }
+  }
+
+  /**
+   * 本地玩家：输入 → 确定性预测。零网络延迟，贴墙滑行与门洞通行手感完全不变。
+   */
+  private stepLocal(eid: number, dt: number): void {
+    this.expireLocalOverlays(eid);
+
+    const vector = this.input.vector();
+    const moving = vector.x !== 0 || vector.y !== 0;
+    // 座位上一按方向键就起身：位置留在椅子旁，之后按正常移动走
+    if (moving && this.localSeat !== 0) this.standUp();
+
+    if (moving) {
+      const prevX = Position.x[eid]!;
+      const prevY = Position.y[eid]!;
+      const nextX = clamp(prevX + vector.x * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
+      const nextY = clamp(prevY + vector.y * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
+      // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
+      resolveMotionInto(this.motion, prevX, prevY, nextX, nextY);
+      const advanced = Math.abs(this.motion.x - prevX) + Math.abs(this.motion.y - prevY) > 0.01;
+      Position.x[eid] = this.motion.x;
+      Position.y[eid] = this.motion.y;
+      Motion.direction[eid] = directionFromVector(vector.x, vector.y, Motion.direction[eid] as Direction);
+      // 顶在围栏上时原地踏步会露馅：没有实际位移就当站定
+      if (advanced) {
+        // 走动打断叫唤与打招呼（都没有行走帧）；跳跃是位移动作，不能在这里清位，
+        // 否则「边走边跳」按下即被自己掐掉
+        Motion.emote[eid] = 0;
+        Motion.wave[eid] = 0;
+        if (Motion.pose[eid] !== POSE.Walk) {
+          Motion.pose[eid] = POSE.Walk;
+          Motion.since[eid] = this.elapsed;
+        }
+        Motion.moving[eid] = 1;
+      } else {
+        if (Motion.pose[eid] === POSE.Walk) {
+          Motion.pose[eid] = POSE.Idle;
+          Motion.since[eid] = this.elapsed;
+        }
+        Motion.moving[eid] = 0;
+      }
+    } else {
+      if (Motion.pose[eid] === POSE.Walk) {
+        Motion.pose[eid] = POSE.Idle;
+        Motion.since[eid] = this.elapsed;
+      }
+      Motion.moving[eid] = 0;
+    }
+  }
+
+  /**
+   * 远端实体：按固定延迟采样位置与状态，然后一次性喂给渲染层。
+   *
+   * 位置与 state 取自同一个采样点，所以「先迈步后位移」的错位不会出现。
+   * 采样本身不贵，但换纹理与重排深度只在可见时做——那才是真正的开销。
+   */
+  private stepRemote(eid: number, renderTime: number): void {
+    if (this.ecs.remote.sample(eid, renderTime, this.sample)) {
+      const state = this.sample.state;
+      Position.x[eid] = this.sample.x;
+      Position.y[eid] = this.sample.y;
+      Motion.direction[eid] = state & STATE_BITS.direction;
+
+      const pose = (state >> STATE_BITS.poseShift) & STATE_BITS.pose;
+      if (Motion.pose[eid] !== pose) {
+        Motion.pose[eid] = pose;
+        Motion.since[eid] = this.elapsed;
+      }
+      Motion.moving[eid] = (state & STATE_BITS.moving) !== 0 ? 1 : 0;
+      this.applyOverlayBit(eid, Motion.emote, Motion.emoteSince, (state & STATE_BITS.emote) !== 0);
+      this.applyOverlayBit(eid, Motion.jump, Motion.jumpSince, (state & STATE_BITS.jump) !== 0);
+      this.applyOverlayBit(eid, Motion.wave, Motion.waveSince, (state & STATE_BITS.wave) !== 0);
+    }
+
+    const netId = this.ecs.netOf[eid]!;
+    if (!this.renderer.updateEntity(netId, Position.x[eid]!, Position.y[eid]!)) return;
+
+    this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
+    // 跳跃弧线：图集只负责姿势与 5 纹素腾空，剩下的落差与阴影由客户端叠
+    const jumping = Motion.jump[eid] === 1;
+    const lift = jumping
+      ? jumpLiftTexels(this.elapsed - Motion.jumpSince[eid]!, this.overlays.jumpMs)
+      : 0;
+    this.renderer.setJump(netId, lift, jumpShadowFor(lift));
+  }
+
+  /** 本地玩家永远在画面中心，不做可见性判定 */
+  private commitLocalView(eid: number): void {
+    const netId = this.ecs.netOf[eid]!;
+    this.renderer.updateLocalEntity(netId, Position.x[eid]!, Position.y[eid]!);
+    this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
+    const jumping = Motion.jump[eid] === 1;
+    const lift = jumping
+      ? jumpLiftTexels(this.elapsed - Motion.jumpSince[eid]!, this.overlays.jumpMs)
+      : 0;
+    this.renderer.setJump(netId, lift, jumpShadowFor(lift));
+  }
+
+  /**
+   * 上行移动：独立时钟，不随帧率漂移。
+   *
+   * 低帧率下 `dtMs` 被钳在 50，而真实间隔可能更长，一帧只发一条会让上行退化到 15Hz；
+   * 这里补发最多两条，再多说明这台机器已经跑不动游戏了，继续补只会雪上加霜。
+   */
+  private sendMove(eid: number): void {
+    let sent = 0;
+    while (this.movementSendTime >= MOVEMENT_SEND_INTERVAL && sent < 2) {
+      this.movementSendTime -= MOVEMENT_SEND_INTERVAL;
+      sent += 1;
+      const state = packState(
+        Motion.direction[eid]! as Direction,
+        Motion.pose[eid]! as Pose,
+        Motion.moving[eid] === 1,
+        Motion.emote[eid] === 1,
+        Motion.jump[eid] === 1,
+        Motion.wave[eid] === 1,
+      );
+      this.clientMoveSequence = (this.clientMoveSequence + 1) & 0xffff;
+      this.net?.sendMove(
+        quantizeCoord(Position.x[eid]!),
+        quantizeCoord(Position.y[eid]!),
+        state,
+        this.clientMoveSequence,
+        Math.floor(performance.now()) >>> 0,
+      );
+    }
+    // 积压超过两包就没有补发的意义了：直接丢掉，避免卡顿后爆发一串过期坐标
+    if (sent === 2 && this.movementSendTime >= MOVEMENT_SEND_INTERVAL) this.movementSendTime = 0;
   }
 
   private tick = (ticker: { deltaMS: number }): void => {
@@ -535,143 +786,29 @@ export class GameSession {
     const now = performance.now();
     this.elapsed += dtMs;
     this.frames += 1;
-    this.expireOverlays();
 
     const localEid = this.ecs.get(this.localId);
     if (localEid) {
-      const vector = this.input.vector();
-      const moving = vector.x !== 0 || vector.y !== 0;
-      // 座位上一按方向键就起身：位置留在椅子旁，之后按正常移动走
-      if (moving && this.localSeat !== 0) this.standUp();
-      if (moving) {
-        const prevX = Position.x[localEid]!;
-        const prevY = Position.y[localEid]!;
-        const nextX = clamp(prevX + vector.x * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
-        const nextY = clamp(prevY + vector.y * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
-        // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
-        const resolved = resolveMotion(prevX, prevY, nextX, nextY);
-        const advanced = Math.abs(resolved.x - prevX) + Math.abs(resolved.y - prevY) > 0.01;
-        Position.x[localEid] = resolved.x;
-        Position.y[localEid] = resolved.y;
-        Motion.direction[localEid] = directionFromVector(vector.x, vector.y, Motion.direction[localEid] as Direction);
-        // 顶在围栏上时原地踏步会露馅：没有实际位移就当站定
-        if (advanced) {
-          // 走动打断叫唤与打招呼（都没有行走帧）；跳跃是位移动作，不能在这里清位，
-          // 否则「边走边跳」按下即被自己掐掉
-          Motion.emote[localEid] = 0;
-          Motion.wave[localEid] = 0;
-          if (Motion.pose[localEid] !== POSE.Walk) {
-            Motion.pose[localEid] = POSE.Walk;
-            Motion.since[localEid] = this.elapsed;
-          }
-          Motion.moving[localEid] = 1;
-        } else {
-          if (Motion.pose[localEid] === POSE.Walk) {
-            Motion.pose[localEid] = POSE.Idle;
-            Motion.since[localEid] = this.elapsed;
-          }
-          Motion.moving[localEid] = 0;
-        }
-      } else {
-        if (Motion.pose[localEid] === POSE.Walk) {
-          Motion.pose[localEid] = POSE.Idle;
-          Motion.since[localEid] = this.elapsed;
-        }
-        Motion.moving[localEid] = 0;
-      }
+      this.stepLocal(localEid, dt);
+      this.emitLocalState(localEid);
     }
 
+    const renderTime = now - INTERP_DELAY_MS;
+
+    // 一趟遍历同时完成：远端采样 → 状态变化检测 → 喂渲染层。
+    // 原来这里是四趟（叠加位到期、插值、渲染同步、遮挡），每趟都是全实体扫描。
     for (const eid of this.ecs.entities()) {
-      if (Local.flag[eid] === 1) continue;
-      
-      // P1：时间线插值
-      const now = performance.now();
-      const currentTime = Snapshot.currentTime[eid]!;
-      const prevTime = Snapshot.prevTime[eid]!;
-      const timeDiff = currentTime - prevTime;
-      
-      // 检查是否有有效的快照对（时间差 > 0 且 < 1000ms）
-      if (timeDiff > 0 && timeDiff < 1000) {
-        const elapsedSinceSnapshot = now - currentTime;
-        const progress = elapsedSinceSnapshot / timeDiff;
-        
-        // 如果还在快照区间内，使用时间线插值
-        if (progress < 1) {
-          const clampedProgress = clamp(progress, 0, 1);
-          const snapshotX = Snapshot.prevX[eid]!;
-          const snapshotY = Snapshot.prevY[eid]!;
-          const targetX = Snapshot.currentX[eid]!;
-          const targetY = Snapshot.currentY[eid]!;
-          Position.x[eid] = lerp(snapshotX, targetX, clampedProgress);
-          Position.y[eid] = lerp(snapshotY, targetY, clampedProgress);
-        } else {
-          // 进度超过1，切换到指数插值向目标逼近
-          const k = 1 - Math.exp(-dt * MOVEMENT_CONFIG.INTERPOLATION_FACTOR);
-          Position.x[eid] = Position.x[eid]! + (Target.x[eid]! - Position.x[eid]!) * k;
-          Position.y[eid] = Position.y[eid]! + (Target.y[eid]! - Position.y[eid]!) * k;
-        }
-      } else {
-        // 没有有效快照，使用指数插值作为回退
-        const k = 1 - Math.exp(-dt * MOVEMENT_CONFIG.INTERPOLATION_FACTOR);
-        Position.x[eid] = Position.x[eid]! + (Target.x[eid]! - Position.x[eid]!) * k;
-        Position.y[eid] = Position.y[eid]! + (Target.y[eid]! - Position.y[eid]!) * k;
+      if (Local.flag[eid] === 1) {
+        this.commitLocalView(eid);
+        continue;
       }
-    }
-
-    for (const netId of this.names.keys()) {
-      const eid = this.ecs.get(netId);
-      if (!eid) continue;
-      const x = Position.x[eid]!;
-      const y = Position.y[eid]!;
-      
-      // 始终更新位置（同步网络状态）
-      this.renderer.updateEntity(netId, x, y);
-      
-      // 只对可见实体更新动画状态（setPose）以减少 CPU 开销
-      // 使用相机边界判定可见性，范围扩大至 256 纹素以确保边界附近的实体也能及时更新
-      const cameraBounds = this.renderer.getCameraBounds();
-      const isVisible = !cameraBounds || (
-        x >= cameraBounds.minX - 256 &&
-        x <= cameraBounds.maxX + 256 &&
-        y >= cameraBounds.minY - 256 &&
-        y <= cameraBounds.maxY + 256
-      );
-      
-      if (isVisible) {
-        this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
-        // 跳跃弧线：图集只负责姿势与 5 纹素腾空，剩下的落差与阴影由客户端叠
-        const jumping = Motion.jump[eid] === 1;
-        const lift = jumping ? jumpLiftTexels(this.elapsed - Motion.jumpSince[eid]!, this.overlays.jumpMs) : 0;
-        this.renderer.setJump(netId, lift, jumpShadowFor(lift));
-      }
+      this.stepRemote(eid, renderTime);
     }
 
     if (localEid) {
       this.renderer.updateCamera(Position.x[localEid]!, Position.y[localEid]!);
-      
-      // 独立的网络发送时钟：不依赖帧率
       this.movementSendTime += dtMs;
-      if (this.movementSendTime >= this.MOVEMENT_SEND_INTERVAL) {
-        this.movementSendTime -= this.MOVEMENT_SEND_INTERVAL; // 模运算避免累积错误
-        const state = packState(
-          Motion.direction[localEid]! as Direction,
-          Motion.pose[localEid]! as Pose,
-          Motion.moving[localEid] === 1,
-          Motion.emote[localEid] === 1,
-          Motion.jump[localEid] === 1,
-          Motion.wave[localEid] === 1,
-        );
-        const clientSequence = ++this.clientMoveSequence;
-        // 使用 performance.now() 的低 32 位，适用于 RTT 估计
-        const clientTimestampMs = Math.floor(performance.now()) >>> 0;
-        this.net?.sendMove(
-          quantizeCoord(Position.x[localEid]!), 
-          quantizeCoord(Position.y[localEid]!), 
-          state,
-          clientSequence,
-          clientTimestampMs,
-        );
-      }
+      this.sendMove(localEid);
     }
 
     this.renderer.tickBubbles(dtMs);
@@ -682,6 +819,7 @@ export class GameSession {
         this.seatHintAt = 0;
         this.updateSeatHint(localEid);
       }
+      this.updateSnore(localEid);
     }
 
     if (now - this.statsAt >= STATS_INTERVAL) {

@@ -3,7 +3,6 @@ import {
   ACTION,
   MAX_PACKET_BYTES,
   OpCode,
-  POSE,
   QUEUE_REJECT_REASON,
   TICK_MS,
   decodeAction,
@@ -186,11 +185,15 @@ export function startGameServer(config: ServerConfig) {
         return;
       }
       if (action !== ACTION.Lie) return;
-      // 座位上不能躺：先起身
+      // 座位上不能再躺第二次：先起身（床位已经是躺姿）
       if (player.seat !== 0) return;
-      // 切姿势会中断叠加动作：服务端这里一并清位，避免残留张嘴/腾空/抬手帧
-      player.applyState(player.direction, POSE.Lie, false, false, false, false);
-      player.dirty = true;
+      // 上床可能吸附位置：与 ACTION.Sit 同一条路径，先广播座位再刷空间索引；
+      // 附近没有空床则退化为原来的地面躺。切姿势会中断叠加动作，由 applyState 一并清位。
+      const changes = seats.lie(player, now);
+      if (changes.length > 0) {
+        broadcastSeats(changes);
+        if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+      }
       return;
     }
 
@@ -202,6 +205,8 @@ export function startGameServer(config: ServerConfig) {
     if (op === OpCode.C2S_SET_APPEARANCE) {
       player.appearance = decodeSetAppearance(data);
       player.dirty = true;
+      // 换装会让缓存的入场资料失效：不失效的话，之后进入他视野的人会看到旧的帽子与配色
+      player.markSpawnDirty();
       const packet = encodeAppearanceBroadcast(player.id, player.appearance);
       transport.send(player.wsId, packet);
       for (const id of player.known) {

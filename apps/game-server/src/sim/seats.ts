@@ -3,6 +3,8 @@ import {
   WORLD_LAYOUT,
   findNearestSeat,
   seatById,
+  seatPose,
+  type SeatInstance,
   type SeatStateEntry,
 } from '@niuma/shared-types';
 import type { Player } from './world';
@@ -12,6 +14,10 @@ import type { Player } from './world';
  *
  * 所有变更都在这里完成并返回「变化条目」，由调用方广播；
  * 客户端的本地预测只用于即时反馈，最终以服务端广播为准。
+ *
+ * 床位与凳子的区别只在 `seatPose`：床位落躺姿、其余落坐姿。
+ * 判断「该坐还是该躺」由调用方决定（ACTION.Sit / ACTION.Lie），
+ * 本类只负责「找对应种类里最近的空位并占住」。
  */
 export class SeatRegistry {
   /** seatId → 占用者的玩家 id，0 表示空闲；下标 0 不用 */
@@ -36,44 +42,77 @@ export class SeatRegistry {
   }
 
   /**
-   * 入座：附近有空闲座位则吸附到座位锚点并面朝座位；否则就地坐下（保持原有行为）。
-   * 返回本次占用变化（无座位可坐时为空数组）。
+   * 占住一个座位：吸附到锚点、按种类落姿态，并把变化追加到 `out`。
+   * 床位与凳子共用这一条路径，姿态只由 `seatPose` 决定。
    */
-  sit(player: Player, now: number): SeatStateEntry[] {
-    if (player.seat !== 0) return [];
-    const seat = findNearestSeat(player.x, player.y, (id) => this.isFree(id));
-    if (!seat) {
-      player.applyState(player.direction, POSE.Sit, false);
-      player.dirty = true;
-      return [];
-    }
+  occupy(player: Player, seat: SeatInstance, now: number, out: SeatStateEntry[]): SeatStateEntry[] {
     this.occupant[seat.id] = player.id;
     player.seat = seat.id;
     player.x = seat.x;
     player.y = seat.y;
     player.lastMoveAt = now;
-    player.direction = seat.facing;
-    player.applyState(seat.facing, POSE.Sit, false);
+    player.applyState(seat.facing, seatPose(seat.kind), false);
     player.dirty = true;
     player.needsViewRefresh = true;
-    return [{ seatId: seat.id, occupant: player.id }];
+    out.push({ seatId: seat.id, occupant: player.id });
+    return out;
+  }
+
+  /**
+   * 入座：附近有空闲的**非床**座位则吸附过去，否则就地坐下（保持原有行为）。
+   * 返回值是本次占用变化追加到 `out` 之后的同一个数组（无座位可坐时原样返回）。
+   *
+   * `out` 由调用方提供，是为了让 20Hz 的移动包路径能复用一块 scratch：
+   * 移动解算里「起身」绝大多数时候不会发生，但空数组照样是每包一次分配。
+   */
+  sit(player: Player, now: number, out: SeatStateEntry[] = []): SeatStateEntry[] {
+    if (player.seat !== 0) return out;
+    const seat = findNearestSeat(player.x, player.y, (id) => this.isFree(id), undefined, (seat) => seat.kind !== 'bed');
+    if (!seat) {
+      player.applyState(player.direction, POSE.Sit, false);
+      player.dirty = true;
+      return out;
+    }
+    return this.occupy(player, seat, now, out);
+  }
+
+  /**
+   * 躺下：附近有空闲床位则吸附上去并落躺姿，否则就地躺平。
+   * 床位是唯一允许「座位上躺姿」的座位种类（ADR-0024 修订 ADR-0020）。
+   */
+  lie(player: Player, now: number, out: SeatStateEntry[] = []): SeatStateEntry[] {
+    if (player.seat !== 0) return out;
+    const bed = findNearestSeat(player.x, player.y, (id) => this.isFree(id), undefined, (seat) => seat.kind === 'bed');
+    if (!bed) {
+      player.applyState(player.direction, POSE.Lie, false);
+      player.dirty = true;
+      return out;
+    }
+    return this.occupy(player, bed, now, out);
   }
 
   /** 释放座位但不改姿态：用于断线与移动时的起身前置步骤 */
-  release(player: Player): SeatStateEntry[] {
+  release(player: Player, out: SeatStateEntry[] = []): SeatStateEntry[] {
     const seatId = player.seat;
-    if (seatId === 0) return [];
+    if (seatId === 0) return out;
     player.seat = 0;
     if (seatById(seatId)) this.occupant[seatId] = 0;
-    return [{ seatId, occupant: 0 }];
+    out.push({ seatId, occupant: 0 });
+    return out;
   }
 
-  /** 起身：释放座位并回到站立，位置保持在椅子旁 */
-  stand(player: Player): SeatStateEntry[] {
-    const changes = this.release(player);
-    if (changes.length === 0) return changes;
+  /**
+   * 起身：释放座位并回到站立，位置保持在椅子 / 床边。
+   *
+   * 地面坐 / 躺没有座位可释放，但姿态同样要归零：
+   * 否则 ACTION.Stand 只能等下一包 20Hz move 才被远端看到（ADR-0023）。
+   */
+  stand(player: Player, out: SeatStateEntry[] = []): SeatStateEntry[] {
+    this.release(player, out);
+    // 已经是站姿就什么都不用做，也避免每包无谓地重打包 state
+    if (player.pose === POSE.Idle) return out;
     player.applyState(player.direction, POSE.Idle, false);
     player.dirty = true;
-    return changes;
+    return out;
   }
 }

@@ -31,6 +31,7 @@ import {
 } from './autotile';
 import { WILDFLOWER_KINDS, bloomDecalKind, scatterDecals, type DecalPlacement } from './decals';
 import { seeded } from './seeded';
+import type { DepthSink } from './sort-layer';
 import {
   EDGE_STYLE,
   MATERIAL,
@@ -213,7 +214,7 @@ export class TerrainView {
   private readonly nextLit = new Set<CanopyEntry>();
   /** 边缘任务：底色阶段只登记，底色全部落盘后再统一出图 */
   private readonly edges: EdgeJob[] = [];
-  private sorted: Container | null = null;
+  private depth: DepthSink | null = null;
   private grid: MaterialGrid | null = null;
   private readonly edgeEnabled: boolean;
   private waterElapsed = 0;
@@ -243,9 +244,9 @@ export class TerrainView {
     };
   }
 
-  /** `sorted` 必须已开启 sortableChildren，树与围栏会按脚底 y 插进去 */
-  build(sorted: Container): void {
-    this.sorted = sorted;
+  /** `depth` 负责按脚底 y 把树、围栏与道具放进正确的深度层 */
+  build(depth: DepthSink): void {
+    this.depth = depth;
     this.addSea();
     this.addShoreShelf();
     this.addGrass();
@@ -261,9 +262,9 @@ export class TerrainView {
     this.flushEdges();
     this.addDecor();
     this.addDecals();
-    this.addTrees(sorted);
-    this.addPlanters(sorted);
-    for (const segment of WORLD_LAYOUT.fence.segments) this.addFence(sorted, segment);
+    this.addTrees(depth);
+    this.addPlanters(depth);
+    for (const segment of WORLD_LAYOUT.fence.segments) this.addFence(depth, segment);
   }
 
   /** 深海铺在最底层，外扩一圈：任何视口都不会露出世界外的黑色 */
@@ -636,13 +637,9 @@ export class TerrainView {
     const sprite = new Sprite(kind === 'rock' ? this.textures.rock : this.textures.reed);
     sprite.anchor.set(0.5, 1);
     sprite.position.set(px, py);
-    // 碎石与芦苇按脚底 y 进排序层：人走过去时前后关系才对
-    if (this.sorted) {
-      sprite.zIndex = py;
-      this.sorted.addChild(sprite);
-    } else {
-      this.base.addChild(sprite);
-    }
+    // 碎石与芦苇按脚底 y 进深度层：人走过去时前后关系才对
+    if (this.depth) this.depth.add(py, sprite);
+    else this.base.addChild(sprite);
     this.cullables.push({ sprite, x: px, y: py, padX: 12, padY: 26 });
   }
 
@@ -651,12 +648,12 @@ export class TerrainView {
    * zIndex 取 y - 0.5，永远排在同位置物体之下，又不会掉到更靠上的物件下面。
    */
   private addPropShadow(x: number, y: number, texture: Texture): void {
-    if (!this.sorted) return;
+    if (!this.depth) return;
     const shadow = new Sprite(texture);
     shadow.anchor.set(0.5, 0.5);
     shadow.position.set(Math.round(x), Math.round(y) - 1);
-    shadow.zIndex = y - 0.5;
-    this.sorted.addChild(shadow);
+    // 取 y - 0.5 而不是 y：同位置的影子压在本体之下，又不会掉到更靠上的物件后面
+    this.depth.add(y - 0.5, shadow);
     this.cullables.push({ sprite: shadow, x, y, padX: 32, padY: 14 });
   }
 
@@ -715,7 +712,7 @@ export class TerrainView {
     return true;
   }
 
-  private addTrees(sorted: Container): void {
+  private addTrees(depth: DepthSink): void {
     const trees = [
       ...WORLD_LAYOUT.forests.flatMap((forest) => forest.trees),
       ...WORLD_LAYOUT.wildTrees,
@@ -723,10 +720,10 @@ export class TerrainView {
     for (const tree of trees) {
       const parts = this.textures.trees[tree.variant % this.textures.trees.length]!;
       this.addPropShadow(tree.x, tree.y, this.textures.shadows.tree);
-      const trunk = this.treeSprite(sorted, parts.trunk, tree.x, tree.y);
+      const trunk = this.treeSprite(depth, parts.trunk, tree.x, tree.y);
       // 树干与树冠同帧同锚点、同 zIndex：角色在树后时两层都在其上，
       // 遮挡只把树冠 alpha 压到 0.85，树干保持不透明（ADR-0013）。
-      const canopy = this.treeSprite(sorted, parts.canopy, tree.x, tree.y);
+      const canopy = this.treeSprite(depth, parts.canopy, tree.x, tree.y);
       // 树冠向上长到 108px、向两边各探 36px，裁剪范围要覆盖到
       this.cullables.push({ sprite: trunk, x: tree.x, y: tree.y, padX: 36, padY: 112 });
       this.cullables.push({ sprite: canopy, x: tree.x, y: tree.y, padX: 36, padY: 112 });
@@ -734,12 +731,11 @@ export class TerrainView {
     }
   }
 
-  private treeSprite(sorted: Container, texture: Texture, x: number, y: number): Sprite {
+  private treeSprite(depth: DepthSink, texture: Texture, x: number, y: number): Sprite {
     const sprite = new Sprite(texture);
     sprite.anchor.set(0.5, 1);
     sprite.position.set(x, y);
-    sprite.zIndex = y;
-    sorted.addChild(sprite);
+    depth.add(y, sprite);
     return sprite;
   }
 
@@ -760,25 +756,23 @@ export class TerrainView {
     else this.canopyGrid.set(key, [entry]);
   }
 
-  private addPlanters(sorted: Container): void {
+  private addPlanters(depth: DepthSink): void {
     for (const planter of WORLD_LAYOUT.planters) {
       this.addPropShadow(planter.x, planter.y, this.textures.shadows.planter);
       const sprite = new Sprite(this.textures.planter);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(planter.x, planter.y);
-      sprite.zIndex = planter.y;
-      sorted.addChild(sprite);
+      depth.add(planter.y, sprite);
       this.cullables.push({ sprite, x: planter.x, y: planter.y, padX: 16, padY: 36 });
     }
   }
 
-  private addFence(sorted: Container, segment: FenceSegment): void {
+  private addFence(depth: DepthSink, segment: FenceSegment): void {
     if (segment.y1 === segment.y2) {
       const left = Math.min(segment.x1, segment.x2);
       const right = Math.max(segment.x1, segment.x2);
       const g = this.drawFenceSpan(left, segment.y1, right - left, true);
-      g.zIndex = segment.y1;
-      sorted.addChild(g);
+      depth.add(segment.y1, g);
       return;
     }
     const from = Math.min(segment.y1, segment.y2);
@@ -788,8 +782,7 @@ export class TerrainView {
       const end = Math.min(y + 120, to);
       const g = this.drawFenceSpan(segment.x1, y, end - y, false);
       // 竖向栏板按分段下沿排序：走过的人各归各的前后
-      g.zIndex = end;
-      sorted.addChild(g);
+      depth.add(end, g);
     }
   }
 

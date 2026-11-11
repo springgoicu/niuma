@@ -218,9 +218,18 @@ export function findFreePoint(x: number, y: number, radius: number = PLAYER_RADI
   return { x: WORLD_CENTER.x, y: WORLD_CENTER.y };
 }
 
+/** 位移解算的输出槽：`resolveMotionInto` 要把结果写回调用方预分配的容器 */
+export interface MotionTarget {
+  x: number;
+  y: number;
+}
+
 /**
  * 把一次位移解算到合法位置：先试整段，被挡则退化为单轴滑动。
  * 调用方传入的目标点已经是「限速后」的坐标，这里只负责地形。
+ *
+ * 返回新对象的版本保留给低频调用与测试；帧循环与服务端移动包请用 `resolveMotionInto`
+ * ——那里每秒要跑上万次，每次一个 `{x, y}` 会把 GC 压力堆到服务端 tick 上。
  */
 export function resolveMotion(
   fromX: number,
@@ -228,8 +237,25 @@ export function resolveMotion(
   toX: number,
   toY: number,
   radius: number = PLAYER_RADIUS,
-): { x: number; y: number } {
-  if (!Number.isFinite(toX) || !Number.isFinite(toY)) return { x: fromX, y: fromY };
+): MotionTarget {
+  const out: MotionTarget = { x: fromX, y: fromY };
+  resolveMotionInto(out, fromX, fromY, toX, toY, radius);
+  return out;
+}
+
+export function resolveMotionInto(
+  out: MotionTarget,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  radius: number = PLAYER_RADIUS,
+): void {
+  if (!Number.isFinite(toX) || !Number.isFinite(toY)) {
+    out.x = fromX;
+    out.y = fromY;
+    return;
+  }
 
   let originX = fromX;
   let originY = fromY;
@@ -242,7 +268,11 @@ export function resolveMotion(
   const dx = toX - originX;
   const dy = toY - originY;
   const distance = Math.hypot(dx, dy);
-  if (distance < 0.001) return { x: originX, y: originY };
+  if (distance < 0.001) {
+    out.x = originX;
+    out.y = originY;
+    return;
+  }
 
   // 每一小步都沿「原始方向」推进：若改成朝目标重新瞄准，贴墙滑行会越走越慢，
   // 而且滑动后重新命中的首个空闲点会把角色瞬移过障碍。
@@ -275,5 +305,6 @@ export function resolveMotion(
     }
     break;
   }
-  return { x, y };
+  out.x = x;
+  out.y = y;
 }

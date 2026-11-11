@@ -57,6 +57,22 @@ export function packState(
   );
 }
 
+/**
+ * state 字节的位域（与 `packState` 一一对应）。
+ *
+ * 帧循环要按实体逐帧拆 state，用 `unpackState` 会每实体每帧造一个对象
+ * （200 人同屏就是每秒 12000 个）。这里只暴露掩码与位移，调用方直接按位取。
+ */
+export const STATE_BITS = {
+  direction: 0b11,
+  poseShift: 2,
+  pose: 0b11,
+  wave: 0b10000,
+  moving: 0b100000,
+  emote: 0b1000000,
+  jump: 0b10000000,
+} as const;
+
 export function unpackState(state: number): {
   direction: Direction;
   pose: Pose;

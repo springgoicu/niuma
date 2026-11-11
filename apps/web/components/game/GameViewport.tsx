@@ -9,7 +9,7 @@ import { GameSession } from '@/lib/game/session';
 import { defaultAppearance, loadProfile, saveProfile, type Profile } from '@/lib/profile';
 import { ActionBar } from './ActionBar';
 import { ChatDock } from './ChatDock';
-import { ConnectionBanner, OnlineBadge, PlayerCard } from './Hud';
+import { ConnectionBanner, OnlineBadge, PlayerCard, SfxToggle } from './Hud';
 import { JoinGate } from './JoinGate';
 import { MiniMap } from './MiniMap';
 import { QueueGate } from './QueueGate';
@@ -44,8 +44,9 @@ export function GameViewport() {
   const setRejected = useGameUi((state) => state.setRejected);
   const pushMessage = useGameUi((state) => state.pushMessage);
   const setChatOpen = useGameUi((state) => state.setChatOpen);
-  const setSeatHint = useGameUi((state) => state.setSeatHint);
-  const seatHint = useGameUi((state) => state.seatHint);
+  const setHint = useGameUi((state) => state.setHint);
+  const setLocalState = useGameUi((state) => state.setLocalState);
+  const hint = useGameUi((state) => state.hint);
 
   useEffect(() => {
     useGameUi.getState().reset();
@@ -77,7 +78,8 @@ export function GameViewport() {
       onStats: (stats) => setStats(stats),
       onChat: (entry) => pushMessage(entry),
       onRequestChat: () => setChatOpen(true),
-      onSeatHint: (hint) => setSeatHint(hint),
+      onHint: (next) => setHint(next),
+      onLocalState: (state) => setLocalState(state),
     });
     sessionRef.current = session;
     session.start(host, profile).catch((error: unknown) => {
@@ -88,7 +90,7 @@ export function GameViewport() {
       session.stop();
       sessionRef.current = null;
     };
-  }, [profile, setStatus, setStats, pushMessage, setChatOpen, setSeatHint]);
+  }, [profile, setStatus, setStats, pushMessage, setChatOpen, setHint, setLocalState]);
 
   const getSession = useCallback(() => sessionRef.current, []);
   const handleChat = useCallback((text: string) => sessionRef.current?.sendChat(text), []);
@@ -126,14 +128,17 @@ export function GameViewport() {
               </div>
               <div className="flex shrink-0 flex-col items-end gap-2">
                 <OnlineBadge compact={isTouch} />
-                <Link
-                  href="/"
-                  aria-label="打卡下班"
-                  className="pointer-events-auto flex min-h-9 items-center gap-1.5 border-2 border-ink-600 bg-ink-900/92 px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500"
-                >
-                  <LogOut className="h-3 w-3" />
-                  打卡下班
-                </Link>
+                <div className="flex items-center gap-2">
+                  <SfxToggle compact={isTouch} />
+                  <Link
+                    href="/"
+                    aria-label="打卡下班"
+                    className="pointer-events-auto flex min-h-9 items-center gap-1.5 border-2 border-ink-600 bg-ink-900/92 px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500"
+                  >
+                    <LogOut className="h-3 w-3" />
+                    打卡下班
+                  </Link>
+                </div>
               </div>
             </div>
 
@@ -154,12 +159,12 @@ export function GameViewport() {
           </div>
 
           <QueueGate onRetry={handleRetry} />
-          {seatHint && (
+          {hint && (
             <div
               role="status"
               className={`pointer-events-none absolute left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${isTouch ? 'bottom-36' : 'bottom-24'}`}
             >
-              {seatHint}
+              {hint}
             </div>
           )}
           <ConnectionBanner />

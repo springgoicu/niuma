@@ -9,10 +9,12 @@ import {
   type PropInstance,
   type PropKind,
   type SeatInstance,
+  type SeatKind,
   type SolidRect,
   type WorldRect,
 } from '@niuma/shared-types';
 import { bake } from './terrain-textures';
+import type { DepthSink } from './sort-layer';
 
 /**
  * 室内与园区设施的渲染层：工位、座椅、马桶、会议室、卫生间、庭院与装饰。
@@ -67,6 +69,18 @@ const COLOR = {
   // 装饰
   woodLight: 0xe0b48a,
   woodDark: 0x8a6446,
+  // 休息室：地毯、床品与软包
+  carpetA: 0xe8c9a6,
+  carpetB: 0xdcbb96,
+  carpetSeam: 0xcaa680,
+  linen: 0xfdf6ec,
+  linenEdge: 0xdcc9b4,
+  blanket: 0x9fd3ff,
+  blanketLight: 0xc6e6ff,
+  pillow: 0xffe49a,
+  sofaBody: 0x8fe3c7,
+  sofaSeat: 0xb6f0dc,
+  stoolSeat: 0xffb59e,
   metal: 0x9aa5b4,
   gold: 0xffd166,
   lampGlow: 0xfff0b8,
@@ -101,21 +115,33 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   bike: { w: 38, h: 20 },
   table: { w: 40, h: 34 },
   plant: { w: 16, h: 22 },
+  cooler: { w: 20, h: 30 },
+  coffee: { w: 22, h: 28 },
+  sideTable: { w: 20, h: 18 },
 };
 
 const DESK_SPRITE = { w: 96, h: 66 };
 const CHAIR_SPRITE = { w: 26, h: 30 };
 const TOILET_SPRITE = { w: 22, h: 28 };
-
-/** 桌椅与马桶的精灵相对入座锚点下沉 6px：椅面落在角色臀下，而不是悬空 */
-const SEAT_SINK = 6;
+const STOOL_SPRITE = { w: 18, h: 22 };
+const SOFA_SPRITE = { w: 58, h: 30 };
+/**
+ * 床：横向 64×42，躺下的角色正好横卧在床垫上。
+ * 角色帧是 64×64、锚点在脚底中心，所以床要往锚点下方压 16px 才托住躯干。
+ */
+const BED_SPRITE = { w: 64, h: 42 };
 
 /**
- * 售货机的碰撞矩形尺寸，与 layout 中 PLAZA_SOLIDS 保持一致：这类碰撞体由精灵承担。
- * 精灵从 42×60 收到 34×48，底座碰撞同比收到 32×24。
+ * 座位精灵相对锚点的下沉量与尺寸。
+ * 椅子 / 马桶沿用 6；凳子面更矮、沙发更厚、床要把身体托起来。
  */
-const VENDING_W = 32;
-const VENDING_H = 24;
+const SEAT_ART: Record<SeatKind, { w: number; h: number; sink: number }> = {
+  chair: { ...CHAIR_SPRITE, sink: 6 },
+  toilet: { ...TOILET_SPRITE, sink: 6 },
+  stool: { ...STOOL_SPRITE, sink: 4 },
+  sofa: { ...SOFA_SPRITE, sink: 8 },
+  bed: { ...BED_SPRITE, sink: 16 },
+};
 
 function rect(g: Graphics, x: number, y: number, w: number, h: number, color: number): void {
   g.rect(x, y, w, h).fill(color);
@@ -229,6 +255,34 @@ function drawProp(kind: PropKind, g: Graphics): void {
     case 'plant':
       drawPlantPot(g, w / 2, h - 1, 1);
       return;
+    case 'cooler':
+      // 饮水机：顶上一只天蓝色水桶，机身两个出水按钮，底部一层空杯
+      box(g, 2, 0, 16, 11, COLOR.sky, COLOR.skyDark);
+      rect(g, 3, 2, 14, 2, COLOR.skyDark);
+      rect(g, 8, 4, 4, 5, COLOR.wallCap);
+      box(g, 1, 11, 18, 18, COLOR.fixture, COLOR.fixtureEdge);
+      rect(g, 4, 14, 4, 3, COLOR.skyDark);
+      rect(g, 11, 14, 4, 3, COLOR.peachDark);
+      box(g, 6, 20, 8, 6, COLOR.wallCap, COLOR.ceramicEdge);
+      return;
+    case 'coffee':
+      // 咖啡机：深色机身 + 亮屏菜单 + 出水口下的一只白杯
+      box(g, 1, 1, 20, 25, COLOR.bezel);
+      box(g, 3, 4, 16, 8, COLOR.screenIdle, COLOR.bezel);
+      rect(g, 5, 6, 5, 1, COLOR.ceramic);
+      rect(g, 5, 9, 8, 1, COLOR.ceramic);
+      rect(g, 10, 14, 2, 3, COLOR.metal);
+      box(g, 7, 17, 8, 6, COLOR.ceramic, COLOR.ceramicEdge);
+      rect(g, 9, 19, 4, 1, COLOR.woodDark);
+      rect(g, 2, 26, 18, 1, COLOR.outline);
+      return;
+    case 'sideTable':
+      // 床头小几：圆桌面 + 一根细腿
+      g.ellipse(10, 6, 9, 4).fill(COLOR.outline);
+      g.ellipse(10, 5, 8, 3).fill(COLOR.woodLight);
+      box(g, 9, 7, 2, 8, COLOR.woodDark);
+      box(g, 4, 14, 12, 3, COLOR.woodDark);
+      return;
   }
 }
 
@@ -287,6 +341,47 @@ function drawToilet(g: Graphics): void {
   g.ellipse(11, 18, 5, 3.5).stroke({ width: 1, color: COLOR.ceramicEdge });
 }
 
+/** 凳子：糖果色软垫 + 两根可见细腿，比椅子矮一档 */
+function drawStool(g: Graphics): void {
+  const { w, h } = STOOL_SPRITE;
+  shadow(g, w / 2, h - 1, 7, 2);
+  box(g, 2, 6, 14, 7, COLOR.stoolSeat);
+  rect(g, 4, 8, 10, 1, COLOR.ceramic);
+  box(g, 3, 13, 2, 8, COLOR.woodDark);
+  box(g, 13, 13, 2, 8, COLOR.woodDark);
+}
+
+/** 沙发：靠背在上、两个座垫在下，两侧各一只扶手 */
+function drawSofa(g: Graphics): void {
+  const { w, h } = SOFA_SPRITE;
+  shadow(g, w / 2, h - 1, 26, 2.5);
+  box(g, 0, 0, w, 12, COLOR.sofaBody);
+  box(g, 3, 12, 24, 10, COLOR.sofaSeat);
+  box(g, 31, 12, 24, 10, COLOR.sofaSeat);
+  rect(g, 5, 14, 20, 1, COLOR.ceramic);
+  rect(g, 33, 14, 20, 1, COLOR.ceramic);
+  box(g, 0, 10, 5, 12, COLOR.mintDark);
+  box(g, w - 5, 10, 5, 12, COLOR.mintDark);
+}
+
+/**
+ * 床：木框 + 床垫 + 枕头 + 被子，朝向统一朝右（角色横卧时头朝右）。
+ * 不做镜像翻转：`sprite.scale` 会把 1px 描边拉成半像素（ADR-0005）。
+ */
+function drawBed(g: Graphics): void {
+  const { w, h } = BED_SPRITE;
+  shadow(g, w / 2, h - 2, w / 2 - 3, 3);
+  box(g, 2, 4, w - 4, h - 8, COLOR.woodDark);
+  box(g, 5, 7, w - 10, h - 14, COLOR.linen, COLOR.linenEdge);
+  // 被子铺左三分之二，靠右留出枕头
+  box(g, 7, 9, w - 26, h - 18, COLOR.blanket, COLOR.blanketLight);
+  rect(g, 9, 11, w - 30, 1, COLOR.blanketLight);
+  // 枕头与床头板
+  box(g, w - 19, 10, 12, h - 20, COLOR.pillow, COLOR.linenEdge);
+  rect(g, w - 17, 13, 8, 1, COLOR.ceramic);
+  box(g, w - 5, 2, 4, h - 4, COLOR.woodLight, COLOR.woodDark);
+}
+
 function fillFloorWood(g: Graphics, r: WorldRect): void {
   rect(g, r.x, r.y, r.w, r.h, COLOR.woodA);
   // 木板错缝：每条板的起点错开，像真的拼花地板
@@ -311,6 +406,20 @@ function fillFloorTile(g: Graphics, r: WorldRect): void {
   for (let y = r.y; y < r.y + r.h; y += 16) rect(g, r.x, y, r.w, 1, COLOR.tileSeam);
 }
 
+/** 休息室地毯：暖色横向条带 + 内圈收边，软地面与木地板的读感差一档 */
+function fillFloorCarpet(g: Graphics, r: WorldRect): void {
+  rect(g, r.x, r.y, r.w, r.h, COLOR.carpetA);
+  for (let y = r.y + 16, row = 0; y < r.y + r.h; y += 16, row += 1) {
+    rect(g, r.x, y, r.w, 1, COLOR.carpetSeam);
+    if (row % 2 === 0 && y + 15 < r.y + r.h) rect(g, r.x, y + 1, r.w, 15, COLOR.carpetB);
+  }
+  // 内圈收边：站在门口一眼能看出这是软地面
+  rect(g, r.x + 4, r.y + 4, r.w - 8, 1, COLOR.carpetSeam);
+  rect(g, r.x + 4, r.y + r.h - 5, r.w - 8, 1, COLOR.carpetSeam);
+  rect(g, r.x + 4, r.y + 4, 1, r.h - 8, COLOR.carpetSeam);
+  rect(g, r.x + r.w - 5, r.y + 4, 1, r.h - 8, COLOR.carpetSeam);
+}
+
 function fillPaving(g: Graphics, r: WorldRect): void {
   rect(g, r.x, r.y, r.w, r.h, COLOR.paving);
   for (let x = r.x + 40; x < r.x + r.w; x += 40) rect(g, x, r.y, 1, r.h, COLOR.pavingSeam);
@@ -332,6 +441,7 @@ function fillSolidFlat(g: Graphics, s: SolidRect): void {
 
 function fillBuildingFloor(g: Graphics, building: BuildingSpec): void {
   if (building.floor === 'wood') fillFloorWood(g, building.rect);
+  else if (building.floor === 'carpet') fillFloorCarpet(g, building.rect);
   else fillFloorTile(g, building.rect);
 }
 
@@ -362,15 +472,15 @@ export class PropsView {
    */
   private readonly propTextures = new Map<PropKind, Texture>();
 
-  /** 构造期一次性生成全部贴图与精灵；`sorted` 必须已开启 sortableChildren */
-  build(sorted: Container, renderer: TextureFactory): void {
+  /** 构造期一次性生成全部贴图与精灵；`depth` 负责按脚底 y 归入深度层 */
+  build(depth: DepthSink, renderer: TextureFactory): void {
     const ground = new Graphics();
     for (const building of WORLD_LAYOUT.buildings) fillBuildingFloor(ground, building);
     for (const area of WORLD_LAYOUT.paved) fillPaving(ground, area);
     for (const solid of WORLD_LAYOUT.solids) {
       if (solid.kind === 'desk') continue;
-      // 售货机本体由装饰精灵承担，地面层不再重复画
-      if (solid.kind === 'fixture' && solid.w === VENDING_W && solid.h === VENDING_H) continue;
+      // 售货机 / 饮水机 / 咖啡机的本体由装饰精灵承担，地面层不再重复画
+      if (solid.kind === 'prop') continue;
       fillSolidFlat(ground, solid);
     }
     this.base.addChild(ground);
@@ -378,34 +488,36 @@ export class PropsView {
     const frame = (w: number, h: number) => new Rectangle(0, 0, w, h);
     const deskIdle = bake(renderer, (g) => drawDesk(g, false), { frame: frame(DESK_SPRITE.w, DESK_SPRITE.h) });
     const deskLit = bake(renderer, (g) => drawDesk(g, true), { frame: frame(DESK_SPRITE.w, DESK_SPRITE.h) });
-    const chair = bake(renderer, drawChair, { frame: frame(CHAIR_SPRITE.w, CHAIR_SPRITE.h) });
-    const toilet = bake(renderer, drawToilet, { frame: frame(TOILET_SPRITE.w, TOILET_SPRITE.h) });
-    this.textures.push(deskIdle, deskLit, chair, toilet);
+    const seatTextures: Record<SeatKind, Texture> = {
+      chair: bake(renderer, drawChair, { frame: frame(CHAIR_SPRITE.w, CHAIR_SPRITE.h) }),
+      toilet: bake(renderer, drawToilet, { frame: frame(TOILET_SPRITE.w, TOILET_SPRITE.h) }),
+      stool: bake(renderer, drawStool, { frame: frame(STOOL_SPRITE.w, STOOL_SPRITE.h) }),
+      sofa: bake(renderer, drawSofa, { frame: frame(SOFA_SPRITE.w, SOFA_SPRITE.h) }),
+      bed: bake(renderer, drawBed, { frame: frame(BED_SPRITE.w, BED_SPRITE.h) }),
+    };
+    this.textures.push(deskIdle, deskLit, ...Object.values(seatTextures));
 
     for (const desk of WORLD_LAYOUT.desks) {
       const bottom = desk.y + DESK_H / 2;
       const sprite = new Sprite(deskIdle);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(desk.x, bottom);
-      sprite.zIndex = bottom;
-      sorted.addChild(sprite);
+      depth.add(bottom, sprite);
       this.desks.push({ sprite, idle: deskIdle, lit: deskLit });
       this.cullables.push({ sprite, x: desk.x, y: bottom, padX: DESK_W / 2 + 8, padY: DESK_SPRITE.h });
     }
 
     for (const seat of WORLD_LAYOUT.seats) {
-      const isToilet = seat.kind === 'toilet';
-      const size = isToilet ? TOILET_SPRITE : CHAIR_SPRITE;
-      const sprite = new Sprite(isToilet ? toilet : chair);
+      const art = SEAT_ART[seat.kind];
+      const sprite = new Sprite(seatTextures[seat.kind]);
       sprite.anchor.set(0.5, 1);
-      sprite.position.set(seat.x, seat.y + SEAT_SINK);
-      // 座椅排在入座者脚底 y 之下：角色坐上去时椅子在身后
-      sprite.zIndex = seat.y - 1;
-      sorted.addChild(sprite);
-      this.cullables.push({ sprite, x: seat.x, y: seat.y, padX: size.w / 2 + 4, padY: size.h + SEAT_SINK });
+      sprite.position.set(seat.x, seat.y + art.sink);
+      // 座椅排在入座者脚底 y 之下：角色坐上去 / 躺下去时家具在身后
+      depth.add(seat.y - 1, sprite);
+      this.cullables.push({ sprite, x: seat.x, y: seat.y, padX: art.w / 2 + 4, padY: art.h + art.sink });
     }
 
-    for (const prop of WORLD_LAYOUT.props) this.addProp(sorted, renderer, prop);
+    for (const prop of WORLD_LAYOUT.props) this.addProp(depth, renderer, prop);
   }
 
   private propTexture(renderer: TextureFactory, kind: PropKind): Texture {
@@ -418,14 +530,13 @@ export class PropsView {
     return texture;
   }
 
-  private addProp(sorted: Container, renderer: TextureFactory, prop: PropInstance): void {
+  private addProp(depth: DepthSink, renderer: TextureFactory, prop: PropInstance): void {
     const size = PROP_SIZE[prop.kind];
     const texture = this.propTexture(renderer, prop.kind);
     const sprite = new Sprite(texture);
     sprite.anchor.set(0.5, 1);
     sprite.position.set(prop.x, prop.y);
-    sprite.zIndex = prop.y;
-    sorted.addChild(sprite);
+    depth.add(prop.y, sprite);
     this.cullables.push({ sprite, x: prop.x, y: prop.y, padX: size.w / 2 + 2, padY: size.h + 2 });
   }
 

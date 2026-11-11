@@ -6,11 +6,14 @@ const LEFT_KEYS = new Set(['ArrowLeft', 'KeyA']);
 const RIGHT_KEYS = new Set(['ArrowRight', 'KeyD']);
 const BLOCKED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
 
-export type ActionKey = 'sit' | 'lie' | 'emote' | 'jump' | 'wave';
+export type ActionKey = 'sit' | 'lie' | 'emote' | 'jump' | 'wave' | 'interact';
 
 export class InputController {
   private readonly pressed = new Set<string>();
-  private touch = { x: 0, y: 0 };
+  private touchX = 0;
+  private touchY = 0;
+  /** 每帧都要读一次方向，输出槽复用以避免每帧一个字面量 */
+  private readonly out = { x: 0, y: 0 };
   private detachFns: Array<() => void> = [];
 
   attach(onAction: (action: ActionKey) => void, onChat: () => void): void {
@@ -24,13 +27,20 @@ export class InputController {
       }
       if (inField) return;
       if (BLOCKED.has(event.code)) event.preventDefault();
+      // Ctrl/Cmd/Alt 组合交给浏览器（撤销、搜索等），不当动作键
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      // pressed 必须维护：长按移动靠它，重复 keydown 只是不能重复派发动作，
+      // 否则按住 Z 会来回坐/起，按住 C 会把叫唤无限重播
       this.pressed.add(event.code);
+      if (event.repeat) return;
 
       if (event.code === 'KeyZ') onAction('sit');
       else if (event.code === 'KeyX') onAction('lie');
       else if (event.code === 'KeyC') onAction('emote');
       // E 贴着 WASD，且不在页面快捷键里：抬手打招呼
       else if (event.code === 'KeyE') onAction('wave');
+      // F 贴着 WASD 另一侧：取饮料 / 接水 / 打咖啡
+      else if (event.code === 'KeyF') onAction('interact');
       // 空格本来就在 BLOCKED 里（防止页面滚动），正好拿来当跳跃键
       else if (event.code === 'Space') onAction('jump');
     };
@@ -57,7 +67,8 @@ export class InputController {
     this.pressed.clear();
   }
 
-  vector(): { x: number; y: number } {
+  /** 返回的是复用槽位：只在当帧有效，调用方不要保存引用 */
+  vector(): Readonly<{ x: number; y: number }> {
     let x = 0;
     let y = 0;
     for (const code of this.pressed) {
@@ -72,19 +83,22 @@ export class InputController {
       y *= inv;
     }
     // 触屏摇杆与键盘叠加：合成后长度钳到 1，避免双输入时比键盘跑得更快
-    x += this.touch.x;
-    y += this.touch.y;
-    const length = Math.hypot(x, y);
+    x += this.touchX;
+    y += this.touchY;
+    const length = Math.sqrt(x * x + y * y);
     if (length > 1) {
       x /= length;
       y /= length;
     }
-    return { x, y };
+    this.out.x = x;
+    this.out.y = y;
+    return this.out;
   }
 
   /** 触屏摇杆的方向，取值范围 -1..1（屏幕坐标，y 向下为正） */
   setTouchVector(x: number, y: number): void {
-    this.touch = { x, y };
+    this.touchX = x;
+    this.touchY = y;
   }
 
   clear(): void {

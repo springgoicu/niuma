@@ -9,6 +9,7 @@ import {
   QUEUE_REJECT_BYTES,
   QUEUE_STATUS_BYTES,
   SYNC_ENTRY_BYTES,
+  SYNC_HEADER_BYTES,
 } from './constants';
 import type {
   CharacterAppearance,
@@ -182,16 +183,19 @@ export function truncateChat(text: string): string {
   return out;
 }
 
+/** 写进调用方复用的缓冲：客户端 20Hz 上行不必每次都新建一条 14 字节包 */
+export function encodeMoveInto(writer: ByteWriter, packet: MovePacket): void {
+  writer.u8(OpCode.C2S_MOVE).u16(packet.id).u16(packet.x).u16(packet.y).u8(packet.state);
+  if (packet.clientSequence !== undefined && packet.clientTimestampMs !== undefined) {
+    writer.u16(packet.clientSequence).u32(packet.clientTimestampMs);
+  }
+}
+
 /** 编码移动包，支持带或不带序号和时间戳 */
 export function encodeMove(packet: MovePacket): Uint8Array {
-  const hasTimingInfo = packet.clientSequence !== undefined && packet.clientTimestampMs !== undefined;
-  const size = hasTimingInfo ? 14 : 8;
-  const w = new ByteWriter(size);
-  w.u8(OpCode.C2S_MOVE).u16(packet.id).u16(packet.x).u16(packet.y).u8(packet.state);
-  if (hasTimingInfo) {
-    w.u16(packet.clientSequence!).u32(packet.clientTimestampMs!);
-  }
-  return w.finish();
+  const writer = new ByteWriter(MOVE_PACKET_WITH_TIMING_BYTES);
+  encodeMoveInto(writer, packet);
+  return writer.finish();
 }
 
 export function decodeMove(data: Uint8Array, out?: MovePacket): MovePacket {
@@ -200,15 +204,17 @@ export function decodeMove(data: Uint8Array, out?: MovePacket): MovePacket {
     throw new Error(`move packet must be ${MOVE_PACKET_BYTES} or ${MOVE_PACKET_WITH_TIMING_BYTES} bytes, got ${len}`);
   }
   if (data[0] !== OpCode.C2S_MOVE) throw new Error(`unexpected opcode ${data[0]}`);
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  // 直接按字节取小端值：DataView 是每包一次的分配，200 人 20Hz 就是 4000 个/秒，
+  // 而这里只有 4-7 个字段，手写移位比构造视图更快也更干净。
   const packet = out ?? ({} as MovePacket);
-  packet.id = view.getUint16(1, true);
-  packet.x = view.getUint16(3, true);
-  packet.y = view.getUint16(5, true);
-  packet.state = view.getUint8(7);
+  packet.id = data[1]! | (data[2]! << 8);
+  packet.x = data[3]! | (data[4]! << 8);
+  packet.y = data[5]! | (data[6]! << 8);
+  packet.state = data[7]!;
   if (len === MOVE_PACKET_WITH_TIMING_BYTES) {
-    packet.clientSequence = view.getUint16(8, true);
-    packet.clientTimestampMs = view.getUint32(10, true);
+    packet.clientSequence = data[8]! | (data[9]! << 8);
+    packet.clientTimestampMs =
+      (data[10]! | (data[11]! << 8) | (data[12]! << 16) | (data[13]! << 24)) >>> 0;
   }
   return packet;
 }
@@ -217,14 +223,57 @@ export function writeSyncHeader(writer: ByteWriter, tick: number, count: number)
   writer.u8(OpCode.S2C_SYNC_ENTITIES).u32(tick).u16(count);
 }
 
-export function writeSyncEntry(writer: ByteWriter, entity: EntitySnapshot): void {
-  writer.u16(entity.id).u16(entity.x).u16(entity.y).u8(entity.state);
+/**
+ * 条目写入用标量参数而不是 `EntitySnapshot` 对象。
+ *
+ * Tick 里这张表是 O(可见性边数) 的：200 人全同屏时每 Tick 4 万次。
+ * 传对象会让服务端在稳态下每秒造出 80 万个短命字面量，GC 一响就是一整帧。
+ * 4 个标量没有任何需要归还的生命周期，比对象池更彻底。
+ */
+export function writeSyncEntry(writer: ByteWriter, id: number, x: number, y: number, state: number): void {
+  writer.u16(id).u16(x).u16(y).u8(state);
+}
+
+/**
+ * 逐条消费同步包，不建数组、不建对象。
+ *
+ * 客户端每帧都要吃下整包实体，200 人同屏 20Hz 就是每秒 4000 个对象；
+ * 直接按字节取（小端）比构造 DataView 更省，且调用方可以把写入 TypedArray
+ * 的动作放进同一个循环里，避免"先解析成数组再遍历"的第二趟。
+ *
+ * 返回条目数。格式错误仍抛异常——协议是双端唯一契约，静默降级只会把问题推迟到更难查的地方。
+ */
+export function readSync(
+  data: Uint8Array,
+  visit: (id: number, x: number, y: number, state: number) => void,
+): number {
+  if (data.byteLength < SYNC_HEADER_BYTES) {
+    throw new Error(`sync packet too short: ${data.byteLength}`);
+  }
+  if (data[0] !== OpCode.S2C_SYNC_ENTITIES) throw new Error('not a sync packet');
+  const count = data[5]! | (data[6]! << 8);
+  if (data.byteLength - SYNC_HEADER_BYTES !== count * SYNC_ENTRY_BYTES) {
+    throw new Error(
+      `sync payload mismatch: ${data.byteLength - SYNC_HEADER_BYTES} vs ${count * SYNC_ENTRY_BYTES}`,
+    );
+  }
+  let at = SYNC_HEADER_BYTES;
+  for (let i = 0; i < count; i += 1) {
+    visit(
+      data[at]! | (data[at + 1]! << 8),
+      data[at + 2]! | (data[at + 3]! << 8),
+      data[at + 4]! | (data[at + 5]! << 8),
+      data[at + 6]!,
+    );
+    at += SYNC_ENTRY_BYTES;
+  }
+  return count;
 }
 
 export function encodeSync(tick: number, entities: readonly EntitySnapshot[]): Uint8Array {
   const writer = new ByteWriter(7 + entities.length * SYNC_ENTRY_BYTES);
   writeSyncHeader(writer, tick, entities.length);
-  for (const entity of entities) writeSyncEntry(writer, entity);
+  for (const entity of entities) writeSyncEntry(writer, entity.id, entity.x, entity.y, entity.state);
   return writer.finish();
 }
 
@@ -243,19 +292,39 @@ export function decodeSync(data: Uint8Array): { tick: number; entities: EntitySn
   return { tick, entities };
 }
 
+/**
+ * 入场资料的「不变部分」：`[nameLen u8][nameBytes][appearance 32B]`。
+ *
+ * 新玩家入场时要给视野内所有人各发一份 spawn，但除了坐标与状态，内容完全一样。
+ * 原实现每份都重新跑一遍 `TextEncoder.encode` + `encodeAppearance`（内部再分配 32 字节数组
+ * 与 DataView，并做 11 次 sanitize），200 人同秒涌入时是 4 万次重复编码——这就是
+ * README 里那次 158ms 长帧的根因。名字与外观在一局内不变，算一次存着即可。
+ */
+export function buildSpawnBody(name: string, appearance: CharacterAppearance): Uint8Array {
+  const nameBytes = textEncoder.encode(name);
+  const body = new Uint8Array(1 + nameBytes.length + APPEARANCE_BYTES);
+  body[0] = nameBytes.length;
+  body.set(nameBytes, 1);
+  body.set(encodeAppearance(appearance), 1 + nameBytes.length);
+  return body;
+}
+
+/** 用现成的 body 拼一个完整 spawn 包：坐标与状态每次都写，保证入场位置不过期 */
+export function encodeSpawnInto(
+  writer: ByteWriter,
+  id: number,
+  x: number,
+  y: number,
+  state: number,
+  body: Uint8Array,
+): void {
+  writer.u8(OpCode.S2C_ENTITY_SPAWN).u16(id).u16(x).u16(y).u8(state).raw(body);
+}
+
 export function encodeSpawn(packet: SpawnPacket): Uint8Array {
-  const nameBytes = textEncoder.encode(packet.name);
-  const appearance = encodeAppearance(packet.appearance);
-  const writer = new ByteWriter(9 + nameBytes.length + APPEARANCE_BYTES);
-  writer
-    .u8(OpCode.S2C_ENTITY_SPAWN)
-    .u16(packet.id)
-    .u16(packet.x)
-    .u16(packet.y)
-    .u8(packet.state)
-    .u8(nameBytes.length)
-    .raw(nameBytes)
-    .raw(appearance);
+  const body = buildSpawnBody(packet.name, packet.appearance);
+  const writer = new ByteWriter(6 + body.length);
+  encodeSpawnInto(writer, packet.id, packet.x, packet.y, packet.state, body);
   return writer.finish();
 }
 
@@ -272,9 +341,14 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
   return { id, x, y, state, name, appearance };
 }
 
+/** 写进调用方复用的缓冲：一次视野重算可能连发几十条 despawn，不必每条都新建 */
+export function encodeDespawnInto(writer: ByteWriter, id: number, reason = 0): void {
+  writer.u8(OpCode.S2C_ENTITY_DESPAWN).u16(id).u8(reason);
+}
+
 export function encodeDespawn(id: number, reason = 0): Uint8Array {
   const writer = new ByteWriter(4);
-  writer.u8(OpCode.S2C_ENTITY_DESPAWN).u16(id).u8(reason);
+  encodeDespawnInto(writer, id, reason);
   return writer.finish();
 }
 

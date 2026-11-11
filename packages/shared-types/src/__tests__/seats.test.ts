@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DIRECTION,
   PLAYER_RADIUS,
+  POSE,
   SIT_RANGE,
   WORLD_LAYOUT,
   decodeSeatState,
@@ -9,8 +10,11 @@ import {
   findNearestSeat,
   isBlocked,
   isOnLand,
+  isSelfSolidProp,
   isWaterAt,
+  resolveMotion,
   seatById,
+  seatPose,
   type SolidRect,
 } from '../index';
 
@@ -67,6 +71,25 @@ describe('座位布局', () => {
       expect(seat.desk).toBe(-1);
     }
   });
+
+  it('床位只能躺、凳子与沙发只能坐', () => {
+    const beds = seats.filter((seat) => seat.kind === 'bed');
+    expect(beds.length).toBeGreaterThanOrEqual(3);
+    expect(seats.filter((seat) => seat.kind === 'stool').length).toBeGreaterThanOrEqual(2);
+    expect(seats.filter((seat) => seat.kind === 'sofa').length).toBeGreaterThanOrEqual(1);
+
+    for (const seat of beds) expect(seatPose(seat.kind)).toBe(POSE.Lie);
+    for (const seat of seats.filter((item) => item.kind !== 'bed')) {
+      expect(seatPose(seat.kind)).toBe(POSE.Sit);
+    }
+  });
+
+  it('休息室与工作区的侧门都能穿过', () => {
+    // 休息室东墙 x 3920–3930 开门（y 5150–5210），从门前铺装向西进屋
+    expect(resolveMotion(3960, 5180, 3900, 5180).x).toBeLessThan(3920);
+    // 工作区西墙 x 4240–4250 开门，从主路一侧向东进屋
+    expect(resolveMotion(4220, 5180, 4280, 5180).x).toBeGreaterThan(4250);
+  });
 });
 
 describe('地图碰撞与装饰', () => {
@@ -92,7 +115,7 @@ describe('地图碰撞与装饰', () => {
     for (const prop of props) {
       expect(isOnLand(prop.x, prop.y, 20)).toBe(true);
       expect(isWaterAt(prop.x, prop.y)).toBe(false);
-      if (prop.kind === 'vending') continue;
+      if (isSelfSolidProp(prop.kind)) continue;
       for (const solid of solids) {
         const inside = prop.x > solid.x && prop.x < solid.x + solid.w && prop.y > solid.y && prop.y < solid.y + solid.h;
         expect(inside).toBe(false);
@@ -100,11 +123,10 @@ describe('地图碰撞与装饰', () => {
     }
   });
 
-  it('研发园的会议室与卫生间归入各自区域', () => {
-    const meeting = WORLD_LAYOUT.regions.find((region) => region.name === '会议室');
-    const restroom = WORLD_LAYOUT.regions.find((region) => region.name === '卫生间');
-    expect(meeting).toBeDefined();
-    expect(restroom).toBeDefined();
+  it('研发园与南向两栋新房间归入各自区域', () => {
+    for (const name of ['会议室', '卫生间', '研发园', '工作区', '休息室']) {
+      expect(WORLD_LAYOUT.regions.find((region) => region.name === name)).toBeDefined();
+    }
   });
 });
 
@@ -127,6 +149,16 @@ describe('findNearestSeat', () => {
     const farY = 0;
     expect(findNearestSeat(farX, farY, () => true)).toBeUndefined();
     expect(SIT_RANGE).toBeGreaterThan(0);
+  });
+
+  it('按种类过滤：Z 不找床、X 只找床', () => {
+    const bed = seats.find((seat) => seat.kind === 'bed')!;
+    const notBed = (seat: { kind: string }) => seat.kind !== 'bed';
+
+    const bedOnly = findNearestSeat(bed.x, bed.y, () => true, SIT_RANGE, (seat) => seat.kind === 'bed');
+    expect(bedOnly?.id).toBe(bed.id);
+    // 床没有轮子可坐：同一位置做「坐位」查询不该命中床
+    expect(findNearestSeat(bed.x, bed.y, () => true, SIT_RANGE, notBed)).toBeUndefined();
   });
 });
 

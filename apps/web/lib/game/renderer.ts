@@ -19,6 +19,7 @@ import { PonyRenderer } from './pony';
 import type { PonyMotion } from './pony-motion';
 import { PropsView } from './props';
 import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetrics } from './pixel-scale';
+import { SortLayer } from './sort-layer';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
 
@@ -87,6 +88,8 @@ class EntityView {
   private jumpLift = 0;
   bubbleUntil = 0;
   private lastColumn = -1;
+  /** 上一次的可见状态：只在翻转时才改 `renderable` */
+  private shown = true;
   /** 昵称文字底边（相对脚底）：换装改变头顶高度后重算 */
   private nameBottom: number;
   /** 上次气泡高度：换装重排时直接复用，不必重新测量文字 */
@@ -161,6 +164,21 @@ class EntityView {
     this.root.position.set(x, y);
     // 昵称与气泡跟着跳跃抬升：不然人跳起来会「穿」过自己的名字
     this.labels.position.set(x, y + this.jumpLift);
+  }
+
+  /**
+   * 屏外时整棵子树停止绘制：本体与昵称一起关掉。
+   * 只在状态翻转时碰 Pixi 的标记位，稳态下零开销。
+   */
+  setShown(shown: boolean): void {
+    if (shown === this.shown) return;
+    this.shown = shown;
+    this.root.renderable = shown;
+    this.labels.renderable = shown;
+  }
+
+  get isShown(): boolean {
+    return this.shown;
   }
 
   /** 换列时顺手判定落脚：跨到接触帧才扬尘，站着不动不会一路冒土 */
@@ -284,8 +302,11 @@ class EntityView {
 export class GameRenderer {
   readonly app = new Application();
   private readonly world = new Container();
-  /** 树、围栏、角色统一按脚底 y 排序 */
-  private readonly sorted = new Container();
+  /**
+   * 树、围栏、角色统一按脚底 y 排序。
+   * 分桶而不是一个大容器：角色一走动就会改 zIndex，单容器意味着每帧重排整张地图。
+   */
+  private sortLayer!: SortLayer;
   private readonly labels = new Container();
   private readonly views = new Map<number, EntityView>();
   private atlas!: Atlas;
@@ -310,9 +331,15 @@ export class GameRenderer {
   private initGeneration = 0;
   /** 相机可见范围缓存，用于实体可见性筛选 */
   private cameraBounds: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
-  
+
   // 气泡队列管理：限制同屏气泡数量
   private readonly MAX_VISIBLE_BUBBLES = 10;
+  /** 活跃气泡的复用数组：活跃数通常 0–3，原来每帧都要新建数组 + 每个气泡一个对象 */
+  private readonly activeBubbles: EntityView[] = [];
+  /** 上次重算像素倍率时的屏幕尺寸与 DPR */
+  private metricDpr = 0;
+  private metricScreenW = -1;
+  private metricScreenH = -1;
 
   async init(host: HTMLElement): Promise<void> {
     const dpr = readDpr();
@@ -357,12 +384,18 @@ export class GameRenderer {
     const params = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
     this.lightEnabled = params?.get('light') !== '0';
 
-    this.sorted.sortableChildren = true;
+    // `?bands=0` 退回单容器：与 `?flat=1` / `?light=0` 同一套灰度惯例，
+    // 回退走的也是 add/update/remove 这同一条接口，不是一段会腐烂的分支。
+    this.sortLayer = new SortLayer({
+      originY: ISLAND.bounds.y,
+      extentY: ISLAND.bounds.h,
+      single: params?.get('bands') === '0',
+    });
     this.terrain = new TerrainView(this.app.renderer, {
       flat: params?.get('flat') === '1',
       edge: params?.get('edge') !== '0',
     });
-    this.terrain.build(this.sorted);
+    this.terrain.build(this.sortLayer);
 
     this.world.addChild(this.terrain.base);
     // 边缘层：草尖 / 外凸圆弧 / 内缘暗边，压在底色之上、贴花之下
@@ -371,14 +404,14 @@ export class GameRenderer {
     this.world.addChild(this.terrain.decals);
     // 室内地板与墙体、园区铺装：与地形同层，压在贴花之上、y 排序层之下
     this.props = new PropsView();
-    this.props.build(this.sorted, this.app.renderer);
+    this.props.build(this.sortLayer, this.app.renderer);
     this.world.addChild(this.props.base);
 
     this.shadowTextures = GroundFx.shadowTextures(this.app.renderer);
     this.fx = new GroundFx(this.app.renderer);
     this.world.addChild(this.fx.container);
 
-    this.world.addChild(this.sorted);
+    this.world.addChild(this.sortLayer.container);
     this.world.addChild(this.labels);
 
     const walk = this.atlas.manifest.clips.walk;
@@ -391,7 +424,11 @@ export class GameRenderer {
     if (landing !== undefined) this.dustFrames.add(landing);
   }
 
-  async addEntity(id: number, name: string, appearance: CharacterAppearance): Promise<void> {
+  /**
+   * 加入一个角色。`x/y` 只用于首次归 band：之后每帧由 `updateEntity` 维护，
+   * 传进来的目的是避免角色在加入的第一帧被塞进错误的 band 里闪一下。
+   */
+  async addEntity(id: number, name: string, appearance: CharacterAppearance, x = 0, y = 0): Promise<void> {
     if (!this.ready || this.views.has(id)) return;
     
     // 为本次初始化分配 generation token 和 abort signal
@@ -435,7 +472,9 @@ export class GameRenderer {
     
     // 所有检查通过，正式加入渲染系统
     this.views.set(id, view);
-    this.sorted.addChild(view.root);
+    // 先把位置摆好再挂进 band：否则首帧会停在 (0,0)，在地图左上角闪一下
+    view.setPosition(snapTexel(x), snapTexel(y));
+    this.sortLayer.add(y, view.root);
     this.labels.addChild(view.labels);
     this.pendingInit.delete(id);
   }
@@ -455,14 +494,36 @@ export class GameRenderer {
     }
   }
 
-  updateEntity(id: number, x: number, y: number): void {
+  /**
+   * 更新远端角色。返回是否可见：屏外时位置、深度与批处理都不必碰，
+   * 调用方可以据此跳过整段动画求值（那些结果本来就看不见）。
+   *
+   * 隐藏在最后一次可见时的位置上，回屏那一帧才重算——它本来是看不见的，
+   * 所以不存在「瞬移一帧」的观感问题。
+   */
+  updateEntity(id: number, x: number, y: number): boolean {
+    const view = this.views.get(id);
+    if (!view) return false;
+    const shown = this.isEntityVisible(x, y);
+    view.setShown(shown);
+    if (shown) this.place(view, x, y);
+    return shown;
+  }
+
+  /** 本地角色：永远在画面中心，不做可见性判定 */
+  updateLocalEntity(id: number, x: number, y: number): void {
     const view = this.views.get(id);
     if (!view) return;
+    view.setShown(true);
+    this.place(view, x, y);
+  }
+
+  private place(view: EntityView, x: number, y: number): void {
     const sx = snapTexel(x);
     const sy = snapTexel(y);
     view.setPosition(sx, sy);
     // 脚底 y 即深度：站在树后会被树冠挡住，站到树前就压回去
-    view.root.zIndex = sy;
+    this.sortLayer.update(view.root, sy);
   }
 
   setPose(id: number, direction: number, column: number): void {
@@ -489,31 +550,37 @@ export class GameRenderer {
 
   tickBubbles(dtMs: number): void {
     const now = performance.now();
-    
-    // 收集所有活跃气泡
-    const activeBubbles: Array<{ id: number; view: EntityView; bubbleUntil: number }> = [];
-    for (const [id, view] of this.views.entries()) {
-      if (view.bubble.visible) {
-        activeBubbles.push({ id, view, bubbleUntil: view.bubbleUntil });
-      }
-    }
-    
-    // 按气泡过期时间排序（最久的在前）
-    activeBubbles.sort((a, b) => a.bubbleUntil - b.bubbleUntil);
-    
-    // 如果超过限制，让最早的气泡立即淡出
-    if (activeBubbles.length > this.MAX_VISIBLE_BUBBLES) {
-      for (let i = 0; i < activeBubbles.length - this.MAX_VISIBLE_BUBBLES; i++) {
-        // 触发淡出：设置气泡过期时间到现在，使其立即开始淡出
-        activeBubbles[i].view.bubbleUntil = now;
-      }
-    }
-    
-    // 更新所有气泡的淡出进度
+
+    // 活跃气泡通常 0–3 个，复用一块数组：原来每帧新建数组 + 每个气泡一个
+    // `{id, view, bubbleUntil}` 对象 + 一次 sort，哪怕一个气泡都没有。
+    const active = this.activeBubbles;
+    let count = 0;
     for (const view of this.views.values()) {
-      view.tickBubble(now);
+      if (!view.bubble.visible) continue;
+      if (count < active.length) active[count] = view;
+      else active.push(view);
+      count += 1;
     }
-    
+
+    // 超过同屏上限时让最早的气泡提前淡出。只有真超限才排序（插入排序，元素极少）。
+    if (count > this.MAX_VISIBLE_BUBBLES) {
+      for (let i = 1; i < count; i += 1) {
+        const view = active[i]!;
+        const key = view.bubbleUntil;
+        let j = i - 1;
+        while (j >= 0 && active[j]!.bubbleUntil > key) {
+          active[j + 1] = active[j]!;
+          j -= 1;
+        }
+        active[j + 1] = view;
+      }
+      for (let i = 0; i < count - this.MAX_VISIBLE_BUBBLES; i += 1) {
+        active[i]!.bubbleUntil = now;
+      }
+    }
+
+    for (let i = 0; i < count; i += 1) active[i]!.tickBubble(now);
+
     this.fx?.update(dtMs);
     this.terrain?.update(dtMs);
     this.syncOccluders();
@@ -544,19 +611,18 @@ export class GameRenderer {
     let count = 0;
     for (const view of this.views.values()) {
       if (count >= capacity) break;
-      // 只处理可见实体
-      if (this.isEntityVisible(view.root.position.x, view.root.position.y)) {
-        this.occluders[count * 2] = view.root.position.x;
-        this.occluders[count * 2 + 1] = view.root.position.y;
-        count += 1;
-      }
+      // 屏外角色的位置是最后一次可见时的旧值，喂进去只会让某棵树莫名变透明
+      if (!view.isShown) continue;
+      this.occluders[count * 2] = view.root.position.x;
+      this.occluders[count * 2 + 1] = view.root.position.y;
+      count += 1;
     }
     this.terrain.occlude(this.occluders, count);
   }
 
   updateCamera(x: number, y: number): void {
-    this.syncMetrics();
     const screen = this.app.screen;
+    this.syncMetrics(screen.width, screen.height);
     // 柔光层跟着视口铺满，并在 30s 粒度上换一次时段色
     this.light?.resize(screen.width, screen.height);
     this.light?.update(performance.now());
@@ -599,9 +665,22 @@ export class GameRenderer {
     );
   }
 
-  /** 拖窗口到另一块屏（DPR 变化）时重建缩放与文字位图 */
-  private syncMetrics(): void {
-    const next = pixelMetrics(this.cssPerTexel, readDpr(), MIN_DEVICE_PX_PER_TEXEL);
+  /**
+   * 拖窗口到另一块屏（DPR 变化）时重建缩放与文字位图。
+   *
+   * 只在尺寸或 DPR 真变了才重算：原实现每帧都构造一个 metrics 对象再与旧值比较丢弃，
+   * 等于每帧一次无谓的分配。
+   */
+  private syncMetrics(screenWidth: number, screenHeight: number): void {
+    const dpr = readDpr();
+    if (dpr === this.metricDpr && screenWidth === this.metricScreenW && screenHeight === this.metricScreenH) {
+      return;
+    }
+    this.metricDpr = dpr;
+    this.metricScreenW = screenWidth;
+    this.metricScreenH = screenHeight;
+
+    const next = pixelMetrics(this.cssPerTexel, dpr, MIN_DEVICE_PX_PER_TEXEL);
     if (sameMetrics(next, this.metrics)) return;
     this.metrics = next;
     this.world.scale.set(next.cssScale);
@@ -617,13 +696,6 @@ export class GameRenderer {
   setSeatOccupied(seatId: number, occupied: boolean): void {
     const seat = seatById(seatId);
     if (seat) this.props?.setSeatOccupied(seat, occupied);
-  }
-
-  /**
-   * 获取当前相机的可见范围（用于实体筛选）
-   */
-  getCameraBounds(): { minX: number; maxX: number; minY: number; maxY: number } | null {
-    return this.cameraBounds;
   }
 
   destroy(): void {

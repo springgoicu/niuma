@@ -56,9 +56,11 @@ describe('SeatRegistry', () => {
   it('附近没有空闲座位时就地坐下，不占座', () => {
     const world = new World();
     const seats = new SeatRegistry();
-    // 把每把椅子都坐满：每个假人站在自己的座位上入座
+    // 把每个座位都占满：坐位靠 sit、床位靠 lie，各走各的入口
     for (const seat of WORLD_LAYOUT.seats) {
-      seats.sit(spawn(world, seat.x, seat.y), 0);
+      const dummy = spawn(world, seat.x, seat.y);
+      if (seat.kind === 'bed') seats.lie(dummy, 0);
+      else seats.sit(dummy, 0);
     }
     expect(seats.snapshot().length).toBe(WORLD_LAYOUT.seats.length);
 
@@ -84,6 +86,34 @@ describe('SeatRegistry', () => {
     expect(seats.isFree(seat.id)).toBe(true);
   });
 
+  it('地面坐姿的起身也要回到站立：没有座位可释放，姿态同样归零', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    // 远离所有座位，确保是地面坐姿而不是入座
+    const player = spawn(world, 4096, 4096);
+    seats.sit(player, 0);
+    expect(player.seat).toBe(0);
+    expect(player.pose).toBe(POSE.Sit);
+    player.dirty = false;
+
+    const changes = seats.stand(player);
+    expect(changes).toEqual([]);
+    expect(player.pose).toBe(POSE.Idle);
+    expect(player.dirty).toBe(true);
+  });
+
+  it('地面躺姿的起身也回到站立', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const player = spawn(world, 4096, 4096);
+    player.applyState(DIRECTION.Down, POSE.Lie, false);
+    player.dirty = false;
+
+    expect(seats.stand(player)).toEqual([]);
+    expect(player.pose).toBe(POSE.Idle);
+    expect(player.dirty).toBe(true);
+  });
+
   it('断线释放座位', () => {
     const world = new World();
     const seats = new SeatRegistry();
@@ -103,6 +133,82 @@ describe('SeatRegistry', () => {
     const player = spawn(world, seat.x, seat.y);
     seats.sit(player, 0);
     expect(seats.snapshot()).toEqual([{ seatId: seat.id, occupant: player.id }]);
+  });
+});
+
+describe('床位与凳子', () => {
+  const bedSeat = () => WORLD_LAYOUT.seats.find((seat) => seat.kind === 'bed')!;
+
+  it('附近有空床时躺下会吸附到床上并落躺姿', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const bed = bedSeat();
+    const player = spawn(world, bed.x + 20, bed.y + 20);
+
+    expect(seats.lie(player, 0)).toEqual([{ seatId: bed.id, occupant: player.id }]);
+    expect(player.seat).toBe(bed.id);
+    expect(player.pose).toBe(POSE.Lie);
+    expect(player.x).toBe(bed.x);
+    expect(player.y).toBe(bed.y);
+  });
+
+  it('按坐不会占床：旁边只有床时退化为地面坐', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const bed = bedSeat();
+    const player = spawn(world, bed.x, bed.y);
+
+    expect(seats.sit(player, 0)).toEqual([]);
+    expect(player.seat).toBe(0);
+    expect(player.pose).toBe(POSE.Sit);
+  });
+
+  it('附近没有床时躺下退化为地面躺', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const player = spawn(world, 4096, 4096);
+
+    expect(seats.lie(player, 0)).toEqual([]);
+    expect(player.seat).toBe(0);
+    expect(player.pose).toBe(POSE.Lie);
+  });
+
+  it('床上报坐姿即视为起身并释放床位', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const bed = bedSeat();
+    const player = spawn(world, bed.x, bed.y);
+    seats.lie(player, 0);
+
+    const result = applyMove(player, movePacket(player.id, bed.x + 6, bed.y, POSE.Sit, false), 1000, seats);
+    expect(result.released).toEqual([{ seatId: bed.id, occupant: 0 }]);
+    expect(player.seat).toBe(0);
+    expect(seats.isFree(bed.id)).toBe(true);
+  });
+
+  it('床上报躺姿保持锁定，移动包被拒绝', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const bed = bedSeat();
+    const player = spawn(world, bed.x, bed.y);
+    seats.lie(player, 0);
+
+    const result = applyMove(player, movePacket(player.id, bed.x + 40, bed.y, POSE.Lie, false), 1000, seats);
+    expect(result.accepted).toBe(false);
+    expect(player.x).toBe(bed.x);
+    expect(player.seat).toBe(bed.id);
+    expect(player.pose).toBe(POSE.Lie);
+  });
+
+  it('断线释放床位', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const bed = bedSeat();
+    const player = spawn(world, bed.x, bed.y);
+    seats.lie(player, 0);
+
+    expect(seats.release(player)).toEqual([{ seatId: bed.id, occupant: 0 }]);
+    expect(seats.isFree(bed.id)).toBe(true);
   });
 });
 

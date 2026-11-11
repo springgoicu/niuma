@@ -31,7 +31,13 @@ import {
   encodeQueueRejected,
   encodeQueueStatus,
   encodeSpawn,
+  encodeSpawnInto,
   encodeSync,
+  buildSpawnBody,
+  readSync,
+  writeSyncEntry,
+  writeSyncHeader,
+  ByteWriter,
   decodeQueueRejected,
   decodeQueueStatus,
   normalizeColor,
@@ -231,6 +237,43 @@ describe('sync packet', () => {
     const packet = encodeSync(1, [{ id: 1, x: 2, y: 3, state: 4 }]);
     expect(() => decodeSync(packet.subarray(0, packet.byteLength - 1))).toThrow(/payload mismatch/);
   });
+
+  /**
+   * 逐条访问器是客户端唯一的热路径解析入口：它必须与 `decodeSync` 逐字节等价，
+   * 否则服务端省下的分配会以「客户端少收一个实体」的形式还回来。
+   */
+  it('逐条访问器与 decodeSync 结果一致', () => {
+    const entities = [
+      { id: 65535, x: 0, y: 65535, state: 255 },
+      { id: 7, x: 8191, y: 1, state: 0 },
+      { id: 4242, x: 333, y: 444, state: 0b10101010 },
+    ];
+    const packet = encodeSync(7, entities);
+    const seen: typeof entities = [];
+    const count = readSync(packet, (id, x, y, state) => seen.push({ id, x, y, state }));
+
+    expect(count).toBe(entities.length);
+    expect(seen).toEqual(entities);
+  });
+
+  it('逐条访问器同样拒绝长度不符的包', () => {
+    const packet = encodeSync(1, [{ id: 1, x: 2, y: 3, state: 4 }]);
+    expect(() => readSync(packet.subarray(0, packet.byteLength - 1), () => {})).toThrow(/payload mismatch/);
+  });
+
+  it('标量写入与对象写入产出同一串字节', () => {
+    const writer = new ByteWriter(64);
+    writeSyncHeader(writer, 42, 2);
+    writeSyncEntry(writer, 1, 10, 20, 4);
+    writeSyncEntry(writer, 2, 30, 40, 5);
+    const scalar = writer.finish();
+
+    const expected = encodeSync(42, [
+      { id: 1, x: 10, y: 20, state: 4 },
+      { id: 2, x: 30, y: 40, state: 5 },
+    ]);
+    expect([...scalar]).toEqual([...expected]);
+  });
 });
 
 describe('spawn / despawn / chat / hello', () => {
@@ -248,6 +291,35 @@ describe('spawn / despawn / chat / hello', () => {
     expect(decoded.name).toBe('牛马实习生');
     expect(decoded.appearance.species).toBe('horse');
     expect(decoded.appearance.colors.body).toBe(sanitizeAppearance(DEFAULT_APPEARANCE.horse).colors.body);
+  });
+
+  /**
+   * 入场补发改成「缓存不变部分 + 每次现写坐标」：两条路径必须产出完全一致的字节，
+   * 否则老客户端会在新玩家入场时读错偏移。
+   */
+  it('缓存的 spawnBody 与整包编码产出同一串字节', () => {
+    const name = '夜班实习生';
+    const body = buildSpawnBody(name, DEFAULT_APPEARANCE.horse);
+
+    const viaBody = new ByteWriter(128);
+    encodeSpawnInto(viaBody, 9, 100, 200, 7, body);
+
+    const direct = encodeSpawn({ id: 9, x: 100, y: 200, state: 7, name, appearance: DEFAULT_APPEARANCE.horse });
+    expect([...viaBody.finish()]).toEqual([...direct]);
+  });
+
+  it('spawnBody 与坐标解耦：同一份 body 换坐标后位置跟着变', () => {
+    const body = buildSpawnBody('牛', DEFAULT_APPEARANCE.cow);
+    const writer = new ByteWriter(128);
+    encodeSpawnInto(writer, 3, 11, 22, 0, body);
+    const first = decodeSpawn(writer.finish());
+
+    writer.reset();
+    encodeSpawnInto(writer, 3, 99, 88, 0, body);
+    const second = decodeSpawn(writer.finish());
+
+    expect(first).toMatchObject({ x: 11, y: 22 });
+    expect(second).toMatchObject({ x: 99, y: 88 });
   });
 
   it('round-trips despawn reason', () => {

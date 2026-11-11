@@ -55,9 +55,9 @@ describe('水体', () => {
 
   it('桥面以外的河段挡人', () => {
     // 起点贴着东岸（离水 30px，树不会长这么近），一路向西应该停在水边
-    const result = resolveMotion(2660, 3000, 2300, 3000);
-    expect(result.x).toBeGreaterThan(2610);
-    expect(result.x).toBeLessThan(2660);
+    const result = resolveMotion(2920, 3000, 2600, 3000);
+    expect(result.x).toBeGreaterThan(2860);
+    expect(result.x).toBeLessThan(2920);
     expect(isWaterAt(result.x, 3000)).toBe(false);
   });
 });
@@ -98,8 +98,8 @@ describe('地形布局', () => {
     const lake = WORLD_LAYOUT.lakes[0]!.rect;
     expect(regionAt(CENTER.x, CENTER.y)).toBe('办公区');
     expect(regionAt(lake.x + lake.w / 2, lake.y + lake.h / 2)).toBe('摸鱼湖');
-    expect(regionAt(2075, 1850)).toBe('加班林');
-    expect(regionAt(1200, 3000)).toBe('园区野地');
+    expect(regionAt(2000, 2000)).toBe('加班林');
+    expect(regionAt(1600, 3600)).toBe('园区野地');
   });
 
   it('树木不会长进广场、水面与道路上', () => {
@@ -196,13 +196,13 @@ describe('海岛边界', () => {
 
   it('从岸边向海走会被挡住', () => {
     const north = resolveMotion(3950, 2900, 3950, 1000);
-    expect(north.y).toBeGreaterThan(2450);
+    expect(north.y).toBeGreaterThan(2756);
 
-    const west = resolveMotion(900, 2000, 600, 2000);
-    expect(west.x).toBeGreaterThan(780);
+    const west = resolveMotion(1600, 2000, 1200, 2000);
+    expect(west.x).toBeGreaterThan(1310);
 
-    const south = resolveMotion(6000, 7400, 6000, 8200);
-    expect(south.y).toBeLessThan(7620);
+    const south = resolveMotion(6000, 6600, 6000, 7400);
+    expect(south.y).toBeLessThan(7056);
   });
 
   it('所有静态地形都在岸线以内，且离海至少 24px', () => {

@@ -1,7 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { Armchair, Hand, MessageSquare, Music4, Rabbit, Sandwich } from 'lucide-react';
+import { Armchair, Coffee, Hand, MessageSquare, Music4, Rabbit, Sandwich } from 'lucide-react';
+import { POSE } from '@niuma/shared-types';
+import { useGameUi } from '@/lib/game-ui';
+import { actionPresentation } from '@/lib/game/actions';
 import type { ActionKey } from '@/lib/game/input';
 
 /** 摇杆死区：小于该比例的推动视为静止，避免拇指轻碰就滑步 */
@@ -121,6 +124,7 @@ const ACTION_BUTTONS: Array<{ label: string; action: ActionKey; Icon: typeof Arm
   { label: '叫唤', action: 'emote', Icon: Music4 },
   { label: '打招呼', action: 'wave', Icon: Hand },
   { label: '跳', action: 'jump', Icon: Rabbit },
+  { label: '互动', action: 'interact', Icon: Coffee },
 ];
 
 interface TouchActionsProps {
@@ -128,25 +132,44 @@ interface TouchActionsProps {
   onChat: () => void;
 }
 
-/** 右下角动作按钮：按下即触发，与键盘 Z/X/C/E/Space 一一对应 */
+/** 右下角动作按钮：按下即触发，与键盘 Z/X/C/E/Space/F 一一对应 */
 export function TouchActions({ onAction, onChat }: TouchActionsProps) {
+  const localPose = useGameUi((state) => state.localPose);
+  const seated = useGameUi((state) => state.seated);
+  const seatKind = useGameUi((state) => state.seatKind);
+  // 与桌面动作条共用同一套判定：激活态 / 不可用态不会两边不一致
+  const state = { pose: localPose, seated, seatKind, moving: localPose === POSE.Walk };
+
   return (
     <div className="pointer-events-auto grid grid-cols-3 gap-2 touch-none select-none">
-      {ACTION_BUTTONS.map(({ label, action, Icon }) => (
-        <button
-          key={action}
-          type="button"
-          aria-label={label}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            onAction(action);
-          }}
-          className="flex h-[58px] w-[58px] flex-col items-center justify-center gap-0.5 rounded-full border-2 border-ink-600 bg-ink-900/85 text-mist-300 backdrop-blur-sm active:scale-95 active:border-mint-400 active:text-mint-400"
-        >
-          <Icon className="h-4 w-4" />
-          <span className="font-mono text-[8px] tracking-[0.08em]">{label}</span>
-        </button>
-      ))}
+      {ACTION_BUTTONS.map(({ label, action, Icon }) => {
+        const view = actionPresentation(action, state);
+        const text = view.label ?? label;
+        const toggles = action === 'sit' || action === 'lie';
+
+        return (
+          <button
+            key={action}
+            type="button"
+            aria-label={text}
+            aria-pressed={toggles ? view.active : undefined}
+            aria-disabled={view.unavailable || undefined}
+            title={view.reason}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              onAction(action);
+            }}
+            className={`flex h-[58px] w-[58px] flex-col items-center justify-center gap-0.5 rounded-full border-2 backdrop-blur-sm transition-colors active:scale-95 ${
+              view.active
+                ? 'border-mint-400 bg-mint-400/15 text-mint-400'
+                : 'border-ink-600 bg-ink-900/85 text-mist-300 active:border-mint-400 active:text-mint-400'
+            } ${view.unavailable ? 'opacity-45' : ''}`}
+          >
+            <Icon className="h-4 w-4" />
+            <span className="font-mono text-[8px] tracking-[0.08em]">{text}</span>
+          </button>
+        );
+      })}
       <button
         type="button"
         aria-label="打字"

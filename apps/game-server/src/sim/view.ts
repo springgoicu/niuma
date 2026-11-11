@@ -1,4 +1,11 @@
-import { VIEW_RADIUS, encodeDespawn, encodeSpawn, quantizeCoord } from '@niuma/shared-types';
+import {
+  ByteWriter,
+  VIEW_RADIUS,
+  encodeDespawn,
+  encodeDespawnInto,
+  encodeSpawnInto,
+  quantizeCoord,
+} from '@niuma/shared-types';
 import type { SpatialGrid } from '../spatial/grid';
 import type { Player, World } from './world';
 
@@ -12,21 +19,42 @@ export const DESPAWN_DISCONNECTED = 1;
 const nearScratch = new Set<number>();
 const removals: number[] = [];
 
+/**
+ * 离场包共用一条缓冲：一次视野重算可能连发几十条，不必每条都新建 4 字节视图。
+ * 前提与 `syncWriter` 完全相同——Bun 的 `socket.send` 同步拷贝，
+ * 整个服务端的下行都建立在这个前提上，这里没有新增假设。
+ */
+const despawnWriter = new ByteWriter(8);
+
 function withinView(a: Player, b: Player): boolean {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return dx * dx + dy * dy <= VIEW_RADIUS * VIEW_RADIUS;
 }
 
+/**
+ * 把某个玩家的入场包编码到他自己持有的缓冲里。
+ * 名字与外观走 `spawnBody` 的缓存，这里只现写 8 字节头，
+ * 所以除了首次構建 body 之外，稳态下一份入场包不产生任何分配。
+ */
 function spawnPacketOf(player: Player): Uint8Array {
-  return encodeSpawn({
-    id: player.id,
-    x: quantizeCoord(player.x),
-    y: quantizeCoord(player.y),
-    state: player.state,
-    name: player.name,
-    appearance: player.appearance,
-  });
+  const writer = player.spawnWriter;
+  writer.reset();
+  encodeSpawnInto(
+    writer,
+    player.id,
+    quantizeCoord(player.x),
+    quantizeCoord(player.y),
+    player.state,
+    player.spawnBody,
+  );
+  return writer.finish();
+}
+
+function sendDespawn(transport: Transport, wsId: number, id: number, reason: number): void {
+  despawnWriter.reset();
+  encodeDespawnInto(despawnWriter, id, reason);
+  transport.send(wsId, despawnWriter.finish());
 }
 
 /**
@@ -54,13 +82,16 @@ export function refreshView(player: Player, world: World, grid: SpatialGrid, tra
   }
   for (const id of removals) {
     player.known.delete(id);
-    transport.send(player.wsId, encodeDespawn(id, DESPAWN_OUT_OF_VIEW));
+    sendDespawn(transport, player.wsId, id, DESPAWN_OUT_OF_VIEW);
     const other = world.get(id);
     if (other && other.known.delete(player.id)) {
-      transport.send(other.wsId, encodeDespawn(player.id, DESPAWN_OUT_OF_VIEW));
+      sendDespawn(transport, other.wsId, player.id, DESPAWN_OUT_OF_VIEW);
     }
   }
 
+  // 自己的包在循环外算一次：N 个已在场者原本各编一遍同一个玩家，
+  // 200 人同秒涌入时光这一条支路就是 O(N²) 次编码。
+  let selfPacket: Uint8Array | null = null;
   for (const id of nearScratch) {
     if (player.known.has(id)) continue;
     const other = world.get(id);
@@ -69,7 +100,8 @@ export function refreshView(player: Player, world: World, grid: SpatialGrid, tra
     transport.send(player.wsId, spawnPacketOf(other));
     if (!other.known.has(player.id)) {
       other.known.add(player.id);
-      transport.send(other.wsId, spawnPacketOf(player));
+      selfPacket ??= spawnPacketOf(player);
+      transport.send(other.wsId, selfPacket);
     }
   }
 }

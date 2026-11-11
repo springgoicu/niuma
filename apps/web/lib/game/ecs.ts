@@ -1,6 +1,7 @@
 'use client';
 
 import { addComponent, addEntity, createWorld, query, removeEntity, type QueryResult } from 'bitecs';
+import { RemoteTrack } from './interp';
 
 const CAPACITY = 4096;
 
@@ -9,22 +10,6 @@ const CAPACITY = 4096;
  * bitecs 只负责实体生命周期与查询，数据布局由这里掌控。
  */
 export const Position = { x: new Float32Array(CAPACITY), y: new Float32Array(CAPACITY) };
-export const Target = { x: new Float32Array(CAPACITY), y: new Float32Array(CAPACITY) };
-/** 远端角色位置快照：用于时间线插值 */
-export const Snapshot = {
-  /** 当前快照时间戳（客户端接收时间）*/
-  currentTime: new Float64Array(CAPACITY),
-  /** 上一次快照时间戳 */
-  prevTime: new Float64Array(CAPACITY),
-  /** 当前快照 X 坐标 */
-  currentX: new Float32Array(CAPACITY),
-  /** 当前快照 Y 坐标 */
-  currentY: new Float32Array(CAPACITY),
-  /** 上一次快照 X 坐标 */
-  prevX: new Float32Array(CAPACITY),
-  /** 上一次快照 Y 坐标 */
-  prevY: new Float32Array(CAPACITY),
-};
 export const Motion = {
   direction: new Uint8Array(CAPACITY),
   pose: new Uint8Array(CAPACITY),
@@ -49,16 +34,20 @@ export const POSE = { Idle: 0, Walk: 1, Sit: 2, Lie: 3, Emote: 4 } as const;
 export class Ecs {
   readonly world = createWorld();
   private readonly byNetId = new Map<number, number>();
+  /**
+   * eid → netId 反查。帧循环原本用 `byNetId.get()` 为每个实体查三次 Map，
+   * 摊平成数组后一次遍历就能同时拿到两侧身份。
+   */
+  readonly netOf = new Int32Array(CAPACITY);
+  /** 远端位置回放缓冲：收到同步先入环形，帧循环再按固定延迟采样 */
+  readonly remote = new RemoteTrack(CAPACITY);
 
   spawn(netId: number, x: number, y: number): number {
     const eid = addEntity(this.world);
     addComponent(this.world, eid, Position);
-    addComponent(this.world, eid, Target);
     addComponent(this.world, eid, Motion);
     Position.x[eid] = x;
     Position.y[eid] = y;
-    Target.x[eid] = x;
-    Target.y[eid] = y;
     Motion.direction[eid] = 0;
     Motion.pose[eid] = POSE.Idle;
     Motion.moving[eid] = 0;
@@ -69,14 +58,9 @@ export class Ecs {
     Motion.jumpSince[eid] = 0;
     Motion.wave[eid] = 0;
     Motion.waveSince[eid] = 0;
-    // 初始化快照数据
-    const now = performance.now();
-    Snapshot.currentTime[eid] = now;
-    Snapshot.prevTime[eid] = now;
-    Snapshot.currentX[eid] = x;
-    Snapshot.currentY[eid] = y;
-    Snapshot.prevX[eid] = x;
-    Snapshot.prevY[eid] = y;
+    Local.flag[eid] = 0;
+    this.netOf[eid] = netId;
+    this.remote.reset(eid);
     this.byNetId.set(netId, eid);
     return eid;
   }
@@ -93,6 +77,9 @@ export class Ecs {
     const eid = this.byNetId.get(netId);
     if (eid === undefined) return;
     this.byNetId.delete(netId);
+    this.remote.reset(eid);
+    this.netOf[eid] = 0;
+    Local.flag[eid] = 0;
     removeEntity(this.world, eid);
   }
 
