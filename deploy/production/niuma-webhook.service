@@ -1,0 +1,24 @@
+[Unit]
+Description=niuma Gitee webhook deployer
+Documentation=https://gitee.com/mySia/niuma
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+EnvironmentFile=/etc/niuma/webhook.env
+ExecStart=/usr/local/bin/node /opt/niuma/webhook.mjs
+Restart=always
+RestartSec=3
+# 部署脚本会起 pnpm / bun / tsc，给足句柄
+LimitNOFILE=65535
+# 构建是内存大头，OOM 时只杀部署而不是整机
+MemoryMax=2600M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=niuma-webhook
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,59 @@
+# niuma 全局 nginx 参数（http 上下文）—— /etc/nginx/conf.d/00-niuma-http.conf
+#
+# 只放「必须在 http 上下文」的东西：map、upstream、gzip、文件缓存、SSL 会话。
+
+# WebSocket 升级：空 Upgrade 头必须发 close，否则普通请求会被上游当成劫持
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# 两个上游都留在本机回环，keepalive 复用连接，省掉每个请求一次 connect()
+upstream niuma_web {
+    server 127.0.0.1:3000;
+    keepalive 32;
+}
+
+upstream niuma_game {
+    server 127.0.0.1:3001;
+    keepalive 4;
+}
+
+# ---- 压缩 ----
+# 静态资源命中同目录的 .gz（部署时预压缩），动态 HTML 才走运行时 gzip。
+gzip_static on;
+gzip on;
+gzip_vary on;
+gzip_proxied any;
+gzip_comp_level 5;
+gzip_min_length 512;
+gzip_types
+    text/plain
+    text/css
+    text/xml
+    text/javascript
+    application/javascript
+    application/json
+    application/manifest+json
+    application/xml
+    image/svg+xml;
+
+# ---- 静态文件元数据缓存 ----
+# 2 vCPU 机器上省掉的就是一次次 stat()：命中后连 open() 都省了
+open_file_cache          max=20000 inactive=60s;
+open_file_cache_valid    30s;
+open_file_cache_min_uses 2;
+open_file_cache_errors   on;
+
+# ---- TLS 会话复用 ----
+# 首访是完整握手，第二次起走 session ticket；5Mbps 机器上握手省下的几百毫秒很值钱
+ssl_session_cache   shared:SSL:20m;
+ssl_session_timeout 1d;
+ssl_session_tickets on;
+ssl_protocols       TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+# 4k：证书链一次发完，减少一个 RTT
+ssl_buffer_size     4k;
+
+server_tokens off;
+client_max_body_size 4m;
