@@ -9,7 +9,8 @@ set -euo pipefail
 
 DOMAIN="${DOMAIN:-bangying.top}"
 WWW="${WWW:-www.$DOMAIN}"
-REPO="${REPO:-git@gitee.com:mySia/niuma.git}"
+# HTTPS 拉取：凭据存在部署用户的 ~/.git-credentials（600）。镜像成部署公钥时改成 git@ 地址也可以
+REPO="${REPO:-https://gitee.com/mySia/niuma.git}"
 BRANCH="${BRANCH:-master}"
 CONTACT_EMAIL="${CONTACT_EMAIL:-springgo_icu@163.com}"
 SRC_DIR="${SRC_DIR:-/srv/niuma/src}"

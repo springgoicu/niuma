@@ -20,7 +20,8 @@ SRC_DIR="${SRC_DIR:-/srv/niuma/src}"
 ENV_FILE="${ENV_FILE:-/etc/niuma/niuma.env}"
 BRANCH="${BRANCH:-master}"
 LOG_FILE="${LOG_FILE:-/var/log/niuma/deploy.log}"
-LOCK_FILE="${LOCK_FILE:-/run/niuma-deploy.lock}"
+# 放在 /tmp：部署用户对 /run 没有写权限，放到那里会因为“锁文件建不出来”直接失败
+LOCK_FILE="${LOCK_FILE:-/tmp/niuma-deploy.lock}"
 PUBLIC_HOST="${PUBLIC_HOST:-bangying.top}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
