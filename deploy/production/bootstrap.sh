@@ -172,8 +172,13 @@ sleep 1
 systemctl is-active --quiet niuma-webhook && echo "   niuma-webhook 运行中"
 
 step "8. pm2 开机自启"
-sudo -u "$AS_USER" env PATH="$PATH" pm2 startup systemd -u "$AS_USER" --hp "/home/$AS_USER" >/dev/null
-echo "   已安装 pm2-$AS_USER.service"
+# pm2 startup 在「已经装过」时会以非零码退出，重复执行 bootstrap 不应该因此中断
+if systemctl is-enabled --quiet "pm2-$AS_USER" 2>/dev/null; then
+  echo "   pm2-$AS_USER.service 已存在"
+else
+  sudo -u "$AS_USER" env PATH="$PATH" pm2 startup systemd -u "$AS_USER" --hp "/home/$AS_USER" >/dev/null || true
+  echo "   已安装 pm2-$AS_USER.service"
+fi
 
 step "9. 首次部署"
 if [ "$SKIP_DEPLOY" = "1" ]; then
