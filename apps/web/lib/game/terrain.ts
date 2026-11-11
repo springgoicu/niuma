@@ -34,12 +34,14 @@ import type { DepthSink } from './sort-layer';
 import {
   EDGE_STYLE,
   MATERIAL,
+  WINTER_EDGE_STYLE,
+  WINTER_GRASS_FRINGE,
   buildMaterialGrid,
   edgeGlyphs,
   type MaterialGrid,
   type MaterialId,
 } from './terrain-edge';
-import { TERRAIN_COLORS as C } from './terrain-palette';
+import { TERRAIN_COLORS as C, WINTER_COLORS as W } from './terrain-palette';
 import {
   PROP_SHADOW,
   TREE_H,
@@ -51,6 +53,7 @@ import {
   makeReedTexture,
   makeRockTexture,
   makeSeaTexture,
+  makeSnowTexture,
   makeTreeTextures,
   makeWaterTexture,
   type DecalAtlas,
@@ -105,6 +108,8 @@ interface TerrainTextures {
   reed: Texture;
   planter: Texture;
   decals: DecalAtlas;
+  /** 冬季才烘焙的覆雪平铺：夏季整张不存在，也不占显存 */
+  snow?: Texture;
   /** 树 / 花箱 / 石头的底座投影，全部按 0x1E2846 @0.2 烘焙 */
   shadows: { tree: Texture; planter: Texture; rock: Texture };
 }
@@ -140,6 +145,11 @@ export interface TerrainOptions {
   flat?: boolean;
   /** `?edge=0`：只关边缘层（草尖/圆弧/内缘暗边），底色与轮廓照旧 */
   edge?: boolean;
+  /**
+   * 冬季（ADR-0046）：覆雪层、雪缘、冷调水面、积雪山冠与岸边薄冰都由它开关。
+   * 由 `season.ts` 在读 URL 时判定一次，地形只消费布尔量，不自己读日期。
+   */
+  winter?: boolean;
 }
 
 interface Cullable {
@@ -214,6 +224,8 @@ export class TerrainView {
   private depth: DepthSink | null = null;
   private grid: MaterialGrid | null = null;
   private readonly edgeEnabled: boolean;
+  /** 冬季开关：构造期算好，帧循环里没有再判一次日期的分支 */
+  private readonly winter: boolean;
   private waterElapsed = 0;
   private waterFrame = 0;
 
@@ -223,16 +235,18 @@ export class TerrainView {
   ) {
     // 材质网格有 66k 格，只有真的要画边缘时才开始算
     this.edgeEnabled = !this.options.flat && this.options.edge !== false;
+    this.winter = options.winter === true;
     this.textures = {
       grass: makeGrassTexture(renderer),
       dirt: makeDirtTexture(renderer),
-      water: makeWaterTexture(renderer),
-      sea: makeSeaTexture(renderer),
-      trees: makeTreeTextures(renderer),
+      water: makeWaterTexture(renderer, this.winter),
+      sea: makeSeaTexture(renderer, this.winter),
+      trees: makeTreeTextures(renderer, this.winter),
       rock: makeRockTexture(renderer),
       reed: makeReedTexture(renderer),
       planter: makePlanterTexture(renderer),
       decals: makeDecalAtlas(renderer),
+      ...(this.winter ? { snow: makeSnowTexture(renderer) } : {}),
       shadows: {
         tree: makePropShadowTexture(renderer, PROP_SHADOW.tree.w, PROP_SHADOW.tree.h),
         planter: makePropShadowTexture(renderer, PROP_SHADOW.planter.w, PROP_SHADOW.planter.h),
@@ -250,6 +264,9 @@ export class TerrainView {
     this.addShoreSand();
     this.addForestFloor();
     this.addFlowerMeadow();
+    // 覆雪压在草地/林地/花海之上、路缘与土路之下：
+    // 路缘与土路是「被踩过的地面」，雪本来就留不住（ADR-0046 的层序）
+    if (this.winter) this.addSnowCover();
     this.addPlaza();
     this.addPaths();
     for (const lake of WORLD_LAYOUT.lakes) this.addLake(lake);
@@ -369,6 +386,41 @@ export class TerrainView {
     });
   }
 
+  /**
+   * 覆雪层：一张平铺 + 一块遮罩，覆盖草地、林地、花海与广场。
+   *
+   * 遮罩取「海岸线内缩 ISLAND_SAND」：沙带是以海岸线为中线的 52px 描边，
+   * 内缩 26px 正好接住它的内缘，雪不会盖到沙滩上——
+   * 岸边该是雪化了的湿沙，而不是又一层白。
+   *
+   * 不复用 `addGrass` 的原始海岸线遮罩：那份会盖住沙带一半，
+   * 沙与雪之间也没有过渡；雪缘的过渡交给 `flushEdges` 的冬季齿色。
+   */
+  private addSnowCover(): void {
+    const texture = this.textures.snow;
+    if (!texture) return;
+    const snow = new TilingSprite({
+      texture,
+      width: WORLD_WIDTH,
+      height: WORLD_HEIGHT,
+    });
+    // 平铺相位与世界坐标对齐：与草地同尺寸，两张纹理的雪堆不会各走各的
+    snow.tilePosition.set(0, 0);
+
+    if (this.options.flat) {
+      this.base.addChild(snow);
+      return;
+    }
+
+    const ring = ISLAND.points.map(([x, y]) => ({ x, y }));
+    const mask = new Graphics();
+    traceContour(mask, offsetContour(ring, -ISLAND_SAND));
+    mask.fill(0xffffff);
+    this.base.addChild(mask);
+    snow.mask = mask;
+    this.base.addChild(snow);
+  }
+
   /** 办公区路缘：整片广场地面就是草地，这里只画一圈石色边圈出范围 */
   private addPlaza(): void {
     const plaza = WORLD_LAYOUT.plaza;
@@ -453,13 +505,26 @@ export class TerrainView {
     for (const job of this.edges) {
       const g = new Graphics();
       const flat = contourPolygon(job.contour);
-      const style = EDGE_STYLE[job.self];
+      const palette = this.winter ? WINTER_EDGE_STYLE : EDGE_STYLE;
+      const style = palette[job.self];
+      // 冬季的「地被」是雪：对面是草的那套齿色整体换成雪色，
+      // 否则雪地上会长出一圈绿草尖，整层覆雪就白铺了
+      const fringe = this.winter
+        ? job.other === MATERIAL.grass
+          ? WINTER_GRASS_FRINGE
+          : palette[job.self]
+        : undefined;
 
       if (job.rim) {
         g.poly(flat).stroke({ color: style.rim, width: style.rimWidth, alignment: 1, join: 'round' });
       }
       if (job.other === MATERIAL.grass) {
-        g.poly(flat).stroke({ color: C.grassTuft, width: 2, alignment: 0.5, join: 'round' });
+        g.poly(flat).stroke({
+          color: this.winter ? W.snowLight : C.grassTuft,
+          width: 2,
+          alignment: 0.5,
+          join: 'round',
+        });
       }
       for (const glyph of edgeGlyphs(job.contour, {
         self: job.self,
@@ -467,6 +532,7 @@ export class TerrainView {
         grow: job.grow,
         seed: job.seed,
         grid,
+        fringe,
       })) {
         g.rect(glyph.x, glyph.y, glyph.w, glyph.h).fill(glyph.color);
       }
@@ -498,6 +564,7 @@ export class TerrainView {
     mask.fill(0xffffff);
     this.base.addChild(mask);
     water.mask = mask;
+    if (this.winter) this.addIceRim(contour, 0x4c1a2f);
 
     if (this.edgeEnabled) {
       this.edges.push({ self: MATERIAL.water, other: MATERIAL.sand, contour, rim: true, seed: 0x4c1a2f });
@@ -541,6 +608,7 @@ export class TerrainView {
       mask.fill(0xffffff);
       this.base.addChild(mask);
       water.mask = mask;
+      if (this.winter) this.addIceRim(contour, 0x7d31a5);
 
       if (this.edgeEnabled) {
         this.edges.push({ self: MATERIAL.water, other: MATERIAL.sand, contour, rim: true, seed: 0x7d31a5 });
@@ -558,6 +626,31 @@ export class TerrainView {
         });
       }
     }
+  }
+
+  /**
+   * 岸边薄冰：只沿水岸内侧画 3px 冰带 + 几粒碎冰，不整片盖住水面。
+   *
+   * 整片结冰会把「湖」读成「另一种地面」，而冬季真正读得出来的是
+   * 「岸边先冻、水面还在动」——冰带贴边，水面照旧滚动，一眼就知道那是水。
+   */
+  private addIceRim(contour: ContourPoint[], seed: number): void {
+    if (contour.length < 3) return;
+    const flat = contourPolygon(contour);
+    const ice = new Graphics();
+    // alignment 1 = 向轮廓内侧生长，冰带永远落在水里
+    ice.poly(flat).stroke({ color: W.iceEdge, width: 4, alignment: 1, join: 'round' });
+    ice.poly(flat).stroke({ color: W.iceBase, width: 3, alignment: 1, join: 'round' });
+    const random = seeded(seed);
+    const chips = Math.min(48, Math.max(6, Math.round(contour.length / 6)));
+    for (let i = 0; i < chips; i += 1) {
+      // 采样点落在轮廓上，再随机往里探 1–3px：碎冰一定在冰带里，不会飘到岸上
+      const point = contour[Math.floor(random() * contour.length)]!;
+      const x = Math.round(point.x + (random() - 0.5) * 4);
+      const y = Math.round(point.y + (random() - 0.5) * 4);
+      ice.rect(x, y, 1 + Math.floor(random() * 3), 1).fill(random() > 0.5 ? W.snowLight : W.iceBase);
+    }
+    this.base.addChild(ice);
   }
 
   private addWaterSurface(rect: WorldRect, axis: 'x' | 'y', every: number): TilingSprite {
@@ -694,6 +787,9 @@ export class TerrainView {
    * 三层共用同一张图集与同一套视口裁剪，帧循环里只翻 renderable。
    */
   private addDecals(): void {
+    // 冬季整层不生成：花与草叶本来就被雪埋了，留着只会浮在雪面上。
+    // 顺带省掉 900–1200 个精灵——覆雪层的开销正好被这一条抵掉。
+    if (this.winter) return;
     const bounds = { x: ISLAND.bounds.x, y: ISLAND.bounds.y, w: ISLAND.bounds.w, h: ISLAND.bounds.h };
     this.addDecalSprites(
       scatterDecals(bounds, (x, y) => this.decalAllowed(x, y), 0x5eed1a),

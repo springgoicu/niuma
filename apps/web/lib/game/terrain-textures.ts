@@ -4,7 +4,7 @@ import { Graphics, Rectangle, Texture, type Application } from 'pixi.js';
 import { DECAL_KINDS } from './decals';
 import { fillEllipse } from './fx';
 import { seeded } from './seeded';
-import { TERRAIN_COLORS as C } from './terrain-palette';
+import { TERRAIN_COLORS as C, WINTER_COLORS as W } from './terrain-palette';
 
 /**
  * 地形贴图工厂：全部 1:1 生成 + nearest 采样（ADR-0005）。
@@ -119,6 +119,65 @@ export function makeGrassTexture(renderer: TextureFactory): Texture {
 }
 
 /**
+ * 积雪地面：512px 平铺，与草地同尺寸——换季只是换这层纹理，平铺相位与遮罩都不用重算。
+ *
+ * 画法刻意压平对比：雪面若靠明暗撑细节，整张地图会先在背景上「花掉」，
+ * 角色的 48 纹素剪影就浮不出来。真正提供质感的是三处极轻的颗粒：
+ * 受光雪堆（snowLight）、堆间雪影（snowShade）、以及从雪里探头的零星草尖。
+ */
+export function makeSnowTexture(renderer: TextureFactory): Texture {
+  const size = 512;
+  return bake(renderer, (g) => {
+    g.rect(0, 0, size, size).fill(W.snowBase);
+    const random = seeded(0x2c9f41b7);
+    // 雪堆：比草地色簇更大更扁，边缘仍走 wrappedRect 无缝收口
+    for (let i = 0; i < 46; i += 1) {
+      organicBlob(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        18 + Math.floor(random() * 30),
+        6 + Math.floor(random() * 11),
+        size,
+        random() > 0.45 ? W.snowLight : W.snowShade,
+        random,
+      );
+    }
+    // 雪影：极淡的 1px 颗粒，近看才有雪粒的沙感
+    for (let i = 0; i < 520; i += 1) {
+      wrappedRect(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        random() > 0.6 ? 2 : 1,
+        1,
+        size,
+        W.snowShade,
+      );
+    }
+    // 压痕：几条 3–9px 的浅雪沟，暗示「有人踩过一脚」
+    for (let i = 0; i < 26; i += 1) {
+      wrappedRect(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        3 + Math.floor(random() * 7),
+        1,
+        size,
+        W.snowDeep,
+      );
+    }
+    // 露出的草尖：雪没盖严的地方，几根 1×2 的草从雪面探出来
+    for (let i = 0; i < 54; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
+      wrappedRect(g, x, y, 1, 2, size, C.grassDeep);
+      if (random() > 0.55) wrappedRect(g, x, y, 1, 1, size, C.grassTuft);
+    }
+  });
+}
+
+/**
  * 土路：暖棕底上叠大小不一的有机色簇，再用 1px 石子与短车辙打散。
  * 没有任何一条边与平铺边界平行，所以看不出「一块块」的拼贴。
  */
@@ -157,11 +216,20 @@ export function makeDirtTexture(renderer: TextureFactory): Texture {
   });
 }
 
-/** 水面：96px 平铺，波纹是短弧而不是横贯整块的直杠（与 terrain.ts 的 WATER_TILE 必须同值） */
-export function makeWaterTexture(renderer: TextureFactory): Texture {
+/** 水面色：夏冬两套键名一致，绘制代码只换表不换写法 */
+function waterPalette(winter: boolean): typeof C {
+  return winter ? (W as unknown as typeof C) : C;
+}
+
+/**
+ * 水面：96px 平铺，波纹是短弧而不是横贯整块的直杠（与 terrain.ts 的 WATER_TILE 必须同值）。
+ * 冬季换一张冷调纹理而不是给精灵加 `tint`：multiply 只能压亮部，调不出「更冷更淡」的水。
+ */
+export function makeWaterTexture(renderer: TextureFactory, winter = false): Texture {
   const size = 96;
+  const P = waterPalette(winter);
   return bake(renderer, (g) => {
-    g.rect(0, 0, size, size).fill(C.waterDeep);
+    g.rect(0, 0, size, size).fill(P.waterDeep);
     const random = seeded(0x37a7c29d);
     // 波纹：扁平的有机色簇，长度随位置变化，平铺边界靠 wrappedRect 收口
     for (let i = 0; i < 30; i += 1) {
@@ -172,7 +240,7 @@ export function makeWaterTexture(renderer: TextureFactory): Texture {
         5 + Math.floor(random() * 11),
         1 + Math.floor(random() * 2),
         size,
-        C.waterMid,
+        P.waterMid,
         random,
       );
     }
@@ -181,12 +249,12 @@ export function makeWaterTexture(renderer: TextureFactory): Texture {
       const x = Math.floor(random() * size);
       const y = Math.floor(random() * size);
       const length = 2 + Math.floor(random() * 5);
-      wrappedRect(g, x, y, length, 1, size, C.waterCrest);
-      if (random() > 0.72) wrappedRect(g, x + 1, y + 1, 2, 1, size, C.waterFoam);
+      wrappedRect(g, x, y, length, 1, size, P.waterCrest);
+      if (random() > 0.72) wrappedRect(g, x + 1, y + 1, 2, 1, size, P.waterFoam);
     }
     // 零星泡沫点：让水面有颗粒，不靠条纹撑细节
     for (let i = 0; i < 36; i += 1) {
-      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, C.waterFoam);
+      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, P.waterFoam);
     }
   });
 }
@@ -195,10 +263,11 @@ export function makeWaterTexture(renderer: TextureFactory): Texture {
  * 深海：96px 平铺，波纹比湖面更稀更慢。
  * 海面只在海岸附近进入视野，密度再高就会抢沙滩的过渡。
  */
-export function makeSeaTexture(renderer: TextureFactory): Texture {
+export function makeSeaTexture(renderer: TextureFactory, winter = false): Texture {
   const size = 96;
+  const P = waterPalette(winter);
   return bake(renderer, (g) => {
-    g.rect(0, 0, size, size).fill(C.seaBase);
+    g.rect(0, 0, size, size).fill(P.seaBase);
     const random = seeded(0x5ea5a17);
     // 深海波纹：比湖面更扁更稀的有机色簇，不再有横贯整块的直线
     for (let i = 0; i < 16; i += 1) {
@@ -209,7 +278,7 @@ export function makeSeaTexture(renderer: TextureFactory): Texture {
         9 + Math.floor(random() * 15),
         1 + Math.floor(random() * 2),
         size,
-        C.seaMid,
+        P.seaMid,
         random,
       );
     }
@@ -217,11 +286,11 @@ export function makeSeaTexture(renderer: TextureFactory): Texture {
     for (let i = 0; i < 14; i += 1) {
       const x = Math.floor(random() * size);
       const y = Math.floor(random() * size);
-      wrappedRect(g, x, y, 4 + Math.floor(random() * 6), 1, size, C.seaCrest);
+      wrappedRect(g, x, y, 4 + Math.floor(random() * 6), 1, size, P.seaCrest);
     }
     // 泡沫点：海面只在海岸附近进视野，颗粒压到最低
     for (let i = 0; i < 44; i += 1) {
-      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, C.seaFoam);
+      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, P.seaFoam);
     }
   });
 }
@@ -253,7 +322,7 @@ export interface TreeTextures {
   canopy: Texture;
 }
 
-function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures {
+function makeTreeParts(renderer: TextureFactory, variant: number, winter = false): TreeTextures {
   const profile = TREE_PROFILES[variant % TREE_PROFILES.length]!;
   const canopyWidth = TREE_CANOPY_WIDTHS[variant % TREE_CANOPY_WIDTHS.length]!;
   const trunkWidth = 7 + (variant % 2) * 3;
@@ -278,6 +347,12 @@ function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures 
       }
       // 树干与树冠的接缝：压一档暗，树冠盖上去才有「长在树上」的感觉
       g.rect(trunkX - 1, trunkTop, trunkWidth + 2, 2).fill(C.trunkDark);
+      if (winter) {
+        // 树根积雪：贴地一圈，雪才像「堆在树脚」而不是悬浮在树干上
+        g.rect(trunkX - 4, TREE_H - 7, trunkWidth + 8, 3).fill(W.snowBase);
+        g.rect(trunkX - 3, TREE_H - 6, trunkWidth + 6, 1).fill(W.snowLight);
+        g.rect(trunkX - 5, TREE_H - 4, trunkWidth + 10, 2).fill(W.snowShade);
+      }
     },
     { frame: TREE_FRAME },
   );
@@ -286,12 +361,15 @@ function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures 
     renderer,
     (g) => {
       let centerShift = 0;
+      /** 雪帽要按行宽重新铺一遍，所以行几何必须留到循环之后 */
+      const rows: Array<{ x: number; y: number; width: number }> = [];
       profile.forEach((ratio, index) => {
         const width = Math.max(6, Math.round(ratio * canopyWidth));
         const y = trunkTop - (index + 1) * TREE_ROW_HEIGHT;
         const drift = random();
         centerShift = Math.max(-2, Math.min(2, centerShift + (drift > 0.7 ? 1 : drift < 0.3 ? -1 : 0)));
         const x = Math.round(TREE_CENTER + centerShift - width / 2);
+        rows.push({ x, y, width });
         // 叶簇外沿保留一档暗色，轮廓高低变化而不是齐刷刷叠成层层方片
         const overhang = random() > 0.76 ? 2 : 1;
         g.rect(x - overhang, y, width + overhang * 2, TREE_ROW_HEIGHT).fill(C.canopyEdge);
@@ -314,6 +392,33 @@ function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures 
           g.rect(mx, my, random() > 0.6 ? 3 : 1, 1).fill(bright ? C.canopyGlow : C.canopyDeep);
         }
       });
+
+      if (winter) {
+        // 雪帽：只压上半部，越靠顶越厚。逐行都盖满会在 3px 行距上拉出一道道横纹，
+        // 所以下半部只在外沿枝尖点雪，中间留出叶色。
+        const snowStart = Math.floor(rows.length * 0.66);
+        for (let i = snowStart; i < rows.length; i += 1) {
+          const row = rows[i]!;
+          const t = (i - snowStart) / Math.max(1, rows.length - 1 - snowStart);
+          const thickness = t > 0.62 ? 2 : 1;
+          const cover = Math.max(4, Math.round(row.width * (0.78 + 0.18 * t)));
+          const x = row.x + Math.round((row.width - cover) / 2);
+          g.rect(x, row.y, cover, thickness).fill(W.snowBase);
+          if (t > 0.55) g.rect(x + 1, row.y + 1, Math.max(2, cover - 2), 1).fill(W.snowLight);
+        }
+        // 雪线：雪帽下沿压一道雪影，帽才不会像贴上去的白纸
+        const edgeRow = rows[snowStart];
+        if (edgeRow) g.rect(edgeRow.x, edgeRow.y + 1, edgeRow.width, 1).fill(W.snowShade);
+        // 枝尖薄雪：外沿左右各点几粒，雪挂在探出的枝条上
+        for (let i = Math.floor(rows.length * 0.34); i < snowStart; i += 1) {
+          const row = rows[i]!;
+          if (random() > 0.45) continue;
+          const side = random() > 0.5;
+          const sx = side ? row.x - 1 : row.x + row.width - 1;
+          g.rect(sx, row.y, 2, 1).fill(W.snowShade);
+          g.rect(sx, row.y + 1, 1, 1).fill(W.snowLight);
+        }
+      }
       // 树冠底缘：向下收一档暗边，和树干之间才有厚度
       const bottomY = trunkTop - TREE_ROW_HEIGHT;
       const bottomWidth = Math.round(profile[profile.length - 1]! * canopyWidth);
@@ -325,8 +430,8 @@ function makeTreeParts(renderer: TextureFactory, variant: number): TreeTextures 
   return { trunk, canopy };
 }
 
-export function makeTreeTextures(renderer: TextureFactory): TreeTextures[] {
-  return TREE_PROFILES.map((_, index) => makeTreeParts(renderer, index));
+export function makeTreeTextures(renderer: TextureFactory, winter = false): TreeTextures[] {
+  return TREE_PROFILES.map((_, index) => makeTreeParts(renderer, index, winter));
 }
 
 /* ------------------------------------------------------------------ *

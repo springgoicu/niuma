@@ -42,6 +42,24 @@ const ANCHORS: Anchor[] = [
   { hour: 24, color: 0x9fb6d9, alpha: 0.12, label: 'night' },
 ];
 
+/**
+ * 冬季光照锚点（ADR-0046）：日出推后一小时、日落提前一小时，夜里的冷蓝再压深一档。
+ *
+ * 这是「雪天」而不是「北欧极夜」：alpha 只从 0.12 抬到 0.15，
+ * 夜里仍看得清地面纹理；抬到 0.3 以上整张图会先糊成蓝黑，
+ * 灯串那点暖光反而没了参照。
+ */
+const WINTER_ANCHORS: Anchor[] = [
+  { hour: 0, color: 0xa8bfe0, alpha: 0.15, label: 'night' },
+  { hour: 6, color: 0xa8bfe0, alpha: 0.15, label: 'night' },
+  { hour: 8, color: 0xffe6b4, alpha: 0.09, label: 'dawn' },
+  { hour: 11, color: 0xffffff, alpha: 0, label: 'day' },
+  { hour: 15, color: 0xffd2a0, alpha: 0.12, label: 'day' },
+  { hour: 17, color: 0xffb877, alpha: 0.2, label: 'dusk' },
+  { hour: 20, color: 0xa8bfe0, alpha: 0.15, label: 'night' },
+  { hour: 24, color: 0xa8bfe0, alpha: 0.15, label: 'night' },
+];
+
 function lerpChannel(a: number, b: number, t: number): number {
   const from = (a >> 16) & 0xff;
   const to = (b >> 16) & 0xff;
@@ -56,17 +74,18 @@ function lerpChannel(a: number, b: number, t: number): number {
 }
 
 /** 纯函数：给定小时（0..24，可为小数）返回当前该叠的光 */
-export function lightToneAt(hour: number): LightTone {
+export function lightToneAt(hour: number, winter = false): LightTone {
+  const anchors = winter ? WINTER_ANCHORS : ANCHORS;
   const h = Number.isFinite(hour) ? ((hour % 24) + 24) % 24 : 12;
   let index = 0;
-  for (let i = 0; i < ANCHORS.length - 1; i += 1) {
-    if (h >= ANCHORS[i]!.hour && h <= ANCHORS[i + 1]!.hour) {
+  for (let i = 0; i < anchors.length - 1; i += 1) {
+    if (h >= anchors[i]!.hour && h <= anchors[i + 1]!.hour) {
       index = i;
       break;
     }
   }
-  const from = ANCHORS[index]!;
-  const to = ANCHORS[index + 1] ?? from;
+  const from = anchors[index]!;
+  const to = anchors[index + 1] ?? from;
   const span = to.hour - from.hour;
   const t = span <= 0 ? 0 : (h - from.hour) / span;
   return {
@@ -84,7 +103,7 @@ export class AmbientLight {
   private nextSampleAt = 0;
   private lastKey = '';
 
-  constructor() {
+  constructor(private readonly winter = false) {
     this.sprite.blendMode = 'multiply';
     this.sprite.anchor.set(0, 0);
     void this.applyNow();

@@ -13,7 +13,7 @@ import {
 } from '@niuma/shared-types';
 import { contourSignedArea, type ContourPoint } from './autotile';
 import { hashCell } from './decals';
-import { TERRAIN_COLORS as C } from './terrain-palette';
+import { TERRAIN_COLORS as C, WINTER_COLORS as W } from './terrain-palette';
 
 /**
  * 双网格自适应边缘的纯逻辑层（不依赖 Pixi）。
@@ -366,6 +366,33 @@ export const EDGE_STYLE: Record<MaterialId, EdgeStyle> = {
 /** 草是被地：只要对面是草，草色齿一律由草来长，不管自己是土、石还是沙 */
 const GRASS_FRINGE = EDGE_STYLE[MATERIAL.grass];
 
+/**
+ * 冬季边缘（ADR-0046）：雪后的「地被」是雪，不是草。
+ *
+ * 只改草与土两档：草缘的描边从压暗的草绿换成雪影，齿色换成雪白；
+ * 其余材质（水、沙、桥）沿用本体色压暗的夏季节奏——
+ * 雪落在水面与沙滩上本来就会被冲淡，不换色反而更像「雪化了一半」。
+ */
+export const WINTER_EDGE_STYLE: Record<MaterialId, EdgeStyle> = {
+  ...EDGE_STYLE,
+  [MATERIAL.grass]: {
+    ...EDGE_STYLE[MATERIAL.grass],
+    rim: W.snowDeep,
+    tooth: W.snowBase,
+    toothDeep: W.snowShade,
+    scallop: W.snowLight,
+  },
+  [MATERIAL.dirt]: {
+    ...EDGE_STYLE[MATERIAL.dirt],
+    tooth: W.snowBase,
+    toothDeep: W.snowShade,
+    scallop: W.snowLight,
+  },
+};
+
+/** 冬季的「草」：雪从雪面长进土、石、水里 */
+export const WINTER_GRASS_FRINGE = WINTER_EDGE_STYLE[MATERIAL.grass];
+
 export interface EdgeGlyphOptions {
   /** 轮廓所属材质 */
   self: MaterialId;
@@ -381,6 +408,11 @@ export interface EdgeGlyphOptions {
   cap?: number;
   /** 位掩码来源；缺省时只按几何撒齿，不查邻居 */
   grid?: MaterialGrid;
+  /**
+   * 齿色覆盖：冬季把「草往对面长」换成「雪往对面长」。
+   * 缺省仍是夏季那套 EDGE_STYLE / GRASS_FRINGE，既有调用方与测试零改动。
+   */
+  fringe?: EdgeStyle;
 }
 
 /**
@@ -400,7 +432,7 @@ export function edgeGlyphs(contour: readonly ContourPoint[], options: EdgeGlyphO
 
   const outward: ContourPoint[] = [...contour];
   if (contourSignedArea(contour) <= 0) outward.reverse();
-  const fringe = other === MATERIAL.grass ? GRASS_FRINGE : EDGE_STYLE[self];
+  const fringe = options.fringe ?? (other === MATERIAL.grass ? GRASS_FRINGE : EDGE_STYLE[self]);
   const tooth = fringe.tooth ?? EDGE_STYLE[self].tooth;
   if (tooth === null && fringe.scallop === null) return [];
 

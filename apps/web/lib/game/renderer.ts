@@ -12,6 +12,11 @@ import {
 import { ISLAND, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
+import { isOutdoorGround } from './ground';
+import { InteriorArt } from './interior-art';
+import { readSeason, type SeasonState } from './season';
+import { SnowField } from './snow-fx';
+import { WinterArt } from './winter-art';
 import { pickCharacter, type PickCandidate } from './badge';
 import { cameraFocus } from './camera';
 import { bakeCritterArt, type CritterArt } from './critter-art';
@@ -489,6 +494,15 @@ export class GameRenderer {
   private focusY = 0;
   /** 屏幕空间的乘算柔光层；`?light=0` 时整层不建 */
   private light?: AmbientLight;
+  /** 冬季雪景（ADR-0046）：非冬季时三个字段都不构造，零开销 */
+  private snow?: SnowField;
+  private winterArt?: WinterArt;
+  /** 季节判定结果：只读一次，其余图层只消费 `winter` 布尔量 */
+  private season: SeasonState = { winter: false, snow: false, source: 'date' };
+  /** 室内陈设补完层：与季节无关，改动只落在渲染层 */
+  private interior?: InteriorArt;
+  /** 左右脚交替：同一条触地通路里按次数翻转，不用随机数 */
+  private footprintFoot = false;
   private shadowTextures: Texture[] = [];
   private fx?: GroundFx;
   /** 涉水涟漪：与尘土分开，生命周期与图层位置都不同 */
@@ -554,9 +568,16 @@ export class GameRenderer {
     if (this.destroyed) return;
     this.buildLayers();
     this.app.stage.addChild(this.world);
+    // 飘雪在 world 之上、柔光之下：雪被柔光染一层冷色，才和整张图在同一光环境里。
+    // `?snow=0` 只关这一层，覆雪地面与冬季道具保留
+    if (this.season.snow) {
+      this.snow = new SnowField(this.app.renderer);
+      this.snow.resize(this.app.screen.width, this.app.screen.height);
+      this.app.stage.addChild(this.snow.container);
+    }
     // 柔光层压在 world 之上、屏幕空间：整张地图画完才覆盖，不随相机缩放
     if (this.lightEnabled) {
-      this.light = new AmbientLight();
+      this.light = new AmbientLight(this.season.winter);
       this.app.stage.addChild(this.light.sprite);
     }
     this.world.scale.set(this.metrics.cssScale);
@@ -571,6 +592,9 @@ export class GameRenderer {
     // 灰度开关：?flat=1 退回矩形平铺，?light=0 关掉柔光层，用于线上快速定位观感回归
     const params = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
     this.lightEnabled = params?.get('light') !== '0';
+    // 季节只在这里判定一次（`?season=winter` / `?season=off` / `?snow=0`），
+    // 之后地形、柔光、飘雪、冬季道具都只消费 `winter` 布尔量（ADR-0046）
+    this.season = readSeason(typeof window === 'undefined' ? '' : window.location.search);
 
     // `?bands=0` 退回单容器：与 `?flat=1` / `?light=0` 同一套灰度惯例，
     // 回退走的也是 add/update/remove 这同一条接口，不是一段会腐烂的分支。
@@ -582,6 +606,7 @@ export class GameRenderer {
     this.terrain = new TerrainView(this.app.renderer, {
       flat: params?.get('flat') === '1',
       edge: params?.get('edge') !== '0',
+      winter: this.season.winter,
     });
     this.terrain.build(this.sortLayer);
 
@@ -594,6 +619,17 @@ export class GameRenderer {
     this.props = new PropsView();
     this.props.build(this.sortLayer, this.app.renderer);
     this.world.addChild(this.props.base);
+
+    // 室内陈设补完（宿舍 / 工作区 / 卫生间）：与季节无关，始终挂上。
+    // 墙上的窗、钟、镜与衣柜这类「贴墙家具」都没有碰撞——贴墙位置本来就在墙体里
+    this.interior = new InteriorArt();
+    this.interior.build(this.sortLayer, this.props.base, this.app.renderer);
+
+    // 冬季道具：雪人 / 雪堆进 y 排序层（会被树冠挡住），冰棱贴墙进地面层
+    if (this.season.winter) {
+      this.winterArt = new WinterArt();
+      this.winterArt.attach(this.sortLayer, this.props.base, this.app.renderer);
+    }
 
     // 氛围图集与小鱼层（ADR-0045）：鱼在水面之上、道具与角色之下，先于 y 排序层入场景。
     // 图集与地面小动物共用，只烘焙一次；`?fish=0` 只关鱼，`?critters=0` 两者都关。
@@ -676,7 +712,15 @@ export class GameRenderer {
       (x, y, wading) => {
         // 水里换涟漪，陆地照旧扬尘：同一条落脚通路，不另建计时器
         if (wading) this.waterFx?.spawn(x, y);
-        else this.fx?.spawn(x, y);
+        else {
+          this.fx?.spawn(x, y);
+          // 雪地脚印：只踩在覆雪地面（户外草地）上。土路、桥、沙岸、室内都是
+          // 不该留印子的地面——`isOutdoorGround` 就是贴花层用的那一份判定
+          if (this.season.winter && isOutdoorGround(x, y)) {
+            this.footprintFoot = !this.footprintFoot;
+            this.fx?.spawnFootprint(x, y, this.footprintFoot);
+          }
+        }
       },
     );
     
@@ -838,6 +882,9 @@ export class GameRenderer {
     this.fx?.update(dtMs);
     this.waterFx?.update(dtMs);
     this.terrain?.update(dtMs);
+    // 雪在屏幕空间，只累加坐标；灯串亮度由它自己 30s 采样一次
+    this.snow?.update(dtMs);
+    this.winterArt?.update(now);
     // 相机在 session 里先于本方法更新，这里拿到的边界与焦点属于同一帧
     this.critters?.update(dtMs, this.focusX, this.focusY, this.cameraBounds);
     this.fish?.update(dtMs, this.cameraBounds, this.focusX, this.focusY);
@@ -884,6 +931,8 @@ export class GameRenderer {
     // 柔光层跟着视口铺满，并在 30s 粒度上换一次时段色
     this.light?.resize(screen.width, screen.height);
     this.light?.update(performance.now());
+    // 雪按视口面积重排：缩放窗口时雪量跟着变，密度不会突然变稀或变密
+    this.snow?.resize(screen.width, screen.height);
     const { dpr, cssScale } = this.metrics;
     const halfW = screen.width / cssScale / 2;
     const halfH = screen.height / cssScale / 2;
@@ -1009,6 +1058,10 @@ export class GameRenderer {
     this.terrain?.destroy();
     this.props?.destroy();
     this.welcome?.destroy();
+    // 冬季与室内陈设的精灵先交给 app.destroy 统一回收，纹理在这里手动释放
+    this.winterArt?.destroy();
+    this.interior?.destroy();
+    this.snow?.destroy();
     // 先放两个 Field 的精灵，再放共享图集：反了会让还在引用纹理的 Sprite 悬空
     this.fish?.destroy();
     this.critters?.destroy();

@@ -90,6 +90,45 @@ export const TERRAIN_COLORS = {
 } as const;
 
 /**
+ * 冬季色板（ADR-0046）：只有在 `winter` 为真时才被取用，夏季配色一格不动。
+ *
+ * 纪律与夏季同一套：雪不是纯白（纯白会把画面拉成一张蒙版、也压不住暖色角色），
+ * 暗部不是灰色而是带蓝相的雪影；冰只做细边，不做整片盖水面——
+ * 一整片冰会让「水」读成「另一种地面」。
+ */
+export const WINTER_COLORS = {
+  /** 雪面主体：略偏米蓝的暖白，比 #fff 低一档明度才托得住角色 */
+  snowBase: 0xe9f0f7,
+  /** 受光面：只用于雪堆顶与树冠雪帽 */
+  snowLight: 0xf6fafd,
+  /** 堆与堆之间的接触暗部 */
+  snowShade: 0xd3dfec,
+  /** 雪缘齿尖与冰棱根部，不铺大面积 */
+  snowDeep: 0xb4c6d9,
+  /** 岸边薄冰 */
+  iceBase: 0xcbe6f0,
+  iceEdge: 0x8fb6c8,
+  iceDeep: 0x6f97ac,
+  /** 灯串暖光：夜间柔光下浮出来 */
+  bulbWarm: 0xffd08a,
+  bulbCore: 0xfff3d0,
+  /** 脚印：雪面的蓝灰，不是泥色，否则读成「地上有脏点」 */
+  footprint: 0xa9bccf,
+
+  /** 冬季水面：更冷更淡，波纹对比压低 */
+  waterDeep: 0x5b90a6,
+  waterMid: 0x6fa7bb,
+  waterCrest: 0x9cc9d6,
+  waterFoam: 0xc4e0e8,
+  waterEdge: 0x356c80,
+  /** 冬季海面：与湖面同族但再压一档，岸边才分得出「湖 / 海」 */
+  seaBase: 0x356c80,
+  seaMid: 0x447d94,
+  seaCrest: 0x5c96ab,
+  seaFoam: 0x7ab5c4,
+} as const;
+
+/**
  * 描边表：每一种材质的边界取本体色的深色混合态。
  * 全部是「色相不变、明度压到 40% 上下」，没有一个中性黑——
  * 纯黑描边会把 warm pastel 拉回廉价马赛克感。
