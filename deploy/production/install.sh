@@ -166,8 +166,22 @@ echo "   pnpm $(pnpm -v) | pm2 $(pm2 -v 2>/dev/null | tail -1) | bun $(bun --ver
 step "4. 内核参数与文件句柄"
 install -m 644 "$TPL_DIR/system/99-niuma-sysctl.conf" /etc/sysctl.d/99-niuma.conf
 install -m 644 "$TPL_DIR/system/limits-niuma.conf" /etc/security/limits.d/99-niuma.conf
+
+# /etc/sysctl.conf 在 sysctl --system 里永远是最后一个被读的文件，云厂商镜像常常在里面
+# 预置 somaxconn=4096 之类的值，会把 /etc/sysctl.d/ 里的配置整体盖掉（开机也一样）。
+# 凡是我们要管的键，在 /etc/sysctl.conf 里统一注释掉，配置只留一份真相。
+SYSCTL_CONF="$(readlink -f /etc/sysctl.conf)"
+if [ -f "$SYSCTL_CONF" ]; then
+  cp -a "$SYSCTL_CONF" "${SYSCTL_CONF}.niuma-backup" 2>/dev/null || true
+  for key in $(grep -oE '^[a-z][a-z0-9_.]*' "$TPL_DIR/system/99-niuma-sysctl.conf" | sort -u); do
+    sed -i "s#^[[:space:]]*${key}[[:space:]]*=#\# ${key} 统一由 /etc/sysctl.d/99-niuma.conf 配置#" "$SYSCTL_CONF"
+  done
+fi
+
 sysctl --system >/dev/null 2>&1 || warn "部分内核参数未能应用（容器环境常见），不影响运行"
-echo "   congestion=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?') qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '?') somaxconn=$(sysctl -n net.core.somaxconn 2>/dev/null || echo '?')"
+# --system 走完后我们的文件可能不是最后生效的，再显式应用一次兜底
+sysctl -q -p /etc/sysctl.d/99-niuma.conf 2>/dev/null || true
+echo "   congestion=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?') qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '?') somaxconn=$(sysctl -n net.core.somaxconn 2>/dev/null || echo '?') swappiness=$(sysctl -n vm.swappiness 2>/dev/null || echo '?')"
 
 # ==================== 5. 目录与运行时配置 ====================
 step "5. 目录与配置"
@@ -267,10 +281,14 @@ detect_public_ip() {
 PUBLIC_IP="$(detect_public_ip || true)"
 DOMAIN_IP="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')"
 
+NEED_CERT=0
 if [ "$SKIP_CERT" = "1" ]; then
   warn "SKIP_CERT=1：443 目前用的是自签占位证书"
 elif [ -f "$CERT_DIR/fullchain.pem" ] && [ ! -f "$CERT_DIR/.niuma-placeholder" ]; then
-  echo "   证书已存在，跳过签发"
+  # 真实证书已经在位。这里必须显式记住「不需要签发」：
+  # Let's Encrypt 同一组域名一周只允许 5 张重复证书，重跑安装绝不能无脑重签
+  echo "   证书已存在（到期 $(openssl x509 -enddate -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null | cut -d= -f2)），跳过签发"
+  NEED_CERT=0
 else
   if [ -n "$DOMAIN_IP" ] && [ -n "$PUBLIC_IP" ] && [ "$DOMAIN_IP" != "$PUBLIC_IP" ]; then
     warn "$DOMAIN 解析到 $DOMAIN_IP，本机公网是 $PUBLIC_IP —— 证书签不下来"
@@ -279,10 +297,12 @@ else
   elif [ -z "$DOMAIN_IP" ]; then
     warn "$DOMAIN 还没有解析记录，跳过证书签发"
     SKIP_CERT=1
+  else
+    NEED_CERT=1
   fi
 fi
 
-if [ "$SKIP_CERT" != "1" ]; then
+if [ "$NEED_CERT" = "1" ]; then
   [ -n "$CONTACT_EMAIL" ] || die "签发证书需要 CONTACT_EMAIL"
   rm -rf "/etc/letsencrypt/live/$DOMAIN" "/etc/letsencrypt/archive/$DOMAIN" "/etc/letsencrypt/renewal/$DOMAIN.conf"
   if certbot certonly --webroot -w "$ACME_ROOT" \
@@ -299,11 +319,13 @@ fi
 
 if [ -f "$CERT_DIR/fullchain.pem" ] && [ ! -f "$CERT_DIR/.niuma-placeholder" ]; then
   # 续期后自动 reload：certbot.timer 每次续期都会跑这个钩子
-  install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
-  printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
-  chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+  if [ ! -f /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh ]; then
+    install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
+    printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+    chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+    echo "   已安装续期钩子（reload nginx）"
+  fi
   systemctl enable --now certbot.timer >/dev/null 2>&1 || true
-  echo "   自动续期已就绪（certbot.timer + reload 钩子）"
 fi
 
 # ==================== 8. 免密 sudo ====================
