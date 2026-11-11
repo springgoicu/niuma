@@ -8,6 +8,7 @@ import {
   WORLD_LAYOUT,
   isOnBridge,
   isOnLand,
+  isWadingAt,
   isWaterAt,
   regionAt,
 } from '../world/layout';
@@ -46,10 +47,12 @@ describe('开放式办公区', () => {
 });
 
 describe('水体', () => {
-  it('湖面不可进入', () => {
+  it('湖面可以涉水进入', () => {
     expect(isWaterAt(5450, 5575)).toBe(true);
     const result = resolveMotion(5450, 5150, 5450, 5650);
-    expect(result.y).toBeLessThan(5300);
+    // 水不再是障碍：从北岸一路走进湖心，而不是停在水边
+    expect(result.y).toBeGreaterThan(5575);
+    expect(isWaterAt(result.x, result.y)).toBe(true);
   });
 
   it('主河木桥可以过河', () => {
@@ -69,12 +72,31 @@ describe('水体', () => {
     }
   });
 
-  it('桥面以外的河段挡人', () => {
-    // 主河在 y=3000 处的水面约 x 2609–2833，从东岸向西应该停在水边（2870 是岸上无树的空地）
-    const result = resolveMotion(2870, 3000, 2600, 3000);
-    expect(result.x).toBeGreaterThan(2835);
-    expect(result.x).toBeLessThan(2870);
-    expect(isWaterAt(result.x, 3000)).toBe(false);
+  it('桥面以外的河段也可以涉水', () => {
+    // 主河在 y=3000 处的水面约 x 2609–2833：从东岸向西走进河里，不再被无形墙挡住
+    const result = resolveMotion(2870, 3000, 2700, 3000);
+    expect(result.x).toBeLessThan(2760);
+    expect(isWaterAt(result.x, 3000)).toBe(true);
+  });
+
+  it('湖心与河心都算涉水', () => {
+    expect(isWadingAt(5450, 5575)).toBe(true);
+    expect(isWadingAt(2700, 3000)).toBe(true);
+  });
+
+  it('桥上与码头上不算涉水', () => {
+    for (const bridge of WORLD_LAYOUT.bridges) {
+      const midX = bridge.x + bridge.w / 2;
+      const midY = bridge.y + bridge.h / 2;
+      expect(isWaterAt(midX, midY)).toBe(true);
+      expect(isOnBridge(midX, midY)).toBe(true);
+      expect(isWadingAt(midX, midY)).toBe(false);
+    }
+    for (const dock of WORLD_LAYOUT.docks) {
+      const midX = dock.x + dock.w / 2;
+      const midY = dock.y + dock.h / 2;
+      expect(isWadingAt(midX, midY)).toBe(false);
+    }
   });
 
   it('码头伸进水面但可以站上去', () => {
@@ -84,6 +106,14 @@ describe('水体', () => {
     expect(isWaterAt(midX, midY)).toBe(true);
     expect(isOnBridge(midX, midY)).toBe(true);
     expect(isBlocked(midX, midY)).toBe(false);
+  });
+
+  it('海水仍是世界边界', () => {
+    expect(isOnLand(100, 100)).toBe(false);
+    expect(isBlocked(100, 100)).toBe(true);
+    // 从岛内往海里走，最终必须停在陆地上
+    const result = resolveMotion(300, 300, 100, 100);
+    expect(isOnLand(result.x, result.y)).toBe(true);
   });
 });
 
@@ -102,6 +132,8 @@ describe('出生点与坐标兜底', () => {
       // 花箱与咖啡座就摆在出生点四周，服务端也是先采样再就近挪到空地
       const spawn = findFreePoint(x, y);
       expect(isBlocked(spawn.x, spawn.y)).toBe(false);
+      // 水虽可涉，出生点仍要避开水面（findFreePoint 默认 avoidWater）
+      expect(isWaterAt(spawn.x, spawn.y)).toBe(false);
       expect(Math.hypot(spawn.x - x, spawn.y - y)).toBeLessThan(120);
     }
   });
@@ -274,6 +306,14 @@ describe('海岛边界', () => {
     const point = findFreePoint(100, 100);
     expect(isOnLand(point.x, point.y)).toBe(true);
     expect(isBlocked(point.x, point.y)).toBe(false);
+  });
+
+  it('就近挪位默认避水，显式允许时才接受水面', () => {
+    const safe = findFreePoint(5450, 5575);
+    expect(isWaterAt(safe.x, safe.y)).toBe(false);
+    // 移动求解的卡死恢复会传 avoidWater=false：水里可以站，不必兜底回广场
+    const allowed = findFreePoint(5450, 5575, 9, false);
+    expect(isWaterAt(allowed.x, allowed.y)).toBe(true);
   });
 
   it('海岸线包围盒覆盖全部内容', () => {

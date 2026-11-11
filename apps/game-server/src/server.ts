@@ -21,6 +21,7 @@ import {
   findFreePoint,
   isBlocked,
   isOnLand,
+  isWaterAt,
   quantizeCoord,
   readOpCode,
   WORLD_CENTER,
@@ -51,6 +52,9 @@ const MOVE_SCRATCH = { id: 0, x: 0, y: 0, state: 0 };
 /**
  * 出生点在广场内散布；落进花坛/水面时由 findFreePoint 就近挪到空地。
  * 压测会把半径放大到 3000，采样点可能落海：先拒绝采样重抽，避免整批人被兜底塞回广场。
+ *
+ * 水已可涉水（ADR-0030），但出生仍要避开水面：`isWaterAt` 与 `findFreePoint`
+ * 的 `avoidWater` 是两道保险，避免新玩家一进场就泡在湖心。
  */
 function spawnPoint(radius: number): { x: number; y: number } {
   for (let attempt = 0; attempt < 16; attempt += 1) {
@@ -58,8 +62,8 @@ function spawnPoint(radius: number): { x: number; y: number } {
     const distance = Math.sqrt(Math.random()) * radius;
     const x = WORLD_CENTER.x + Math.cos(angle) * distance;
     const y = WORLD_CENTER.y + Math.sin(angle) * distance;
-    // 连障碍一起拒：湖心/河心的点到岸边超过环搜索半径，会被兜底塞回广场
-    if (!isOnLand(x, y) || isBlocked(x, y)) continue;
+    // 连障碍与水面一起拒：出生点落在湖心/河心观感糟糕，也确实离广场太远
+    if (!isOnLand(x, y) || isBlocked(x, y) || isWaterAt(x, y)) continue;
     return findFreePoint(x, y);
   }
   return findFreePoint(WORLD_CENTER.x, WORLD_CENTER.y);

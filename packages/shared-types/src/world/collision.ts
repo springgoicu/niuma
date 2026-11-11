@@ -1,11 +1,12 @@
 /**
  * 地形碰撞：服务端权威结算与客户端本地预测跑的是同一份纯函数，因此双端坐标天然一致。
  *
- * 求解策略（见 ADR-0008 / ADR-0028）：
+ * 求解策略（见 ADR-0008 / ADR-0028 / ADR-0030）：
  * 1. 障碍按 128px 网格建索引，单次查询只遍历邻近桶；
  * 2. 4px 子步推进，薄隔断（6px 隔断 + 9px 玩家半径）不可能被一步跨过；
  * 3. 整段被挡时退化为单轴移动，贴着墙体与家具走会自然滑行而不是卡死；
- * 4. 桥面与码头是水域放行区，其余水面一律不可涉。
+ * 4. 湖面与河道全域可涉水（ADR-0030），水不再是障碍；海仍由 `isOnLand` 兜底，
+ *    桥面与码头的放行语义退化为普通通行面。
  *
  * 办公区已删除围栏（ADR-0028），软边界树篱不参与碰撞。
  */
@@ -19,7 +20,7 @@ import {
   type Point,
   type WorldRect,
 } from './geometry';
-import { ISLAND, PLANTER_RADIUS, TREE_TRUNK_RADIUS, WORLD_CENTER, WORLD_LAYOUT, isOnBridge, isOnLand } from './layout';
+import { ISLAND, PLANTER_RADIUS, TREE_TRUNK_RADIUS, WORLD_CENTER, WORLD_LAYOUT, isOnLand, isWaterAt } from './layout';
 
 /** 玩家碰撞半径：约等于身体宽度的一半（角色 48 texel 高、躯干 23 宽），墙体与树干的体感由此决定 */
 export const PLAYER_RADIUS = 9;
@@ -30,7 +31,7 @@ const GRID_SIZE = 128;
 const GRID_COUNT = Math.ceil(WORLD_WIDTH / GRID_SIZE);
 
 type Blocker =
-  | { readonly kind: 'circle'; readonly x: number; readonly y: number; readonly r: number; readonly water: boolean }
+  | { readonly kind: 'circle'; readonly x: number; readonly y: number; readonly r: number }
   | {
       readonly kind: 'segment';
       readonly x1: number;
@@ -38,23 +39,22 @@ type Blocker =
       readonly x2: number;
       readonly y2: number;
       readonly r: number;
-      readonly water: boolean;
     }
-  | { readonly kind: 'polygon'; readonly points: ReadonlyArray<Point>; readonly water: boolean };
+  | { readonly kind: 'polygon'; readonly points: ReadonlyArray<Point> };
 
 const blockers: Blocker[] = [];
 
 // ADR-0028：办公区删除围栏，树篱只做视觉分区（走 props 管线，不产生 blocker）
 for (const forest of WORLD_LAYOUT.forests) {
   for (const tree of forest.trees) {
-    blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS, water: false });
+    blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS });
   }
 }
 for (const tree of WORLD_LAYOUT.wildTrees) {
-  blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS, water: false });
+  blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS });
 }
 for (const planter of WORLD_LAYOUT.planters) {
-  blockers.push({ kind: 'circle', x: planter.x, y: planter.y, r: PLANTER_RADIUS, water: false });
+  blockers.push({ kind: 'circle', x: planter.x, y: planter.y, r: PLANTER_RADIUS });
 }
 for (const solid of WORLD_LAYOUT.solids) {
   const { x, y, w, h } = solid;
@@ -66,15 +66,9 @@ for (const solid of WORLD_LAYOUT.solids) {
       [x + w, y + h],
       [x, y + h],
     ],
-    water: false,
   });
 }
-for (const lake of WORLD_LAYOUT.lakes) {
-  blockers.push({ kind: 'polygon', points: lake.points, water: true });
-}
-for (const river of WORLD_LAYOUT.rivers) {
-  blockers.push({ kind: 'polygon', points: river.polygon, water: true });
-}
+// 湖与河不再注册为碰撞体：全岛水域可涉水（ADR-0030）。海仍由 isOnLand 兜底。
 
 const cells = new Map<number, number[]>();
 
@@ -159,14 +153,11 @@ function overlaps(blocker: Blocker, x: number, y: number, radius: number): boole
 /** 该点是否与地形相交；非有限坐标视为被挡，避免 NaN 污染权威状态 */
 export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return true;
-  // 海即边界：先判陆地，再查家具/树/水。顺序反了会让「站在海里但没碰到障碍」被放行
+  // 海即边界：先判陆地，再查家具与树。湖河可涉水，不再进障碍列表（ADR-0030）
   if (!isOnLand(x, y, radius)) return true;
-  const onBridge = isOnBridge(x, y);
   const list = gather(x, y, radius);
   for (const index of list) {
-    const blocker = blockers[index]!;
-    if (blocker.water && onBridge) continue;
-    if (overlaps(blocker, x, y, radius)) return true;
+    if (overlaps(blockers[index]!, x, y, radius)) return true;
   }
   return false;
 }
@@ -180,8 +171,26 @@ function insideWorld(x: number, y: number, radius: number): boolean {
   return isOnLand(x, y, radius);
 }
 
-/** 就近找一块空地：出生点兜底、卡进障碍时脱困 */
-export function findFreePoint(x: number, y: number, radius: number = PLAYER_RADIUS): { x: number; y: number } {
+/** 可作为落脚点的判定：陆地、无碰撞体，按需排除水面 */
+function freeAt(x: number, y: number, radius: number, avoidWater: boolean): boolean {
+  if (!insideWorld(x, y, radius)) return false;
+  if (isBlocked(x, y, radius)) return false;
+  if (avoidWater && isWaterAt(x, y)) return false;
+  return true;
+}
+
+/**
+ * 就近找一块空地：出生点兜底、卡进障碍时脱困。
+ *
+ * `avoidWater` 默认 true：水虽可涉，出生与就近挪位落进湖心观感仍然糟糕。
+ * 移动求解的卡死恢复会传 false——岸边狭小时宁可站在浅水里，也不要被兜底送回广场。
+ */
+export function findFreePoint(
+  x: number,
+  y: number,
+  radius: number = PLAYER_RADIUS,
+  avoidWater = true,
+): { x: number; y: number } {
   let startX = Number.isFinite(x) ? x : WORLD_CENTER.x;
   let startY = Number.isFinite(y) ? y : WORLD_CENTER.y;
   // 压测会把出生半径放大到 3000，采样点会落进海里：先夹回陆地包围盒再就近搜。
@@ -192,7 +201,7 @@ export function findFreePoint(x: number, y: number, radius: number = PLAYER_RADI
     startX = clamp(startX, bx + margin, bx + w - margin);
     startY = clamp(startY, by + margin, by + h - margin);
   }
-  if (insideWorld(startX, startY, radius) && !isBlocked(startX, startY, radius)) {
+  if (freeAt(startX, startY, radius, avoidWater)) {
     return { x: startX, y: startY };
   }
   for (let ring = 1; ring <= 16; ring += 1) {
@@ -202,8 +211,7 @@ export function findFreePoint(x: number, y: number, radius: number = PLAYER_RADI
       const angle = (i / samples) * Math.PI * 2;
       const px = startX + Math.cos(angle) * distance;
       const py = startY + Math.sin(angle) * distance;
-      if (!insideWorld(px, py, radius)) continue;
-      if (!isBlocked(px, py, radius)) return { x: px, y: py };
+      if (freeAt(px, py, radius, avoidWater)) return { x: px, y: py };
     }
   }
   return { x: WORLD_CENTER.x, y: WORLD_CENTER.y };
@@ -251,7 +259,8 @@ export function resolveMotionInto(
   let originX = fromX;
   let originY = fromY;
   if (!insideWorld(originX, originY, radius) || isBlocked(originX, originY, radius)) {
-    const free = findFreePoint(originX, originY, radius);
+    // 脱困不避水：水已可走，岸边狭小时宁可站进浅水，也不要把人送回广场
+    const free = findFreePoint(originX, originY, radius, false);
     originX = free.x;
     originY = free.y;
   }

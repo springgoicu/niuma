@@ -119,7 +119,7 @@ export interface WorldLayout {
   lakes: LakeShape[];
   rivers: RiverShape[];
   bridges: WorldRect[];
-  /** 码头木栈道：一端接岸、一端伸进水面，与 bridges 共用 isOnBridge 放行 */
+  /** 码头木栈道：一端接岸、一端伸进水面，与 bridges 共用 isOnBridge（不计涉水） */
   docks: WorldRect[];
   forests: ForestPatch[];
   /** 散布全岛的孤树：与森林里的树一样参与碰撞，但不属于任何林地 */
@@ -336,8 +336,9 @@ const BRIDGES: WorldRect[] = [
 ];
 
 /**
- * 码头木栈道：一端踩在岸上、一端伸进水面，与桥共用 `isOnBridge` 放行。
- * 单独建模而不是塞进 bridges——桥要求两端都在陆地，码头只有一端在陆地。
+ * 码头木栈道：一端踩在岸上、一端伸进水面，与桥共用 `isOnBridge`。
+ * 水已可涉水（ADR-0030），`isOnBridge` 现在用于「不算涉水」的表现判定，
+ * 而不是碰撞放行；码头仍单独建模——桥要求两端都在陆地，码头只有一端在陆地。
  */
 const DOCKS: WorldRect[] = [
   // 摸鱼湖北岸：从岸上往南伸进湖里
@@ -673,9 +674,41 @@ export function distanceSqToWater(x: number, y: number): number {
   return best;
 }
 
-/** 是否踩在水面上（湖面或河面）。桥面与码头由 isOnBridge 单独放行 */
+/**
+ * 是否踩在水面上（湖面或河面）。
+ *
+ * 水面只描述「这里是不是水」，不再表示「能不能走」：湖与河全域可涉水（ADR-0030），
+ * 桥面与码头由 `isOnBridge` 单独标识为正常通行面。
+ * 先用包围盒粗筛再判多边形：渲染端每帧要对每个可见实体调用一次，河有 48 个顶点。
+ */
 export function isWaterAt(x: number, y: number): boolean {
-  return distanceSqToWater(x, y) === 0;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  for (const lake of LAKES) {
+    if (!rectContains(lake.rect, x, y)) continue;
+    if (pointInPolygon(x, y, lake.points)) return true;
+    // 中心线端点可能正好落在多边形边界上：pointInPolygon 对边界点不保证为真，
+    // 这里用「到边界的距离为 0」补齐，保持与 distanceSqToWater === 0 的旧语义一致。
+    if (distanceSqToPolygon(x, y, lake.points) === 0) return true;
+  }
+  for (const river of RIVERS) {
+    if (!rectContains(river.rect, x, y)) continue;
+    if (pointInPolygon(x, y, river.polygon)) return true;
+    if (distanceSqToPolygon(x, y, river.polygon) === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * 是否正在涉水：站在水面上、且脚下不是桥面或码头。
+ *
+ * 桥面中心同样满足 `isWaterAt`（水面在桥下），所以必须先排除 `isOnBridge`，
+ * 否则桥上行走会错误地出现半身入水与涟漪。海不在此判定内：海是 `isOnLand` 的边界，
+ * 玩家无法到达，也就不会触发涉水表现。
+ */
+export function isWadingAt(x: number, y: number): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  if (isOnBridge(x, y)) return false;
+  return isWaterAt(x, y);
 }
 
 const REGIONS: RegionSpec[] = [
@@ -908,7 +941,10 @@ export function regionAt(x: number, y: number): string {
   return FALLBACK_REGION;
 }
 
-/** 桥面与码头：水域在这里放行 */
+/**
+ * 桥面与码头：水面上的正常通行面。
+ * 水已全域可涉水（ADR-0030），这里不再承担碰撞放行，只用于把涉水表现排除在外。
+ */
 export function isOnBridge(x: number, y: number): boolean {
   for (const bridge of BRIDGES) {
     if (rectContains(bridge, x, y)) return true;

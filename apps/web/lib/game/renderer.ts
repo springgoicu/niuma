@@ -9,7 +9,7 @@ import {
   Text,
   type Texture,
 } from 'pixi.js';
-import { ISLAND, seatById, type CharacterAppearance } from '@niuma/shared-types';
+import { ISLAND, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
 import { cameraFocus } from './camera';
@@ -22,6 +22,7 @@ import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetri
 import { SortLayer } from './sort-layer';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
+import { WaterFx, makeWadingTexture } from './water-fx';
 
 /**
  * 世界倍率：1 纹素画 1.5 个 CSS 像素，角色站立 48 纹素 ≈ 72 CSS 像素（DPR 2）。
@@ -84,6 +85,12 @@ class EntityView {
   private readonly bubbleBg = new Graphics();
   private readonly shadows: Texture[];
   private shadowIndex = SHADOW_NORMAL;
+  /** 涉水水线覆盖层：固定在脚底，不跟随 body 的呼吸起伏与跳跃抬升 */
+  private readonly wading: Sprite;
+  private wadingShown = false;
+  /** 上一次判定的吸附坐标：站立不动时不必每帧重查水域多边形 */
+  private lastWadingX = Number.NaN;
+  private lastWadingY = Number.NaN;
   /** 跳跃弧线的抬升纹素（0 或负值）：本体与昵称同步抬高，阴影留在地面 */
   private jumpLift = 0;
   bubbleUntil = 0;
@@ -110,7 +117,8 @@ class EntityView {
     appearance: CharacterAppearance,
     devicePxPerTexel: number,
     shadows: Texture[],
-    private readonly onFootfall: (x: number, y: number) => void,
+    wadingTexture: Texture,
+    private readonly onFootfall: (x: number, y: number, wading: boolean) => void,
   ) {
     // 接触阴影先入容器：它永远压在所有角色图层之下。
     // 阴影是 root 的直接子节点，角色本体的起伏只作用在 body.container 上，
@@ -118,6 +126,12 @@ class EntityView {
     this.shadows = shadows;
     const shadowSprite = new Sprite(shadows[SHADOW_NORMAL]!);
     shadowSprite.anchor.set(0.5, 0.5);
+
+    // 水线覆盖层锚在脚底，底边略低于脚底 1px，盖住接触阴影的上沿
+    this.wading = new Sprite(wadingTexture);
+    this.wading.anchor.set(0.5, 1);
+    this.wading.position.set(0, 1);
+    this.wading.visible = false;
 
     this.body = new PonyRenderer(atlas, appearance, 1);
     // 昵称底边贴着头顶外侧：头顶高度来自图集锚点，帽檐与犄角再由外观分档让位
@@ -149,7 +163,8 @@ class EntityView {
 
   async init(): Promise<void> {
     await this.body.build();
-    this.root.addChild(this.shadow, this.body.container);
+    // 水线覆盖层压在 body 之上：腿在水下，上半身仍是干的
+    this.root.addChild(this.shadow, this.body.container, this.wading);
     this.labels.addChild(this.label, this.bubble);
   }
 
@@ -185,9 +200,29 @@ class EntityView {
   setPose(direction: number, column: number, dustFrames: Set<number>): void {
     this.body.setPose(direction, column);
     if (column !== this.lastColumn && dustFrames.has(column)) {
-      this.onFootfall(this.root.position.x, this.root.position.y);
+      // 水里不扬尘：由调用方改放涟漪
+      this.onFootfall(this.root.position.x, this.root.position.y, this.wadingShown);
     }
     this.lastColumn = column;
+  }
+
+  /**
+   * 按脚底坐标判定涉水。返回 true 表示「这一帧刚踏进水里」，调用方据此放一次大水花。
+   *
+   * 坐标没变就复用上次结果：站立角色不做任何几何查询，
+   * 200 人同屏时只有移动中的实体才会重新判水。
+   */
+  setWadingAt(x: number, y: number): boolean {
+    if (x === this.lastWadingX && y === this.lastWadingY) return false;
+    this.lastWadingX = x;
+    this.lastWadingY = y;
+    const wading = isWadingAt(x, y);
+    if (wading === this.wadingShown) return false;
+    this.wadingShown = wading;
+    this.wading.visible = wading;
+    // 水里不该有贴地硬阴影：压到 0.35，保留一点接触感
+    this.shadow.alpha = wading ? 0.35 : 1;
+    return wading;
   }
 
   /** 微动效：整数纹素起伏 + 阴影形态切换（换 texture，不做浮点缩放） */
@@ -316,6 +351,10 @@ export class GameRenderer {
   private light?: AmbientLight;
   private shadowTextures: Texture[] = [];
   private fx?: GroundFx;
+  /** 涉水涟漪：与尘土分开，生命周期与图层位置都不同 */
+  private waterFx?: WaterFx;
+  /** 水线覆盖纹理：所有角色共用一张，不按人复制 */
+  private wadingTexture?: Texture;
   private dustFrames = new Set<number>();
   /** 树冠遮挡的输入缓冲：脚底坐标 (x, y) 成对写入，容量 512 人 */
   private readonly occluders = new Float32Array(1024);
@@ -411,6 +450,11 @@ export class GameRenderer {
     this.fx = new GroundFx(this.app.renderer);
     this.world.addChild(this.fx.container);
 
+    // 涟漪在水面之上、角色之下：先于 y 排序层入场景
+    this.wadingTexture = makeWadingTexture(this.app.renderer);
+    this.waterFx = new WaterFx(this.app.renderer);
+    this.world.addChild(this.waterFx.container);
+
     this.world.addChild(this.sortLayer.container);
     this.world.addChild(this.labels);
 
@@ -442,7 +486,12 @@ export class GameRenderer {
       appearance,
       this.metrics.devicePxPerTexel,
       this.shadowTextures,
-      (x, y) => this.fx?.spawn(x, y),
+      this.wadingTexture!,
+      (x, y, wading) => {
+        // 水里换涟漪，陆地照旧扬尘：同一条落脚通路，不另建计时器
+        if (wading) this.waterFx?.spawn(x, y);
+        else this.fx?.spawn(x, y);
+      },
     );
     
     try {
@@ -473,7 +522,11 @@ export class GameRenderer {
     // 所有检查通过，正式加入渲染系统
     this.views.set(id, view);
     // 先把位置摆好再挂进 band：否则首帧会停在 (0,0)，在地图左上角闪一下
-    view.setPosition(snapTexel(x), snapTexel(y));
+    const sx = snapTexel(x);
+    const sy = snapTexel(y);
+    view.setPosition(sx, sy);
+    // 入场首帧就判一次水：远端角色一出生就在河里时不会先干着站一帧
+    view.setWadingAt(sx, sy);
     this.sortLayer.add(y, view.root);
     this.labels.addChild(view.labels);
     this.pendingInit.delete(id);
@@ -522,6 +575,8 @@ export class GameRenderer {
     const sx = snapTexel(x);
     const sy = snapTexel(y);
     view.setPosition(sx, sy);
+    // 刚踏进水里的那一帧放一次大水花；之后水中落脚由 setPose 的小涟漪接管
+    if (view.setWadingAt(sx, sy)) this.waterFx?.spawn(sx, sy, true);
     // 脚底 y 即深度：站在树后会被树冠挡住，站到树前就压回去
     this.sortLayer.update(view.root, sy);
   }
@@ -582,6 +637,7 @@ export class GameRenderer {
     for (let i = 0; i < count; i += 1) active[i]!.tickBubble(now);
 
     this.fx?.update(dtMs);
+    this.waterFx?.update(dtMs);
     this.terrain?.update(dtMs);
     this.syncOccluders();
   }
@@ -712,6 +768,8 @@ export class GameRenderer {
     this.views.clear();
     for (const texture of this.shadowTextures) texture.destroy(true);
     this.fx?.destroy();
+    this.waterFx?.destroy();
+    this.wadingTexture?.destroy(true);
     this.terrain?.destroy();
     this.props?.destroy();
     this.app.destroy(true, { children: true });
