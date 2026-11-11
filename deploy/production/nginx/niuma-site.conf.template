@@ -99,6 +99,9 @@ server {
 
     # ---- 探活：唯一放开 CORS 的接口，选园页靠它拿在线人数与延迟 ----
     location = /health {
+        # 游戏服自己也会带一份 CORS 头，两边都发会出现两条 Access-Control-Allow-Origin，
+        # 浏览器会直接判为非法；这里统一由 nginx 发，把上游那条藏掉
+        proxy_hide_header Access-Control-Allow-Origin;
         add_header Access-Control-Allow-Origin "*" always;
         add_header Cache-Control "no-store" always;
         proxy_pass http://niuma_game;
