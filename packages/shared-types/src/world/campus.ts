@@ -40,10 +40,29 @@ export function seatPose(kind: SeatKind): Pose {
   return kind === 'bed' ? POSE.Lie : POSE.Sit;
 }
 
-/** 工位桌（中心点）。桌面本身是碰撞体，见 SolidRect */
+/**
+ * 工位桌（中心点）。桌面本身是碰撞体，见 SolidRect。
+ * `facing` 是屏幕朝向，也是入座者的面朝方向：椅子永远在屏幕背面一侧，
+ * 渲染端按它选四向贴图（ADR-0027）。
+ */
 export interface DeskInstance {
   x: number;
   y: number;
+  facing: Direction;
+}
+
+/** 朝向 → 单位向量（屏幕坐标：+x 向右、+y 向下） */
+const FACING_VECTOR: Record<Direction, { x: number; y: number }> = {
+  [DIRECTION.Down]: { x: 0, y: 1 },
+  [DIRECTION.Left]: { x: -1, y: 0 },
+  [DIRECTION.Right]: { x: 1, y: 0 },
+  [DIRECTION.Up]: { x: 0, y: -1 },
+};
+
+/** 一张工位：桌子带屏幕朝向，椅子由朝向反推 */
+export interface Workstation {
+  desk: DeskInstance;
+  seat: Omit<SeatInstance, 'id' | 'desk' | 'kind'>;
 }
 
 export type PropKind =
@@ -124,6 +143,26 @@ const WORKROOM_DOOR: DoorSpec = { side: 'west', from: 5150, to: 5210 };
 export const DESK_W = 88;
 export const DESK_H = 40;
 export const CHAIR_GAP = 20;
+
+/** 椅子离桌心的距离：屏幕朝南北时让开桌高的一半，朝东西时让开桌宽的一半 */
+export function chairOffset(facing: Direction): number {
+  return FACING_VECTOR[facing].x !== 0 ? DESK_W / 2 + CHAIR_GAP : DESK_H / 2 + CHAIR_GAP;
+}
+
+/**
+ * 工位工厂：桌子 + 屏幕朝向，椅子锚点由朝向反推。
+ *
+ * 「椅子永远在屏幕背面一侧」因此是构造性质，而不是靠布局手写字面量维持——
+ * 朝向与椅位两处各写一份，改一次桌子尺寸就会漂一次。
+ */
+export function workstation(x: number, y: number, facing: Direction): Workstation {
+  const dir = FACING_VECTOR[facing];
+  const gap = chairOffset(facing);
+  return {
+    desk: { x, y, facing },
+    seat: { x: x - dir.x * gap, y: y - dir.y * gap, facing },
+  };
+}
 
 /** 门两侧的碰撞段：门洞落在墙的哪一段就断开哪一段 */
 function splitSpan(start: number, end: number, from: number, to: number): Array<[number, number]> {
@@ -210,24 +249,23 @@ const TOILET_SEATS = STALL_CENTERS.map((cx) => ({ x: cx, y: STALL_SEAT_Y, facing
 const WORK_DESK_XS = [4370, 4600] as const;
 const WORK_DESK_YS = [5060, 5150, 5240] as const;
 
-export const WORKSTATIONS: ReadonlyArray<{
-  desk: DeskInstance;
-  seat: { x: number; y: number; facing: Direction };
-}> = WORK_DESK_YS.flatMap((y) =>
-  WORK_DESK_XS.map((x) => ({
-    desk: { x, y },
-    seat: { x, y: y + DESK_H / 2 + CHAIR_GAP, facing: DIRECTION.Up as Direction },
-  })),
+export const WORKSTATIONS: ReadonlyArray<Workstation> = WORK_DESK_YS.flatMap((y) =>
+  WORK_DESK_XS.map((x) => workstation(x, y, DIRECTION.Up)),
 );
 
-/** 休息室的六个座位：三张床（只能躺）、一张沙发与两张凳子（只能坐） */
+/**
+ * 休息室的六个座位：三张床（只能躺）、一张沙发与两张凳子（只能坐）。
+ *
+ * 朝向都必须对得上家具：床位朝右躺，头落在 `drawBed` 右端的枕头上；
+ * 沙发朝南（`drawSofa` 靠背在北）；两张凳子朝南，正对南侧的 `sideTable` 茶几。
+ */
 export const LOUNGE_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
   { x: 3580, y: 5090, facing: DIRECTION.Right, kind: 'bed' },
   { x: 3580, y: 5170, facing: DIRECTION.Right, kind: 'bed' },
   { x: 3580, y: 5250, facing: DIRECTION.Right, kind: 'bed' },
   { x: 3810, y: 5090, facing: DIRECTION.Down, kind: 'sofa' },
-  { x: 3720, y: 5230, facing: DIRECTION.Up, kind: 'stool' },
-  { x: 3810, y: 5230, facing: DIRECTION.Up, kind: 'stool' },
+  { x: 3720, y: 5230, facing: DIRECTION.Down, kind: 'stool' },
+  { x: 3810, y: 5230, facing: DIRECTION.Down, kind: 'stool' },
 ];
 
 /** 园区装饰：灯、长椅、垃圾桶、标识、饮水/售货、单车棚 */

@@ -39,15 +39,17 @@ import {
   WORKSTATIONS,
   WORKROOM,
   WORK_PROPS,
+  workstation,
   type BuildingSpec,
   type DeskInstance,
   type PropInstance,
   type SeatInstance,
   type SolidRect,
+  type Workstation,
 } from './campus';
 
-export { CHAIR_GAP, DESK_H, DESK_W, isSelfSolidProp, seatPose } from './campus';
-export type { BuildingSpec, DeskInstance, PropInstance, SeatInstance, SolidRect, SeatKind, PropKind, SolidKind } from './campus';
+export { CHAIR_GAP, DESK_H, DESK_W, chairOffset, isSelfSolidProp, seatPose, workstation } from './campus';
+export type { BuildingSpec, DeskInstance, PropInstance, SeatInstance, SolidRect, SeatKind, PropKind, SolidKind, Workstation } from './campus';
 
 export interface LakeShape {
   points: Point[];
@@ -381,35 +383,20 @@ function rangesOverlap(a0: number, a1: number, b0: number, b1: number): boolean 
   return a1 > b0 && a0 < b1;
 }
 
-function officeWorkstations(): Array<{ desk: DeskInstance; seat: Omit<SeatInstance, 'id' | 'desk' | 'kind'> }> {
-  const out: Array<{ desk: DeskInstance; seat: Omit<SeatInstance, 'id' | 'desk' | 'kind'> }> = [];
+function officeWorkstations(): Workstation[] {
+  const out: Workstation[] = [];
   const runX: number[] = [];
   for (let cx = 3420; cx <= 4740; cx += DESK_ROW_PITCH) {
     if (rangesOverlap(cx - DESK_W / 2, cx + DESK_W / 2, GATE_LANE_X[0], GATE_LANE_X[1])) continue;
     runX.push(cx);
   }
-  for (const cx of runX) {
-    out.push({
-      desk: { x: cx, y: DESK_NORTH_Y },
-      seat: { x: cx, y: DESK_NORTH_Y + DESK_H / 2 + CHAIR_GAP, facing: DIRECTION.Up },
-    });
-  }
-  for (const cx of runX) {
-    out.push({
-      desk: { x: cx, y: DESK_SOUTH_Y },
-      seat: { x: cx, y: DESK_SOUTH_Y - DESK_H / 2 - CHAIR_GAP, facing: DIRECTION.Down },
-    });
-  }
+  // 椅子由朝向反推：屏幕朝北 → 椅子在桌南；屏幕朝南 → 椅子在桌北；东西两列同理
+  for (const cx of runX) out.push(workstation(cx, DESK_NORTH_Y, DIRECTION.Up));
+  for (const cx of runX) out.push(workstation(cx, DESK_SOUTH_Y, DIRECTION.Down));
   for (let cy = DESK_COLUMN_START; cy <= 4640; cy += DESK_COLUMN_PITCH) {
     if (rangesOverlap(cy - DESK_H / 2, cy + DESK_H / 2, GATE_LANE_Y[0], GATE_LANE_Y[1])) continue;
-    out.push({
-      desk: { x: DESK_WEST_X, y: cy },
-      seat: { x: DESK_WEST_X + DESK_W / 2 + CHAIR_GAP, y: cy, facing: DIRECTION.Left },
-    });
-    out.push({
-      desk: { x: DESK_EAST_X, y: cy },
-      seat: { x: DESK_EAST_X - DESK_W / 2 - CHAIR_GAP, y: cy, facing: DIRECTION.Right },
-    });
+    out.push(workstation(DESK_WEST_X, cy, DIRECTION.Left));
+    out.push(workstation(DESK_EAST_X, cy, DIRECTION.Right));
   }
   return out;
 }

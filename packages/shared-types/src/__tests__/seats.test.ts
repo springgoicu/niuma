@@ -5,6 +5,7 @@ import {
   POSE,
   SIT_RANGE,
   WORLD_LAYOUT,
+  chairOffset,
   decodeSeatState,
   encodeSeatState,
   findNearestSeat,
@@ -15,6 +16,7 @@ import {
   resolveMotion,
   seatById,
   seatPose,
+  type Direction,
   type SolidRect,
 } from '../index';
 
@@ -89,6 +91,63 @@ describe('座位布局', () => {
     expect(resolveMotion(3960, 5180, 3900, 5180).x).toBeLessThan(3920);
     // 工作区西墙 x 4240–4250 开门，从主路一侧向东进屋
     expect(resolveMotion(4220, 5180, 4280, 5180).x).toBeGreaterThan(4250);
+  });
+});
+
+/**
+ * 座位朝向是「人正对家具」的唯一真相：
+ * 工位椅对着显示器、床位头朝枕头、凳子对着茶几，渲染端只按这份数据选帧。
+ */
+describe('座位朝向与家具一致', () => {
+  const chairs = seats.filter((seat) => seat.kind === 'chair' && seat.desk >= 0);
+  const FACING_VECTOR: Record<Direction, { x: number; y: number }> = {
+    [DIRECTION.Down]: { x: 0, y: 1 },
+    [DIRECTION.Left]: { x: -1, y: 0 },
+    [DIRECTION.Right]: { x: 1, y: 0 },
+    [DIRECTION.Up]: { x: 0, y: -1 },
+  };
+
+  it('工位桌带屏幕朝向，且与椅子的入座朝向一致', () => {
+    for (const seat of chairs) {
+      const desk = desks[seat.desk]!;
+      expect(desk.facing).toBe(seat.facing);
+    }
+  });
+
+  it('椅子永远在屏幕背面一侧，偏移量由桌尺寸与 CHAIR_GAP 决定', () => {
+    for (const seat of chairs) {
+      const desk = desks[seat.desk]!;
+      const dir = FACING_VECTOR[seat.facing];
+      const gap = chairOffset(seat.facing);
+      expect(seat.x).toBe(desk.x - dir.x * gap);
+      expect(seat.y).toBe(desk.y - dir.y * gap);
+    }
+  });
+
+  it('四排工位覆盖四个朝向：渲染端四张贴图都有真实座位在用', () => {
+    const facings = new Set(chairs.map((seat) => seat.facing));
+    for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
+      expect(facings.has(facing)).toBe(true);
+    }
+  });
+
+  it('床位朝向统一为水平方向：头始终落在枕头那一侧', () => {
+    const beds = seats.filter((seat) => seat.kind === 'bed');
+    expect(beds.length).toBeGreaterThan(0);
+    // 床品画法是横向的（drawBed 的枕头在右端），所有床必须同一朝向，
+    // 否则会出现「头在被子中间」的躺姿
+    expect(new Set(beds.map((bed) => bed.facing)).size).toBe(1);
+    expect([DIRECTION.Left, DIRECTION.Right]).toContain(beds[0]!.facing as Direction);
+  });
+
+  it('休息室的凳子面朝南侧茶几，而不是朝向随机', () => {
+    const stools = seats.filter((seat) => seat.kind === 'stool');
+    expect(stools.length).toBeGreaterThanOrEqual(2);
+    const tables = props.filter((prop) => prop.kind === 'sideTable');
+    for (const stool of stools) {
+      expect(stool.facing).toBe(DIRECTION.Down);
+      expect(tables.some((table) => table.y > stool.y && Math.abs(table.x - stool.x) <= SIT_RANGE)).toBe(true);
+    }
   });
 });
 

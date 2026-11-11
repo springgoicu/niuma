@@ -4,8 +4,10 @@ import { Container, Graphics, Rectangle, Sprite, Texture, type Application } fro
 import {
   DESK_H,
   DESK_W,
+  DIRECTION,
   WORLD_LAYOUT,
   type BuildingSpec,
+  type Direction,
   type PropInstance,
   type PropKind,
   type SeatInstance,
@@ -13,6 +15,7 @@ import {
   type SolidRect,
   type WorldRect,
 } from '@niuma/shared-types';
+import { DESK_ART_SIZE, deskArtFor, type DeskArt } from './desk-art';
 import { bake } from './terrain-textures';
 import type { DepthSink } from './sort-layer';
 
@@ -120,7 +123,6 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   sideTable: { w: 20, h: 18 },
 };
 
-const DESK_SPRITE = { w: 96, h: 66 };
 const CHAIR_SPRITE = { w: 26, h: 30 };
 const TOILET_SPRITE = { w: 22, h: 28 };
 const STOOL_SPRITE = { w: 18, h: 22 };
@@ -286,23 +288,76 @@ function drawProp(kind: PropKind, g: Graphics): void {
   }
 }
 
-/** 工位：显示器（带屏幕小代码 / 亮屏发光）+ 桌面（桌角有马克杯、绿植、便签） */
-function drawDesk(g: Graphics, lit: boolean): void {
-  const { w, h } = DESK_SPRITE;
-  shadow(g, w / 2, h - 2, 42, 3);
-  // 显示器支架与屏幕
-  rect(g, 45, 22, 6, 7, COLOR.bezel);
-  box(g, 32, 2, 32, 22, COLOR.bezel);
-  box(g, 34, 4, 28, 16, lit ? COLOR.screenLit : COLOR.screenIdle, COLOR.bezel);
+/**
+ * 显示器：正面 / 背面 / 侧视三种画法（ADR-0027）。
+ *
+ * 桌子只有一块桌面，屏幕必须朝坐的人；`art` 给出显示器落在哪条边、
+ * 镜头看到的是屏幕、背壳还是侧面。点亮状态三种视角都要一眼读出来：
+ * 正面亮屏、背面沿外框漏光、侧视在屏幕那一侧留一条亮边与一片反光。
+ */
+function drawMonitor(g: Graphics, lit: boolean, art: DeskArt): void {
+  const m = art.monitor;
+  const standX = Math.round(m.x + m.w / 2 - 3);
+  const side = art.screen === 'west' || art.screen === 'east';
+
+  // 泛光按帧内裁剪：朝北的显示器贴在帧顶，外扩 4px 会越过画布上沿
   if (lit) {
-    g.rect(26, 0, 44, 26).fill({ color: COLOR.screenLit, alpha: 0.16 });
-    rect(g, 37, 8, 12, 1, COLOR.ceramic);
-    rect(g, 37, 12, 18, 1, COLOR.ceramic);
-    rect(g, 37, 16, 8, 1, COLOR.ceramic);
-  } else {
-    rect(g, 37, 8, 14, 1, COLOR.screenInk);
-    rect(g, 37, 12, 9, 1, COLOR.screenInk);
+    const glowY = Math.max(0, m.y - 4);
+    g.rect(m.x - 4, glowY, m.w + 8, m.h + 8 - (glowY - (m.y - 4))).fill({ color: COLOR.screenLit, alpha: 0.12 });
   }
+  // 支架：机身下沿压 2px，底座落在桌面上 / 桌面前沿
+  rect(g, standX, m.y + m.h - 2, 6, 7, COLOR.bezel);
+
+  if (side) {
+    // 侧视：竖窄机身 + 屏幕一侧的亮边；屏幕朝东就亮右边，朝西就亮左边
+    const screenX = art.screen === 'east' ? m.x + m.w - 3 : m.x + 1;
+    box(g, m.x, m.y, m.w, m.h, COLOR.bezel);
+    rect(g, m.x + 3, m.y + 2, m.w - 6, m.h - 4, COLOR.chairBase);
+    rect(g, screenX, m.y + 3, 2, m.h - 6, lit ? COLOR.screenLit : COLOR.screenInk);
+    if (lit) {
+      // 光从屏幕那一侧洒在桌面上：侧视只有这一片反光读得出「亮着」
+      const spillX = art.screen === 'east' ? m.x + m.w + 4 : m.x - 4;
+      g.ellipse(spillX, m.y + m.h / 2, 5, m.h * 0.42).fill({ color: COLOR.screenLit, alpha: 0.24 });
+    }
+    return;
+  }
+
+  box(g, m.x, m.y, m.w, m.h, COLOR.bezel);
+  if (art.screen === 'front') {
+    // 正面：屏幕 + 代码行；灯亮时行变白，未点亮时是深色墨线
+    box(g, m.x + 2, m.y + 2, m.w - 4, m.h - 6, lit ? COLOR.screenLit : COLOR.screenIdle, COLOR.bezel);
+    if (lit) {
+      rect(g, m.x + 5, m.y + 6, 12, 1, COLOR.ceramic);
+      rect(g, m.x + 5, m.y + 10, 18, 1, COLOR.ceramic);
+      rect(g, m.x + 5, m.y + 14, 8, 1, COLOR.ceramic);
+      g.ellipse(m.x + m.w / 2, m.y + m.h + 4, m.w * 0.55, 5).fill({ color: COLOR.screenLit, alpha: 0.2 });
+    } else {
+      rect(g, m.x + 5, m.y + 6, 14, 1, COLOR.screenInk);
+      rect(g, m.x + 5, m.y + 10, 9, 1, COLOR.screenInk);
+    }
+    return;
+  }
+
+  // 背面：素色背壳 + 两道散热缝；屏幕朝人（北），光只从外框与桌面反光里漏出来
+  box(g, m.x + 3, m.y + 3, m.w - 6, m.h - 6, COLOR.chairBase, COLOR.bezel);
+  rect(g, m.x + 6, m.y + 8, m.w - 12, 1, COLOR.bezel);
+  rect(g, m.x + 6, m.y + 12, m.w - 12, 1, COLOR.bezel);
+  if (lit) {
+    // 屏幕朝人（北），镜头这一侧只能看到光沿外框漏出来的一圈
+    rect(g, m.x + 1, m.y + 1, m.w - 2, 1, COLOR.screenLit);
+    rect(g, m.x + 1, m.y + m.h - 2, m.w - 2, 1, COLOR.screenLit);
+  }
+}
+
+/**
+ * 工位：显示器（带屏幕小代码 / 亮屏发光）+ 桌面（桌角有马克杯、绿植、便签）。
+ *
+ * 桌面本体与工位位置四面一致，只有显示器按 `DeskInstance.facing` 换边换角度；
+ * 绘制顺序是「桌面 → 显示器 → 陈设」，显示器才站得住桌面而不是被桌面盖住。
+ */
+function drawDesk(g: Graphics, lit: boolean, art: DeskArt): void {
+  const { w, h } = DESK_ART_SIZE;
+  shadow(g, w / 2, h - 2, 42, 3);
   // 桌面与前挡板：顶面浅、前面深，带圆角与抽屉拉手
   box(g, 4, 28, 88, 24, COLOR.deskTop);
   rect(g, 6, 29, 84, 2, COLOR.deskTopLight);
@@ -310,13 +365,15 @@ function drawDesk(g: Graphics, lit: boolean): void {
   rect(g, 40, 56, 16, 2, COLOR.deskLeg);
   box(g, 6, 60, 5, 6, COLOR.deskLeg);
   box(g, 85, 60, 5, 6, COLOR.deskLeg);
-  // 桌角生活细节
-  box(g, 70, 19, 9, 9, COLOR.mint);
-  rect(g, 71, 21, 7, 2, COLOR.ceramic);
-  g.roundRect(78, 22, 3, 4, 1).stroke({ width: 1, color: COLOR.outline });
-  box(g, 53, 33, 9, 7, COLOR.butter);
-  rect(g, 55, 35, 5, 1, COLOR.peachDark);
-  drawPlantPot(g, 14, 28, 1);
+  drawMonitor(g, lit, art);
+  // 桌角生活细节：左右朝向时让开显示器
+  const { plantCx, mugX, noteX } = art.details;
+  box(g, mugX, 19, 9, 9, COLOR.mint);
+  rect(g, mugX + 1, 21, 7, 2, COLOR.ceramic);
+  g.roundRect(mugX + 8, 22, 3, 4, 1).stroke({ width: 1, color: COLOR.outline });
+  box(g, noteX, 33, 9, 7, COLOR.butter);
+  rect(g, noteX + 2, 35, 5, 1, COLOR.peachDark);
+  drawPlantPot(g, plantCx, 28, 1);
 }
 
 /** 工位椅：薰衣草色软垫，靠背圆润，五星脚 */
@@ -486,8 +543,16 @@ export class PropsView {
     this.base.addChild(ground);
 
     const frame = (w: number, h: number) => new Rectangle(0, 0, w, h);
-    const deskIdle = bake(renderer, (g) => drawDesk(g, false), { frame: frame(DESK_SPRITE.w, DESK_SPRITE.h) });
-    const deskLit = bake(renderer, (g) => drawDesk(g, true), { frame: frame(DESK_SPRITE.w, DESK_SPRITE.h) });
+    const deskFrame = frame(DESK_ART_SIZE.w, DESK_ART_SIZE.h);
+    // 四个朝向各烘焙一对 idle / lit：桌子只有一种桌面，显示器换边换角度（ADR-0027）
+    const deskTextures = new Map<Direction, { idle: Texture; lit: Texture }>();
+    for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
+      const art = deskArtFor(facing);
+      deskTextures.set(facing, {
+        idle: bake(renderer, (g) => drawDesk(g, false, art), { frame: deskFrame }),
+        lit: bake(renderer, (g) => drawDesk(g, true, art), { frame: deskFrame }),
+      });
+    }
     const seatTextures: Record<SeatKind, Texture> = {
       chair: bake(renderer, drawChair, { frame: frame(CHAIR_SPRITE.w, CHAIR_SPRITE.h) }),
       toilet: bake(renderer, drawToilet, { frame: frame(TOILET_SPRITE.w, TOILET_SPRITE.h) }),
@@ -495,16 +560,18 @@ export class PropsView {
       sofa: bake(renderer, drawSofa, { frame: frame(SOFA_SPRITE.w, SOFA_SPRITE.h) }),
       bed: bake(renderer, drawBed, { frame: frame(BED_SPRITE.w, BED_SPRITE.h) }),
     };
-    this.textures.push(deskIdle, deskLit, ...Object.values(seatTextures));
+    for (const art of deskTextures.values()) this.textures.push(art.idle, art.lit);
+    this.textures.push(...Object.values(seatTextures));
 
     for (const desk of WORLD_LAYOUT.desks) {
       const bottom = desk.y + DESK_H / 2;
-      const sprite = new Sprite(deskIdle);
+      const texture = deskTextures.get(desk.facing) ?? deskTextures.get(DIRECTION.Up)!;
+      const sprite = new Sprite(texture.idle);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(desk.x, bottom);
       depth.add(bottom, sprite);
-      this.desks.push({ sprite, idle: deskIdle, lit: deskLit });
-      this.cullables.push({ sprite, x: desk.x, y: bottom, padX: DESK_W / 2 + 8, padY: DESK_SPRITE.h });
+      this.desks.push({ sprite, idle: texture.idle, lit: texture.lit });
+      this.cullables.push({ sprite, x: desk.x, y: bottom, padX: DESK_W / 2 + 8, padY: DESK_ART_SIZE.h });
     }
 
     for (const seat of WORLD_LAYOUT.seats) {

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { DIRECTION, POSE, WORLD_LAYOUT, packState, quantizeCoord, seatById, type MovePacket } from '@niuma/shared-types';
+import {
+  DIRECTION,
+  POSE,
+  WORLD_LAYOUT,
+  packState,
+  quantizeCoord,
+  seatById,
+  type Direction,
+  type MovePacket,
+} from '@niuma/shared-types';
 import { applyMove } from './movement';
 import { SeatRegistry } from './seats';
 import { World } from './world';
@@ -10,12 +19,20 @@ function spawn(world: World, x: number, y: number) {
   return player;
 }
 
-function movePacket(id: number, x: number, y: number, pose: number, moving = false, emote = false): MovePacket {
+function movePacket(
+  id: number,
+  x: number,
+  y: number,
+  pose: number,
+  moving = false,
+  emote = false,
+  direction: Direction = DIRECTION.Down,
+): MovePacket {
   return {
     id,
     x: quantizeCoord(x),
     y: quantizeCoord(y),
-    state: packState(DIRECTION.Down, pose as never, moving, emote),
+    state: packState(direction, pose as never, moving, emote),
     clientSequence: undefined,
     clientTimestampMs: undefined,
   };
@@ -238,6 +255,22 @@ describe('座位上的移动规则', () => {
     expect(result.released).toEqual([{ seatId: seat.id, occupant: 0 }]);
     expect(player.seat).toBe(0);
     expect(seats.isFree(seat.id)).toBe(true);
+  });
+
+  it('坐着时上报的朝向不会改写座位朝向：人始终正对家具', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const seat = WORLD_LAYOUT.seats[0]!;
+    const player = spawn(world, seat.x, seat.y);
+    seats.sit(player, 0);
+    expect(player.direction).toBe(seat.facing);
+
+    // 客户端就算本地转向（或伪造朝向），座位上的朝向也只能来自 seat.facing
+    const forged = seat.facing === DIRECTION.Up ? DIRECTION.Left : DIRECTION.Up;
+    applyMove(player, movePacket(player.id, seat.x, seat.y, POSE.Sit, false, false, forged), 1000, seats);
+
+    expect(player.direction).toBe(seat.facing);
+    expect(player.seat).toBe(seat.id);
   });
 
   it('坐着时可以原地叫唤', () => {
