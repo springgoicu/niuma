@@ -87,18 +87,24 @@ bash deploy/jenkins-deploy.sh
 log "reload nginx"
 sudo -n systemctl reload nginx
 
-# 公网复验：本机探活过了不代表 TLS/反代/安全组也是通的
-log "公网复验 https://$PUBLIC_HOST"
-ok=1
-for path in /health / /sprites/manifest.json; do
-  code="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "https://$PUBLIC_HOST$path" || true)"
-  printf '  %-26s %s\n' "$path" "${code:-000}"
-  [ "$code" = "200" ] || ok=0
-done
+# 公网复验：本机探活过了不代表 TLS/反代/安全组也是通的。
+# install.sh 在证书还没签下来时会设 SKIP_PUBLIC_CHECK=1：那时 443 是自签证书，
+# 从这里 curl 必然失败，不该把一次成功的安装判成失败。
+if [ "${SKIP_PUBLIC_CHECK:-0}" = "1" ]; then
+  log "跳过公网复验（SKIP_PUBLIC_CHECK=1）"
+else
+  log "公网复验 https://$PUBLIC_HOST"
+  ok=1
+  for path in /health / /sprites/manifest.json; do
+    code="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "https://$PUBLIC_HOST$path" || true)"
+    printf '  %-26s %s\n' "$path" "${code:-000}"
+    [ "$code" = "200" ] || ok=0
+  done
 
-if [ "$ok" != "1" ]; then
-  log "✖ 公网探活未全部通过，请检查 nginx / 证书 / 安全组"
-  exit 1
+  if [ "$ok" != "1" ]; then
+    log "✖ 公网探活未全部通过，请检查 nginx / 证书 / 安全组"
+    exit 1
+  fi
 fi
 
 log "✔ 部署完成：${REMOTE_REV:0:8}"

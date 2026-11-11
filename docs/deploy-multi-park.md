@@ -8,6 +8,11 @@
 
 决策背景与被拒方案见 [`adr/0043-multi-park-deployment.md`](adr/0043-multi-park-deployment.md)。
 
+> **先看这里。** 本文是手写的操作手册，讲清每一步为什么这么配。如果你只是要把站点装到一台
+> 新机器上，不用照着本文抄命令——[`../deploy/production/README.md`](../deploy/production/README.md)
+> 里的 `install.sh` 已经把这些步骤（依赖、内核参数、nginx、证书、Webhook、首次发版）全部
+> 脚本化，一条命令跑完。本文保留下来是为了解释取值理由与多机扩展。
+
 ## 0. 我要部署几座
 
 | 规模 | 需要几台机器 | `GAME_PARKS` | `/enter` 的表现 | 园内「切换园区」 |
