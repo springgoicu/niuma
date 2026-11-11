@@ -99,6 +99,34 @@ export const QUEUE_STATUS_BYTES = 16;
 export const QUEUE_REJECT_BYTES = 2;
 /** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */
 export const CHAT_REJECT_BYTES = 2;
+
+/**
+ * 聊天历史（ADR-0039）：服务端进程内环形缓冲，不落盘、不接库。
+ *
+ * 条数与时长双上限——条数管内存（200 × 约 540B ≈ 108KB 恒定），
+ * 时长管「重开标签页看到一小时前的话」这种失真。
+ */
+export const CHAT_HISTORY_CAPACITY = 200;
+export const CHAT_HISTORY_TTL_MS = 60 * 60 * 1000;
+/** 首屏补发与每次上翻的条数：一页一包，与加长后的面板可视高度对齐 */
+export const CHAT_HISTORY_PAGE_SIZE = 10;
+/** 单次请求允许的最大页长：客户端传什么都不能改大服务端的下行预算 */
+export const CHAT_HISTORY_MAX_PAGE = 30;
+/**
+ * 单个历史包的下行预算。历史会走 `transport.send` 的出口计量并影响准入带宽水位，
+ * 所以一页装不下就截断并置 `HasMore`，不引入分包协议。
+ */
+export const CHAT_HISTORY_PACKET_BUDGET = 2048;
+/** 上翻请求的最小间隔：滚动抖动不应该把服务端刷穿 */
+export const CHAT_HISTORY_REQUEST_INTERVAL_MS = 500;
+
+/** 历史包 flags：位标记而不是枚举，将来加「按类型过滤」不用再开新包 */
+export const CHAT_HISTORY_FLAG = {
+  /** 首屏快照：客户端整表替换，而不是往现有列表前插 */
+  Replace: 1,
+  /** 本页之外还有更早的消息 */
+  HasMore: 2,
+} as const;
 /** 排队位次推送间隔（毫秒）；排队者零广播，只有这一条心跳包 */
 export const QUEUE_STATUS_INTERVAL_MS = 1000;
 

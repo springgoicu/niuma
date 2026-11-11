@@ -311,6 +311,20 @@
   .field:focus {
     border-color: var(--color-mint-400);
   }
+
+  /*
+   * 品牌标记：悬停时眨一次眼。
+   * 它是个彩蛋，不是加载动画——只在指针进入时播一遍，不常驻循环；
+   * 两帧除眼睛外逐像素一致，所以这里只切 opacity，画面不会抖。
+   * reduced-motion 由文件末尾的全站规则统一关掉。
+   */
+  .logo-blink {
+    opacity: 0;
+  }
+
+  .group:hover .logo-blink {
+    animation: blink-once 280ms linear 1;
+  }
 }
 
 @layer utilities {
@@ -342,13 +356,13 @@
     animation: scan 6s linear infinite;
   }
 
-  /* 入场欢迎条：出现时轻推一下，进度线在 5.6s 内走完（ADR-0036） */
+  /* 入场欢迎条：出现时轻推一下，进度线在 3.6s 内走完（与 WelcomeBanner 的 HOLD_MS 对齐） */
   .animate-welcome-in {
     animation: welcome-in 320ms var(--ease-out-expo);
   }
 
   .animate-welcome-run {
-    animation: welcome-run 5.6s linear forwards;
+    animation: welcome-run 3.6s linear forwards;
   }
 
   /* 公告栏：小木牌从下方落定，不是整块弹出来 */
@@ -434,6 +448,18 @@
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+/* 先闭 117ms 再睁开：起手就是闭眼帧，中间那一格几乎瞬时，读起来是一次眨眼而不是淡入淡出 */
+@keyframes blink-once {
+  0%,
+  42% {
+    opacity: 1;
+  }
+  43%,
+  100% {
+    opacity: 0;
   }
 }
 

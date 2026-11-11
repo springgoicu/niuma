@@ -1,12 +1,15 @@
 import type { ServerWebSocket } from 'bun';
 import {
   ACTION,
+  CHAT_HISTORY_FLAG,
+  CHAT_HISTORY_REQUEST_INTERVAL_MS,
   FALLBACK_NICKNAME,
   MAX_PACKET_BYTES,
   OpCode,
   QUEUE_REJECT_REASON,
   TICK_MS,
   decodeAction,
+  decodeChatHistoryRequest,
   decodeChatSend,
   decodeHello,
   decodeMove,
@@ -14,6 +17,7 @@ import {
   decodeSetAppearance,
   decodeSetStatus,
   encodeAppearanceBroadcast,
+  encodeChatHistory,
   encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
@@ -29,6 +33,7 @@ import type { ServerConfig } from './config';
 import { EgressMeter, RingSampler } from './metrics';
 import { SpatialGrid } from './spatial/grid';
 import { handleChat } from './sim/chat';
+import { ChatHistory, type ChatPage } from './sim/history';
 import { loadModerationFilter } from './sim/moderation';
 import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
@@ -64,6 +69,8 @@ export function startGameServer(config: ServerConfig) {
   const admission = new AdmissionController(config.admission);
   // 词表加载与 trie 构建只发生在这里一次，聊天路径只做走查
   const moderation = loadModerationFilter(config.moderation.lexiconPath);
+  // 频道历史只活在进程内（ADR-0039）：跟着世界一起启动、一起丢弃
+  const chatHistory = new ChatHistory(config.chatHistory.capacity, config.chatHistory.ttlMs);
   let nextWsId = 1;
   let tickCount = 0;
   let lastSampleAt = 0;
@@ -77,6 +84,25 @@ export function startGameServer(config: ServerConfig) {
       socket.send(data);
     },
   };
+
+  /**
+   * 历史页只发给本人：补发与上翻都不走 `handleChat`，
+   * 既不占 5s/3 条的发送窗口，也不会触发头顶气泡。
+   * 空页照发——客户端靠 `Replace` 清掉上一个会话残留的消息。
+   */
+  function sendHistoryPage(wsId: number, page: ChatPage, now: number, replace: boolean): void {
+    const entries = page.lines.map((line) => ({
+      msgId: line.msgId,
+      entityId: line.entityId,
+      // 距今秒数而不是时间戳：客户端按自己的时钟还原，两端时钟不一致也不会倒流
+      ageSec: Math.max(0, Math.floor((now - line.at) / 1000)),
+      name: line.name,
+      text: line.text,
+    }));
+    let flags = page.hasMore ? CHAT_HISTORY_FLAG.HasMore : 0;
+    if (replace) flags |= CHAT_HISTORY_FLAG.Replace;
+    transport.send(wsId, encodeChatHistory({ flags, entries }));
+  }
 
   /** 座位变化广播给全园：占用变动很少，一包带多条即可 */
   function broadcastSeats(changes: readonly SeatStateEntry[]): void {
@@ -126,6 +152,14 @@ export function startGameServer(config: ServerConfig) {
     );
     const occupied = seats.snapshot();
     if (occupied.length > 0) ws.send(encodeSeatState(occupied));
+    // 历史必须早于 refreshView：known 一旦建立，实时聊天才可能到达这个 socket；
+    // 先发快照才能保证 REPLACE 不会抹掉刚到的实时消息
+    sendHistoryPage(
+      player.wsId,
+      chatHistory.latestPage(config.chatHistory.pageSize, now),
+      now,
+      true,
+    );
     refreshView(player, world, grid, transport);
     // 必须在 refreshView 之后：这时双方的 known 才补齐，播报才发得到「看得见他的人」
     announceEnter(player, world, transport);
@@ -232,7 +266,25 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_CHAT) {
-      handleChat(player, decodeChatSend(data), now, world, transport, moderation);
+      handleChat(player, decodeChatSend(data), now, world, transport, moderation, chatHistory);
+      return;
+    }
+
+    if (op === OpCode.C2S_CHAT_HISTORY) {
+      // 上翻节流：滚动抖动不该把服务端刷穿，窗口内的重复请求直接丢弃
+      if (now - player.lastHistoryAt < CHAT_HISTORY_REQUEST_INTERVAL_MS) return;
+      player.lastHistoryAt = now;
+      const request = decodeChatHistoryRequest(data);
+      // 页长以服务端配置为准：客户端传小值按小的发，传大值也不许放大下行预算
+      const limit = Math.min(
+        request.limit > 0 ? request.limit : config.chatHistory.pageSize,
+        config.chatHistory.pageSize,
+      );
+      const page =
+        request.beforeMsgId > 0
+          ? chatHistory.before(request.beforeMsgId, limit, now)
+          : chatHistory.latestPage(limit, now);
+      sendHistoryPage(player.wsId, page, now, request.beforeMsgId === 0);
       return;
     }
 

@@ -1,9 +1,25 @@
-import { SPAWN_RADIUS } from '@niuma/shared-types';
+import {
+  CHAT_HISTORY_CAPACITY,
+  CHAT_HISTORY_MAX_PAGE,
+  CHAT_HISTORY_PAGE_SIZE,
+  CHAT_HISTORY_TTL_MS,
+  SPAWN_RADIUS,
+} from '@niuma/shared-types';
 import type { AdmissionConfig } from './admission/controller';
 
 export interface ModerationConfig {
   /** 外部词库 JSON 路径；空串表示只用内置词库 */
   lexiconPath: string;
+}
+
+/** 频道历史缓冲（ADR-0039）：全在内存里，进程重启即清空 */
+export interface ChatHistoryConfig {
+  /** 环形缓冲条数上限 */
+  capacity: number;
+  /** 超过这个时长的消息不再补发 */
+  ttlMs: number;
+  /** 首屏补发与上翻每页条数 */
+  pageSize: number;
 }
 
 export interface ServerConfig {
@@ -18,6 +34,8 @@ export interface ServerConfig {
   admission: AdmissionConfig;
   /** 内容审核词库；内置表随版本发布，外置文件可覆盖/追加 */
   moderation: ModerationConfig;
+  /** 频道历史缓冲；条数、时长与页长都可压测时调小 */
+  chatHistory: ChatHistoryConfig;
 }
 
 function readInt(value: string | undefined, fallback: number): number {
@@ -79,6 +97,12 @@ export function loadConfig(): ServerConfig {
     admission,
     moderation: {
       lexiconPath: process.env.GAME_MODERATION_LEXICON ?? '',
+    },
+    chatHistory: {
+      capacity: readInt(process.env.GAME_CHAT_HISTORY_CAPACITY, CHAT_HISTORY_CAPACITY),
+      ttlMs: readInt(process.env.GAME_CHAT_HISTORY_TTL_MS, CHAT_HISTORY_TTL_MS),
+      // 页长不跟着配置无限放大：单包预算与面板高度都按协议里的上限对齐
+      pageSize: Math.min(readInt(process.env.GAME_CHAT_HISTORY_PAGE, CHAT_HISTORY_PAGE_SIZE), CHAT_HISTORY_MAX_PAGE),
     },
   };
 }

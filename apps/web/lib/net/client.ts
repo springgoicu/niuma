@@ -4,6 +4,7 @@ import {
   OpCode,
   decodeAppearanceBroadcast,
   decodeChatBroadcast,
+  decodeChatHistory,
   decodeChatRejected,
   decodeDespawn,
   decodePong,
@@ -14,6 +15,7 @@ import {
   decodeStatusBroadcast,
   decodeSystemNotice,
   decodeWelcome,
+  encodeChatHistoryRequest,
   encodeChatSend,
   encodeHello,
   encodeMoveInto,
@@ -22,6 +24,7 @@ import {
   encodeSetStatus,
   ByteWriter,
   type CharacterAppearance,
+  type ChatHistoryPacket,
   type ChatPacket,
   type MovePacket,
   type QueueStatusPacket,
@@ -48,6 +51,8 @@ export interface NetHandlers {
    */
   onSync(data: Uint8Array): void;
   onChat(packet: ChatPacket): void;
+  /** 历史聊天页（首屏补发或上翻），`flags` 见 CHAT_HISTORY_FLAG */
+  onChatHistory(packet: ChatHistoryPacket): void;
   /** 系统提示（进园 / 离园等）：文案已由服务端套好模板，客户端只按 kind 选样式 */
   onSystemNotice(packet: SystemNoticePacket): void;
   /** 服务端拦下了一条发言（政治敏感 / 限速），只带原因，不回传原文 */
@@ -191,6 +196,9 @@ export class NetClient {
       case OpCode.S2C_CHAT_BROADCAST:
         this.handlers.onChat(decodeChatBroadcast(data));
         break;
+      case OpCode.S2C_CHAT_HISTORY:
+        this.handlers.onChatHistory(decodeChatHistory(data));
+        break;
       case OpCode.S2C_SYSTEM_NOTICE:
         this.handlers.onSystemNotice(decodeSystemNotice(data));
         break;
@@ -272,6 +280,12 @@ export class NetClient {
   sendChat(text: string): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeChatSend(text));
+  }
+
+  /** 上翻：`beforeMsgId = 0` 表示要最新一页（服务端会以 Replace 语义回） */
+  sendChatHistory(beforeMsgId: number, limit: number): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeChatHistoryRequest({ beforeMsgId, limit }));
   }
 
   sendAppearance(appearance: CharacterAppearance): void {

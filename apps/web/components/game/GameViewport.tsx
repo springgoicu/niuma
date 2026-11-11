@@ -50,6 +50,7 @@ export function GameViewport() {
   const setQueue = useGameUi((state) => state.setQueue);
   const setRejected = useGameUi((state) => state.setRejected);
   const pushMessage = useGameUi((state) => state.pushMessage);
+  const applyHistory = useGameUi((state) => state.applyHistory);
   const setHint = useGameUi((state) => state.setHint);
   const setLocalState = useGameUi((state) => state.setLocalState);
   const hint = useGameUi((state) => state.hint);
@@ -114,6 +115,7 @@ export function GameViewport() {
       onRejected: (reason) => setRejected(reason),
       onStats: (stats) => setStats(stats),
       onChat: (entry) => pushMessage(entry),
+      onChatHistory: (entries, meta) => applyHistory(entries, meta),
       onRequestChat: openChat,
       onHint: (next) => setHint(next),
       onLocalState: (state) => setLocalState(state),
@@ -128,10 +130,20 @@ export function GameViewport() {
       session.stop();
       sessionRef.current = null;
     };
-  }, [profile, setStatus, setStats, pushMessage, openChat, setHint, setLocalState]);
+  }, [profile, setStatus, setStats, pushMessage, applyHistory, openChat, setHint, setLocalState]);
 
   const getSession = useCallback(() => sessionRef.current, []);
   const handleChat = useCallback((text: string) => sessionRef.current?.sendChat(text), []);
+  /**
+   * 上翻到顶：先点亮加载态，再发请求。加载态由响应里的 `applyHistory` 清掉，
+   * ChatDock 另有超时兜底——离线时请求会石沉大海，不能让「正在加载」永远转着。
+   */
+  const handleLoadHistory = useCallback((cursor: number) => {
+    useGameUi.getState().setHistoryLoading(true);
+    sessionRef.current?.requestHistory(cursor);
+    // 离线时请求会石沉大海：超时自己收起加载态，不让「正在加载」永远转着
+    window.setTimeout(() => useGameUi.getState().setHistoryLoading(false), 4000);
+  }, []);
   const handleAction = useCallback((action: ActionKey) => {
     sessionRef.current?.perform(action);
   }, []);
@@ -249,7 +261,12 @@ export function GameViewport() {
                     且不参与 HUD 的纵向 flex，不会把底部操作区顶出屏幕 */}
                 {isTouch && (
                   <div className="pointer-events-none absolute left-0 top-full z-30 mt-1 flex justify-start">
-                    <ChatDock onSend={handleChat} onOpen={openChat} compact />
+                    <ChatDock
+                      onSend={handleChat}
+                      onOpen={openChat}
+                      onLoadHistory={handleLoadHistory}
+                      compact
+                    />
                   </div>
                 )}
               </div>
@@ -300,7 +317,7 @@ export function GameViewport() {
               </div>
             ) : (
               <div className="flex items-end justify-between gap-4">
-                <ChatDock onSend={handleChat} onOpen={openChat} />
+                <ChatDock onSend={handleChat} onOpen={openChat} onLoadHistory={handleLoadHistory} />
                 <div className="hidden flex-1 justify-center md:flex">
                   <ActionBar onAction={handleAction} onChat={openChat} />
                 </div>

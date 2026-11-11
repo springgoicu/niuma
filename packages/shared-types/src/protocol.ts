@@ -1,6 +1,9 @@
 import { decodeAppearance, encodeAppearance } from './appearance-codec';
 import {
   APPEARANCE_BYTES,
+  CHAT_HISTORY_FLAG,
+  CHAT_HISTORY_MAX_PAGE,
+  CHAT_HISTORY_PACKET_BUDGET,
   CHAT_REJECT_BYTES,
   FALLBACK_NICKNAME,
   MAX_CHAT_CHARS,
@@ -25,6 +28,9 @@ import { displayWidth } from './name';
 import { dequantizeCoord, packState, quantizeCoord, unpackState } from './quantize';
 import type {
   CharacterAppearance,
+  ChatHistoryEntry,
+  ChatHistoryPacket,
+  ChatHistoryRequest,
   ChatPacket,
   EntitySnapshot,
   LimitKind,
@@ -104,6 +110,11 @@ export class ByteWriter {
   /** 回填已知偏移处的 u16，用于「先留头部占位、后写数量」的同步包 */
   patchU16(at: number, value: number): void {
     this.view.setUint16(at, value & 0xffff, true);
+  }
+
+  /** 回填 u8：历史包要先写 flags 占位，装完这一页才能确定条数 */
+  patchU8(at: number, value: number): void {
+    this.view.setUint8(at, value & 0xff);
   }
 
   finish(): Uint8Array {
@@ -753,6 +764,88 @@ export function decodeChatRejected(data: Uint8Array): { reason: number } {
   if (reader.u8() !== OpCode.S2C_CHAT_REJECTED) throw new Error('not a chat rejected packet');
   // 原样返回：新服务端可能新增原因，客户端按「未知原因」给通用文案，不硬编码降级
   return { reason: reader.u8() };
+}
+
+/**
+ * 历史页：`[op][flags u8][count u8]` + count × `[msgId u16][entityId u16][ageSec u32][name u8+bytes][text u16+bytes]`。
+ *
+ * 一页一包：累计到 `CHAT_HISTORY_PACKET_BUDGET` 就不再追加。
+ * 被预算截断时由编码器自己把 `HasMore` 置真——只靠调用方判断的话，
+ * 「这页没装完」会静默变成「没有更早的消息了」，用户再也翻不上去。
+ */
+export function encodeChatHistory(packet: ChatHistoryPacket): Uint8Array {
+  const writer = new ByteWriter(64);
+  writer.u8(OpCode.S2C_CHAT_HISTORY).u8(packet.flags).u8(0);
+  let count = 0;
+  let truncated = false;
+  for (const entry of packet.entries) {
+    const name = textEncoder.encode(truncateName(entry.name));
+    const text = textEncoder.encode(truncateChat(entry.text));
+    // 9 字节定长头 + 昵称 + 2 字节正文字段 + 正文：先算后写，绝不写到一半越界
+    if (writer.offset + 11 + name.length + text.length > CHAT_HISTORY_PACKET_BUDGET) {
+      truncated = true;
+      break;
+    }
+    writer
+      .u16(entry.msgId)
+      .u16(entry.entityId)
+      .u32(Math.max(0, Math.floor(entry.ageSec)))
+      .u8(name.length)
+      .raw(name)
+      .u16(text.length)
+      .raw(text);
+    count += 1;
+  }
+  writer.patchU8(2, count);
+  // 截断即代表「还有更早的」：这一页装不下的条目必须让客户端继续翻
+  if (truncated) writer.patchU8(1, packet.flags | CHAT_HISTORY_FLAG.HasMore);
+  return writer.finish();
+}
+
+export function decodeChatHistory(data: Uint8Array): ChatHistoryPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_CHAT_HISTORY) throw new Error('not a chat history packet');
+  const flags = reader.u8();
+  const count = reader.u8();
+  const entries: ChatHistoryEntry[] = [];
+  for (let i = 0; i < count; i += 1) {
+    // 定长头 9 字节都不够，说明包被截断：保留已解析的前缀，绝不在缓冲外取值
+    if (reader.remaining < 9) break;
+    const msgId = reader.u16();
+    const entityId = reader.u16();
+    const ageSec = reader.u32();
+    const nameLength = reader.u8();
+    if (nameLength > reader.remaining) break;
+    const name = reader.utf8(nameLength);
+    if (reader.remaining < 2) {
+      entries.push({ msgId, entityId, ageSec, name, text: '' });
+      break;
+    }
+    const textLength = reader.u16();
+    // 长度字段越界：按空串处理并停下（与系统提示包同口径）
+    if (textLength > reader.remaining) {
+      entries.push({ msgId, entityId, ageSec, name, text: '' });
+      break;
+    }
+    entries.push({ msgId, entityId, ageSec, name, text: reader.utf8(textLength) });
+  }
+  return { flags, entries };
+}
+
+export function encodeChatHistoryRequest(request: ChatHistoryRequest): Uint8Array {
+  const writer = new ByteWriter(4);
+  writer.u8(OpCode.C2S_CHAT_HISTORY).u16(Math.max(0, request.beforeMsgId)).u8(request.limit);
+  return writer.finish();
+}
+
+export function decodeChatHistoryRequest(data: Uint8Array): ChatHistoryRequest {
+  if (data.byteLength < 4) {
+    throw new Error(`chat history request must be 4 bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_CHAT_HISTORY) throw new Error('not a chat history request');
+  // 页长由服务端钳制：下行预算是服务端的，不由调用方改大
+  return { beforeMsgId: reader.u16(), limit: Math.min(reader.u8(), CHAT_HISTORY_MAX_PAGE) };
 }
 
 export function decodeQueueRejected(data: Uint8Array): QueueRejectedPacket {

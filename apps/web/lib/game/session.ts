@@ -2,6 +2,8 @@
 
 import {
   ACTION,
+  CHAT_HISTORY_FLAG,
+  CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
   MOVE_SPEED,
   QUEUE_REJECT_REASON,
@@ -23,6 +25,7 @@ import {
   seatPose,
   unpackState,
   type CharacterAppearance,
+  type ChatHistoryPacket,
   type Direction,
   type MotionTarget,
   type Pose,
@@ -62,6 +65,11 @@ export interface ChatEntry {
    * 缺省视为普通聊天，旧数据与旧服务端都不用改。
    */
   kind?: 'chat' | 'system';
+  /**
+   * 来自进园补发或上翻：不弹头顶气泡，UI 会在历史与实时之间画一条分隔线。
+   * 缺省是实时消息，旧数据不用改。
+   */
+  history?: boolean;
   /** 系统消息的模板编号（SYSTEM_NOTICE_KIND），供样式与将来的静音开关使用 */
   systemKind?: number;
 }
@@ -94,6 +102,8 @@ export interface SessionCallbacks {
   onRejected(reason: number): void;
   onStats(stats: SessionStats): void;
   onChat(entry: ChatEntry): void;
+  /** 历史聊天页：`replace` 时整表替换（首屏 / 重连），否则整页前插 */
+  onChatHistory(entries: ChatEntry[], meta: { replace: boolean; hasMore: boolean }): void;
   onRequestChat(): void;
   /** 附近可用座位、当前入座或被拦下的动作提示；null 表示不显示 */
   onHint(hint: string | null): void;
@@ -258,6 +268,7 @@ export class GameSession {
       onDespawn: (id) => this.handleDespawn(id),
       onSync: (data) => this.handleSync(data),
       onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
+      onChatHistory: (packet) => this.handleChatHistory(packet),
       onSystemNotice: (packet) => this.handleSystemNotice(packet),
       onChatRejected: (reason) => {
         // 服务端权威拦截的回执：正常路径被本地预检挡住了，走到这里基本是词库不同步或伪造包
@@ -631,6 +642,29 @@ export class GameSession {
     });
   }
 
+  /**
+   * 历史页：只落进频道列表，不弹头顶气泡。
+   *
+   * `ageSec` 是服务端口径的「距今秒数」，这里用本地时钟还原成毫秒时间戳——
+   * 直接信任服务端绝对时间的话，两端时钟不一致会让历史消息显示成「未来」。
+   */
+  private handleChatHistory(packet: ChatHistoryPacket): void {
+    const now = Date.now();
+    const entries: ChatEntry[] = packet.entries.map((entry) => ({
+      id: entry.msgId,
+      // 历史条目自带昵称快照：发送者可能早已离场，名字表里查不到
+      name: entry.name,
+      text: entry.text,
+      at: now - entry.ageSec * 1000,
+      self: entry.entityId === this.localId,
+      history: true,
+    }));
+    this.callbacks.onChatHistory(entries, {
+      replace: (packet.flags & CHAT_HISTORY_FLAG.Replace) !== 0,
+      hasMore: (packet.flags & CHAT_HISTORY_FLAG.HasMore) !== 0,
+    });
+  }
+
   /** 服务端播报（进园 / 离园）：不弹气泡，只落进频道列表 */
   private handleSystemNotice(packet: SystemNoticePacket): void {
     if (packet.text.length === 0) return;
@@ -729,6 +763,11 @@ export class GameSession {
   sendChat(text: string): void {
     if (text.trim().length === 0) return;
     this.net?.sendChat(text);
+  }
+
+  /** 上翻更早的聊天；`beforeMsgId = 0` 表示重新要最新一页（首屏语义） */
+  requestHistory(beforeMsgId: number): void {
+    this.net?.sendChatHistory(beforeMsgId, CHAT_HISTORY_PAGE_SIZE);
   }
 
   setAppearance(appearance: CharacterAppearance): void {

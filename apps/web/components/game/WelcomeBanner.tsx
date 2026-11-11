@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useGameUi } from '@/lib/game-ui';
 
 /** 停留时长与淡出时长：与 globals.css 的 welcome-run 进度条保持一致 */
-const HOLD_MS = 5600;
+const HOLD_MS = 3600;
 const FADE_MS = 320;
 
 type Phase = 'idle' | 'in' | 'out';

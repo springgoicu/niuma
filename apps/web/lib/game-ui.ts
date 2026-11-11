@@ -24,6 +24,15 @@ interface GameUiState {
   /** 被拒原因（1 队列满 / 2 等待超时），0 表示未被拒 */
   rejected: number;
   messages: ChatEntry[];
+  /**
+   * 历史分页状态。
+   *
+   * `cursor` 是最旧一条聊天消息的 msgId，上翻请求拿它当「before」游标；
+   * 0 表示还没拿到过聊天（别拿它去请求，否则服务端会按「最新一页」整表替换）。
+   */
+  history: { loading: boolean; hasMore: boolean; cursor: number };
+  /** 面板收起期间累计的新消息数：标题栏用它替代没有信息量的总条数 */
+  unread: number;
   chatOpen: boolean;
   /**
    * 每次「打开 / 重新聚焦聊天」自增。
@@ -51,6 +60,12 @@ interface GameUiState {
   setQueue: (queue: QueueStatusPacket | null) => void;
   setRejected: (reason: number) => void;
   pushMessage: (entry: ChatEntry) => void;
+  /**
+   * 落一页历史：`replace` 是首屏 / 重连快照（整表替换），否则整页前插。
+   * 按 msgId 去重、按时间兜底排序、裁剪到 `MAX_MESSAGES`。
+   */
+  applyHistory: (entries: ChatEntry[], meta: { replace: boolean; hasMore: boolean }) => void;
+  setHistoryLoading: (loading: boolean) => void;
   setChatOpen: (open: boolean) => void;
   /** 打开聊天并请求聚焦输入框：与 setChatOpen(true) 的区别是「已展开也必须重新聚焦」 */
   requestChat: () => void;
@@ -59,7 +74,22 @@ interface GameUiState {
   reset: () => void;
 }
 
-const MAX_MESSAGES = 40;
+/**
+ * 列表上限。服务端环形缓冲也是 200 条，两者对齐后「往上翻到底」与「列表被裁掉」
+ * 是同一件事，不会出现翻了一半突然断档。
+ */
+const MAX_MESSAGES = 200;
+
+/** 未读徽标的上限：再多也只是个数字，`99+` 足够 */
+const MAX_UNREAD = 99;
+
+/** 列表里最旧的一条聊天消息 id；只有系统播报时返回 0（负数 id 不能当游标） */
+function oldestChatMsgId(messages: readonly ChatEntry[]): number {
+  for (const message of messages) {
+    if (message.kind !== 'system' && message.id > 0) return message.id;
+  }
+  return 0;
+}
 
 const INITIAL = {
   status: 'idle' as ConnectionStatus,
@@ -75,6 +105,8 @@ const INITIAL = {
   queue: null,
   rejected: 0,
   messages: [] as ChatEntry[],
+  history: { loading: false, hasMore: false, cursor: 0 },
+  unread: 0,
   chatOpen: false,
   chatFocusSeq: 0,
   statusOpen: false,
@@ -113,14 +145,48 @@ export const useGameUi = create<GameUiState>((set) => ({
   pushMessage: (entry) =>
     set((state) => ({
       messages: [...state.messages.slice(-(MAX_MESSAGES - 1)), entry],
+      // 展开着看到的不算「没看」；收起期间才累计，进面板即清
+      unread: state.chatOpen ? 0 : Math.min(MAX_UNREAD, state.unread + 1),
     })),
+
+  applyHistory: (entries, meta) =>
+    set((state) => {
+      if (meta.replace) {
+        // 首屏 / 重连快照：服务端就是权威的那几条，整表替换。
+        // 未读不动——进园补发十条不该让人一进来就看到「10 条未读」
+        const messages = entries.slice(-MAX_MESSAGES);
+        return {
+          messages,
+          unread: state.unread,
+          history: { loading: false, hasMore: meta.hasMore, cursor: oldestChatMsgId(messages) },
+        };
+      }
+
+      // 上翻：只前插本地没有的条目。msgId 是 u16 会回绕，去重键必须带上「是不是聊天」
+      const seen = new Set<number>();
+      for (const message of state.messages) {
+        if (message.kind !== 'system') seen.add(message.id);
+      }
+      const fresh = entries.filter((entry) => !seen.has(entry.id));
+      // 历史时间只有秒级精度，与实时消息混排时按时间统一排序，避免前插顺序偶尔颠倒
+      const messages = [...fresh, ...state.messages]
+        .sort((a, b) => a.at - b.at)
+        .slice(-MAX_MESSAGES);
+      return {
+        messages,
+        history: { loading: false, hasMore: meta.hasMore, cursor: oldestChatMsgId(messages) },
+      };
+    }),
+
+  setHistoryLoading: (loading) =>
+    set((state) => ({ history: { ...state.history, loading } })),
 
   // 两块面板都贴在左上角：任一方展开就把另一方收起，避免叠成一列。
   // 展开时顺手推进聚焦序号，头部按钮与回车共用同一条聚焦路径
   setChatOpen: (chatOpen) =>
     set((state) =>
       chatOpen
-        ? { chatOpen, statusOpen: false, noticeOpen: false, chatFocusSeq: state.chatFocusSeq + 1 }
+        ? { chatOpen, statusOpen: false, noticeOpen: false, chatFocusSeq: state.chatFocusSeq + 1, unread: 0 }
         : { chatOpen },
     ),
 
@@ -130,6 +196,7 @@ export const useGameUi = create<GameUiState>((set) => ({
       statusOpen: false,
       noticeOpen: false,
       chatFocusSeq: state.chatFocusSeq + 1,
+      unread: 0,
     })),
 
   setStatusOpen: (statusOpen) =>

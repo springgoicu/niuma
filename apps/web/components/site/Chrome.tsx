@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { ArrowUpRight, Github, Radio } from 'lucide-react';
+import { LogoMark } from './LogoMark';
 import { MobileNav } from './MobileNav';
 
 const NAV = [
@@ -13,9 +14,7 @@ export function TopNav() {
     <header className="fixed inset-x-0 top-0 z-50 border-b-2 border-ink-700 bg-ink-900/85 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-6 px-5 sm:px-8">
         <Link href="/" className="group flex items-center gap-3" aria-label="牛马 NIOMA 首页">
-          <span className="grid h-9 w-9 place-items-center border-2 border-mint-400 font-display text-base font-bold text-mint-400 transition-colors duration-150 group-hover:bg-mint-400 group-hover:text-ink-950">
-            牛
-          </span>
+          <LogoMark />
           <span className="flex flex-col leading-none">
             <span className="font-display text-base font-semibold tracking-[0.42em] text-mist-100">NIOMA</span>
             <span className="mt-1 font-mono text-[9px] uppercase tracking-[0.24em] text-mist-500">

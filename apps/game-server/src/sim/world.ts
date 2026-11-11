@@ -42,6 +42,8 @@ export class Player {
   chatCount = 0;
   /** 上一次状态变更的时间戳：广播节流用，防伪造包把它当放大器 */
   lastStatusAt = 0;
+  /** 上一次拉取历史的时刻：上翻请求的节流窗口，防止滚动抖动刷穿服务端 */
+  lastHistoryAt = 0;
   /** 当前占用的座位 id，0 表示站立或地面坐 */
   seat = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
@@ -98,6 +100,7 @@ export class Player {
     this.chatWindowStart = 0;
     this.chatCount = 0;
     this.lastStatusAt = 0;
+    this.lastHistoryAt = 0;
     this.spawnBodyCache = null;
     this.known.clear();
   }

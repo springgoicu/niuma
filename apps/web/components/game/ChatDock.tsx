@@ -2,19 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, MessageSquare, Send } from 'lucide-react';
-import {
-  MAX_NAME_DISPLAY_UNITS,
-  SYSTEM_NOTICE_KIND,
-  inspectText,
-  truncateToDisplayWidth,
-} from '@niuma/shared-types';
+import { inspectText } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
-import { formatClock, formatFullClock } from '@/lib/game/clock';
+import { ChatLog } from './ChatLog';
 
 interface ChatDockProps {
   onSend: (text: string) => void;
   /** 打开面板：由宿主统一清移动键并请求聚焦；缺省时只切展开态 */
   onOpen?: () => void;
+  /** 上翻到顶：把当前最旧的 msgId 交给宿主去拉更早的一页 */
+  onLoadHistory?: (cursor: number) => void;
   compact?: boolean;
 }
 
@@ -23,25 +20,10 @@ const CHAR_WARNING_THRESHOLD = 140;
 /** 提示条在收起态也要留一会儿，但不能常驻 */
 const NOTICE_DURATION_MS = 4000;
 
-/**
- * 系统消息的类型标记：进园「+」、离园「−」、本地提醒「·」。
- * 颜色只做区分，不承担语义——读屏读到的始终是整句文案。
- */
-function systemMarker(kind: number | undefined): { glyph: string; tone: string } {
-  switch (kind) {
-    case SYSTEM_NOTICE_KIND.Enter:
-      return { glyph: '+', tone: 'text-mint-400/80' };
-    case SYSTEM_NOTICE_KIND.Leave:
-      return { glyph: '−', tone: 'text-mist-500' };
-    case SYSTEM_NOTICE_KIND.OnDuty:
-      return { glyph: '·', tone: 'text-amber-400/80' };
-    default:
-      return { glyph: '·', tone: 'text-mist-500' };
-  }
-}
-
-export function ChatDock({ onSend, onOpen, compact = false }: ChatDockProps) {
+export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: ChatDockProps) {
   const messages = useGameUi((state) => state.messages);
+  const history = useGameUi((state) => state.history);
+  const unread = useGameUi((state) => state.unread);
   const open = useGameUi((state) => state.chatOpen);
   const focusSeq = useGameUi((state) => state.chatFocusSeq);
   const setOpen = useGameUi((state) => state.setChatOpen);
@@ -49,7 +31,6 @@ export function ChatDock({ onSend, onOpen, compact = false }: ChatDockProps) {
   /** 本地预检的即时解释：被拦下时保留草稿，打码时照常发出 */
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   /**
    * 聚焦由 `open` 与 `chatFocusSeq` 共同驱动：
@@ -73,11 +54,6 @@ export function ChatDock({ onSend, onOpen, compact = false }: ChatDockProps) {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  useEffect(() => {
-    const node = listRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [messages, open]);
-
   const submit = () => {
     const text = draft.trim();
     if (text.length === 0) return;
@@ -100,6 +76,7 @@ export function ChatDock({ onSend, onOpen, compact = false }: ChatDockProps) {
 
   const charCount = draft.length;
   const isNearLimit = charCount > CHAR_WARNING_THRESHOLD;
+  const unreadLabel = unread > 99 ? '99+' : `${unread}`;
 
   return (
     <div
@@ -125,7 +102,16 @@ export function ChatDock({ onSend, onOpen, compact = false }: ChatDockProps) {
           <span className="text-mist-500">/local</span>
         </span>
         <span className="flex items-center gap-2">
-          <span className="font-mono text-[9px] text-mist-500">{messages.length}</span>
+          {/* 收起态显示未读而不是总数：200 条这个数字不携带任何信息 */}
+          {!open && unread > 0 ? (
+            <span className="border border-mint-400 bg-mint-400 px-1 py-0.5 font-mono text-[9px] font-semibold tabular-nums leading-none text-ink-950">
+              {unreadLabel}
+            </span>
+          ) : (
+            <span className="font-mono text-[9px] tabular-nums text-mist-500">{messages.length}</span>
+          )}
+          {/* 未读同时用文案表达，不只靠颜色 */}
+          {!open && unread > 0 && <span className="sr-only">{unread} 条未读</span>}
           <ChevronDown
             className={`h-3.5 w-3.5 text-mist-500 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
           />
@@ -134,55 +120,17 @@ export function ChatDock({ onSend, onOpen, compact = false }: ChatDockProps) {
 
       {open && (
         <>
-          <div
-            ref={listRef}
-            // 固定高度而不是 dvh：竖屏聊天浮在工牌下方，展开后不能把底部操作区顶出屏幕
-            className={`space-y-2 overflow-y-auto px-3 py-3 ${compact ? 'max-h-[120px]' : 'max-h-[220px]'}`}
-          >
-            {messages.length === 0 && (
-              <div className="space-y-1.5 font-mono text-[11px] leading-relaxed text-mist-500">
-                <p>频道很安静。按 Enter 说点什么，附近 900px 内的牛马都能看到。</p>
-                <p className="text-[10px]">有人进园、离园，或你在岗满 30 分钟，这里会自动播报。</p>
-              </div>
-            )}
-            {messages.map((message) => {
-              const time = formatClock(message.at);
-              const full = formatFullClock(message.at);
-              if (message.kind === 'system') {
-                const marker = systemMarker(message.systemKind);
-                return (
-                  <p
-                    key={`${message.id}-${message.at}`}
-                    className="flex items-baseline gap-1.5 font-mono text-[10px] leading-relaxed text-mist-400"
-                  >
-                    <span className="shrink-0 tabular-nums text-mist-500" title={full}>
-                      {time}
-                    </span>
-                    <span className={`shrink-0 ${marker.tone}`} aria-hidden>
-                      {marker.glyph}
-                    </span>
-                    <span className="min-w-0 flex-1">{message.text}</span>
-                  </p>
-                );
-              }
-              return (
-                <p key={`${message.id}-${message.at}`} className="text-[12px] leading-relaxed">
-                  <span className="mr-1.5 font-mono text-[9px] tabular-nums text-mist-500" title={full}>
-                    {time}
-                  </span>
-                  <span
-                    className={`mr-2 font-mono text-[10px] uppercase tracking-[0.12em] ${
-                      message.self ? 'text-lime-400' : 'text-mint-400'
-                    }`}
-                  >
-                    {/* 与头顶同一口径：全角算 2 宽，超出换省略号，不撑开 340px 面板 */}
-                    {truncateToDisplayWidth(message.name, MAX_NAME_DISPLAY_UNITS)}
-                  </span>
-                  <span className="text-mist-100">{message.text}</span>
-                </p>
-              );
-            })}
-          </div>
+          {/*
+            固定高度而不是 dvh：竖屏聊天浮在工牌下方，展开后不能把底部操作区顶出屏幕（ADR-0033）。
+            手机端取 min(38dvh, 220px)，桌面端给到 340px 让一屏多看到几轮对话。
+          */}
+          <ChatLog
+            messages={messages}
+            history={history}
+            open={open}
+            compact={compact}
+            onLoadHistory={onLoadHistory}
+          />
 
           <form
             onSubmit={(event) => {
@@ -233,7 +181,7 @@ export function ChatDock({ onSend, onOpen, compact = false }: ChatDockProps) {
                 {notice}
               </span>
               <span
-                className={`shrink-0 font-mono text-[9px] ${isNearLimit ? 'text-amber-400' : 'text-mist-500'}`}
+                className={`shrink-0 font-mono text-[9px] tabular-nums ${isNearLimit ? 'text-amber-400' : 'text-mist-500'}`}
               >
                 {charCount} / {MAX_INPUT_LENGTH}
               </span>

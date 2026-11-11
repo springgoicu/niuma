@@ -6,6 +6,7 @@ import {
   truncateChat,
   type ModerationFilter,
 } from '@niuma/shared-types';
+import type { ChatHistory } from './history';
 import type { Player, World } from './world';
 import type { Transport } from './view';
 
@@ -26,6 +27,7 @@ export function handleChat(
   world: World,
   transport: Transport,
   moderation: ModerationFilter,
+  history: ChatHistory,
 ): ChatResult {
   const text = truncateChat(rawText);
   if (text.length === 0) return { sent: false, reason: 'empty' };
@@ -49,12 +51,17 @@ export function handleChat(
     return { sent: false, reason: 'political' };
   }
 
+  const msgId = nextMessageId;
+  nextMessageId = nextMessageId >= 0xfffe ? 1 : nextMessageId + 1;
   const packet = encodeChatBroadcast({
     entityId: player.id,
-    msgId: nextMessageId,
+    msgId,
     text: verdict.text,
   });
-  nextMessageId = nextMessageId >= 0xfffe ? 1 : nextMessageId + 1;
+
+  // 历史里存打码后的文本：回放看到的必须和当时广播出去的一模一样。
+  // 被拒的消息在上面的分支里已经 return，不会进历史。
+  history.add({ msgId, entityId: player.id, name: player.name, text: verdict.text, at: now });
 
   transport.send(player.wsId, packet);
   for (const id of player.known) {

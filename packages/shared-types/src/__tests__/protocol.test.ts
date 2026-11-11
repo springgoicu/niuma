@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   APPEARANCE_BYTES,
   APPEARANCE_COLOR_KEYS,
+  CHAT_HISTORY_FLAG,
+  CHAT_HISTORY_MAX_PAGE,
+  CHAT_HISTORY_PACKET_BUDGET,
   CHAT_REJECT_BYTES,
   CHAT_REJECT_REASON,
   DIRECTION,
@@ -18,6 +21,8 @@ import {
   decodeAppearance,
   decodeAppearanceBroadcast,
   decodeChatBroadcast,
+  decodeChatHistory,
+  decodeChatHistoryRequest,
   decodeChatRejected,
   decodeDespawn,
   decodeHello,
@@ -33,6 +38,8 @@ import {
   encodeAppearance,
   encodeAppearanceBroadcast,
   encodeChatBroadcast,
+  encodeChatHistory,
+  encodeChatHistoryRequest,
   encodeChatRejected,
   encodeDespawn,
   encodeHello,
@@ -489,6 +496,82 @@ describe('chat rejected', () => {
 
   it('rejects a wrong-length packet instead of decoding garbage', () => {
     expect(() => decodeChatRejected(new Uint8Array([0x1a]))).toThrow(/2 bytes/);
+  });
+});
+
+describe('chat history', () => {
+  it('round-trips flags, ageSec and multi-byte name/text', () => {
+    const packet = encodeChatHistory({
+      flags: CHAT_HISTORY_FLAG.Replace | CHAT_HISTORY_FLAG.HasMore,
+      entries: [
+        { msgId: 7, entityId: 42, ageSec: 12, name: '夜班实习生', text: '摸鱼中 🐟 别卷了' },
+        { msgId: 8, entityId: 43, ageSec: 3, name: '阿牛', text: '我去倒杯水' },
+      ],
+    });
+    expect(decodeChatHistory(packet)).toEqual({
+      flags: CHAT_HISTORY_FLAG.Replace | CHAT_HISTORY_FLAG.HasMore,
+      entries: [
+        { msgId: 7, entityId: 42, ageSec: 12, name: '夜班实习生', text: '摸鱼中 🐟 别卷了' },
+        { msgId: 8, entityId: 43, ageSec: 3, name: '阿牛', text: '我去倒杯水' },
+      ],
+    });
+  });
+
+  it('returns an empty page instead of throwing', () => {
+    const packet = encodeChatHistory({ flags: CHAT_HISTORY_FLAG.Replace, entries: [] });
+    // op(1) + flags(1) + count(1)：空页只发 3 字节，客户端靠它清掉上一个会话的残留
+    expect(packet.byteLength).toBe(3);
+    expect(packet[2]).toBe(0);
+    expect(decodeChatHistory(packet)).toEqual({ flags: CHAT_HISTORY_FLAG.Replace, entries: [] });
+  });
+
+  it('stops at the packet budget instead of blowing past it', () => {
+    // 10 条满长度中文正文 ≈ 4.8KB，远超 2KB 预算：只能装下前面几条
+    const entries = Array.from({ length: 10 }, (_, i) => ({
+      msgId: i + 1,
+      entityId: 1,
+      ageSec: 60,
+      name: '实习生',
+      text: '卷'.repeat(160),
+    }));
+    const packet = encodeChatHistory({ flags: 0, entries });
+    expect(packet.byteLength).toBeLessThanOrEqual(CHAT_HISTORY_PACKET_BUDGET);
+    const decoded = decodeChatHistory(packet);
+    expect(decoded.entries.length).toBeGreaterThan(0);
+    expect(decoded.entries.length).toBeLessThan(entries.length);
+    // 被预算截断时编码器必须自己置 HasMore，否则客户端会以为「没有更早的了」
+    expect(decoded.flags & CHAT_HISTORY_FLAG.HasMore).toBe(CHAT_HISTORY_FLAG.HasMore);
+    // 截断必须只发生在页尾：已装下的条目内容完整
+    expect(decoded.entries[0]).toEqual({ msgId: 1, entityId: 1, ageSec: 60, name: '实习生', text: '卷'.repeat(160) });
+  });
+
+  it('treats an outrunning text length as empty instead of reading out of bounds', () => {
+    const packet = encodeChatHistory({
+      flags: 0,
+      entries: [{ msgId: 9, entityId: 3, ageSec: 5, name: 'a', text: 'hello' }],
+    });
+    // 正文长度字段偏移：op(1)+flags(1)+count(1)+头(9)+name(1)
+    new DataView(packet.buffer, packet.byteOffset, packet.byteLength).setUint16(13, 0xffff, true);
+    expect(decodeChatHistory(packet).entries).toEqual([
+      { msgId: 9, entityId: 3, ageSec: 5, name: 'a', text: '' },
+    ]);
+  });
+
+  it('rejects a wrong opcode', () => {
+    expect(() => decodeChatHistory(encodeChatBroadcast({ entityId: 1, msgId: 1, text: 'hi' }))).toThrow(
+      /chat history/,
+    );
+  });
+
+  it('round-trips the paging request and clamps the page size', () => {
+    expect(decodeChatHistoryRequest(encodeChatHistoryRequest({ beforeMsgId: 512, limit: 10 }))).toEqual({
+      beforeMsgId: 512,
+      limit: 10,
+    });
+    expect(decodeChatHistoryRequest(encodeChatHistoryRequest({ beforeMsgId: 0, limit: 255 })).limit).toBe(
+      CHAT_HISTORY_MAX_PAGE,
+    );
+    expect(() => decodeChatHistoryRequest(new Uint8Array([0x1e, 0, 0]))).toThrow(/4 bytes/);
   });
 });
 

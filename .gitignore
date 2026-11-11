@@ -9,6 +9,8 @@ dist/
 next-env.d.ts
 apps/web/public/sprites/*.png
 apps/web/public/sprites/*.json
+# 品牌图同样由 pnpm assets 生成（favicon / iOS 图标 / 导航 logo），不入库
+apps/web/public/brand/
 packages/pixel-assets/.proof/
 # 构建期生成的预压缩产物（next build 后由 scripts/precompress.mjs 产出，不入库）
 apps/web/public/**/*.gz

@@ -22,6 +22,7 @@ import {
   ORIGIN,
   ROWS,
 } from '../src/layout';
+import { writeBrandAssets } from './brand';
 
 const OUT_DIR = resolve(import.meta.dir, '../../../apps/web/public/sprites');
 /** 校对图落点：不进 public、不打进包，只给人眼验收用 */
@@ -572,6 +573,8 @@ async function main(): Promise<void> {
 
   await writeFile(resolve(OUT_DIR, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   await writeLayoutModule();
+  // 品牌标记与图集同批生成：favicon / iOS 图标 / 导航 logo 都从 src/logo.ts 这一份 16×16 位图出
+  await writeBrandAssets();
   await writeProof();
 
   const elapsed = Date.now() - started;

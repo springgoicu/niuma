@@ -106,6 +106,10 @@ export const OpCode = {
   S2C_STATUS: 0x1c,
   /** 系统提示（进园 / 离园等）：`[op][kind u8][entityId u16][len u16][utf8]` */
   S2C_SYSTEM_NOTICE: 0x1d,
+  /** 拉取更早的聊天：`[op][beforeMsgId u16][limit u8]`，`beforeMsgId = 0` 表示要最新一页 */
+  C2S_CHAT_HISTORY: 0x1e,
+  /** 历史聊天页：`[op][flags u8][count u8]` + count × entry */
+  S2C_CHAT_HISTORY: 0x1f,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -181,6 +185,35 @@ export interface SystemNoticePacket {
   kind: number;
   entityId: number;
   text: string;
+}
+
+/**
+ * 一条历史聊天。
+ *
+ * `name` 是发送时的昵称快照：发送者可能早就离场，客户端名字表里查不到，
+ * 只有 `entityId` 的话会退化成「匿名牛马」。
+ * 时间用「距今秒数」而不是服务端时间戳——客户端按自己的时钟还原，
+ * 两端时钟不一致也不会出现「历史比现在还新」的倒流。
+ */
+export interface ChatHistoryEntry {
+  msgId: number;
+  entityId: number;
+  /** 距今秒数：客户端用 `Date.now() - ageSec * 1000` 还原 */
+  ageSec: number;
+  name: string;
+  text: string;
+}
+
+/** 历史页；`flags` 见 `CHAT_HISTORY_FLAG`（首屏快照 / 还有更早的） */
+export interface ChatHistoryPacket {
+  flags: number;
+  entries: ChatHistoryEntry[];
+}
+
+/** 上翻请求：`beforeMsgId = 0` 表示「要最新一页」 */
+export interface ChatHistoryRequest {
+  beforeMsgId: number;
+  limit: number;
 }
 
 /**
