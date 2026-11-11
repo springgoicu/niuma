@@ -436,10 +436,25 @@ function waveAt(phase: number, reach: readonly number[], lift: readonly number[]
   return { reach: reach[phase] ?? 0, lift: lift[phase] ?? 0 };
 }
 
+/** 一块躯干形：站立时只有一块，坐姿由胸 / 腰 / 臀三块并集而成 */
+interface TorsoMass {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  r: number;
+}
+
 interface SideOptions {
   bodyCY: number;
   bodyW: number;
   bodyH: number;
+  /** 躯干并集：绘制与斑纹遮罩共用同一份形状，禁止另写一套几何 */
+  torso: TorsoMass[];
+  /** 腿根 y：站姿埋进躯干 3px，坐姿从肩线起画，前腿才不会从胸口里长出来 */
+  legTop: number;
+  /** 尾巴挂点 y：坐姿挂在臀部上缘，站姿挂在背线 */
+  tailTop: number;
   headCY: number;
   headX: number;
   hindFar: LegAnim;
@@ -450,24 +465,25 @@ interface SideOptions {
   openMouth: boolean;
   /** 躺姿：不画腿，只露一截蹄子 */
   lying: boolean;
-  /** 坐下时把后腿折成臀部的鼓包 */
-  haunch: boolean;
+  /**
+   * 猫狗式坐姿（sit / sitEmote / sitWave 共用）：后腿折进臀部、不再画落地腿柱，
+   * 躯干前高后低、臀部贴地，两条前腿直立撑住前身。
+   */
+  sitting: boolean;
   /** 打招呼：抬起的近侧前腿；null 表示四条腿照常落地 */
   wave: WaveAnim | null;
   blink: boolean;
 }
 
 function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void {
-  const bodyTop = o.bodyCY - o.bodyH / 2;
-  const bodyBottom = o.bodyCY + o.bodyH / 2;
   const sock = spec.pattern === 2;
   const longTail = spec.tail === 1;
 
   // 挂点外移 1px：幼态比例下臀部更圆，尾巴贴着躯干画会被躯干吃掉，只剩一个不读数的凸起
-  drawTail(px, spec.species, BODY_CX - o.bodyW / 2 - 1.5, bodyTop + 2, o.tailSway, longTail);
+  drawTail(px, spec.species, BODY_CX - o.bodyW / 2 - 1.5, o.tailTop, o.tailSway, longTail);
 
   const legBase = {
-    top: bodyBottom - 3,
+    top: o.legTop,
     w: a.legW,
     hoofH: a.hoofH,
     sock,
@@ -478,25 +494,31 @@ function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void
   // 远侧两条腿先画：它们永远压在躯干与近侧腿之下。
   // 屈膝量 1.6 → 1.2：腿变短以后原来的折角会读成「弯折的棍子」而不是膝盖
   if (!o.lying) {
-    drawLeg(px, { ...legBase, x: hindX + 1, far: true, bend: -1.2, ...o.hindFar });
+    // 坐姿的后腿折进臀部，不再画落地腿柱；远侧前腿照常撑地
+    if (!o.sitting) drawLeg(px, { ...legBase, x: hindX + 1, far: true, bend: -1.2, ...o.hindFar });
     drawLeg(px, { ...legBase, x: frontX - 1 - a.legW, far: true, bend: 1.2, ...o.frontFar });
   }
 
+  // 坐姿是胸 / 腰 / 臀三块并集：先按 1px 偏移整体铺一遍阴影，再整体铺一遍本体色。
+  // 逐块 solid 会在接缝处留下内部暗边，把坐姿切成三块补丁。
   solid(px, S.Body, S.BodyShade, (slot, dx, dy) => {
-    px.roundRect(BODY_CX + dx, o.bodyCY + dy, o.bodyW, o.bodyH, a.bodyR, slot);
+    for (const mass of o.torso) px.roundRect(mass.cx + dx, mass.cy + dy, mass.w, mass.h, mass.r, slot);
   });
 
   if (spec.pattern === 1) {
+    // 斑纹遮罩复用同一份并集形状，否则坐姿的斑块会落到轮廓外
     stampBlobs(
       px,
       spec.species,
       o.bodyCY,
-      maskOfShape(px, (canvas) => canvas.roundRect(BODY_CX, o.bodyCY, o.bodyW, o.bodyH, a.bodyR, S.Body)),
+      maskOfShape(px, (canvas) => {
+        for (const mass of o.torso) canvas.roundRect(mass.cx, mass.cy, mass.w, mass.h, mass.r, S.Body);
+      }),
     );
   }
 
   if (!o.lying) {
-    drawLeg(px, { ...legBase, x: hindX + 1 + a.legW + 1.2, far: false, bend: -0.8, ...o.hindNear });
+    if (!o.sitting) drawLeg(px, { ...legBase, x: hindX + 1 + a.legW + 1.2, far: false, bend: -0.8, ...o.hindNear });
     if (o.wave) {
       // 打招呼：近侧前腿离地举起，蹄子按三拍前伸 / 上抬；远侧前腿照常撑地
       drawRaisedLeg(px, { x: frontX - 1, top: legBase.top, w: a.legW, hoofH: a.hoofH, sock, ...o.wave });
@@ -508,7 +530,7 @@ function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void
   if (o.lying) {
     px.rect(o.headX - 14, FEET - a.hoofH, a.legW + 1.5, a.hoofH, S.Hoof);
     px.rect(o.headX - 14, FEET - a.hoofH, a.legW + 1.5, 1, S.HoofShade);
-    px.roundRect(BODY_CX - o.bodyW / 2 + 4, bodyBottom - 1, 11, 6, 2.5, S.BodyShade);
+    px.roundRect(BODY_CX - o.bodyW / 2 + 4, o.bodyCY + o.bodyH / 2 - 1, 11, 6, 2.5, S.BodyShade);
     if (o.wave) {
       // 躺姿没有腿柱可抬：把贴地那截前蹄抬到躯干上方，躯干与头保持贴地不动
       drawRaisedLeg(px, {
@@ -520,14 +542,6 @@ function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void
         ...o.wave,
       });
     }
-  }
-
-  if (o.haunch) {
-    // 坐下时的后腿：折起来只剩臀部一团，比画四条凳子腿更符合四足动物。
-    // 尺寸跟 bodyW 走——写死 12×8 在幼态比例下会变成贴在肚子下面的一小块补丁
-    const haunchW = Math.max(10, o.bodyW * 0.5);
-    px.roundRect(BODY_CX - o.bodyW / 2 + 4, bodyBottom + 1, haunchW, 7.5, a.bodyR * 0.55, S.BodyShade);
-    px.roundRect(BODY_CX - o.bodyW / 2 + 5, bodyBottom + 2, haunchW - 4, 4.5, a.bodyR * 0.4, S.Body);
   }
 
   // 颈：从躯干前上缘斜拉到下颌，锥形收窄。
@@ -629,13 +643,30 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
   const openMouth = (pose === 'emote' || pose === 'sitEmote' || pose === 'lieEmote') && phase === 1;
 
   if (pose === 'sit' || pose === 'sitEmote' || pose === 'sitWave') {
-    // 坐下：后腿折成臀部，前腿直撑；尾巴落地。
-    // 落座量 7 → 5.5、低头量 5 → 4：腿短了 2，原来的位移会让屁股悬在半空
+    // 猫狗式坐姿：后腿折进臀部、不再画落地腿柱；前躯抬高，两条前腿直立撑住前身。
+    // 躯干是三块圆角矩形的并集（胸 / 腰 / 臀），圆心沿后下方排，背线自然下斜。
+    // 臀块底边钉在 FEET - 3：既读得出「屁股落地」，又不会深陷进椅子面（SEAT_ART.sink 不变）。
+    // 调参旋钮（从影响大到小）：hipBottom（屁股贴地程度）、shoulderY（前腿露出长度）、
+    // chestCY 与胸块宽度（前躯挺立感）、headCY（抬头量）。
+    const shoulderY = FEET - a.legH * 0.94 + breathe;
+    const hipBottom = FEET - 3 + breathe;
+    const hipH = a.bodyH * 1.02;
+    const chestCY = shoulderY - a.bodyH * 0.48;
     return {
-      bodyCY: standBodyCY + 5.5 + breathe,
+      bodyCY: chestCY,
       bodyW: a.bodyW,
-      bodyH: a.bodyH * 0.9,
-      headCY: standHeadCY + 6 + breathe,
+      bodyH: a.bodyH * 0.96,
+      torso: [
+        // 胸：最靠前、抬得最高，前腿从这里挂下去。窄而高才读得出「前身立起来」
+        { cx: BODY_CX + a.bodyW * 0.22, cy: chestCY, w: a.bodyW * 0.52, h: a.bodyH * 0.96, r: a.bodyR * 0.55 },
+        // 腰：垫在胸与臀之间，把两块的落差摊成一道斜坡
+        { cx: BODY_CX, cy: shoulderY - a.bodyH * 0.3, w: a.bodyW * 0.74, h: a.bodyH * 0.9, r: a.bodyR * 0.75 },
+        // 臀：最靠后、最低，底边贴地，读作坐下去的大腿
+        { cx: BODY_CX - a.bodyW * 0.24, cy: hipBottom - hipH / 2, w: a.bodyW * 0.62, h: hipH, r: a.bodyR * 0.72 },
+      ],
+      legTop: shoulderY - 2,
+      tailTop: hipBottom - hipH + 3,
+      headCY: standHeadCY + 2 + breathe,
       headX: HEAD_CX,
       hindFar: STILL,
       hindNear: STILL,
@@ -644,17 +675,22 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
       tailSway: 0,
       openMouth,
       lying: false,
-      haunch: true,
+      sitting: true,
       wave: pose === 'sitWave' ? waveAt(phase, WAVE_REACH, WAVE_LIFT) : null,
       blink,
     };
   }
 
   if (pose === 'lie' || pose === 'lieEmote' || pose === 'lieWave') {
+    const bodyCY = FEET - (a.bodyH * 0.72) / 2 - 2 + breathe;
+    const bodyH = a.bodyH * 0.72;
     return {
-      bodyCY: FEET - (a.bodyH * 0.72) / 2 - 2 + breathe,
+      bodyCY,
       bodyW: a.bodyW + 1,
-      bodyH: a.bodyH * 0.72,
+      bodyH,
+      torso: [{ cx: BODY_CX, cy: bodyCY, w: a.bodyW + 1, h: bodyH, r: a.bodyR }],
+      legTop: bodyCY + bodyH / 2 - 3,
+      tailTop: bodyCY - bodyH / 2 + 2,
       headCY: FEET - a.headR - 2 + breathe,
       headX: HEAD_CX,
       hindFar: STILL,
@@ -664,7 +700,7 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
       tailSway: 0,
       openMouth,
       lying: true,
-      haunch: false,
+      sitting: false,
       wave: pose === 'lieWave' ? waveAt(phase, LIE_WAVE_REACH, LIE_WAVE_LIFT) : null,
       blink,
     };
@@ -676,10 +712,14 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
   const jumping = pose === 'jump';
   const hop = jumping ? ([3, -5, 0][phase] ?? 0) : 0;
   const jumpLegs: LegAnim = jumping && phase === 1 ? { swing: 0, lift: 5 } : STILL;
+  const bodyCY = standBodyCY + bob + hop + breathe;
   return {
-    bodyCY: standBodyCY + bob + hop + breathe,
+    bodyCY,
     bodyW: a.bodyW,
     bodyH: a.bodyH,
+    torso: [{ cx: BODY_CX, cy: bodyCY, w: a.bodyW, h: a.bodyH, r: a.bodyR }],
+    legTop: bodyCY + a.bodyH / 2 - 3,
+    tailTop: bodyCY - a.bodyH / 2 + 2,
     headCY: standHeadCY + bob + hop + breathe,
     headX: HEAD_CX,
     hindFar: jumping ? jumpLegs : legs.hindFar,
@@ -689,7 +729,7 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
     tailSway: walk ? (TAIL_SWAY[phase] ?? 0) : 0,
     openMouth,
     lying: false,
-    haunch: false,
+    sitting: false,
     wave: pose === 'wave' ? waveAt(phase, WAVE_REACH, WAVE_LIFT) : null,
     blink,
   };
@@ -708,7 +748,10 @@ interface FacingOptions {
   headCY: number;
   legTop: number;
   back: boolean;
+  /** 坐姿：后腿折叠不落腿柱，两条前腿直立撑地 */
   sit: boolean;
+  /** 躺姿：四条腿折在身下，只露贴地蹄子（与坐姿分开，ADR-0026 的床上语义） */
+  lie: boolean;
   legLift: [number, number];
   openMouth: boolean;
   /** 打招呼：举起的近侧前腿与所在侧（0 = 屏幕左），null 表示四条腿都落地 */
@@ -735,7 +778,32 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
   const hipX: [number, number] = [x0 + 0.5, x1 - 0.5 - legW];
   const shoulderX: [number, number] = [x0 + legW + 1.2, x1 - legW * 2 - 1.2];
 
-  if (!o.sit) {
+  if (o.lie) {
+    // 正面躺下：四条腿折在身下，只在贴地处露两截蹄子
+    const hoofY = FEET - a.hoofH;
+    px.rect(BODY_CX - 8, hoofY, legW + 1.5, a.hoofH, S.Hoof);
+    px.rect(BODY_CX + 2, hoofY, legW + 1.5, a.hoofH, S.Hoof);
+    px.rect(BODY_CX - 8, hoofY, legW + 1.5, 1, S.HoofShade);
+    px.rect(BODY_CX + 2, hoofY, legW + 1.5, 1, S.HoofShade);
+  } else if (o.sit) {
+    // 正面坐下：后腿折到身后，只在两侧露出折叠的大腿圆块；两条前腿直立撑地。
+    // 鼓包不落到地面（FEET - 6）：一落地就会被数成第三条、第四条腿，坐姿立刻读成「蹲」。
+    const haunchW = legW * 1.6;
+    const haunchTop = bodyBottom - 2;
+    const haunchBottom = FEET - 6;
+    const haunchH = Math.max(5, haunchBottom - haunchTop);
+    for (const cx of [x0 + haunchW * 0.42, x1 - haunchW * 0.42]) {
+      px.roundRect(cx, haunchTop + haunchH / 2, haunchW, haunchH, haunchW * 0.45, S.BodyShade);
+    }
+    for (let side = 0; side < 2; side += 1) {
+      // 挥手那一侧的前腿离地：不画落地柱，改由躯干之后的举腿分支接手
+      if (o.wave?.side === side) continue;
+      const nearX = shoulderX[side]!;
+      px.polygon(taper(nearX + legW / 2, o.legTop, nearX + legW / 2, FEET - a.hoofH, legW, legW * 0.9), S.Body);
+      px.rect(nearX, FEET - a.hoofH, legW, a.hoofH, S.Hoof);
+      px.rect(nearX, FEET - a.hoofH, legW, 1, S.HoofShade);
+    }
+  } else {
     for (let side = 0; side < 2; side += 1) {
       const lift = o.legLift[side] ?? 0;
       const farX = hipX[side]!;
@@ -749,13 +817,6 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
       px.rect(nearX, FEET - lift - a.hoofH, legW, a.hoofH, S.Hoof);
       px.rect(nearX, FEET - lift - a.hoofH, legW, 1, S.HoofShade);
     }
-  } else {
-    // 正面坐下 / 躺下：四条腿折在身下，只在贴地处露两截蹄子
-    const hoofY = FEET - a.hoofH;
-    px.rect(BODY_CX - 8, hoofY, legW + 1.5, a.hoofH, S.Hoof);
-    px.rect(BODY_CX + 2, hoofY, legW + 1.5, a.hoofH, S.Hoof);
-    px.rect(BODY_CX - 8, hoofY, legW + 1.5, 1, S.HoofShade);
-    px.rect(BODY_CX + 2, hoofY, legW + 1.5, 1, S.HoofShade);
   }
 
   solid(px, S.Body, S.BodyShade, (slot, dx, dy) => {
@@ -794,7 +855,7 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
     const { reach, lift, side } = o.wave;
     drawRaisedLeg(px, {
       x: shoulderX[side]! + legW / 2,
-      top: o.sit ? bodyBottom - 2 : bodyBottom - 3,
+      top: o.legTop,
       w: legW,
       hoofH: a.hoofH,
       sock: spec.pattern === 2,
@@ -877,14 +938,9 @@ function facingOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: numbe
   // 与侧视同一条上限：腾空 -5，再高牛角会顶到帧顶
   const hop = pose === 'jump' ? ([3, -5, 0][phase] ?? 0) : 0;
   const breathe = breatheOffset(spec, pose, phase);
-  // 正视 / 背视把坐与躺画成同一套「腿折在身下」，叫唤与挥手沿用各自的基座
-  const sit =
-    pose === 'sit' ||
-    pose === 'lie' ||
-    pose === 'sitEmote' ||
-    pose === 'lieEmote' ||
-    pose === 'sitWave' ||
-    pose === 'lieWave';
+  // 坐与躺是两套下半身：坐姿要露出两条直立前腿，躺姿只露贴地蹄子（ADR-0026 的床上语义）
+  const sit = pose === 'sit' || pose === 'sitEmote' || pose === 'sitWave';
+  const lie = pose === 'lie' || pose === 'lieEmote' || pose === 'lieWave';
   const walkLift = pose === 'walk' ? phase % 2 : 0;
   const jumpLift = pose === 'jump' && phase === 1 ? 5 : 0;
   const openMouth = (pose === 'emote' || pose === 'sitEmote' || pose === 'lieEmote') && phase === 1;
@@ -896,17 +952,31 @@ function facingOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: numbe
    * 只抬 1px 的头（耳、角跟着走），身体不动，读作「仰头叫一声」而不是蹦跳。
    */
   const backBarkLift = back && openMouth ? -1 : 0;
+  // 坐姿下沉量比躺姿少 4.5：前腿要留出可读的长度，否则又会退回「四条短腿」
+  const bodyCY = lie
+    ? standBodyCY + 9 + breathe
+    : sit
+      ? standBodyCY + 4.5 + breathe
+      : standBodyCY + bob + hop + breathe;
+  const bodyH = sit || lie ? a.bodyH * 0.92 : a.bodyH;
+  const standLegTop = standBodyCY + a.bodyH / 2 - 3;
 
   return {
-    bodyCY: sit ? standBodyCY + 9 + breathe : standBodyCY + bob + hop + breathe,
+    bodyCY,
     // 正视的躯干比侧视宽 14%：四足动物从正面看是「肩宽大于体深」，
     // 这条差值就是头两侧能露出来的那 2–3px 肩线
     bodyW: a.bodyW * 1.14,
-    bodyH: sit ? a.bodyH * 0.92 : a.bodyH,
-    headCY: sit ? standHeadCY + 11 + breathe + backBarkLift : standHeadCY + bob + hop + breathe + backBarkLift,
-    legTop: standBodyCY + a.bodyH / 2 - 3,
+    bodyH,
+    headCY: lie
+      ? standHeadCY + 11 + breathe + backBarkLift
+      : sit
+        ? standHeadCY + 7 + breathe + backBarkLift
+        : standHeadCY + bob + hop + breathe + backBarkLift,
+    // 坐姿前腿从坐姿肩线起画；躺姿与站姿沿用各自的腿根，挥手抬腿也读同一份
+    legTop: sit ? bodyCY + bodyH / 2 - 1 : lie ? bodyCY + bodyH / 2 - 3 : standLegTop,
     back,
     sit,
+    lie,
     legLift: [walkLift + jumpLift, 1 - walkLift + jumpLift],
     openMouth,
     wave: waving ? { ...faceWave, side: 0 } : null,
