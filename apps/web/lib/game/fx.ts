@@ -151,8 +151,8 @@ export class GroundFx {
     this.container.addChild(this.printLayer);
     for (let i = 0; i < FOOTPRINT_COUNT; i += 1) {
       const sprite = new Sprite(this.printTexture);
-      // 锚点贴在脚印上沿：脚底落点就是踩下去的那条线
-      sprite.anchor.set(0.5, 0);
+      // 锚点贴左上：3 宽的纹理用 0.5 会落在半纹素上，描边会糊一档（ADR-0005）
+      sprite.anchor.set(0, 0);
       sprite.visible = false;
       this.printLayer.addChild(sprite);
       this.prints.push({ sprite, vx: 0, vy: 0, age: 0, life: 0, active: false });
@@ -206,7 +206,8 @@ export class GroundFx {
     this.printNext = (this.printNext + 1) % this.prints.length;
     const sprite = print.sprite;
     sprite.scale.x = flip ? -1 : 1;
-    sprite.position.set(Math.round(x), Math.round(y));
+    // 锚点在左上：x 让开半张纹理，镜像时再翻回来，脚印永远压在脚底中心
+    sprite.position.set(Math.round(x) - (flip ? -(FOOTPRINT_W - 1) : 1), Math.round(y));
     sprite.tint = W.footprint;
     sprite.alpha = FOOTPRINT_ALPHA[0]!;
     sprite.visible = true;
