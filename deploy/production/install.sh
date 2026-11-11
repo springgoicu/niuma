@@ -146,7 +146,13 @@ fi
 echo "   node $(node -v)"
 
 npm config set registry "$NPM_REGISTRY" >/dev/null 2>&1 || true
-npm i -g "pnpm@$PNPM_VERSION" pm2 bun >/tmp/niuma-npm.log 2>&1 || die "npm 全局安装失败，见 /tmp/niuma-npm.log"
+
+# 三个都在就跳过：重跑 install.sh 时没必要再等一次全局安装
+if command -v pnpm >/dev/null 2>&1 && command -v pm2 >/dev/null 2>&1 && command -v bun >/dev/null 2>&1; then
+  echo "   pnpm / pm2 / bun 已就绪，跳过全局安装"
+else
+  npm i -g "pnpm@$PNPM_VERSION" pm2 bun >/tmp/niuma-npm.log 2>&1 || die "npm 全局安装失败，见 /tmp/niuma-npm.log"
+fi
 
 # npm 会把 bin 放进 node 自己的目录（不在 PATH 里），统一软链到 /usr/local/bin
 NODE_PREFIX="$(npm root -g | sed 's#/lib/node_modules##')"
@@ -338,11 +344,8 @@ step "11. 首次部署"
 if [ "$SKIP_DEPLOY" = "1" ]; then
   warn "SKIP_DEPLOY=1：跳过构建。环境已就绪，之后执行 deploy.sh 即可"
 else
-  # 用部署用户跑，环境与 Webhook 触发时完全一致
-  set -a
-  # shellcheck disable=SC1091
-  . /etc/niuma/niuma.env
-  set +a
+  # deploy.sh 自己会 source /etc/niuma/niuma.env 并把它 export 给 pm2 --update-env，
+  # 这里不需要（也不应该）替它传环境变量
   # 证书没签下来时公网复验必然失败（自签证书 curl 过不去），这里不让它把安装判死
   if [ "$SKIP_CERT" = "1" ]; then SKIP_PUBLIC_CHECK=1; else SKIP_PUBLIC_CHECK=0; fi
   # FORCE=1 是必须的：刚 clone 下来 HEAD 就等于 origin/master，deploy.sh 会按
