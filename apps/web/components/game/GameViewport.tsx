@@ -22,34 +22,22 @@ import { InspectCard } from './InspectCard';
 import { JoinGate } from './JoinGate';
 import { MiniMap } from './MiniMap';
 import { NavCard } from './NavCard';
-import { NoticeBoard, NoticeBoardButton } from './NoticeBoard';
+import { NoticeBoard } from './NoticeBoard';
 import { QueueGate } from './QueueGate';
 import { WelcomeBanner } from './WelcomeBanner';
 import { Joystick, TouchActions } from './TouchControls';
-import { useImmersiveStage, useIsTouch, useLandscapeStage, useVisualViewportSize } from '@/lib/use-touch-stage';
-
-/**
- * 竖屏触屏时把舞台横过来（系统横屏锁失败的兜底）：
- * 舞台宽高互换，再绕左上角旋转 90° 并平移回视口内。
- */
-const LANDSCAPE_STAGE_STYLE = {
-  position: 'fixed',
-  top: 0,
-  left: 0,
-  width: '100dvh',
-  height: '100dvw',
-  transformOrigin: '0 0',
-  transform: 'translate(100dvw, 0) rotate(90deg)',
-} as const;
+import { useImmersiveStage, useIsPortrait, useIsTouch, useVisualViewportSize } from '@/lib/use-touch-stage';
 
 export function GameViewport() {
   const hostRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<GameSession | null>(null);
   const isTouch = useIsTouch();
-  const rotated = useLandscapeStage(isTouch);
-  // 全屏 + 横屏锁：手机端拿到真正的横向满屏，锁不住时由 rotated 的 CSS 旋转兜底
-  const immersive = useImmersiveStage(isTouch);
-  // 输入法弹起时 dvh 不变，用可视视口高度把舞台缩到键盘之上（旋转舞台不参与，见下）
+  const isPortrait = useIsPortrait();
+  // 竖屏只决定触控区与 HUD 的排布；世界倍率由 renderer 按屏幕宽高比自适应
+  const portrait = isTouch && isPortrait;
+  // 全屏只负责收起浏览器界面，不再锁横屏：朝向始终交给设备与用户
+  const immersive = useImmersiveStage();
+  // 输入法弹起时 dvh 不变，用可视视口高度把舞台缩到键盘之上
   const viewport = useVisualViewportSize();
   const autoImmersiveRef = useRef(false);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -152,11 +140,14 @@ export function GameViewport() {
   }, []);
 
   /**
-   * 点选角色：舞台局部坐标交给会话做拾取，命中远端角色就打开工牌，点空白 / 自己则收起。
-   * 桌面宿主与手机摇杆轻点共用这一条路径，坐标口径完全一致（offsetX / offsetY）。
+   * 点选角色：统一用屏幕坐标减舞台 rect 换算局部坐标，命中远端角色就打开工牌，
+   * 点空白 / 自己则收起。摇杆热区在竖屏只占左下，不能再拿它自己的 offset 当舞台坐标。
    */
-  const handlePick = useCallback((stageX: number, stageY: number) => {
-    const badge = sessionRef.current?.inspectAt(stageX, stageY) ?? null;
+  const handlePick = useCallback((clientX: number, clientY: number) => {
+    const host = hostRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    const badge = sessionRef.current?.inspectAt(clientX - rect.left, clientY - rect.top) ?? null;
     setInspectId(badge?.id ?? null);
   }, []);
 
@@ -196,12 +187,8 @@ export function GameViewport() {
       className="no-callout relative h-dvh w-full touch-none select-none overflow-hidden bg-ink-950"
       onContextMenu={(event) => event.preventDefault()}
       style={
-        rotated
-          ? LANDSCAPE_STAGE_STYLE
-          : // 只有触屏才跟随可视视口：桌面端浏览器缩放时不该让舞台跟着缩水
-            isTouch && viewport.height > 0
-            ? { height: viewport.height }
-            : undefined
+        // 只有触屏才跟随可视视口：桌面端浏览器缩放时不该让舞台跟着缩水
+        isTouch && viewport.height > 0 ? { height: viewport.height } : undefined
       }
     >
       <div
@@ -213,15 +200,15 @@ export function GameViewport() {
         }}
         onPointerUp={(event) => {
           if (event.button !== 0) return;
-          const native = event.nativeEvent;
-          // offset 是舞台局部坐标：旋转舞台与 DPR 变化都不需要另做换算
-          handlePick(native.offsetX, native.offsetY);
+          // 与摇杆轻点共用同一条路径：屏幕坐标 → 舞台 rect 换算
+          handlePick(event.clientX, event.clientY);
         }}
       />
 
-      {/* 摇杆热区铺满左半屏，必须在 HUD 之下：HUD 的 pointer-events-none 让空白处的按压穿透下来 */}
+      {/* 摇杆热区横屏铺满左半屏、竖屏收进左下 58%，必须在 HUD 之下：
+          HUD 的 pointer-events-none 让空白处的按压穿透下来 */}
       {profile && isTouch && (
-        <Joystick onMove={handleMove} onEngage={closePanels} onTap={handlePick} rotated={rotated} />
+        <Joystick onMove={handleMove} onEngage={closePanels} onTap={handlePick} portrait={portrait} />
       )}
 
       {checked && !profile && (
@@ -238,13 +225,19 @@ export function GameViewport() {
         <>
           <div
             className={`pointer-events-none absolute inset-0 flex flex-col justify-between ${
-              isTouch ? (rotated ? 'game-safe-rotated' : 'game-safe') : 'p-4'
+              isTouch ? 'game-safe' : 'p-4'
             }`}
           >
-            {/* 手机端顶栏压成一行：左侧折叠工牌与右侧控件同高，把纵向空间还给画面。
+            {/* 手机端横向顶栏：左侧折叠工牌、右侧控件；竖屏时右侧再拆成
+                「在线徽标 + 2×2 图标格」两行，390px 宽也不会横向溢出。
                 对齐用 items-start，工牌展开时只向下长，右侧控件不跟着跳。 */}
             <div className="flex items-start justify-between gap-3">
-              <div className={`flex min-w-0 flex-col items-start gap-2 ${isTouch ? 'relative' : ''}`}>
+              {/* 竖屏里展开的工牌会碰到右上的导览卡：把工牌抬到导览卡之上，展开时以工牌为准 */}
+              <div
+                className={`flex min-w-0 flex-col items-start gap-2 ${isTouch ? 'relative' : ''} ${
+                  portrait ? 'z-30' : ''
+                }`}
+              >
                 <PlayerCard
                   name={profile.name}
                   species={profile.appearance.species}
@@ -260,10 +253,12 @@ export function GameViewport() {
                   </div>
                 )}
               </div>
-              <div className={`flex shrink-0 ${isTouch ? 'items-center gap-2' : 'flex-col items-end gap-2'}`}>
+              {/* 竖屏横向只有 360–390px：右列改两行（在线徽标 / 2×2 图标格），
+                  下班入口收成图标，左侧工牌才保得住可读宽度 */}
+              <div className={`flex shrink-0 ${isTouch && !portrait ? 'items-center gap-2' : 'flex-col items-end gap-2'}`}>
                 <OnlineBadge compact={isTouch} />
-                <div className="flex items-center gap-2">
-                  <NoticeBoardButton compact={isTouch} />
+                <div className={portrait ? 'grid grid-cols-2 gap-2' : 'flex items-center gap-2'}>
+                  <NoticeBoard compact={isTouch} />
                   <SfxToggle compact={isTouch} />
                   {/* 手机端的收尾出口：自动全屏被系统拒掉之后，这里还能再要一次 */}
                   {isTouch && immersive.supported && (
@@ -282,11 +277,14 @@ export function GameViewport() {
                   <Link
                     href="/"
                     aria-label="打卡下班"
+                    title="打卡下班"
                     data-no-immersive
-                    className="pointer-events-auto flex min-h-9 items-center gap-1.5 border-2 border-ink-600 bg-ink-900/92 px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500"
+                    className={`pointer-events-auto flex min-h-9 items-center border-2 border-ink-600 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500 ${
+                      portrait ? 'w-9 justify-center px-0' : 'gap-1.5 px-2 py-1.5'
+                    }`}
                   >
                     <LogOut className="h-3 w-3" />
-                    打卡下班
+                    {!portrait && '打卡下班'}
                   </Link>
                 </div>
                 {/* 他人工牌：桌面贴在右上角控件列下方，宽度与自身工牌接近 */}
@@ -298,7 +296,7 @@ export function GameViewport() {
 
             {isTouch ? (
               <div className="flex items-end justify-end">
-                <TouchActions onAction={handleAction} onChat={openChat} />
+                <TouchActions onAction={handleAction} onChat={openChat} portrait={portrait} />
               </div>
             ) : (
               <div className="flex items-end justify-between gap-4">
@@ -311,23 +309,29 @@ export function GameViewport() {
             )}
           </div>
 
-          {/* 手机端他人工牌浮在动作盘上方居中：不铺遮罩、不与右上角导览卡抢位置 */}
+          {/* 手机端他人工牌浮在动作盘上方居中：不铺遮罩、不与右上角导览卡抢位置。
+              竖屏动作盘是 2 列 × 3 行（184px）+ 安全区，浮层要跟着抬到 232px 之上 */}
           {isTouch && (
-            <div className="pointer-events-none absolute bottom-[152px] left-1/2 z-30 -translate-x-1/2">
+            <div
+              className={`pointer-events-none absolute left-1/2 z-30 -translate-x-1/2 ${
+                portrait ? 'bottom-[232px]' : 'bottom-[152px]'
+              }`}
+            >
               <InspectCard playerId={inspectId} getSession={getSession} onClose={handleCloseInspect} compact />
             </div>
           )}
 
-          {/* 出生点的引导层：实体地标在画面里，这几块负责「说清楚」与随时可查（ADR-0036） */}
-          <NavCard compact={isTouch} />
-          <WelcomeBanner compact={isTouch} />
-          <NoticeBoard compact={isTouch} />
+          {/* 出生点的引导层：实体地标在画面里，这两块负责「说清楚」与随时可查（ADR-0036） */}
+          <NavCard compact={isTouch} portrait={portrait} />
+          <WelcomeBanner compact={isTouch} portrait={portrait} />
 
           <QueueGate onRetry={handleRetry} />
           {hint && (
             <div
               role="status"
-              className={`pointer-events-none absolute left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${isTouch ? 'bottom-40' : 'bottom-24'}`}
+              className={`pointer-events-none absolute left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${
+                portrait ? 'bottom-[232px]' : isTouch ? 'bottom-40' : 'bottom-24'
+              }`}
             >
               {hint}
             </div>

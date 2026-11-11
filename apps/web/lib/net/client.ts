@@ -12,6 +12,7 @@ import {
   decodeSeatState,
   decodeSpawn,
   decodeStatusBroadcast,
+  decodeSystemNotice,
   decodeWelcome,
   encodeChatSend,
   encodeHello,
@@ -27,6 +28,7 @@ import {
   type ResumeState,
   type SeatStateEntry,
   type SpawnPacket,
+  type SystemNoticePacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
 
@@ -46,6 +48,8 @@ export interface NetHandlers {
    */
   onSync(data: Uint8Array): void;
   onChat(packet: ChatPacket): void;
+  /** 系统提示（进园 / 离园等）：文案已由服务端套好模板，客户端只按 kind 选样式 */
+  onSystemNotice(packet: SystemNoticePacket): void;
   /** 服务端拦下了一条发言（政治敏感 / 限速），只带原因，不回传原文 */
   onChatRejected(reason: number): void;
   onAppearance(id: number, appearance: CharacterAppearance): void;
@@ -186,6 +190,9 @@ export class NetClient {
         break;
       case OpCode.S2C_CHAT_BROADCAST:
         this.handlers.onChat(decodeChatBroadcast(data));
+        break;
+      case OpCode.S2C_SYSTEM_NOTICE:
+        this.handlers.onSystemNotice(decodeSystemNotice(data));
         break;
       case OpCode.S2C_CHAT_REJECTED:
         this.handlers.onChatRejected(decodeChatRejected(data).reason);

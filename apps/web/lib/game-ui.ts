@@ -34,7 +34,7 @@ interface GameUiState {
   chatFocusSeq: number;
   /** 工牌卡上的状态编辑面板：与聊天面板互斥收起，点击画布空白处一并关闭 */
   statusOpen: boolean;
-  /** 园区公告栏（微信群二维码）：整屏浮层，打开时把聊天与状态面板一起收起 */
+  /** 园区公告栏（微信群二维码）：右上角的下拉小块，点开才展开 */
   noticeOpen: boolean;
   /** 本地角色姿态：动作按钮据此显示激活 / 不可用态 */
   localPose: Pose;
@@ -135,9 +135,8 @@ export const useGameUi = create<GameUiState>((set) => ({
   setStatusOpen: (statusOpen) =>
     set(statusOpen ? { statusOpen, chatOpen: false, noticeOpen: false } : { statusOpen }),
 
-  // 公告栏是整屏浮层：打开时把左上角的两块面板一并收起，避免遮罩下还有别的面板在动
-  setNoticeOpen: (noticeOpen) =>
-    set(noticeOpen ? { noticeOpen, chatOpen: false, statusOpen: false } : { noticeOpen }),
+  // 公告栏是右上角的下拉小块，不抢焦点，也不替用户关掉正在用的面板
+  setNoticeOpen: (noticeOpen) => set({ noticeOpen }),
 
   reset: () => set(INITIAL),
 }));

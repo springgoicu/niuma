@@ -42,19 +42,6 @@ describe('摇杆数学（ADR-0032）', () => {
     expect(outside).toEqual(inside);
   });
 
-  it('旋转舞台把屏幕方向换算回舞台本地坐标，长度不变', () => {
-    // 舞台顺时针转 90°：屏幕「下」= 舞台「右」，屏幕「右」= 舞台「上」
-    expect(stickVector(0, STICK_RADIUS, true).x).toBeCloseTo(1, 12);
-    expect(stickVector(0, STICK_RADIUS, true).y).toBeCloseTo(0, 12);
-    expect(stickVector(STICK_RADIUS, 0, true).y).toBeCloseTo(-1, 12);
-    for (const deg of DIRECTIONS) {
-      const rad = (deg * Math.PI) / 180;
-      const plain = stickVector(Math.cos(rad) * STICK_RADIUS, Math.sin(rad) * STICK_RADIUS);
-      const rotated = stickVector(Math.cos(rad) * STICK_RADIUS, Math.sin(rad) * STICK_RADIUS, true);
-      expect(magnitude(rotated)).toBeCloseTo(magnitude(plain), 12);
-    }
-  });
-
   it('摇杆头只钳半径，不套死区：视觉跟手', () => {
     expect(stickKnob(STICK_RADIUS * 0.5, 0)).toEqual({ x: STICK_RADIUS * 0.5, y: 0 });
     const clamped = stickKnob(STICK_RADIUS * 2, 0);

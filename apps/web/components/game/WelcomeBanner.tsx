@@ -15,7 +15,7 @@ type Phase = 'idle' | 'in' | 'out';
  * 只认「第一次 online」：断线重连、切标签页回来都不会再弹一遍。
  * 不拦任何指针事件，也不读 localStorage——一次性的引导不该留下状态。
  */
-export function WelcomeBanner({ compact = false }: { compact?: boolean }) {
+export function WelcomeBanner({ compact = false, portrait = false }: { compact?: boolean; portrait?: boolean }) {
   const status = useGameUi((state) => state.status);
   const chatOpen = useGameUi((state) => state.chatOpen);
   const entered = useRef(false);
@@ -49,7 +49,7 @@ export function WelcomeBanner({ compact = false }: { compact?: boolean }) {
       aria-live="polite"
       className={`pointer-events-none absolute left-1/2 z-30 w-[min(520px,92vw)] -translate-x-1/2 transition-opacity duration-300 ${
         phase === 'out' ? 'opacity-0' : 'opacity-100'
-      } ${compact ? 'bottom-[148px]' : 'top-[232px]'}`}
+      } ${compact ? (portrait ? 'bottom-[232px]' : 'bottom-[148px]') : 'top-[232px]'}`}
     >
       <div
         className={`animate-welcome-in relative overflow-hidden border-2 border-ink-600 bg-ink-900/95 backdrop-blur-sm ${
@@ -70,7 +70,9 @@ export function WelcomeBanner({ compact = false }: { compact?: boolean }) {
             <p
               className={`mt-2.5 font-mono tracking-[0.06em] text-mist-300 ${compact ? 'text-[9px]' : 'border-t-2 border-ink-700 pt-2.5 text-[10px]'}`}
             >
-              {compact ? '左半屏拖动移动 · 右下动作盘 · 聊天在左上' : 'WASD 移动 · Z 坐下 · X 躺平 · F 互动 · Enter 打字'}
+              {compact
+                ? `${portrait ? '左下' : '左半屏'}拖动移动 · 右下动作盘 · 聊天在左上`
+                : 'WASD 移动 · Z 坐下 · X 躺平 · F 互动 · Enter 打字'}
             </p>
           </div>
           <span className="tag mt-0.5 shrink-0">北门</span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { fitMetrics, pixelMetrics } from '../pixel-scale';
+import { fitMetrics, pixelMetrics, PORTRAIT_TARGET_TEXELS, worldCssPerTexel } from '../pixel-scale';
 
 /** 角色站立高（纹素）：ADR-0010 的基准 */
 const BODY_TEXELS = 48;
@@ -49,6 +49,44 @@ describe('默认下限不污染预览台', () => {
         expect(metrics.devicePxPerTexel).toBeGreaterThanOrEqual(3);
         expect(metrics.cssScale * metrics.dpr).toBeCloseTo(metrics.devicePxPerTexel, 9);
       }
+    }
+  });
+});
+
+describe('竖屏取景倍率（worldCssPerTexel）', () => {
+  it('横屏与宽窗口保持基准倍率', () => {
+    expect(worldCssPerTexel(844, 390, 1.5)).toBe(1.5);
+    expect(worldCssPerTexel(1440, 900, 1.5)).toBe(1.5);
+    expect(worldCssPerTexel(390, 390, 1.5)).toBe(1.5);
+  });
+
+  it('竖屏按屏宽反推到目标纹素，且不超过基准', () => {
+    const next = worldCssPerTexel(390, 844, 1.5);
+    expect(next).toBeLessThan(1.5);
+    expect(390 / next).toBeCloseTo(PORTRAIT_TARGET_TEXELS, 9);
+    for (const width of [320, 360, 390, 414, 430]) {
+      const value = worldCssPerTexel(width, 900, 1.5);
+      expect(value).toBeGreaterThanOrEqual(1);
+      expect(value).toBeLessThanOrEqual(1.5);
+    }
+  });
+
+  it('平板竖屏（宽 ≥ 目标纹素）不降倍率', () => {
+    expect(worldCssPerTexel(768, 1024, 1.5)).toBe(1.5);
+  });
+
+  it('零尺寸 / 非法目标纹素回落到基准', () => {
+    expect(worldCssPerTexel(0, 844, 1.5)).toBe(1.5);
+    expect(worldCssPerTexel(390, 0, 1.5)).toBe(1.5);
+    expect(worldCssPerTexel(Number.NaN, 844, 1.5)).toBe(1.5);
+    expect(worldCssPerTexel(390, 844, 1.5, 0)).toBe(1.5);
+  });
+
+  it('常见手机 DPR 取整后仍能看到 340+ 横向纹素', () => {
+    for (const dpr of [2, 2.625, 3]) {
+      const metrics = pixelMetrics(worldCssPerTexel(390, 844, 1.5), dpr, 2);
+      expect(Number.isInteger(metrics.devicePxPerTexel)).toBe(true);
+      expect(390 / metrics.cssScale).toBeGreaterThanOrEqual(340);
     }
   });
 });

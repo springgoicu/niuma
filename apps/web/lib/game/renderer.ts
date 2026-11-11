@@ -28,7 +28,15 @@ import {
 import { PonyRenderer } from './pony';
 import type { PonyMotion } from './pony-motion';
 import { PropsView } from './props';
-import { pixelMetrics, readDpr, sameMetrics, snapCss, snapTexel, type PixelMetrics } from './pixel-scale';
+import {
+  pixelMetrics,
+  readDpr,
+  sameMetrics,
+  snapCss,
+  snapTexel,
+  worldCssPerTexel,
+  type PixelMetrics,
+} from './pixel-scale';
 import { SortLayer } from './sort-layer';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
@@ -56,14 +64,20 @@ const CSS_PER_TEXEL_MAX = 4;
 /**
  * 灰度开关（与 `?flat=1` / `?light=0` 同一写法）：线上观感回归时一键退回旧倍率，
  * 不用回滚整次发布。非法值一律回落到默认倍率。
+ *
+ * `overridden` 为 true 表示用户显式给了倍率：此时竖屏自适应不再介入，
+ * 保证 `?zoom=3` 在任何朝向下都是同一档倍率。
  */
-function readCssPerTexel(): number {
-  if (typeof window === 'undefined') return DEFAULT_CSS_PER_TEXEL;
+function readCssPerTexel(): { value: number; overridden: boolean } {
+  if (typeof window === 'undefined') return { value: DEFAULT_CSS_PER_TEXEL, overridden: false };
   const raw = new URLSearchParams(window.location.search).get('zoom');
-  if (raw === null) return DEFAULT_CSS_PER_TEXEL;
+  if (raw === null) return { value: DEFAULT_CSS_PER_TEXEL, overridden: false };
   const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_CSS_PER_TEXEL;
-  return Math.min(CSS_PER_TEXEL_MAX, Math.max(CSS_PER_TEXEL_MIN, value));
+  if (!Number.isFinite(value) || value <= 0) return { value: DEFAULT_CSS_PER_TEXEL, overridden: false };
+  return {
+    value: Math.min(CSS_PER_TEXEL_MAX, Math.max(CSS_PER_TEXEL_MIN, value)),
+    overridden: true,
+  };
 }
 
 /**
@@ -476,6 +490,8 @@ export class GameRenderer {
   private metrics: PixelMetrics = pixelMetrics(DEFAULT_CSS_PER_TEXEL, 1, MIN_DEVICE_PX_PER_TEXEL);
   /** 本实例实际使用的倍率：默认值或 `?zoom=` 覆盖值 */
   private cssPerTexel = DEFAULT_CSS_PER_TEXEL;
+  /** `?zoom=` 是否显式锁定倍率：锁定时跳过竖屏自适应 */
+  private zoomLocked = false;
   backend = 'initializing';
   private ready = false;
   private destroyed = false;
@@ -496,8 +512,15 @@ export class GameRenderer {
 
   async init(host: HTMLElement): Promise<void> {
     const dpr = readDpr();
-    this.cssPerTexel = readCssPerTexel();
-    this.metrics = pixelMetrics(this.cssPerTexel, dpr, MIN_DEVICE_PX_PER_TEXEL);
+    const zoom = readCssPerTexel();
+    this.cssPerTexel = zoom.value;
+    this.zoomLocked = zoom.overridden;
+    // 竖屏首帧就落到目标视野：等第一帧 updateCamera 再缩，入场会先跳一下
+    this.metrics = pixelMetrics(
+      this.effectiveCssPerTexel(host.clientWidth, host.clientHeight),
+      dpr,
+      MIN_DEVICE_PX_PER_TEXEL,
+    );
     await this.app.init({
       preference: 'webgpu',
       background: 0x14100c,
@@ -860,8 +883,14 @@ export class GameRenderer {
     );
   }
 
+  /** 竖屏按屏宽降一档视野；`?zoom=` 显式锁定时原样返回，保证灰度开关在两种朝向下一致 */
+  private effectiveCssPerTexel(width: number, height: number): number {
+    if (this.zoomLocked) return this.cssPerTexel;
+    return worldCssPerTexel(width, height, this.cssPerTexel);
+  }
+
   /**
-   * 拖窗口到另一块屏（DPR 变化）时重建缩放与文字位图。
+   * 拖窗口到另一块屏（DPR 变化）、旋转设备（宽高互换）时重建缩放与文字位图。
    *
    * 只在尺寸或 DPR 真变了才重算：原实现每帧都构造一个 metrics 对象再与旧值比较丢弃，
    * 等于每帧一次无谓的分配。
@@ -875,7 +904,11 @@ export class GameRenderer {
     this.metricScreenW = screenWidth;
     this.metricScreenH = screenHeight;
 
-    const next = pixelMetrics(this.cssPerTexel, dpr, MIN_DEVICE_PX_PER_TEXEL);
+    const next = pixelMetrics(
+      this.effectiveCssPerTexel(screenWidth, screenHeight),
+      dpr,
+      MIN_DEVICE_PX_PER_TEXEL,
+    );
     if (sameMetrics(next, this.metrics)) return;
     this.metrics = next;
     this.world.scale.set(next.cssScale);

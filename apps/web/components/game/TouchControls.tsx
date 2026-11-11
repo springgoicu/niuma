@@ -12,10 +12,10 @@ interface JoystickProps {
   onMove: (x: number, y: number) => void;
   /** 落下拇指开始移动：宿主借此收起到聊天 / 状态面板，把画面让给角色 */
   onEngage?: () => void;
-  /** 轻点（没有拖动）时把舞台局部坐标交给宿主做角色点选 */
-  onTap?: (stageX: number, stageY: number) => void;
-  /** 舞台被 CSS 旋转 90° 时，屏幕坐标需要换算回舞台坐标 */
-  rotated?: boolean;
+  /** 轻点（没有拖动）时把屏幕坐标交给宿主，由宿主换算成舞台局部坐标做角色点选 */
+  onTap?: (clientX: number, clientY: number) => void;
+  /** 竖屏：热区收进左下，把顶部信息栏与右上控件的触点让出来 */
+  portrait?: boolean;
 }
 
 /** 轻点判定：位移超过 10px 或按住超过 320ms 都算拖动，避免选中抢走走位 */
@@ -23,13 +23,14 @@ const TAP_SLOP = 10;
 const TAP_HOLD_MS = 320;
 
 /**
- * 左半屏浮动摇杆：在热区内任意落点按下即在落点生成摇杆。
+ * 浮动摇杆：在热区内任意落点按下即在落点生成摇杆。
  *
- * 拇指不用低头找固定的 124px 圆；松手立即回零并淡出。
+ * 横屏热区铺满左半屏，竖屏收进左下 58% 高度——竖屏顶部是信息栏与聊天浮层，
+ * 不能让一次点选被摇杆截走。拇指不用低头找固定的 112px 圆；松手立即回零并淡出。
  * 指针位移只写 `ref.style.transform` 并直接算向量，不触发 React 渲染，
  * 120Hz 触摸采样下也不会每帧跑一次布局。
  */
-export function Joystick({ onMove, onEngage, onTap, rotated = false }: JoystickProps) {
+export function Joystick({ onMove, onEngage, onTap, portrait = false }: JoystickProps) {
   const knobRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<number | null>(null);
   const centerRef = useRef({ x: 0, y: 0 });
@@ -67,10 +68,10 @@ export function Joystick({ onMove, onEngage, onTap, rotated = false }: JoystickP
     };
   }, [release]);
 
-  // 旋转切换时，正在进行的拖动已无意义
+  // 朝向切换后热区会换一块区域，正在进行的拖动已无意义
   useEffect(() => {
     release();
-  }, [rotated, release]);
+  }, [portrait, release]);
 
   const update = (clientX: number, clientY: number) => {
     const sx = clientX - centerRef.current.x;
@@ -79,27 +80,29 @@ export function Joystick({ onMove, onEngage, onTap, rotated = false }: JoystickP
     if (knobRef.current) {
       knobRef.current.style.transform = `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))`;
     }
-    const vector = stickVector(sx, sy, rotated);
+    const vector = stickVector(sx, sy);
     onMoveRef.current(vector.x, vector.y);
   };
 
   return (
     <div
       role="application"
-      aria-label="移动摇杆：左半屏任意位置按下并拖动"
+      aria-label={portrait ? '移动摇杆：左下区域任意位置按下并拖动' : '移动摇杆：左半屏任意位置按下并拖动'}
       data-no-immersive
-      className="pointer-events-auto absolute inset-y-0 left-0 w-[54%] touch-none select-none"
+      className={`pointer-events-auto absolute touch-none select-none ${
+        portrait ? 'bottom-0 left-0 h-[58%] w-[56%]' : 'inset-y-0 left-0 w-[54%]'
+      }`}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
         if (pointerRef.current !== null) return;
         event.preventDefault();
-        // 左半屏是摇杆热区，不会冒泡到舞台：展开的聊天面板要在这里顺手收起
+        // 热区在 HUD 之下，不会冒泡到舞台：展开的聊天面板要在这里顺手收起
         onEngage?.();
         pointerRef.current = event.pointerId;
         event.currentTarget.setPointerCapture(event.pointerId);
         centerRef.current = { x: event.clientX, y: event.clientY };
         tapRef.current = { clientX: event.clientX, clientY: event.clientY, at: performance.now(), dragging: false };
-        // offset 是热区（舞台局部坐标）里的落点：旋转舞台上也不会把摇杆画到别处
+        // offset 是热区自身坐标：摇杆画在手指落点，不需要换算到舞台
         const native = event.nativeEvent;
         setOrigin({ x: native.offsetX, y: native.offsetY });
         setActive(true);
@@ -118,10 +121,10 @@ export function Joystick({ onMove, onEngage, onTap, rotated = false }: JoystickP
       onPointerUp={(event) => {
         if (pointerRef.current !== event.pointerId) return;
         const tap = tapRef.current;
-        // 没拖动且抬手够快：这次按下只是想看人，不是想走位
+        // 没拖动且抬手够快：这次按下只是想看人，不是想走位。
+        // 传屏幕坐标而不是 offset：竖屏热区只剩左下，offset 已不等于舞台坐标。
         if (!tap.dragging && performance.now() - tap.at <= TAP_HOLD_MS) {
-          const native = event.nativeEvent;
-          onTapRef.current?.(native.offsetX, native.offsetY);
+          onTapRef.current?.(event.clientX, event.clientY);
         }
         release();
       }}
@@ -133,13 +136,18 @@ export function Joystick({ onMove, onEngage, onTap, rotated = false }: JoystickP
         if (pointerRef.current === event.pointerId) release();
       }}
     >
-      {/* 未按下：左下角留一枚虚线基座作提示，不占拇指的落点 */}
+      {/* 未按下：左下角留一枚虚线基座作提示，不占拇指的落点。
+          摇杆在 HUD 之外，不继承 game-safe 的内边距，Home 条的高度要自己让 */}
       <div
         aria-hidden
-        className={`pointer-events-none absolute bottom-6 left-6 grid place-items-center rounded-full border-2 border-dashed border-ink-600/80 bg-ink-900/35 transition-opacity duration-150 ${
+        className={`pointer-events-none absolute left-6 grid place-items-center rounded-full border-2 border-dashed border-ink-600/80 bg-ink-900/35 transition-opacity duration-150 ${
           active ? 'opacity-0' : 'opacity-100'
         }`}
-        style={{ width: STICK_BASE, height: STICK_BASE }}
+        style={{
+          width: STICK_BASE,
+          height: STICK_BASE,
+          bottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))',
+        }}
       >
         <span className="font-mono text-[9px] tracking-[0.2em] text-mist-500">移动</span>
       </div>
@@ -178,6 +186,8 @@ const ACTION_BUTTONS: Array<{ label: string; action: ActionKey; Icon: typeof Arm
 interface TouchActionsProps {
   onAction: (action: ActionKey) => void;
   onChat: () => void;
+  /** 竖屏：动作盘收成 2 列 × 3 行，横向只占 196px，不与左下摇杆抢宽度 */
+  portrait?: boolean;
 }
 
 /** 轻震动反馈：支持的设备给一记 8ms，不支持就静默跳过 */
@@ -186,12 +196,13 @@ function haptic(): void {
 }
 
 /**
- * 右下动作盘：3 列 × 2 行 + 独立的打字键。
+ * 右下动作盘 + 独立的打字键。
  *
- * 原来的 3×3 网格最后一格是空的，打字键挤在紧邻摇杆的左下角，误触率最高；
- * 现在动作盘压成两排（总高从 190 降到 128），打字键单独放大到 68px 放在右手主位。
+ * 横屏 3 列 × 2 行（60px）、总高 128，打字键 68px 在右手主位；
+ * 竖屏换成 2 列 × 3 行（56px），横向从 276 收到 196，给左下摇杆留出拇指区。
+ * 两种朝向都保留 56px 以上的命中区，图标与标签一起显示。
  */
-export function TouchActions({ onAction, onChat }: TouchActionsProps) {
+export function TouchActions({ onAction, onChat, portrait = false }: TouchActionsProps) {
   const localPose = useGameUi((state) => state.localPose);
   const seated = useGameUi((state) => state.seated);
   const seatKind = useGameUi((state) => state.seatKind);
@@ -200,7 +211,7 @@ export function TouchActions({ onAction, onChat }: TouchActionsProps) {
 
   return (
     <div className="pointer-events-auto flex touch-none items-end gap-3 select-none">
-      <div className="grid grid-cols-3 gap-2">
+      <div className={`grid gap-2 ${portrait ? 'grid-cols-2' : 'grid-cols-3'}`}>
         {ACTION_BUTTONS.map(({ label, action, Icon }) => {
           const view = actionPresentation(action, state);
           const text = view.label ?? label;
@@ -219,7 +230,9 @@ export function TouchActions({ onAction, onChat }: TouchActionsProps) {
                 haptic();
                 onAction(action);
               }}
-              className={`flex h-[60px] w-[60px] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border-2 backdrop-blur-sm transition-colors active:scale-95 ${
+              className={`flex cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border-2 backdrop-blur-sm transition-colors active:scale-95 ${
+                portrait ? 'h-[56px] w-[56px]' : 'h-[60px] w-[60px]'
+              } ${
                 view.active
                   ? 'border-mint-400 bg-mint-400/15 text-mint-400'
                   : 'border-ink-600 bg-ink-900/85 text-mist-300 active:border-mint-400 active:text-mint-400'
@@ -240,7 +253,9 @@ export function TouchActions({ onAction, onChat }: TouchActionsProps) {
           haptic();
           onChat();
         }}
-        className="flex h-[68px] w-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-full border-2 border-mint-400/70 bg-ink-900/90 text-mint-400 backdrop-blur-sm transition-colors active:scale-95 active:bg-mint-400/15"
+        className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-full border-2 border-mint-400/70 bg-ink-900/90 text-mint-400 backdrop-blur-sm transition-colors active:scale-95 active:bg-mint-400/15 ${
+          portrait ? 'h-16 w-16' : 'h-[68px] w-[68px]'
+        }`}
       >
         <MessageSquare className="h-5 w-5" />
         <span className="font-mono text-[9px] tracking-[0.08em]">打字</span>

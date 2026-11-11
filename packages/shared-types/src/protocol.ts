@@ -33,6 +33,7 @@ import type {
   QueueStatusPacket,
   ResumeState,
   SpawnPacket,
+  SystemNoticePacket,
   WelcomePacket,
 } from './types';
 import { OpCode, QUEUE_REJECT_REASON } from './types';
@@ -655,6 +656,27 @@ export function decodeStatusBroadcast(data: Uint8Array): { entityId: number; sta
   const entityId = reader.u16();
   const length = reader.u16();
   return { entityId, status: length <= reader.remaining ? truncateStatus(reader.utf8(length)) : '' };
+}
+
+/**
+ * 系统提示包：文案由发送方套好模板，客户端只按 `kind` 选样式。
+ * 文本仍走 `truncateChat` 收口，防止模板里塞进超长名字把包撑大。
+ */
+export function encodeSystemNotice(packet: SystemNoticePacket): Uint8Array {
+  const bytes = textEncoder.encode(truncateChat(packet.text));
+  const writer = new ByteWriter(7 + bytes.length);
+  writer.u8(OpCode.S2C_SYSTEM_NOTICE).u8(packet.kind).u16(packet.entityId).u16(bytes.length).raw(bytes);
+  return writer.finish();
+}
+
+export function decodeSystemNotice(data: Uint8Array): SystemNoticePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_SYSTEM_NOTICE) throw new Error('not a system notice packet');
+  const kind = reader.u8();
+  const entityId = reader.u16();
+  const length = reader.u16();
+  // 长度字段超出实际负载说明包被截断或伪造：按空串处理，绝不越过缓冲
+  return { kind, entityId, text: length <= reader.remaining ? reader.utf8(length) : '' };
 }
 
 export function encodeAppearanceBroadcast(entityId: number, appearance: CharacterAppearance): Uint8Array {

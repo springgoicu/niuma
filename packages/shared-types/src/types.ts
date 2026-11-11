@@ -104,6 +104,8 @@ export const OpCode = {
   C2S_SET_STATUS: 0x1b,
   /** 状态变更广播：`[op][entityId u16][len u16][utf8]` */
   S2C_STATUS: 0x1c,
+  /** 系统提示（进园 / 离园等）：`[op][kind u8][entityId u16][len u16][utf8]` */
+  S2C_SYSTEM_NOTICE: 0x1d,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -168,6 +170,16 @@ export interface ResumeState {
 export interface ChatPacket {
   entityId: number;
   msgId: number;
+  text: string;
+}
+
+/**
+ * 系统提示包：文案已由发送方套好模板，客户端只负责按 `kind` 选样式。
+ * `entityId = 0` 表示没有具体对象（例如本地的在岗提醒）。
+ */
+export interface SystemNoticePacket {
+  kind: number;
+  entityId: number;
   text: string;
 }
 

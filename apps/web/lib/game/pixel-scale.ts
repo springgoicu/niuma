@@ -65,6 +65,31 @@ export function fitMetrics(maxCssPerTexel: number, dpr: number = readDpr()): Pix
   return { dpr: ratio, devicePxPerTexel, cssScale: devicePxPerTexel / ratio };
 }
 
+/**
+ * 竖屏取景的目标横向纹素数：390px 宽的竖屏在 1.5 CSS/纹素下只看到 260 纹素，
+ * 不到横屏（844px / 1.5 ≈ 563）的一半。按屏宽反推倍率，把视野拉回约 360 纹素。
+ */
+export const PORTRAIT_TARGET_TEXELS = 360;
+
+/**
+ * 世界倍率的朝向自适应：横屏 / 宽窗口原样返回 `base`；竖屏按 `width / targetTexels`
+ * 反推一档更小的值，只降不升、下限 1。
+ *
+ * 这里只给出「理想 CSS 倍率」，最终的整数设备像素仍由 `pixelMetrics` 决定：
+ * DPR 1 的屏幕受 `MIN_DEVICE_PX_PER_TEXEL = 2` 夹制，竖屏并不能真的再缩小，
+ * 属于已知限制，不做特例。`?zoom=` 显式覆盖时调用方应跳过本函数。
+ */
+export function worldCssPerTexel(
+  width: number,
+  height: number,
+  base: number,
+  targetTexels: number = PORTRAIT_TARGET_TEXELS,
+): number {
+  if (!(width > 0) || !(height > width)) return base;
+  if (!(targetTexels > 0)) return base;
+  return Math.min(base, Math.max(1, width / targetTexels));
+}
+
 /** CSS 长度吸附到整数设备像素上，避免整层画面落在半像素里被重采样 */
 export function snapCss(value: number, dpr: number = readDpr()): number {
   const ratio = normalizeDpr(dpr);

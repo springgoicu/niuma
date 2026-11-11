@@ -17,10 +17,13 @@ const AUTO_COLLAPSE_MS = 8000;
  * 方位与距离全部来自 `nav.ts`（共享 `NAV_TARGETS`），箭头按真实方位角旋转；
  * 位置每 500ms 由 store 更新一次，正好够用，不额外开轮询。
  * 桌面常驻在 MiniMap 上方，触摸端默认展开数秒后收成一枚「导览」胶囊。
+ * 竖屏里右上角只够放 196px 的卡片，聊天浮层展开时整块让位。
  */
-export function NavCard({ compact = false }: { compact?: boolean }) {
+export function NavCard({ compact = false, portrait = false }: { compact?: boolean; portrait?: boolean }) {
   const x = useGameUi((state) => state.x);
   const y = useGameUi((state) => state.y);
+  const chatOpen = useGameUi((state) => state.chatOpen);
+  const noticeOpen = useGameUi((state) => state.noticeOpen);
   const [open, setOpen] = useState(true);
   /** 用户手动开合过就不再自动收起，避免和手指抢控制权 */
   const manual = useRef(false);
@@ -49,11 +52,18 @@ export function NavCard({ compact = false }: { compact?: boolean }) {
     setOpen((value) => !value);
   };
 
+  // 竖屏聊天浮层从左上铺到 250px、公告下拉从右上展开，都与 196px 的导览卡没有并存的余地
+  if (portrait && (chatOpen || noticeOpen)) return null;
+
   return (
     <div
       className={`pointer-events-none absolute z-20 ${
         compact ? 'right-3 top-[100px]' : 'bottom-4 right-4 lg:bottom-[248px]'
       }`}
+      // 竖屏右上是「在线徽标 + 2×2 图标格」两行，导览卡压到它下面并让开刘海
+      style={
+        compact && portrait ? { top: 'calc(max(0.75rem, env(safe-area-inset-top)) + 9rem)' } : undefined
+      }
     >
       {open ? (
         <section

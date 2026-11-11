@@ -7,11 +7,13 @@ import {
   QUEUE_REJECT_REASON,
   SIT_RANGE,
   STATE_BITS,
+  SYSTEM_NOTICE_KIND,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   dequantizeCoord,
   directionFromVector,
   findNearestSeat,
+  formatSystemNotice,
   packState,
   quantizeCoord,
   readSync,
@@ -31,10 +33,12 @@ import {
   type SeatStateEntry,
   type SpawnPacket,
   type Species,
+  type SystemNoticePacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
 import type { PlayerBadge } from './badge';
+import { advanceOnDuty } from './duty';
 import { saveSnapshot, toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
@@ -53,6 +57,13 @@ export interface ChatEntry {
   text: string;
   at: number;
   self: boolean;
+  /**
+   * `system` 是进园 / 离园 / 在岗提醒这类自动播报：没有名字列，也不弹头顶气泡。
+   * 缺省视为普通聊天，旧数据与旧服务端都不用改。
+   */
+  kind?: 'chat' | 'system';
+  /** 系统消息的模板编号（SYSTEM_NOTICE_KIND），供样式与将来的静音开关使用 */
+  systemKind?: number;
 }
 
 export interface SessionStats {
@@ -172,6 +183,10 @@ export class GameSession {
   private localSeatKind: SeatKind | null = null;
   private net: NetClient | null = null;
   private localId = 0;
+  /** 系统消息的负序号：与聊天 msgId 分开，列表 key 不会撞 */
+  private systemSeq = 0;
+  /** 下一个该播报的在岗档位下标；每次 WELCOME 归零 */
+  private onDutyCursor = 0;
   /**
    * 当前状态：重连后 `handleWelcome` 重建本地角色时要用它。
    * 不能读 `start()` 的 profile 闭包——那是入场瞬间的快照，游戏内改过状态就是旧值。
@@ -243,6 +258,7 @@ export class GameSession {
       onDespawn: (id) => this.handleDespawn(id),
       onSync: (data) => this.handleSync(data),
       onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
+      onSystemNotice: (packet) => this.handleSystemNotice(packet),
       onChatRejected: (reason) => {
         // 服务端权威拦截的回执：正常路径被本地预检挡住了，走到这里基本是词库不同步或伪造包
         this.showHint(
@@ -290,6 +306,7 @@ export class GameSession {
     this.snapshotAt = 0;
     // 自己的在线时长从入场成功这一刻起算：断线重连会重建世界，计时随 WELCOME 归零
     this.welcomeAt = performance.now();
+    this.onDutyCursor = 0;
     this.names.set(packet.entityId, profile.name);
     this.speciesById.set(packet.entityId, profile.appearance.species);
     const x = dequantizeCoord(packet.x);
@@ -612,6 +629,42 @@ export class GameSession {
       at: Date.now(),
       self: entityId === this.localId,
     });
+  }
+
+  /** 服务端播报（进园 / 离园）：不弹气泡，只落进频道列表 */
+  private handleSystemNotice(packet: SystemNoticePacket): void {
+    if (packet.text.length === 0) return;
+    this.pushSystemNotice(packet.kind, packet.text);
+  }
+
+  /**
+   * 系统消息与聊天共用一条消息管道（`onChat` → `game-ui.messages`），
+   * 区别只在 `kind`：不弹头顶气泡、不占名字列，id 用负数避开服务端 msgId。
+   */
+  private pushSystemNotice(kind: number, text: string): void {
+    this.callbacks.onChat({
+      id: --this.systemSeq,
+      name: '',
+      text,
+      at: Date.now(),
+      self: false,
+      kind: 'system',
+      systemKind: kind,
+    });
+  }
+
+  /**
+   * 在岗提醒：跟着 500ms 统计节拍检查一次，跨过一档播一条。
+   *
+   * 后台标签页会停掉渲染循环，恢复时可能一次跨过好几档——
+   * 只播最高的那一档，不补发一串过时提醒。
+   */
+  private checkOnDuty(onlineSec: number): void {
+    const tick = advanceOnDuty(onlineSec, this.onDutyCursor);
+    this.onDutyCursor = tick.cursor;
+    if (tick.minutes === 0) return;
+    const text = formatSystemNotice(SYSTEM_NOTICE_KIND.OnDuty, { minutes: tick.minutes });
+    if (text) this.pushSystemNotice(SYSTEM_NOTICE_KIND.OnDuty, text);
   }
 
   /**
@@ -1060,6 +1113,7 @@ export class GameSession {
       this.fps = Math.round((this.frames * 1000) / windowMs);
       this.frames = 0;
       this.statsAt = now;
+      const onlineSec = this.onlineSecOf(this.localId);
       this.callbacks.onStats({
         fps: this.fps,
         ping: this.ping,
@@ -1068,8 +1122,10 @@ export class GameSession {
         nearby: this.names.size,
         backend: this.renderer.backend,
         region: localEid ? regionAt(Position.x[localEid]!, Position.y[localEid]!) : '',
-        onlineSec: this.onlineSecOf(this.localId),
+        onlineSec,
       });
+      // 在岗提醒跟着统计节拍走：500ms 一次足够准，也不必为它单开一个计时器
+      this.checkOnDuty(onlineSec);
     }
   };
 

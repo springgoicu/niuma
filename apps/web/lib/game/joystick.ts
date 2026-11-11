@@ -9,7 +9,7 @@
  * 方形对角与边中点的归一化就不一致）。
  *
  * 逻辑半径写死为 `STICK_RADIUS`，视觉环与计算共用同一个数；不 import pixi、不读 DOM，
- * 可以单独验算。旋转舞台的坐标换算也在这里做，组件只负责指针事件与绘制。
+ * 可以单独验算。组件只负责指针事件与绘制。
  */
 
 /** 摇杆基座直径与摇杆头直径（CSS px）：视觉尺寸只在这里定义一次 */
@@ -30,29 +30,26 @@ export interface StickInput {
 
 /**
  * 屏幕偏移 `(sx, sy)`（相对摇杆中心，y 向下为正）→ 舞台坐标下的移动向量。
+ * 舞台不再被 CSS 旋转，屏幕坐标与舞台坐标同向，不需要任何换算。
  *
- * - `rotated`：竖屏时舞台被 CSS 顺时针旋转 90°，屏幕向量要先换算回舞台本地坐标；
  * - 输出模长 = `(力度 - 死区) / (1 - 死区)`，力度 = 行程 / 半径；
  * - 半径外的偏移钳到半径，不会因为推到圆外突然加速。
  */
 export function stickVector(
   sx: number,
   sy: number,
-  rotated = false,
   radius: number = STICK_RADIUS,
   deadZone: number = STICK_DEAD_ZONE,
 ): StickInput {
   if (!(radius > 0)) return { x: 0, y: 0 };
-  const dx = rotated ? sy : sx;
-  const dy = rotated ? -sx : sy;
-  const length = Math.hypot(dx, dy);
+  const length = Math.hypot(sx, sy);
   if (length === 0) return { x: 0, y: 0 };
 
   // 力度只看离原点多远：方向单位 × 统一力度，斜向与直行同速
   const force = Math.min(length, radius) / radius;
   if (force <= deadZone) return { x: 0, y: 0 };
   const strength = (force - deadZone) / (1 - deadZone);
-  return { x: (dx / length) * strength, y: (dy / length) * strength };
+  return { x: (sx / length) * strength, y: (sy / length) * strength };
 }
 
 /** 摇杆头的屏幕偏移：只钳半径，不做死区重标定（视觉上摇杆头跟着手指走） */

@@ -54,10 +54,11 @@ export function useVisualViewportSize(): { width: number; height: number } {
 }
 
 /**
- * 触屏竖屏时把游戏舞台横过来：先尝试系统横屏锁（仅全屏或部分浏览器可用），
- * 锁定失败则由调用方用 CSS 旋转舞台兜底。返回 true 表示当前应当旋转。
+ * 当前是否竖屏。只决定 HUD 与触控区的排布，不参与世界倍率——倍率看的是屏幕宽高比。
+ *
+ * 与 useIsTouch 分开：桌面把窗口拖成竖长条也会命中 portrait，但那时仍走桌面 HUD。
  */
-export function useLandscapeStage(enabled: boolean): boolean {
+export function useIsPortrait(): boolean {
   const [portrait, setPortrait] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches,
   );
@@ -70,18 +71,13 @@ export function useLandscapeStage(enabled: boolean): boolean {
     return () => query.removeEventListener('change', sync);
   }, []);
 
-  useEffect(() => {
-    if (!enabled || !portrait) return;
-    void orientationApi()?.lock?.('landscape')?.catch(() => undefined);
-  }, [enabled, portrait]);
-
-  return enabled && portrait;
+  return portrait;
 }
 
 /* ------------------------------------------------------------------ *
- * 全屏：横屏锁只有在全屏状态下才会被浏览器接受，所以两者必须成对使用。
+ * 全屏：只负责把浏览器界面收起来，不碰屏幕方向——横竖屏由设备自己决定。
  * iOS Safari 没有 Element.requestFullscreen，此时 supported 为 false，
- * 舞台退回 CSS 旋转，界面不出现点不动的按钮。
+ * 界面不出现点不动的按钮。
  * ------------------------------------------------------------------ */
 
 type LegacyDocument = Document & {
@@ -92,16 +88,6 @@ type LegacyDocument = Document & {
 type FullscreenHost = HTMLElement & {
   webkitRequestFullscreen?: () => Promise<void> | void;
 };
-
-type OrientationApi = {
-  lock?: (orientation: string) => Promise<void>;
-  unlock?: () => void;
-};
-
-function orientationApi(): OrientationApi | undefined {
-  if (typeof window === 'undefined') return undefined;
-  return window.screen?.orientation as unknown as OrientationApi | undefined;
-}
 
 function fullscreenElement(): Element | null {
   if (typeof document === 'undefined') return null;
@@ -134,13 +120,12 @@ export interface ImmersiveStage {
 }
 
 /**
- * 全屏舞台。`lockLandscape` 决定进入全屏后是否顺手锁横屏——
- * 触屏传 true，桌面传 false（桌面的 orientation.lock 本来就会 reject）。
+ * 全屏舞台：只开合全屏，不请求横屏锁。屏幕朝向始终交给设备与用户。
  *
  * 注意：requestFullscreen 必须由用户手势同步触发，任何延迟（setState 后、
  * 定时器里）都会被浏览器拒绝，所以 `enter` 要直接挂在点击回调上。
  */
-export function useImmersiveStage(lockLandscape: boolean): ImmersiveStage {
+export function useImmersiveStage(): ImmersiveStage {
   const [supported] = useState(supportsFullscreen);
   const [active, setActive] = useState(() => fullscreenElement() !== null);
 
@@ -155,7 +140,7 @@ export function useImmersiveStage(lockLandscape: boolean): ImmersiveStage {
           : Promise.resolve(host.webkitRequestFullscreen?.());
       void request.catch(() => undefined);
     } catch {
-      // 被浏览器拒绝就保持原样：竖屏仍有 CSS 旋转兜底，不会白屏
+      // 被浏览器拒绝就保持原样，不白屏
     }
   }, []);
 
@@ -171,18 +156,7 @@ export function useImmersiveStage(lockLandscape: boolean): ImmersiveStage {
 
   useEffect(() => {
     if (!supported) return;
-    const sync = () => {
-      const full = fullscreenElement() !== null;
-      setActive(full);
-      const orientation = orientationApi();
-      if (!full) {
-        orientation?.unlock?.();
-        return;
-      }
-      if (!lockLandscape) return;
-      // lock 只能在全屏之后调用：Android 会真的转成横屏，其余浏览器 reject 后由 CSS 旋转接手
-      void orientation?.lock?.('landscape')?.catch(() => undefined);
-    };
+    const sync = () => setActive(fullscreenElement() !== null);
     sync();
     document.addEventListener('fullscreenchange', sync);
     document.addEventListener('webkitfullscreenchange', sync);
@@ -190,12 +164,11 @@ export function useImmersiveStage(lockLandscape: boolean): ImmersiveStage {
       document.removeEventListener('fullscreenchange', sync);
       document.removeEventListener('webkitfullscreenchange', sync);
     };
-  }, [supported, lockLandscape]);
+  }, [supported]);
 
-  // 离开园区时把屏幕还给用户：全屏与横屏锁都不该跟着路由带到别的页面
+  // 离开园区时把屏幕还给用户：全屏不该跟着路由带到别的页面
   useEffect(
     () => () => {
-      orientationApi()?.unlock?.();
       if (fullscreenElement()) void leaveFullscreen();
     },
     [],

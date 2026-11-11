@@ -25,6 +25,7 @@ import {
   decodeSpawn,
   decodeSetStatus,
   decodeStatusBroadcast,
+  decodeSystemNotice,
   decodeSync,
   decodeWelcome,
   dequantizeCoord,
@@ -43,6 +44,7 @@ import {
   encodeSetStatus,
   encodeStatusBroadcast,
   encodeSync,
+  encodeSystemNotice,
   encodeWelcome,
   buildSpawnBody,
   readSync,
@@ -57,6 +59,8 @@ import {
   quantizeCoord,
   sanitizeAppearance,
   unpackState,
+  SYSTEM_NOTICE_KIND,
+  formatSystemNotice,
 } from '../index';
 
 describe('move packet', () => {
@@ -485,6 +489,62 @@ describe('chat rejected', () => {
 
   it('rejects a wrong-length packet instead of decoding garbage', () => {
     expect(() => decodeChatRejected(new Uint8Array([0x1a]))).toThrow(/2 bytes/);
+  });
+});
+
+describe('system notice', () => {
+  it('round-trips kind, subject and multi-byte text', () => {
+    const packet = encodeSystemNotice({
+      kind: SYSTEM_NOTICE_KIND.Enter,
+      entityId: 42,
+      text: '夜班实习生 进入了园区',
+    });
+    expect(decodeSystemNotice(packet)).toEqual({
+      kind: SYSTEM_NOTICE_KIND.Enter,
+      entityId: 42,
+      text: '夜班实习生 进入了园区',
+    });
+  });
+
+  it('keeps an unknown kind instead of throwing: 旧客户端靠文本也能显示', () => {
+    const packet = encodeSystemNotice({ kind: 200, entityId: 0, text: '园区将在 5 分钟后维护' });
+    expect(decodeSystemNotice(packet)).toEqual({ kind: 200, entityId: 0, text: '园区将在 5 分钟后维护' });
+  });
+
+  it('treats a length field that outruns the payload as an empty line', () => {
+    const packet = encodeSystemNotice({ kind: SYSTEM_NOTICE_KIND.Leave, entityId: 7, text: '小明 离开了园区' });
+    // 把长度字段改大：解码必须回空串，不能读到缓冲区外面
+    const tampered = packet.slice();
+    new DataView(tampered.buffer, tampered.byteOffset, tampered.byteLength).setUint16(4, 0xffff);
+    expect(decodeSystemNotice(tampered)).toEqual({ kind: SYSTEM_NOTICE_KIND.Leave, entityId: 7, text: '' });
+  });
+
+  it('rejects a packet with the wrong opcode', () => {
+    expect(() => decodeSystemNotice(encodeChatBroadcast({ entityId: 1, msgId: 1, text: 'hi' }))).toThrow(
+      /system notice/,
+    );
+  });
+});
+
+describe('system notice templates', () => {
+  it('formats enter / leave by name', () => {
+    expect(formatSystemNotice(SYSTEM_NOTICE_KIND.Enter, { name: '阿牛' })).toBe('阿牛 进入了园区');
+    expect(formatSystemNotice(SYSTEM_NOTICE_KIND.Leave, { name: '阿牛' })).toBe('阿牛 离开了园区');
+  });
+
+  it('formats the on-duty reminder in minutes and whole hours', () => {
+    expect(formatSystemNotice(SYSTEM_NOTICE_KIND.OnDuty, { minutes: 30 })).toBe(
+      '你已经在岗 30 分钟，起来走动两步。',
+    );
+    expect(formatSystemNotice(SYSTEM_NOTICE_KIND.OnDuty, { minutes: 120 })).toBe(
+      '你已经在岗 2 小时，起来走动两步。',
+    );
+  });
+
+  it('returns null for unknown kinds or missing params', () => {
+    expect(formatSystemNotice(99, { name: '阿牛' })).toBeNull();
+    expect(formatSystemNotice(SYSTEM_NOTICE_KIND.Enter, {})).toBeNull();
+    expect(formatSystemNotice(SYSTEM_NOTICE_KIND.OnDuty, { minutes: 0 })).toBeNull();
   });
 });
 

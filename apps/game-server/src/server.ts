@@ -30,6 +30,7 @@ import { EgressMeter, RingSampler } from './metrics';
 import { SpatialGrid } from './spatial/grid';
 import { handleChat } from './sim/chat';
 import { loadModerationFilter } from './sim/moderation';
+import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
 import { resolveSpawn } from './sim/resume';
 import { SeatRegistry } from './sim/seats';
@@ -126,6 +127,8 @@ export function startGameServer(config: ServerConfig) {
     const occupied = seats.snapshot();
     if (occupied.length > 0) ws.send(encodeSeatState(occupied));
     refreshView(player, world, grid, transport);
+    // 必须在 refreshView 之后：这时双方的 known 才补齐，播报才发得到「看得见他的人」
+    announceEnter(player, world, transport);
     console.log(`[game] + ${player.name}#${player.id} online=${world.size}`);
   }
 
@@ -283,6 +286,8 @@ export function startGameServer(config: ServerConfig) {
     if (!player) return;
     const label = `${player.name}#${player.id}`;
     broadcastSeats(seats.release(player));
+    // 必须在 broadcastDespawn 之前：它内部会清空 known，之后再播报就没人收了
+    announceLeave(player, world, transport);
     broadcastDespawn(player, world, transport);
     grid.remove(player.id);
     world.destroy(player.id);
