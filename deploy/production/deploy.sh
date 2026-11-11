@@ -81,7 +81,11 @@ else
 fi
 
 log "构建与切换（APP_BASE=${APP_BASE:-/srv/niuma/app}，园区 ${GAME_PARK_ID:-main}）"
-bash deploy/jenkins-deploy.sh
+# 9>&- 必须加：flock 的锁是靠「持有打开的文件描述符」维持的，而子进程会继承它。
+# jenkins-deploy.sh 里会 pm2 start，pm2 会 fork 一个常驻 daemon —— 那个 daemon 拿到
+# 这个 fd 之后锁就永远不会释放，下次部署会一直报「已有部署在运行」。
+# 关掉子树的 fd 9，锁只留在本进程手里。
+bash deploy/jenkins-deploy.sh 9>&-
 
 # nginx 缓存的是文件的 inode/mtime：换版本后必须 reload，否则可能继续吐旧 chunk
 log "reload nginx"
@@ -108,4 +112,4 @@ else
 fi
 
 log "✔ 部署完成：${REMOTE_REV:0:8}"
-pm2 ls || true
+pm2 ls 9>&- || true
