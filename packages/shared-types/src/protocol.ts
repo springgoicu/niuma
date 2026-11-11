@@ -21,11 +21,23 @@ import {
   RESUME_BYTES,
   RESUME_VERSION,
   STATUS_EXTENSION_MAGIC,
+  SYNC_CAPABILITY_MAGIC,
   SYNC_ENTRY_BYTES,
+  SYNC_ENTRY_BYTES_COMPACT,
+  SYNC_FORMAT_COMPACT,
+  SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
+  type SyncFormat,
 } from './constants';
 import { displayWidth } from './name';
-import { dequantizeCoord, packState, quantizeCoord, unpackState } from './quantize';
+import {
+  dequantizeCoord,
+  fromSyncCoord,
+  packState,
+  quantizeCoord,
+  toSyncCoord,
+  unpackState,
+} from './quantize';
 import type {
   CharacterAppearance,
   ChatHistoryEntry,
@@ -291,6 +303,36 @@ export function writeSyncEntry(writer: ByteWriter, id: number, x: number, y: num
 }
 
 /**
+ * 6 字节紧凑条目，位表（低位在前）：
+ *
+ * ```
+ * bit  0..9   id        (10 bit)
+ * bit 10..24  x @1/4px  (15 bit)
+ * bit 25..39  y @1/4px  (15 bit)
+ * bit 40..47  state     ( 8 bit，与 packState 一致)
+ * ```
+ *
+ * 入参仍是 1/8px 的 `quantizeCoord` 结果，降精度只发生在这一层。
+ */
+export function writeSyncEntryCompact(
+  writer: ByteWriter,
+  id: number,
+  x: number,
+  y: number,
+  state: number,
+): void {
+  const qx = toSyncCoord(x);
+  const qy = toSyncCoord(y);
+  writer
+    .u8(id & 0xff)
+    .u8(((id >> 8) & 0x03) | ((qx & 0x3f) << 2))
+    .u8((qx >> 6) & 0xff)
+    .u8(((qx >> 14) & 0x01) | ((qy & 0x7f) << 1))
+    .u8((qy >> 7) & 0xff)
+    .u8(state & 0xff);
+}
+
+/**
  * 逐条消费同步包，不建数组、不建对象。
  *
  * 客户端每帧都要吃下整包实体，200 人同屏 20Hz 就是每秒 4000 个对象；
@@ -299,21 +341,42 @@ export function writeSyncEntry(writer: ByteWriter, id: number, x: number, y: num
  *
  * 返回条目数。格式错误仍抛异常——协议是双端唯一契约，静默降级只会把问题推迟到更难查的地方。
  */
+/**
+ * 条目格式不靠包长猜，而是由 `S2C_WELCOME` 明确告知。
+ *
+ * 「按长度自适应」在截断包上是有歧义的：7 字节条目少收 1 字节，正好等于一条 6 字节条目
+ * （count=1、payload=6），猜错不会报错，只会把垃圾字节当成坐标。因此格式是连接级契约，
+ * 由服务端在入场时一次说清。
+ */
 export function readSync(
   data: Uint8Array,
   visit: (id: number, x: number, y: number, state: number) => void,
+  format: SyncFormat = SYNC_FORMAT_LEGACY,
 ): number {
   if (data.byteLength < SYNC_HEADER_BYTES) {
     throw new Error(`sync packet too short: ${data.byteLength}`);
   }
   if (data[0] !== OpCode.S2C_SYNC_ENTITIES) throw new Error('not a sync packet');
   const count = data[5]! | (data[6]! << 8);
-  if (data.byteLength - SYNC_HEADER_BYTES !== count * SYNC_ENTRY_BYTES) {
+  const entryBytes = format === SYNC_FORMAT_COMPACT ? SYNC_ENTRY_BYTES_COMPACT : SYNC_ENTRY_BYTES;
+  if (data.byteLength - SYNC_HEADER_BYTES !== count * entryBytes) {
     throw new Error(
-      `sync payload mismatch: ${data.byteLength - SYNC_HEADER_BYTES} vs ${count * SYNC_ENTRY_BYTES}`,
+      `sync payload mismatch: ${data.byteLength - SYNC_HEADER_BYTES} vs ${count}×${entryBytes}`,
     );
   }
   let at = SYNC_HEADER_BYTES;
+  if (format === SYNC_FORMAT_COMPACT) {
+    for (let i = 0; i < count; i += 1) {
+      const b1 = data[at + 1]!;
+      const b3 = data[at + 3]!;
+      const id = data[at]! | ((b1 & 0x03) << 8);
+      const qx = (b1 >> 2) | (data[at + 2]! << 6) | ((b3 & 0x01) << 14);
+      const qy = ((b3 >> 1) & 0x7f) | (data[at + 4]! << 7);
+      visit(id, fromSyncCoord(qx), fromSyncCoord(qy), data[at + 5]!);
+      at += SYNC_ENTRY_BYTES_COMPACT;
+    }
+    return count;
+  }
   for (let i = 0; i < count; i += 1) {
     visit(
       data[at]! | (data[at + 1]! << 8),
@@ -326,25 +389,40 @@ export function readSync(
   return count;
 }
 
-export function encodeSync(tick: number, entities: readonly EntitySnapshot[]): Uint8Array {
-  const writer = new ByteWriter(7 + entities.length * SYNC_ENTRY_BYTES);
+export function encodeSync(
+  tick: number,
+  entities: readonly EntitySnapshot[],
+  format: SyncFormat = SYNC_FORMAT_LEGACY,
+): Uint8Array {
+  const compact = format === SYNC_FORMAT_COMPACT;
+  const entryBytes = compact ? SYNC_ENTRY_BYTES_COMPACT : SYNC_ENTRY_BYTES;
+  const writer = new ByteWriter(SYNC_HEADER_BYTES + entities.length * entryBytes);
   writeSyncHeader(writer, tick, entities.length);
-  for (const entity of entities) writeSyncEntry(writer, entity.id, entity.x, entity.y, entity.state);
+  for (const entity of entities) {
+    if (compact) writeSyncEntryCompact(writer, entity.id, entity.x, entity.y, entity.state);
+    else writeSyncEntry(writer, entity.id, entity.x, entity.y, entity.state);
+  }
   return writer.finish();
 }
 
-export function decodeSync(data: Uint8Array): { tick: number; entities: EntitySnapshot[] } {
+export function decodeSync(
+  data: Uint8Array,
+  format: SyncFormat = SYNC_FORMAT_LEGACY,
+): { tick: number; entities: EntitySnapshot[] } {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_SYNC_ENTITIES) throw new Error('not a sync packet');
   const tick = reader.u32();
   const count = reader.u16();
-  if (reader.remaining !== count * SYNC_ENTRY_BYTES) {
-    throw new Error(`sync payload mismatch: ${reader.remaining} vs ${count * SYNC_ENTRY_BYTES}`);
-  }
   const entities: EntitySnapshot[] = new Array(count);
-  for (let i = 0; i < count; i += 1) {
-    entities[i] = { id: reader.u16(), x: reader.u16(), y: reader.u16(), state: reader.u8() };
-  }
+  let at = 0;
+  const seen = readSync(
+    data,
+    (id, x, y, state) => {
+      entities[at++] = { id, x, y, state };
+    },
+    format,
+  );
+  if (seen !== count) throw new Error(`sync count mismatch: ${seen} vs ${count}`);
   return { tick, entities };
 }
 
@@ -473,13 +551,16 @@ export function encodeHello(
   appearance: CharacterAppearance,
   resume?: ResumeState,
   status?: string,
+  syncFormat: SyncFormat = SYNC_FORMAT_LEGACY,
 ): Uint8Array {
   const nameBytes = textEncoder.encode(truncateName(name));
   const statusBytes = textEncoder.encode(truncateStatus(status));
   // 状态段只在真的有内容时写：空状态的 HELLO 与旧版逐字节相同
   const statusSize = statusBytes.length > 0 ? 2 + statusBytes.length : 0;
+  // 不声明紧凑格式就不写能力段：旧服务端与旧客户端看到的帧长完全不变
+  const capabilitySize = syncFormat === SYNC_FORMAT_COMPACT ? 2 : 0;
   const writer = new ByteWriter(
-    2 + nameBytes.length + APPEARANCE_BYTES + (resume ? RESUME_BYTES : 0) + statusSize,
+    2 + nameBytes.length + APPEARANCE_BYTES + (resume ? RESUME_BYTES : 0) + statusSize + capabilitySize,
   );
   writer.u8(OpCode.C2S_HELLO).u8(nameBytes.length).raw(nameBytes).raw(encodeAppearance(appearance));
   if (resume) {
@@ -493,6 +574,7 @@ export function encodeHello(
   if (statusBytes.length > 0) {
     writer.u8(STATUS_EXTENSION_MAGIC).u8(statusBytes.length).raw(statusBytes);
   }
+  if (capabilitySize > 0) writer.u8(SYNC_CAPABILITY_MAGIC).u8(syncFormat);
   return writer.finish();
 }
 
@@ -502,6 +584,8 @@ export function decodeHello(data: Uint8Array): {
   resume?: ResumeState;
   /** 常驻状态；空串表示没设置（旧客户端整段缺席时同样是空串） */
   status: string;
+  /** 对端声明的同步条目格式；没有能力段就是旧格式 */
+  syncFormat: SyncFormat;
 } {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.C2S_HELLO) throw new Error('not a hello packet');
@@ -511,23 +595,29 @@ export function decodeHello(data: Uint8Array): {
   reader.offset += APPEARANCE_BYTES;
 
   let resume: ResumeState | undefined;
-  // 0xff 是状态段的魔数，不是 resume 版本号：先把它排除，免得把状态字节读成落点
-  if (reader.remaining >= RESUME_BYTES && data[reader.offset] !== STATUS_EXTENSION_MAGIC) {
+  // 0xff 是状态段、0xfd 是能力段的魔数，都不是 resume 版本号：先排除，免得把尾部读成落点
+  if (
+    reader.remaining >= RESUME_BYTES &&
+    data[reader.offset] !== STATUS_EXTENSION_MAGIC &&
+    data[reader.offset] !== SYNC_CAPABILITY_MAGIC
+  ) {
     const version = reader.u8();
     const x = reader.u16();
     const y = reader.u16();
     const state = reader.u8();
     const seatId = reader.u16();
-    // 未来客户端可能写入新字段：版本不认识就整段忽略，出生逻辑回落到随机点
-    if (version !== RESUME_VERSION) return { name, appearance, status: '' };
-    const unpacked = unpackState(state);
-    resume = {
-      x: dequantizeCoord(x),
-      y: dequantizeCoord(y),
-      direction: unpacked.direction,
-      pose: unpacked.pose,
-      seatId,
-    };
+    // 未来客户端可能写入新字段：版本不认识就整段丢弃，出生逻辑回落到随机点，
+    // 但后面的状态段与能力段仍要照常解析，不能提前 return。
+    if (version === RESUME_VERSION) {
+      const unpacked = unpackState(state);
+      resume = {
+        x: dequantizeCoord(x),
+        y: dequantizeCoord(y),
+        direction: unpacked.direction,
+        pose: unpacked.pose,
+        seatId,
+      };
+    }
   }
 
   let status = '';
@@ -536,11 +626,17 @@ export function decodeHello(data: Uint8Array): {
     const statusLength = reader.u8();
     status = statusLength <= reader.remaining ? truncateStatus(reader.utf8(statusLength)) : '';
   }
-  return resume ? { name, appearance, resume, status } : { name, appearance, status };
+
+  let syncFormat: SyncFormat = SYNC_FORMAT_LEGACY;
+  if (reader.remaining >= 2 && data[reader.offset] === SYNC_CAPABILITY_MAGIC) {
+    reader.u8();
+    syncFormat = reader.u8() === SYNC_FORMAT_COMPACT ? SYNC_FORMAT_COMPACT : SYNC_FORMAT_LEGACY;
+  }
+  return { name, appearance, resume, status, syncFormat };
 }
 
 export function encodeWelcome(packet: WelcomePacket): Uint8Array {
-  const writer = new ByteWriter(12);
+  const writer = new ByteWriter(13);
   writer
     .u8(OpCode.S2C_WELCOME)
     .u16(packet.entityId)
@@ -548,6 +644,10 @@ export function encodeWelcome(packet: WelcomePacket): Uint8Array {
     .u16(packet.x)
     .u16(packet.y)
     .u8(packet.state ?? 0);
+  // 尾部追加格式字节：旧客户端读完 state 就停，多余字节被忽略
+  if (packet.syncFormat !== undefined && packet.syncFormat !== SYNC_FORMAT_LEGACY) {
+    writer.u8(packet.syncFormat);
+  }
   return writer.finish();
 }
 
@@ -560,7 +660,12 @@ export function decodeWelcome(data: Uint8Array): WelcomePacket {
   const y = reader.u16();
   // 旧服务端的 11 字节包没有 state：按 Idle + Down 处理，不让入场流程直接失败
   const state = reader.remaining >= 1 ? reader.u8() : 0;
-  return { entityId, tick, x, y, state };
+  const packet: WelcomePacket = { entityId, tick, x, y, state };
+  // 旧格式不写这一段：包体与旧服务端逐字节相同，消费方的对象形状也不变
+  if (reader.remaining >= 1 && reader.u8() === SYNC_FORMAT_COMPACT) {
+    packet.syncFormat = SYNC_FORMAT_COMPACT;
+  }
+  return packet;
 }
 
 export function encodeAction(entityId: number, action: number): Uint8Array {

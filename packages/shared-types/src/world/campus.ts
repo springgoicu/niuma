@@ -1,22 +1,27 @@
 /**
- * 研发园与园区小屋：办公区之外的南部聚落（会议室、卫生间、工作区、休息室与装饰）。
+ * 牛马园四角院落：北门进入后一院四房，南侧另有一片休息庭院。
  *
  * 与 layout.ts 同一条纪律：坐标全部手写，不依赖 Math.random / Math.sin / Math.cos。
  * 本文件只描述「是什么」，渲染材质与贴图由 apps/web 决定。
  *
- * ADR-0028：三个建筑聚簇改成「原点常量 + 内部相对偏移」。
- * 重排聚簇只改原点，桌椅、床位、门洞、铺装自动跟随；
- * 数字仍然全部手写，不引入运行期缩放，也不引入第二套坐标描述。
+ * ADR-0044：办公区收窄为 1520×1240 的四角院落，四间房各占一角、门朝中央中庭：
+ * - 西北 工作区：唯一不加墙的开放区，两排背靠背工位横向成排；
+ * - 东北 会议室：四面墙、南墙开门；
+ * - 西南 宿舍区：四面墙、北墙开门，两组上下铺（每铺两张 bed 座位）；
+ * - 东南 卫生间：四面墙、北墙开门，男 / 中央洗手池 / 女 三区。
+ *
+ * 四间房的矩形全部由「院落 + 房间尺寸」推出，改院落尺寸只改上面两行。
  */
 
 import { DIRECTION, POSE, type Direction, type Pose } from '../constants';
 import type { WorldRect } from './geometry';
 
-
 /**
  * 座位种类：
  * - `chair` 工位椅 / 会议椅，`toilet` 马桶，`stool` 凳子，`sofa` 沙发：入座即坐姿；
  * - `bed` 单人床：入座即躺姿（ADR-0020 的「座位上不能躺」在此按种类放开）。
+ *
+ * 上下铺不新增种类：每个铺位就是一张 `bed` 座位，两层各一张，见下方的 LOUNGE_SEATS。
  */
 export type SeatKind = 'chair' | 'toilet' | 'stool' | 'sofa' | 'bed';
 
@@ -83,13 +88,17 @@ export type PropKind =
   | 'cooler'
   | 'coffee'
   | 'sideTable'
-  | 'hedge';
+  | 'hedge'
+  | 'ladder'
+  | 'logo';
 
 /** 纯装饰（或带碰撞的小设施）：渲染端按 kind 选贴图 */
 export interface PropInstance {
   kind: PropKind;
   x: number;
   y: number;
+  /** 仅 logo 使用：0 工作区 / 1 会议室 / 2 宿舍区 / 3 卫生间 */
+  variant?: number;
 }
 
 /** `prop` 是「本体即碰撞体」的道具（售货机、饮水机、咖啡机、长椅之类），地面层不再重复画矩形 */
@@ -120,7 +129,7 @@ export function propSolids(props: readonly PropInstance[]): SolidRect[] {
  *
  * 尺寸与 apps/web 的 `PROP_SIZE` 对齐，只取「底座」那一截：
  * 长椅与野餐桌是矮家具，碰撞只覆盖椅面 / 桌腿，正面不留隐形墙。
- * 树篱、灯、垃圾桶、绿植、标识等小件不在表里 —— `propSolid` 返回 undefined。
+ * 树篱、灯、垃圾桶、绿植、标识、爬梯、logo 等小件不在表里 —— `propSolid` 返回 undefined。
  */
 const PROP_FOOTPRINT: Partial<Record<PropKind, { w: number; h: number }>> = {
   vending: { w: 32, h: 24 },
@@ -160,52 +169,78 @@ export interface BuildingSpec {
   floor: 'wood' | 'tile' | 'carpet';
 }
 
-/**
- * 三个聚簇的原点。内部坐标一律写成「原点 + 相对偏移」，
- * 这样缩岛重排时只改这三行，五处建筑的全部陈设跟着走。
- */
-export const CAMPUS_ORIGIN = { x: 2900, y: 5100 } as const;
-export const LOUNGE_ORIGIN = { x: 2900, y: 2880 } as const;
-export const WORKROOM_ORIGIN = { x: 5100, y: 3600 } as const;
-
-/** 研发园整体（会议室、卫生间与庭院位于其内，区域名由 regionAt 按优先级区分） */
-export const CAMPUS_RECT: WorldRect = { x: CAMPUS_ORIGIN.x, y: CAMPUS_ORIGIN.y, w: 2100, h: 800 };
-/** 铺装庭院：地面与草地分开，贴花不进入 */
-export const CAMPUS_YARD: WorldRect = { x: CAMPUS_ORIGIN.x + 100, y: CAMPUS_ORIGIN.y + 20, w: 1900, h: 740 };
-
-export const MEETING_ROOM: WorldRect = { x: CAMPUS_ORIGIN.x + 180, y: CAMPUS_ORIGIN.y + 80, w: 440, h: 280 };
-export const RESTROOM: WorldRect = { x: CAMPUS_ORIGIN.x + 1380, y: CAMPUS_ORIGIN.y + 80, w: 400, h: 280 };
+/** 房间统一尺寸：四角各一间，贴院落四角 */
+export const ROOM_W = 460;
+export const ROOM_H = 360;
 
 /**
- * 办公区东西两翼的小屋：休息室在西、工作区在东，各自开一扇朝办公区的门。
- * 尺寸与研发园的房间同档（460×360 / 450×360），走进去是一间屋，不是一条走廊。
+ * 四角院落（也是 `WORLD_LAYOUT.office`）：北门正对，中心仍是世界中心 (4096,4096)。
+ * 1520 = 460 + 600 + 460，1240 = 360 + 520 + 360 —— 中间的 600×520 就是中庭。
  */
-export const LOUNGE: WorldRect = { x: LOUNGE_ORIGIN.x, y: LOUNGE_ORIGIN.y, w: 460, h: 360 };
-export const WORKROOM: WorldRect = { x: WORKROOM_ORIGIN.x, y: WORKROOM_ORIGIN.y, w: 450, h: 360 };
+export const CAMPUS_RECT: WorldRect = { x: 3336, y: 3476, w: 1520, h: 1240 };
+
+/** 西北：开放工作区（无墙） */
+export const WORKROOM: WorldRect = { x: CAMPUS_RECT.x, y: CAMPUS_RECT.y, w: ROOM_W, h: ROOM_H };
+/** 东北：会议室 */
+export const MEETING_ROOM: WorldRect = {
+  x: CAMPUS_RECT.x + CAMPUS_RECT.w - ROOM_W,
+  y: CAMPUS_RECT.y,
+  w: ROOM_W,
+  h: ROOM_H,
+};
+/** 西南：宿舍区（显示名；标识符沿用 LOUNGE，避免 HUD 与测试大改） */
+export const LOUNGE: WorldRect = {
+  x: CAMPUS_RECT.x,
+  y: CAMPUS_RECT.y + CAMPUS_RECT.h - ROOM_H,
+  w: ROOM_W,
+  h: ROOM_H,
+};
+/** 东南：卫生间 */
+export const RESTROOM: WorldRect = {
+  x: CAMPUS_RECT.x + CAMPUS_RECT.w - ROOM_W,
+  y: CAMPUS_RECT.y + CAMPUS_RECT.h - ROOM_H,
+  w: ROOM_W,
+  h: ROOM_H,
+};
+
+/**
+ * 南侧休息庭院（原研发园）：会议室与卫生间搬进四角后只留铺装与休憩设施。
+ * 北缘 5140 接南向主路，铺装内收 40 留给草缘。
+ */
+export const SOUTH_YARD: WorldRect = { x: 3336, y: 5140, w: 1520, h: 560 };
+export const SOUTH_YARD_PAVING: WorldRect = { x: 3376, y: 5160, w: 1440, h: 520 };
+
+/**
+ * 导览目标的到达点（ADR-0040）：进门后的可站立空地。
+ *
+ * 四个房间的几何中心分别是工位桌、会议桌、上下铺与洗手池，
+ * 不能直接当寻路终点；这里按「房间 + 偏移」手写落点，
+ * 由 `nav-arrival` 测试断言不撞任何碰撞体。
+ */
+export const NAV_ARRIVALS = {
+  meeting: { x: MEETING_ROOM.x + 360, y: MEETING_ROOM.y + 314 },
+  restroom: { x: RESTROOM.x + 230, y: RESTROOM.y + 70 },
+  lounge: { x: LOUNGE.x + 230, y: LOUNGE.y + 70 },
+  workroom: { x: WORKROOM.x + 230, y: WORKROOM.y + 294 },
+} as const;
 
 /** 墙厚：碰撞与视觉共用，玩家半径 9 贴墙时不会穿过 10px 墙体 */
 export const WALL_THICKNESS = 10;
-/** 门洞区间：卫生间、会议室朝南；休息室朝东、工作区朝西（都对着办公区） */
-const RESTROOM_DOOR: DoorSpec = {
-  side: 'south',
-  from: CAMPUS_ORIGIN.x + 1550,
-  to: CAMPUS_ORIGIN.x + 1610,
-};
-/** 会议室门开在南墙东端：门洞正对一张椅子会「进门先撞座」，改到桌子东侧的走道上 */
+/** 门洞区间：会议室朝南（面向中庭），宿舍区与卫生间朝北 */
 const MEETING_DOOR: DoorSpec = {
   side: 'south',
-  from: CAMPUS_ORIGIN.x + 530,
-  to: CAMPUS_ORIGIN.x + 590,
+  from: MEETING_ROOM.x + 330,
+  to: MEETING_ROOM.x + 390,
+};
+const RESTROOM_DOOR: DoorSpec = {
+  side: 'north',
+  from: RESTROOM.x + 200,
+  to: RESTROOM.x + 260,
 };
 const LOUNGE_DOOR: DoorSpec = {
-  side: 'south',
-  from: LOUNGE_ORIGIN.x + 230,
-  to: LOUNGE_ORIGIN.x + 290,
-};
-const WORKROOM_DOOR: DoorSpec = {
-  side: 'west',
-  from: WORKROOM_ORIGIN.y + 160,
-  to: WORKROOM_ORIGIN.y + 220,
+  side: 'north',
+  from: LOUNGE.x + 200,
+  to: LOUNGE.x + 260,
 };
 
 /** 工位桌尺寸与椅子偏移：椅子锚点离短边 20px，人坐下时头不压桌面 */
@@ -268,7 +303,7 @@ function splitSpan(start: number, end: number, from: number, to: number): Array<
 
 /**
  * 把一间房的四面墙拆成碰撞矩形，`door` 指定开门的墙与门洞区间。
- * 东西向的门与南门共用同一套拆分逻辑，新房间不必再各写一份。
+ * 东西向的门与南北门共用同一套拆分逻辑，新房间不必再各写一份。
  */
 function roomWalls(rect: WorldRect, door: DoorSpec): SolidRect[] {
   const t = WALL_THICKNESS;
@@ -296,145 +331,217 @@ function roomWalls(rect: WorldRect, door: DoorSpec): SolidRect[] {
   return walls;
 }
 
-const restroomSolids = roomWalls(RESTROOM, RESTROOM_DOOR);
 const meetingSolids = roomWalls(MEETING_ROOM, MEETING_DOOR);
+const restroomSolids = roomWalls(RESTROOM, RESTROOM_DOOR);
 const loungeSolids = roomWalls(LOUNGE, LOUNGE_DOOR);
-const workroomSolids = roomWalls(WORKROOM, WORKROOM_DOOR);
 
-/** 卫生间四个隔间：中心 x 与隔断 x 手写，隔间宽 95 */
-const STALL_CENTERS = [
-  CAMPUS_ORIGIN.x + 1437,
-  CAMPUS_ORIGIN.x + 1532,
-  CAMPUS_ORIGIN.x + 1627,
-  CAMPUS_ORIGIN.x + 1722,
+/**
+ * 卫生间三区（自西向东）：男 140 / 洗手池 140 / 女 140。
+ * 两道 10px 内隔墙各留一扇 60px 门洞，中央区从北门直进，
+ * 两侧要绕过隔墙才能进——这是「男女生分割 + 中间洗手池」的几何。
+ */
+const RESTROOM_ZONE_W = 140;
+const RESTROOM_LANE_W = RESTROOM_ZONE_W + WALL_THICKNESS;
+const RESTROOM_DIVIDER_X = [
+  RESTROOM.x + WALL_THICKNESS + RESTROOM_ZONE_W,
+  RESTROOM.x + WALL_THICKNESS + RESTROOM_LANE_W + RESTROOM_ZONE_W,
 ] as const;
-const STALL_SEAT_Y = CAMPUS_ORIGIN.y + 168;
+const RESTROOM_DIVIDER_GAP_FROM = RESTROOM.y + 200;
+const RESTROOM_DIVIDER_GAP_TO = RESTROOM.y + 260;
 
-const stallPartitions: SolidRect[] = [1485, 1580, 1675].map((offsetX) => ({
-  kind: 'fixture',
-  x: CAMPUS_ORIGIN.x + offsetX - 3,
-  y: CAMPUS_ORIGIN.y + 90,
-  w: 6,
-  h: 100,
-}));
+const restroomDividers: SolidRect[] = RESTROOM_DIVIDER_X.flatMap((x) => [
+  {
+    kind: 'wall' as const,
+    x,
+    y: RESTROOM.y + WALL_THICKNESS,
+    w: WALL_THICKNESS,
+    h: RESTROOM_DIVIDER_GAP_FROM - (RESTROOM.y + WALL_THICKNESS),
+  },
+  {
+    kind: 'wall' as const,
+    x,
+    y: RESTROOM_DIVIDER_GAP_TO,
+    w: WALL_THICKNESS,
+    h: RESTROOM.y + RESTROOM.h - WALL_THICKNESS - RESTROOM_DIVIDER_GAP_TO,
+  },
+]);
 
+/** 卫生间每侧两个马桶的横向中心：男 4440/4512、女 4740/4812 */
+const TOILET_XS = [
+  RESTROOM.x + 44,
+  RESTROOM.x + 116,
+  RESTROOM.x + 344,
+  RESTROOM.x + 416,
+] as const;
+/** 马桶贴房间北墙：与旧卫生间同一档「水箱离墙 56px」的坐点 */
+const TOILET_SEAT_Y = RESTROOM.y + WALL_THICKNESS + 78;
+
+/** 隔间隔断：男、女各一道 6px 短隔断，夹住两个马桶 */
+const stallPartitions: SolidRect[] = [
+  { kind: 'fixture', x: RESTROOM.x + 77, y: RESTROOM.y + WALL_THICKNESS, w: 6, h: 154 },
+  { kind: 'fixture', x: RESTROOM.x + 377, y: RESTROOM.y + WALL_THICKNESS, w: 6, h: 154 },
+];
+
+/** 会议桌：200×90，居中偏北，南侧留出走道 */
 const MEETING_TABLE: SolidRect = {
   kind: 'fixture',
-  x: CAMPUS_ORIGIN.x + 300,
-  y: CAMPUS_ORIGIN.y + 175,
+  x: MEETING_ROOM.x + 140,
+  y: MEETING_ROOM.y + 142,
   w: 200,
   h: 90,
 };
 
 /** 会议桌两侧的椅子：北侧 3 把朝南，南侧 3 把朝北 */
 const MEETING_SEATS: Array<{ x: number; y: number; facing: Direction }> = [
-  { x: CAMPUS_ORIGIN.x + 330, y: CAMPUS_ORIGIN.y + 150, facing: DIRECTION.Down },
-  { x: CAMPUS_ORIGIN.x + 400, y: CAMPUS_ORIGIN.y + 150, facing: DIRECTION.Down },
-  { x: CAMPUS_ORIGIN.x + 470, y: CAMPUS_ORIGIN.y + 150, facing: DIRECTION.Down },
-  { x: CAMPUS_ORIGIN.x + 330, y: CAMPUS_ORIGIN.y + 290, facing: DIRECTION.Up },
-  { x: CAMPUS_ORIGIN.x + 400, y: CAMPUS_ORIGIN.y + 290, facing: DIRECTION.Up },
-  { x: CAMPUS_ORIGIN.x + 470, y: CAMPUS_ORIGIN.y + 290, facing: DIRECTION.Up },
+  { x: MEETING_ROOM.x + 184, y: MEETING_ROOM.y + 116, facing: DIRECTION.Down },
+  { x: MEETING_ROOM.x + 250, y: MEETING_ROOM.y + 116, facing: DIRECTION.Down },
+  { x: MEETING_ROOM.x + 316, y: MEETING_ROOM.y + 116, facing: DIRECTION.Down },
+  { x: MEETING_ROOM.x + 184, y: MEETING_ROOM.y + 258, facing: DIRECTION.Up },
+  { x: MEETING_ROOM.x + 250, y: MEETING_ROOM.y + 258, facing: DIRECTION.Up },
+  { x: MEETING_ROOM.x + 316, y: MEETING_ROOM.y + 258, facing: DIRECTION.Up },
 ];
 
 /** 卫生间马桶：水箱在精灵北端，人面朝房间（南）坐下，背靠水箱 */
-const TOILET_SEATS = STALL_CENTERS.map((cx) => ({ x: cx, y: STALL_SEAT_Y, facing: DIRECTION.Down as Direction }));
+const TOILET_SEATS = TOILET_XS.map((cx) => ({ x: cx, y: TOILET_SEAT_Y, facing: DIRECTION.Down as Direction }));
 
 /**
- * 工作区的六个工位：两列三排，椅子都在桌子南侧、面朝北。
- * 列距 230 / 排距 90 是按 88×40 的桌与 20px 椅距排的，中间留 142px 走道。
- */
-const WORK_DESK_XS = [WORKROOM_ORIGIN.x + 130, WORKROOM_ORIGIN.x + 360] as const;
-const WORK_DESK_YS = [WORKROOM_ORIGIN.y + 70, WORKROOM_ORIGIN.y + 160, WORKROOM_ORIGIN.y + 250] as const;
-
-export const WORKSTATIONS: ReadonlyArray<Workstation> = WORK_DESK_YS.flatMap((y) =>
-  WORK_DESK_XS.map((x) => workstation(x, y, DIRECTION.Up)),
-);
-
-/**
- * 休息室的六个座位：三张床（只能躺）、一张沙发与两张凳子（只能坐）。
+ * 工作区的八个工位：两排背靠背、每排 4 张，横向成排。
  *
- * 朝向都必须对得上家具：床位朝右躺，头落在 `drawBed` 右端的枕头上；
- * 沙发朝南（`drawSofa` 靠背在北）；两张凳子朝南，正对南侧的 `sideTable` 茶几。
+ * 北排屏幕朝北、椅子在南；南排屏幕朝南、椅子在北，两排椅子在中间背靠背，
+ * 列距 104、排距 120，正好落在 460×360 的开放木地板上。
+ */
+const WORK_DESK_XS = [
+  WORKROOM.x + 74,
+  WORKROOM.x + 178,
+  WORKROOM.x + 282,
+  WORKROOM.x + 386,
+] as const;
+const WORK_DESK_NORTH_Y = WORKROOM.y + 122;
+const WORK_DESK_SOUTH_Y = WORKROOM.y + 246;
+
+export const WORKSTATIONS: ReadonlyArray<Workstation> = [
+  ...WORK_DESK_XS.map((x) => workstation(x, WORK_DESK_NORTH_Y, DIRECTION.Up)),
+  ...WORK_DESK_XS.map((x) => workstation(x, WORK_DESK_SOUTH_Y, DIRECTION.Down)),
+];
+
+/**
+ * 宿舍区的七个座位：两组上下铺（每组上下两张床，共 4 个铺位）+
+ * 一张沙发 + 两张凳子。上下两层相距 44px：既读得出「下铺在更近的前景」，
+ * 又满足座位表「两两间距 > 40」的既有断言。
  */
 export const LOUNGE_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
-  { x: LOUNGE_ORIGIN.x + 110, y: LOUNGE_ORIGIN.y + 100, facing: DIRECTION.Right, kind: 'bed' },
-  { x: LOUNGE_ORIGIN.x + 110, y: LOUNGE_ORIGIN.y + 180, facing: DIRECTION.Right, kind: 'bed' },
-  { x: LOUNGE_ORIGIN.x + 110, y: LOUNGE_ORIGIN.y + 260, facing: DIRECTION.Right, kind: 'bed' },
-  { x: LOUNGE_ORIGIN.x + 340, y: LOUNGE_ORIGIN.y + 100, facing: DIRECTION.Down, kind: 'sofa' },
-  { x: LOUNGE_ORIGIN.x + 250, y: LOUNGE_ORIGIN.y + 240, facing: DIRECTION.Down, kind: 'stool' },
-  { x: LOUNGE_ORIGIN.x + 340, y: LOUNGE_ORIGIN.y + 240, facing: DIRECTION.Down, kind: 'stool' },
+  { x: LOUNGE.x + 110, y: LOUNGE.y + 140, facing: DIRECTION.Right, kind: 'bed' },
+  { x: LOUNGE.x + 110, y: LOUNGE.y + 184, facing: DIRECTION.Right, kind: 'bed' },
+  { x: LOUNGE.x + 110, y: LOUNGE.y + 254, facing: DIRECTION.Right, kind: 'bed' },
+  { x: LOUNGE.x + 110, y: LOUNGE.y + 298, facing: DIRECTION.Right, kind: 'bed' },
+  { x: LOUNGE.x + 304, y: LOUNGE.y + 74, facing: DIRECTION.Down, kind: 'sofa' },
+  { x: LOUNGE.x + 264, y: LOUNGE.y + 174, facing: DIRECTION.Down, kind: 'stool' },
+  { x: LOUNGE.x + 344, y: LOUNGE.y + 174, facing: DIRECTION.Down, kind: 'stool' },
+];
+
+/** 四区门口的 logo 立牌：variant 与渲染端的四个图标一一对应，不参与碰撞 */
+export const AREA_LOGOS: PropInstance[] = [
+  { kind: 'logo', variant: 0, x: CAMPUS_RECT.x + 478, y: CAMPUS_RECT.y + 370 },
+  { kind: 'logo', variant: 1, x: MEETING_ROOM.x + 344, y: MEETING_ROOM.y + 386 },
+  { kind: 'logo', variant: 2, x: LOUNGE.x + 270, y: LOUNGE.y - 16 },
+  { kind: 'logo', variant: 3, x: RESTROOM.x + 270, y: RESTROOM.y - 16 },
 ];
 
 /**
- * 研发园装饰：灯、长椅、垃圾桶、标识、饮水/售货、单车棚与野餐桌。
- * 庭院加密一档：四角绿植、沿边灯柱与三张野餐桌把 1900×740 的铺装铺满。
+ * 南侧休息庭院：灯柱四面、绿植四角、长椅与野餐桌沿边、单车与指路牌点缀。
+ * 原先会议室/卫生间的陈设随房间搬走，这里只保留户外高频家具。
  */
-export const CAMPUS_PROPS: PropInstance[] = [
-  { kind: 'lamp', x: CAMPUS_ORIGIN.x + 70, y: CAMPUS_ORIGIN.y + 50 },
-  { kind: 'lamp', x: CAMPUS_ORIGIN.x + 2030, y: CAMPUS_ORIGIN.y + 50 },
-  { kind: 'lamp', x: CAMPUS_ORIGIN.x + 70, y: CAMPUS_ORIGIN.y + 730 },
-  { kind: 'lamp', x: CAMPUS_ORIGIN.x + 2030, y: CAMPUS_ORIGIN.y + 730 },
-  { kind: 'plant', x: CAMPUS_ORIGIN.x + 140, y: CAMPUS_ORIGIN.y + 710 },
-  { kind: 'plant', x: CAMPUS_ORIGIN.x + 2000, y: CAMPUS_ORIGIN.y + 100 },
-  { kind: 'plant', x: CAMPUS_ORIGIN.x + 150, y: CAMPUS_ORIGIN.y + 70 },
-  { kind: 'plant', x: CAMPUS_ORIGIN.x + 1950, y: CAMPUS_ORIGIN.y + 70 },
-  { kind: 'plant', x: CAMPUS_ORIGIN.x + 500, y: CAMPUS_ORIGIN.y + 750 },
-  { kind: 'plant', x: CAMPUS_ORIGIN.x + 1750, y: CAMPUS_ORIGIN.y + 750 },
-  // 白板挂在会议室北墙内侧：底边压到墙内缘 114，34×24 的主体才完整落在屋里
-  { kind: 'board', x: CAMPUS_ORIGIN.x + 400, y: CAMPUS_ORIGIN.y + 114 },
-  { kind: 'sign', x: CAMPUS_ORIGIN.x + 1070, y: CAMPUS_ORIGIN.y + 12 },
-  { kind: 'bench', x: CAMPUS_ORIGIN.x + 600, y: CAMPUS_ORIGIN.y + 710 },
-  { kind: 'bench', x: CAMPUS_ORIGIN.x + 1350, y: CAMPUS_ORIGIN.y + 710 },
-  { kind: 'bin', x: CAMPUS_ORIGIN.x + 1690, y: CAMPUS_ORIGIN.y + 420 },
-  { kind: 'bike', x: CAMPUS_ORIGIN.x + 1880, y: CAMPUS_ORIGIN.y + 700 },
-  { kind: 'table', x: CAMPUS_ORIGIN.x + 1000, y: CAMPUS_ORIGIN.y + 380 },
-  { kind: 'table', x: CAMPUS_ORIGIN.x + 250, y: CAMPUS_ORIGIN.y + 670 },
-  { kind: 'table', x: CAMPUS_ORIGIN.x + 1900, y: CAMPUS_ORIGIN.y + 620 },
-  // 洗手台贴南墙（墙内缘 y+350），水龙头朝墙、台盆朝北，人从房间一侧使用；
-  // 两组中间让开南墙门洞 x+1550–x+1610，进出不会被台面挡住
-  { kind: 'sink', x: CAMPUS_ORIGIN.x + 1420, y: CAMPUS_ORIGIN.y + 350 },
-  { kind: 'sink', x: CAMPUS_ORIGIN.x + 1500, y: CAMPUS_ORIGIN.y + 350 },
-  { kind: 'sink', x: CAMPUS_ORIGIN.x + 1660, y: CAMPUS_ORIGIN.y + 350 },
-  { kind: 'sink', x: CAMPUS_ORIGIN.x + 1740, y: CAMPUS_ORIGIN.y + 350 },
+export const SOUTH_YARD_PROPS: PropInstance[] = [
+  { kind: 'lamp', x: 3416, y: 5200 },
+  { kind: 'lamp', x: 4776, y: 5200 },
+  { kind: 'lamp', x: 3416, y: 5620 },
+  { kind: 'lamp', x: 4776, y: 5620 },
+  { kind: 'plant', x: 3500, y: 5200 },
+  { kind: 'plant', x: 4690, y: 5200 },
+  { kind: 'plant', x: 3500, y: 5600 },
+  { kind: 'plant', x: 4690, y: 5600 },
+  { kind: 'bench', x: 3700, y: 5620 },
+  { kind: 'bench', x: 4490, y: 5620 },
+  { kind: 'bench', x: 4096, y: 5480 },
+  { kind: 'table', x: 3800, y: 5320 },
+  { kind: 'table', x: 4400, y: 5320 },
+  { kind: 'bike', x: 4740, y: 5600 },
+  { kind: 'sign', x: 4250, y: 5190 },
+  { kind: 'bin', x: 3540, y: 5400 },
 ];
 
-/**
- * 工作区陈设：咖啡机与饮水机靠东墙、绿植与垃圾桶守门侧。
- * 门在西墙 y+160–y+220，门口那一条走道保持空着。
- */
+/** 会议室陈设：北墙白板、绿植与垃圾桶，桌椅由 MEETING_SEATS 提供 */
+export const MEETING_PROPS: PropInstance[] = [
+  // 白板挂北墙内侧：精灵顶边贴墙内缘（y+10），24px 高的板面完整落在屋里
+  { kind: 'board', x: MEETING_ROOM.x + 230, y: MEETING_ROOM.y + WALL_THICKNESS + 24 },
+  { kind: 'plant', x: MEETING_ROOM.x + 34, y: MEETING_ROOM.y + 334 },
+  { kind: 'bin', x: MEETING_ROOM.x + 424, y: MEETING_ROOM.y + 30 },
+];
+
+/** 卫生间陈设：中央区南墙两个洗手台，门口一只垃圾桶 */
+export const RESTROOM_PROPS: PropInstance[] = [
+  { kind: 'sink', x: RESTROOM.x + 194, y: RESTROOM.y + 350 },
+  { kind: 'sink', x: RESTROOM.x + 264, y: RESTROOM.y + 350 },
+  { kind: 'bin', x: RESTROOM.x + 176, y: RESTROOM.y + 44 },
+];
+
+/** 工作区陈设：咖啡机与饮水机靠南缘，绿植与垃圾桶守两角；开放区没有墙可依 */
 export const WORK_PROPS: PropInstance[] = [
-  { kind: 'coffee', x: WORKROOM_ORIGIN.x + 420, y: WORKROOM_ORIGIN.y + 240 },
-  { kind: 'cooler', x: WORKROOM_ORIGIN.x + 420, y: WORKROOM_ORIGIN.y + 140 },
-  { kind: 'plant', x: WORKROOM_ORIGIN.x + 30, y: WORKROOM_ORIGIN.y + 50 },
-  { kind: 'bin', x: WORKROOM_ORIGIN.x + 30, y: WORKROOM_ORIGIN.y + 330 },
+  { kind: 'coffee', x: WORKROOM.x + 84, y: WORKROOM.y + 330 },
+  { kind: 'cooler', x: WORKROOM.x + 164, y: WORKROOM.y + 330 },
+  { kind: 'plant', x: WORKROOM.x + 16, y: WORKROOM.y + 24 },
+  { kind: 'bin', x: WORKROOM.x + 16, y: WORKROOM.y + 334 },
 ];
 
-/** 休息室陈设：床头小几、落地灯、绿植与垃圾桶，都是不挡路的小件 */
+/** 宿舍区陈设：两组上下铺各配一架爬梯，靠东一侧沙发 + 床头几 + 两张凳子 */
 export const LOUNGE_PROPS: PropInstance[] = [
-  { kind: 'sideTable', x: LOUNGE_ORIGIN.x + 295, y: LOUNGE_ORIGIN.y + 280 },
-  { kind: 'lamp', x: LOUNGE_ORIGIN.x + 425, y: LOUNGE_ORIGIN.y + 330 },
-  { kind: 'plant', x: LOUNGE_ORIGIN.x + 40, y: LOUNGE_ORIGIN.y + 330 },
-  { kind: 'bin', x: LOUNGE_ORIGIN.x + 425, y: LOUNGE_ORIGIN.y + 30 },
+  { kind: 'ladder', x: LOUNGE.x + 170, y: LOUNGE.y + 190 },
+  { kind: 'ladder', x: LOUNGE.x + 170, y: LOUNGE.y + 304 },
+  { kind: 'sideTable', x: LOUNGE.x + 304, y: LOUNGE.y + 214 },
+  { kind: 'plant', x: LOUNGE.x + 404, y: LOUNGE.y + 324 },
+  { kind: 'bin', x: LOUNGE.x + 404, y: LOUNGE.y + 34 },
 ];
 
-/** 工作区门前的铺装：把门洞接到办公区东缘，贴花不进入。休息室南门直接接北岸横路。 */
+/**
+ * 中庭陈设：四角灯柱 + 沿边咖啡座、售货机、长椅与垃圾桶。
+ * 中央十字留给四条通道，道具全部压在四角，进门不会撞到东西。
+ */
+export const PLAZA_PROPS: PropInstance[] = [
+  { kind: 'lamp', x: 3836, y: 3876 },
+  { kind: 'lamp', x: 4356, y: 3876 },
+  { kind: 'lamp', x: 3836, y: 4316 },
+  { kind: 'lamp', x: 4356, y: 4316 },
+  { kind: 'table', x: 3880, y: 3960 },
+  { kind: 'vending', x: 4352, y: 3960 },
+  { kind: 'bench', x: 3880, y: 4220 },
+  { kind: 'bin', x: 4350, y: 4210 },
+  { kind: 'plant', x: 3960, y: 3862 },
+  { kind: 'plant', x: 4230, y: 4330 },
+];
+
+/** 三个有门房间的门前铺装：把门洞接到草地，贴花不进入 */
 export const DOOR_PAVING: WorldRect[] = [
-  { x: WORKROOM_ORIGIN.x - 124, y: WORKROOM_ORIGIN.y + 140, w: 124, h: 100 },
+  { x: MEETING_ROOM.x + 326, y: MEETING_ROOM.y + 360, w: 68, h: 36 },
+  { x: LOUNGE.x + 196, y: LOUNGE.y - 36, w: 68, h: 36 },
+  { x: RESTROOM.x + 196, y: RESTROOM.y - 36, w: 68, h: 36 },
 ];
 
 export const CAMPUS_BUILDINGS: BuildingSpec[] = [
-  { name: '会议室', rect: MEETING_ROOM, floor: 'wood' },
-  { name: '卫生间', rect: RESTROOM, floor: 'tile' },
   { name: '工作区', rect: WORKROOM, floor: 'wood' },
-  { name: '休息室', rect: LOUNGE, floor: 'carpet' },
+  { name: '会议室', rect: MEETING_ROOM, floor: 'wood' },
+  { name: '宿舍区', rect: LOUNGE, floor: 'carpet' },
+  { name: '卫生间', rect: RESTROOM, floor: 'tile' },
 ];
 
-/** 卫生间与会议室、工作区与休息室的碰撞，以及园区内的桌台隔断 */
+/**
+ * 三间有墙房间的墙体，加上卫生间两道内隔墙、两组隔间与会议桌。
+ * 工作区按需求不加墙，因此这里没有它的任何碰撞矩形。
+ */
 export const CAMPUS_SOLIDS: SolidRect[] = [
   ...meetingSolids,
   ...restroomSolids,
   ...loungeSolids,
-  ...workroomSolids,
+  ...restroomDividers,
   ...stallPartitions,
   MEETING_TABLE,
 ];
@@ -443,46 +550,4 @@ export const CAMPUS_SOLIDS: SolidRect[] = [
 export const CAMPUS_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
   ...MEETING_SEATS.map((seat) => ({ ...seat, kind: 'chair' as const })),
   ...TOILET_SEATS.map((seat) => ({ ...seat, kind: 'toilet' as const })),
-];
-
-/**
- * 办公广场的灯、垃圾桶、长椅、售货机与绿植。
- * 加密到 28 件：四边灯柱 + 沿街长椅 + 内圈花箱旁的咖啡座，把 1120×936 的广场填满。
- */
-export const PLAZA_PROPS: PropInstance[] = [
-  // 四角灯柱与绿植
-  { kind: 'lamp', x: 3560, y: 3652 },
-  { kind: 'plant', x: 3612, y: 3640 },
-  { kind: 'lamp', x: 4632, y: 3652 },
-  { kind: 'plant', x: 4570, y: 3640 },
-  { kind: 'lamp', x: 3560, y: 4540 },
-  { kind: 'plant', x: 3612, y: 4528 },
-  { kind: 'lamp', x: 4632, y: 4540 },
-  { kind: 'plant', x: 4570, y: 4528 },
-  // 售货机与垃圾桶
-  { kind: 'vending', x: 4612, y: 3700 },
-  { kind: 'vending', x: 4612, y: 4480 },
-  { kind: 'bin', x: 3570, y: 3700 },
-  { kind: 'bin', x: 4622, y: 4540 },
-  // 沿街长椅
-  { kind: 'bench', x: 3700, y: 3600 },
-  { kind: 'bench', x: 4430, y: 3600 },
-  { kind: 'bench', x: 3700, y: 4596 },
-  { kind: 'bench', x: 4430, y: 4596 },
-  { kind: 'bench', x: 3580, y: 4000 },
-  { kind: 'bench', x: 3580, y: 4200 },
-  { kind: 'bench', x: 4620, y: 4000 },
-  { kind: 'bench', x: 4620, y: 4200 },
-  // 广场中心的咖啡座：四组小桌 + 绿植，出生点四周不再是一张空桌布
-  { kind: 'table', x: 3820, y: 3900 },
-  { kind: 'table', x: 4370, y: 3900 },
-  { kind: 'table', x: 3820, y: 4290 },
-  { kind: 'table', x: 4370, y: 4290 },
-  { kind: 'plant', x: 3960, y: 3880 },
-  { kind: 'plant', x: 4230, y: 3880 },
-  { kind: 'plant', x: 3960, y: 4310 },
-  { kind: 'plant', x: 4230, y: 4310 },
-  // 北入口与南向主路口的指路牌
-  { kind: 'sign', x: 3860, y: 3384 },
-  { kind: 'sign', x: 4300, y: 4810 },
 ];

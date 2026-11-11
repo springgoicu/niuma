@@ -6,6 +6,7 @@ import {
   CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
   MOVE_SPEED,
+  NAV_TARGETS,
   QUEUE_REJECT_REASON,
   SIT_RANGE,
   STATE_BITS,
@@ -28,6 +29,7 @@ import {
   type ChatHistoryPacket,
   type Direction,
   type MotionTarget,
+  type NavTargetId,
   type Pose,
   type QueueStatusPacket,
   type ResumeState,
@@ -36,6 +38,7 @@ import {
   type SeatStateEntry,
   type SpawnPacket,
   type Species,
+  type SyncFormat,
   type SystemNoticePacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
@@ -46,12 +49,15 @@ import { saveSnapshot, toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
 import { seatLift } from './seat-art';
+import { NEVER_SENT, shouldSendMove, type MoveSample } from './move-send';
 import { sfx } from './sfx';
 import { Ecs, Local, Motion, POSE, Position } from './ecs';
 import { INTERP_DELAY_MS, type RemoteSample } from './interp';
 import { InputController, type ActionKey } from './input';
 import { nearestInteractiveProp, pickLine, snoreDue } from './interactions';
 import { jumpLiftTexels, jumpShadowFor } from './pony-motion';
+import { Navigator } from './navigator';
+import { findPath } from './pathfinding';
 import { GameRenderer } from './renderer';
 
 export interface ChatEntry {
@@ -109,13 +115,21 @@ export interface SessionCallbacks {
   onHint(hint: string | null): void;
   /** 本地姿态、入座状态与座位种类：动作按钮据此显示激活 / 不可用态，只在变化时回调 */
   onLocalState(state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }): void;
+  /** 自动寻路目标：`null` 表示没有在导航（到达、取消、被打断都会回调） */
+  onNav(nav: { id: NavTargetId; name: string } | null): void;
+}
+
+/** 一次会话绑定的园区：构造后不再变化，重连与落盘都以它为准 */
+export interface GameSessionOptions {
+  /** 园区 WebSocket 端点；缺省时退回 NetClient 的同源推导 */
+  wsUrl?: string;
+  /** 园区 id：落点快照按它分区，换园区时不会把上一座的座位带过去 */
+  parkId?: string;
 }
 
 const STATS_INTERVAL = 500;
 /** 座位提示刷新间隔：足够跟手，又不必每帧扫描座位表 */
 const SEAT_HINT_INTERVAL = 150;
-/** 本地预测的上行频率：20Hz 与 Tick 同频，服务端无需插值即可直接限速 */
-const MOVEMENT_SEND_INTERVAL = 50;
 /** 互动节流：连按 F 的两次气泡至少隔这么久 */
 const INTERACT_COOLDOWN_MS = 900;
 /** 瞬时提示的保留时长：房间里的环境提示晚一步再抢回这一行 */
@@ -157,6 +171,10 @@ export class GameSession {
     this.tracks.lie!,
   ];
   private readonly input = new InputController();
+  /** 自动寻路：路点推进与卡死判定都在 Navigator 里，会话只负责启停 */
+  private readonly navigator = new Navigator();
+  /** 导航方向的复用槽位：与 `input.vector()` 的输出分开，互不覆盖 */
+  private readonly navVector = { x: 0, y: 0 };
   private readonly names = new Map<number, string>();
   /** netId → 物种：工牌与点击详情共用，换装广播时同步 */
   private readonly speciesById = new Map<number, Species>();
@@ -195,6 +213,8 @@ export class GameSession {
   private localId = 0;
   /** 系统消息的负序号：与聊天 msgId 分开，列表 key 不会撞 */
   private systemSeq = 0;
+  /** 园区公告只播一次：断线重连重建世界时不再重复刷屏 */
+  private renovationNoticed = false;
   /** 下一个该播报的在岗档位下标；每次 WELCOME 归零 */
   private onDutyCursor = 0;
   /**
@@ -206,6 +226,11 @@ export class GameSession {
   private species: Species = 'cow';
   private elapsed = 0;
   private movementSendTime = 0;
+  /**
+   * 上一次真正发出去的三元组。复用同一个对象：60fps 下每帧新建一个字面量
+   * 就是每秒 60 个短命对象，正是这个仓库的帧循环一直避免的东西。
+   */
+  private readonly lastSentMove: MoveSample = { x: NEVER_SENT, y: NEVER_SENT, state: NEVER_SENT };
   private clientMoveSequence = 0;
   /** 距离上次落盘的累计时长：只在 tick 里累加，不在帧内碰 localStorage */
   private snapshotAt = 0;
@@ -221,7 +246,10 @@ export class GameSession {
   /** 收到同步包的本地时刻：一条包里的所有条目共用一个时间戳，避免逐条读时钟 */
   private syncAt = 0;
 
-  constructor(private readonly callbacks: SessionCallbacks) {}
+  constructor(
+    private readonly callbacks: SessionCallbacks,
+    private readonly options: GameSessionOptions = {},
+  ) {}
 
   get backend(): string {
     return this.renderer.backend;
@@ -242,6 +270,7 @@ export class GameSession {
     window.addEventListener('pagehide', this.persistNow);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
 
+    // 端点由 /play 按园区白名单解析后传进来；没传时才退回 NetClient 的默认推导
     this.net = new NetClient({
       // socket 打开不代表入场：真正的在线由 WELCOME 决定，中间可能隔着一条排队
       onOpen: () => this.callbacks.onStatus('connecting', '等待准入'),
@@ -266,7 +295,7 @@ export class GameSession {
       onWelcome: (packet) => this.handleWelcome(packet, profile),
       onSpawn: (packet) => this.handleSpawn(packet),
       onDespawn: (id) => this.handleDespawn(id),
-      onSync: (data) => this.handleSync(data),
+      onSync: (data, format) => this.handleSync(data, format),
       onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
       onChatHistory: (packet) => this.handleChatHistory(packet),
       onSystemNotice: (packet) => this.handleSystemNotice(packet),
@@ -292,7 +321,7 @@ export class GameSession {
       onPing: (rtt) => {
         this.ping = rtt;
       },
-    });
+    }, this.options.wsUrl);
 
     this.input.attach(
       (action) => this.perform(action),
@@ -313,6 +342,10 @@ export class GameSession {
     this.clearWorld();
     this.localId = packet.entityId;
     this.movementSendTime = 0;
+    // 换了一条连接就得重新握手：新连接的上行基准从「还没发过」开始
+    this.lastSentMove.x = NEVER_SENT;
+    this.lastSentMove.y = NEVER_SENT;
+    this.lastSentMove.state = NEVER_SENT;
     this.clientMoveSequence = 0;
     this.snapshotAt = 0;
     // 自己的在线时长从入场成功这一刻起算：断线重连会重建世界，计时随 WELCOME 归零
@@ -340,6 +373,12 @@ export class GameSession {
     );
     this.renderer.updateCamera(x, y);
     this.callbacks.onStatus('online', this.renderer.backend);
+    // 园区公告（ADR-0044）：入场成功后播一条，只在本机列表里出现，不走协议也不发给别人
+    if (!this.renovationNoticed) {
+      this.renovationNoticed = true;
+      const notice = formatSystemNotice(SYSTEM_NOTICE_KIND.Renovation);
+      if (notice) this.pushSystemNotice(SYSTEM_NOTICE_KIND.Renovation, notice);
+    }
   }
 
   private handleSpawn(packet: SpawnPacket): void {
@@ -421,9 +460,9 @@ export class GameSession {
    *
    * 本地玩家不进缓冲——它的位置由确定性预测给出，服务端的坐标只是回声。
    */
-  private handleSync(data: Uint8Array): void {
+  private handleSync(data: Uint8Array, format: SyncFormat): void {
     this.syncAt = performance.now();
-    readSync(data, this.visitSync);
+    readSync(data, this.visitSync, format);
   }
 
   /**
@@ -717,7 +756,10 @@ export class GameSession {
       pose: Motion.pose[eid]! as Pose,
       seatId: this.localSeat,
     });
-    saveSnapshot(patch);
+    // 落点按园区分区：换园区后这份快照会被 resumeForPark 判为不匹配而丢弃。
+    // 没有 parkId 时不写这个字段，避免把已有的 park 从存档里抹成 undefined
+    const park = this.options.parkId;
+    saveSnapshot(park ? { ...patch, park } : patch);
     // 重连时服务端拿到的必须是最后一次落盘的落点，而不是首次入场时的旧快照
     this.net?.setResume({ ...patch });
   };
@@ -727,6 +769,8 @@ export class GameSession {
   };
 
   private clearWorld(): void {
+    // 重连 / 换世界后旧路径的路点已经失效，必须先停掉导航再清实体
+    this.cancelNavigation();
     for (const id of this.names.keys()) {
       this.ecs.despawn(id);
       this.renderer.removeEntity(id);
@@ -785,6 +829,41 @@ export class GameSession {
     if (this.localId) this.renderer.setStatus(this.localId, status);
   }
 
+  /**
+   * 自动寻路（ADR-0040）：以当前本地位置为起点，点一次只跑一次 A*。
+   * 入座时先起身；找不到路就明确提示，不把人顶在墙上。
+   */
+  navigateTo(id: NavTargetId): void {
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    if (this.localSeat !== 0) this.standUp();
+    const target = NAV_TARGETS.find((item) => item.id === id);
+    if (!target) return;
+    const path = findPath(Position.x[eid]!, Position.y[eid]!, target.arrive.x, target.arrive.y);
+    if (path === null) {
+      this.cancelNavigation();
+      this.showHint('找不到过去的路，试着手动走过去');
+      return;
+    }
+    this.navigator.start(path, target);
+    this.callbacks.onNav({ id: target.id, name: target.name });
+  }
+
+  /** 取消自动寻路：幂等，没有在导航时不触发回调 */
+  cancelNavigation(): void {
+    if (!this.navigator.active) return;
+    this.navigator.cancel();
+    this.callbacks.onNav(null);
+  }
+
+  /** 到达落点：停掉导航并给一句确认，避免玩家以为还在走 */
+  private finishNavigation(): void {
+    const name = this.navigator.target?.name;
+    this.navigator.cancel();
+    this.callbacks.onNav(null);
+    if (name) this.showHint(`已到达${name}`);
+  }
+
   /** 触屏摇杆：把屏幕摇杆方向交给输入层，与键盘共用同一条移动通路 */
   setMoveVector(x: number, y: number): void {
     this.input.setTouchVector(x, y);
@@ -792,6 +871,7 @@ export class GameSession {
 
   /** 打开聊天前清掉仍按住的移动键：输入框接管键盘后角色不该继续滑行（ADR-0023 §6） */
   clearMovement(): void {
+    this.cancelNavigation();
     this.input.clear();
   }
 
@@ -802,6 +882,8 @@ export class GameSession {
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
+    // 任何动作都先夺回控制权：坐着 / 躺着 / 跳跃 / 互动都不该被自动寻路拽着走
+    this.cancelNavigation();
     this.applyIntent(eid, resolveInteraction(action, this.interactionState(eid)));
   }
 
@@ -975,22 +1057,36 @@ export class GameSession {
   private stepLocal(eid: number, dt: number): void {
     this.expireLocalOverlays(eid);
 
-    const vector = this.input.vector();
-    const moving = vector.x !== 0 || vector.y !== 0;
+    const manual = this.input.vector();
+    let vx = manual.x;
+    let vy = manual.y;
+    // 手动输入永远优先：一按方向键 / 摇杆就收回控制权，并停掉自动寻路
+    if (vx !== 0 || vy !== 0) {
+      this.cancelNavigation();
+    } else if (this.navigator.active) {
+      if (this.navigator.steer(Position.x[eid]!, Position.y[eid]!, this.navVector) === 'arrived') {
+        this.finishNavigation();
+      } else {
+        vx = this.navVector.x;
+        vy = this.navVector.y;
+      }
+    }
+
+    const moving = vx !== 0 || vy !== 0;
     // 座位上一按方向键就起身：位置留在椅子旁，之后按正常移动走
     if (moving && this.localSeat !== 0) this.standUp();
 
     if (moving) {
       const prevX = Position.x[eid]!;
       const prevY = Position.y[eid]!;
-      const nextX = clamp(prevX + vector.x * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
-      const nextY = clamp(prevY + vector.y * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
+      const nextX = clamp(prevX + vx * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
+      const nextY = clamp(prevY + vy * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
       // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
       resolveMotionInto(this.motion, prevX, prevY, nextX, nextY);
       const advanced = Math.abs(this.motion.x - prevX) + Math.abs(this.motion.y - prevY) > 0.01;
       Position.x[eid] = this.motion.x;
       Position.y[eid] = this.motion.y;
-      Motion.direction[eid] = directionFromVector(vector.x, vector.y, Motion.direction[eid] as Direction);
+      Motion.direction[eid] = directionFromVector(vx, vy, Motion.direction[eid] as Direction);
       // 顶在围栏上时原地踏步会露馅：没有实际位移就当站定
       if (advanced) {
         // 走动打断叫唤与打招呼（都没有行走帧）；跳跃是位移动作，不能在这里清位，
@@ -1015,6 +1111,16 @@ export class GameSession {
         Motion.since[eid] = this.elapsed;
       }
       Motion.moving[eid] = 0;
+    }
+
+    // 贴着墙角走不动时不能永远顶着：连续 700ms 没有位移就交还控制权
+    if (
+      this.navigator.active &&
+      this.navigator.observe(dt * 1000, Position.x[eid]!, Position.y[eid]!) === 'stuck'
+    ) {
+      const name = this.navigator.target?.name ?? '目标';
+      this.cancelNavigation();
+      this.showHint(`去${name}的路上被挡住了，试试手动走过去`);
     }
   }
 
@@ -1069,35 +1175,35 @@ export class GameSession {
   }
 
   /**
-   * 上行移动：独立时钟，不随帧率漂移。
+   * 上行移动：有变化才发，静止降到 4Hz 保活。
    *
-   * 低帧率下 `dtMs` 被钳在 50，而真实间隔可能更长，一帧只发一条会让上行退化到 15Hz；
-   * 这里补发最多两条，再多说明这台机器已经跑不动游戏了，继续补只会雪上加霜。
+   * 服务端的广播是变化驱动的，所以「发得勤」并不等于「别人看得见」：玩家在工位上
+   * 坐着时每帧发的都是同一份三元组，只会白烧上行、服务端解析与 GC。
+   *
+   * 但**叠加位到期必须立刻发**：叫唤 / 跳 / 挥手的结束只体现在 state 的某一位掉下来，
+   * 远端没有自己的过期计时器，漏了这一包就会一直循环播放（ADR-0018）。
+   * `expireLocalOverlays` 在 `stepLocal` 里已经清位，所以这里每帧重算 state 就能捕获到它。
+   *
+   * 不再补发积压：服务端速度窗口封顶后，一帧一个最新坐标比补发一串过期坐标更准。
    */
   private sendMove(eid: number): void {
-    let sent = 0;
-    while (this.movementSendTime >= MOVEMENT_SEND_INTERVAL && sent < 2) {
-      this.movementSendTime -= MOVEMENT_SEND_INTERVAL;
-      sent += 1;
-      const state = packState(
-        Motion.direction[eid]! as Direction,
-        Motion.pose[eid]! as Pose,
-        Motion.moving[eid] === 1,
-        Motion.emote[eid] === 1,
-        Motion.jump[eid] === 1,
-        Motion.wave[eid] === 1,
-      );
-      this.clientMoveSequence = (this.clientMoveSequence + 1) & 0xffff;
-      this.net?.sendMove(
-        quantizeCoord(Position.x[eid]!),
-        quantizeCoord(Position.y[eid]!),
-        state,
-        this.clientMoveSequence,
-        Math.floor(performance.now()) >>> 0,
-      );
-    }
-    // 积压超过两包就没有补发的意义了：直接丢掉，避免卡顿后爆发一串过期坐标
-    if (sent === 2 && this.movementSendTime >= MOVEMENT_SEND_INTERVAL) this.movementSendTime = 0;
+    const x = quantizeCoord(Position.x[eid]!);
+    const y = quantizeCoord(Position.y[eid]!);
+    const state = packState(
+      Motion.direction[eid]! as Direction,
+      Motion.pose[eid]! as Pose,
+      Motion.moving[eid] === 1,
+      Motion.emote[eid] === 1,
+      Motion.jump[eid] === 1,
+      Motion.wave[eid] === 1,
+    );
+    if (!shouldSendMove(this.lastSentMove, x, y, state, this.movementSendTime)) return;
+    this.movementSendTime = 0;
+    this.lastSentMove.x = x;
+    this.lastSentMove.y = y;
+    this.lastSentMove.state = state;
+    this.clientMoveSequence = (this.clientMoveSequence + 1) & 0xffff;
+    this.net?.sendMove(x, y, state, this.clientMoveSequence, Math.floor(performance.now()) >>> 0);
   }
 
   private tick = (ticker: { deltaMS: number }): void => {
@@ -1193,6 +1299,7 @@ export class GameSession {
 
   stop(): void {
     this.disposed = true;
+    this.cancelNavigation();
     // 关页面前的最后一道保险：pagehide 没来得及触发时（路由内跳转）也能落盘
     this.persistNow();
     window.removeEventListener('pagehide', this.persistNow);

@@ -25,6 +25,13 @@ export interface ChatHistoryConfig {
 export interface ServerConfig {
   port: number;
   hostname: string;
+  /**
+   * 园区身份：多园区部署时每台游戏服各配一个，`/health` 原样下发。
+   * 选园页拿它核对「配置指向的园区」与「实际应答的园区」是不是同一座，
+   * 部署错位（把 B 的地址配成了 A）能在页面上直接看出来。
+   */
+  parkId: string;
+  parkName: string;
   /** 单连接每秒最多处理的消息数，超出直接丢弃，防止单客户端打满 Tick */
   maxMessagesPerSecond: number;
   helloTimeoutMs: number;
@@ -90,6 +97,9 @@ export function loadConfig(): ServerConfig {
   return {
     port: readInt(process.env.GAME_SERVER_PORT, 3001),
     hostname: process.env.GAME_SERVER_HOST ?? '0.0.0.0',
+    // 缺省值必须让单机部署看起来和改造之前一样：id 是 main、名字是主园区
+    parkId: process.env.GAME_PARK_ID?.trim() || 'main',
+    parkName: process.env.GAME_PARK_NAME?.trim() || '主园区',
     maxMessagesPerSecond: readInt(process.env.GAME_SERVER_MAX_MPS, 120),
     helloTimeoutMs: 5000,
     // 直接读 shared-types 的 SPAWN_RADIUS：出生圈收进北门口袋后，这里不再各写一份字面量

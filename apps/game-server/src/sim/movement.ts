@@ -4,6 +4,7 @@ import {
   clampWorldX,
   clampWorldY,
   dequantizeCoord,
+  quantizeCoord,
   resolveMotionInto,
   seatById,
   seatPose,
@@ -18,6 +19,14 @@ import type { SeatRegistry } from './seats';
 
 /** 允许的时间窗下限，避免同一毫秒内连发被误判 */
 const MIN_WINDOW_MS = 8;
+/**
+ * 允许的时间窗上限（5 个 Tick）。
+ *
+ * 上行改成「有变化才发」之后，站着不动很久再走会留下几百毫秒甚至更长的间隔；
+ * 窗口不封顶的话，`allowed` 会跟着间隔线性放大，等于给了一次免费瞬移。
+ * 封顶后单包最多放行 165×0.25×1.25+3 ≈ 55px，既能吸收抖动丢包，又把瞬移压住。
+ */
+const MAX_WINDOW_MS = 250;
 /** 网络抖动与插值误差余量 */
 const TOLERANCE = 1.25;
 const SLACK_PX = 3;
@@ -42,6 +51,23 @@ export interface MoveResult {
   clamped: boolean;
   /** 本包导致的座位释放（移动或改姿态起身），调用方需广播 */
   released: SeatStateEntry[];
+}
+
+/**
+ * 只有「观测者看得出差别」时才置 dirty。
+ *
+ * 三元组（量化坐标 + state）与上次真正广播出去的值相同，说明这一包对别人不可见：
+ * 客户端在工位上坐着也会 20Hz 发 MOVE，若每包都置 dirty，广播成本就与「有没有变化」无关，
+ * 这正是 5M 带宽只够 60 人的根因。基准在 `runTick` 真正发包后回写。
+ */
+function markIfChanged(player: Player): void {
+  if (
+    quantizeCoord(player.x) !== player.lastBroadcastQx ||
+    quantizeCoord(player.y) !== player.lastBroadcastQy ||
+    player.state !== player.lastBroadcastState
+  ) {
+    player.dirty = true;
+  }
 }
 
 /**
@@ -80,7 +106,7 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
       // 座位上位置不动，只接受原地的叫唤 / 挥手；跳跃需要先起身，这里不接
       const stationary = !state.moving;
       player.applyState(player.direction, expected, false, stationary && state.emote, false, stationary && state.wave);
-      player.dirty = true;
+      markIfChanged(player);
       return RESULT;
     }
   }
@@ -91,7 +117,7 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
   const dy = targetY - player.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
 
-  const elapsed = Math.max(MIN_WINDOW_MS, now - player.lastMoveAt);
+  const elapsed = Math.min(MAX_WINDOW_MS, Math.max(MIN_WINDOW_MS, now - player.lastMoveAt));
   const allowed = (MOVE_SPEED * elapsed) / 1000 * TOLERANCE + SLACK_PX;
   const clamped = distance > allowed && distance > 0;
   const scale = clamped ? allowed / distance : 1;
@@ -115,7 +141,7 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
     state.jump,
     stationary && state.wave,
   );
-  player.dirty = true;
+  markIfChanged(player);
 
   RESULT.accepted = true;
   RESULT.clamped = clamped;

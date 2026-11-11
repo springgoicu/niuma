@@ -72,28 +72,32 @@ export function SpeciesTag({ species, dense = false }: { species: string; dense?
  */
 function BadgeMeta({
   region,
+  parkName,
   onlineSec,
   online,
   dense = false,
 }: {
   region: string;
+  /** 园区名（多园区部署时才有意义）：与区域名拼成「一号园区 · 工作区」 */
+  parkName?: string;
   onlineSec: number;
   online: boolean;
   dense?: boolean;
 }) {
   const icon = dense ? 'h-2.5 w-2.5' : 'h-3 w-3';
   const text = online ? formatOnline(onlineSec) : '--:--';
+  const place = [parkName, region].filter(Boolean).join(' · ') || '园区';
   return (
     <div
       role="group"
       className={`flex items-center gap-2 font-mono text-mist-500 ${
         dense ? 'px-2.5 pb-1.5 text-[9px]' : 'mt-1 text-[10px]'
       }`}
-      aria-label={`所在地 ${region || '园区'}，在线 ${text}`}
+      aria-label={`所在地 ${place}，在线 ${text}`}
     >
       <span className="flex min-w-0 flex-1 items-center gap-1">
         <MapPin className={`${icon} shrink-0 text-mint-400`} />
-        <span className="truncate text-mist-300">{region || '园区'}</span>
+        <span className="truncate text-mist-300">{place}</span>
       </span>
       <span className="flex shrink-0 items-center gap-1 tabular-nums">
         <Timer className={`${icon} shrink-0`} />
@@ -167,7 +171,7 @@ function StatusBlock({
 }) {
   const statusOpen = useGameUi((state) => state.statusOpen);
   const setStatusOpen = useGameUi((state) => state.setStatusOpen);
-  // 打开面板时 game-ui 会顺手收起聊天，两块面板不叠在同一个角落
+  // 桌面端状态编辑在工牌内、聊天在左下角，两块面板不再互相收起
   const toggle = () => setStatusOpen(!statusOpen);
 
   return (
@@ -209,6 +213,7 @@ export function PlayerCard({
   species,
   statusText,
   onStatusChange,
+  parkName,
   compact = false,
 }: {
   name: string;
@@ -216,6 +221,8 @@ export function PlayerCard({
   /** 常驻状态：空串表示还没设置 */
   statusText: string;
   onStatusChange: (status: string) => void;
+  /** 当前园区名：单园区部署时不传，工牌只显示区域 */
+  parkName?: string;
   compact?: boolean;
 }) {
   const fps = useGameUi((state) => state.fps);
@@ -284,7 +291,7 @@ export function PlayerCard({
 
         <div id="player-card-detail" hidden={!open} className="w-[184px]">
           <p className="truncate px-2.5 pt-1.5 font-display text-base font-semibold tracking-wide text-mist-100">{name}</p>
-          <BadgeMeta region={region} onlineSec={onlineSec} online={status === 'online'} dense />
+          <BadgeMeta region={region} parkName={parkName} onlineSec={onlineSec} online={status === 'online'} dense />
           <StatusBlock statusText={statusText} onStatusChange={onStatusChange} dense compact />
           <div className="border-t-2 border-ink-700 px-2.5 py-2">
             <CardStats {...stats} dense />
@@ -310,7 +317,7 @@ export function PlayerCard({
 
       <div className="px-3 py-3">
         <p className="truncate font-display text-xl font-semibold tracking-wide text-mist-100">{name}</p>
-        <BadgeMeta region={region} onlineSec={onlineSec} online={status === 'online'} />
+        <BadgeMeta region={region} parkName={parkName} onlineSec={onlineSec} online={status === 'online'} />
       </div>
 
       <StatusBlock statusText={statusText} onStatusChange={onStatusChange} />

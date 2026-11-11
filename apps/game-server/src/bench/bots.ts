@@ -3,9 +3,12 @@ import {
   DIRECTION,
   OpCode,
   POSE,
+  SYNC_FORMAT_COMPACT,
+  SYNC_FORMAT_LEGACY,
   decodeQueueRejected,
   decodeQueueStatus,
   decodeWelcome,
+  dequantizeCoord,
   encodeChatSend,
   encodeHello,
   encodeMove,
@@ -19,6 +22,17 @@ const TOTAL = Number(process.env.BENCH_BOTS ?? 200);
 const DURATION_MS = Number(process.env.BENCH_MS ?? 20000);
 /** 出生散布半径：600 = 全员同屏的最坏情况，3000 = 广场级稀疏分布 */
 const SPREAD = Number(process.env.BENCH_SPREAD ?? 600);
+/**
+ * 静止模式：机器人保持不动，只按真实客户端的 250ms 保活发包。
+ *
+ * 「工位坐班」是这个产品的主场景，而默认模式所有机器人都在走，测不出「静止不广播」
+ * 这条改动的收益。两种模式各跑一次的差值就是去脏省下的下行。
+ */
+const IDLE = process.env.BENCH_IDLE === '1';
+/** 静止模式的保活间隔，与客户端 `MOVE_IDLE_INTERVAL_MS` 对齐 */
+const IDLE_INTERVAL_MS = 250;
+/** 默认声明紧凑格式；BENCH_FORMAT=legacy 用于对比 7 字节旧格式 */
+const FORMAT = process.env.BENCH_FORMAT === 'legacy' ? SYNC_FORMAT_LEGACY : SYNC_FORMAT_COMPACT;
 
 interface Bot {
   socket: WebSocket;
@@ -72,21 +86,32 @@ function spawnBot(index: number): void {
 
   bot.socket.addEventListener('open', () => {
     connected += 1;
-    bot.socket.send(encodeHello(`bot-${index}`, DEFAULT_APPEARANCE.cow));
-    const timer = setInterval(() => {
-      if (bot.entityId === 0) return;
-      bot.x += (Math.random() - 0.5) * 7;
-      bot.y += (Math.random() - 0.5) * 7;
-      const direction = Math.random() > 0.5 ? DIRECTION.Right : DIRECTION.Left;
-      bot.socket.send(
-        encodeMove({
-          id: bot.entityId,
-          x: quantizeCoord(bot.x),
-          y: quantizeCoord(bot.y),
-          state: packState(direction, POSE.Walk, true),
-        }),
-      );
-    }, 50);
+    bot.socket.send(encodeHello(`bot-${index}`, DEFAULT_APPEARANCE.cow, undefined, '', FORMAT));
+    const state = IDLE ? packState(DIRECTION.Down, POSE.Sit, false) : 0;
+    const timer = setInterval(
+      () => {
+        if (bot.entityId === 0) return;
+        if (IDLE) {
+          // 工位上坐着：位置与 state 都不变，重复的是同一份字节
+          bot.socket.send(
+            encodeMove({ id: bot.entityId, x: quantizeCoord(bot.x), y: quantizeCoord(bot.y), state }),
+          );
+          return;
+        }
+        bot.x += (Math.random() - 0.5) * 7;
+        bot.y += (Math.random() - 0.5) * 7;
+        const direction = Math.random() > 0.5 ? DIRECTION.Right : DIRECTION.Left;
+        bot.socket.send(
+          encodeMove({
+            id: bot.entityId,
+            x: quantizeCoord(bot.x),
+            y: quantizeCoord(bot.y),
+            state: packState(direction, POSE.Walk, true),
+          }),
+        );
+      },
+      IDLE ? IDLE_INTERVAL_MS : 50,
+    );
     timers.push(timer);
   });
 
@@ -116,7 +141,12 @@ function spawnBot(index: number): void {
         rejected += 1;
         rejectReasons[reason] = (rejectReasons[reason] ?? 0) + 1;
       } else if (bot.entityId === 0 && view[0] === OpCode.S2C_WELCOME) {
-        bot.entityId = decodeWelcome(view).entityId;
+        const welcome = decodeWelcome(view);
+        bot.entityId = welcome.entityId;
+        // 以服务端裁决的出生点为准：机器人原先自报的坐标会被速度窗口一路截断，
+        // 静止模式就会变成「每 250ms 被拖 55px 的假走路」，测不出真实下行
+        bot.x = dequantizeCoord(welcome.x);
+        bot.y = dequantizeCoord(welcome.y);
         admitted += 1;
         if (bot.queuedAt > 0) {
           waitSamples.push(Date.now() - bot.queuedAt);
@@ -159,6 +189,8 @@ setTimeout(async () => {
   const seconds = DURATION_MS / 1000;
   console.log('\n[bench] ===== summary =====');
   console.log(`bots          : ${bots.length} (connected ${connected}, admitted ${admitted})`);
+  console.log(`mode          : ${IDLE ? 'idle（工位坐班）' : 'walking（全员走动）'}`);
+  console.log(`format        : ${FORMAT === SYNC_FORMAT_COMPACT ? 'compact 6B' : 'legacy 7B'}`);
   console.log(`duration      : ${seconds}s`);
   console.log(`packets       : ${totalPackets} (${(totalPackets / seconds).toFixed(0)}/s)`);
   console.log(`downstream    : ${(totalBytes / 1024 / 1024).toFixed(2)} MB`);

@@ -2,13 +2,16 @@ import {
   DEFAULT_APPEARANCE,
   DIRECTION,
   MAX_ENTITIES,
+  MAX_ENTITY_ID,
   POSE,
+  SYNC_FORMAT_LEGACY,
   ByteWriter,
   buildSpawnBody,
   packState,
   type CharacterAppearance,
   type Direction,
   type Pose,
+  type SyncFormat,
 } from '@niuma/shared-types';
 
 export class Player {
@@ -36,6 +39,17 @@ export class Player {
   wave = false;
   dirty = false;
   needsViewRefresh = false;
+  /**
+   * 上一次**真正发出去**的量化坐标与 state（同步条目里的三元组）。
+   *
+   * 去脏判定拿它做基准：坐着不动的玩家每个 Tick 都发一遍 MOVE，但三元组一模一样，
+   * 再广播就只是把同样的 7 个字节重复给所有观察者。初始值 -1 保证首次移动一定入包。
+   */
+  lastBroadcastQx = -1;
+  lastBroadcastQy = -1;
+  lastBroadcastState = -1;
+  /** 该连接收哪种同步条目：由 HELLO 能力段决定，旧客户端保持 7 字节 */
+  syncFormat: SyncFormat = SYNC_FORMAT_LEGACY;
   lastMoveAt = 0;
   lastClientMoveSequence = -1; // 上次处理的移动包序号（用于防重复）
   chatWindowStart = 0;
@@ -95,6 +109,10 @@ export class Player {
     this.seat = 0;
     this.dirty = false;
     this.needsViewRefresh = false;
+    this.lastBroadcastQx = -1;
+    this.lastBroadcastQy = -1;
+    this.lastBroadcastState = -1;
+    this.syncFormat = SYNC_FORMAT_LEGACY;
     this.lastMoveAt = 0;
     this.lastClientMoveSequence = -1;
     this.chatWindowStart = 0;
@@ -144,9 +162,18 @@ export class World {
     joinedAt = Date.now(),
   ): Player | null {
     if (this.players.size >= MAX_ENTITIES) return null;
+    // 与紧凑条目的 10 bit id 对齐：回绕点必须在 MAX_ENTITY_ID 上，否则 id 会被位表截断成别人。
+    // id 空间比旧版小了一个数量级，长时间运行后 nextId 会绕回仍在使用的号段，必须跳过占用的号
+    let id = this.nextId;
+    while (this.players.has(id)) {
+      id = id >= MAX_ENTITY_ID ? 1 : id + 1;
+      if (id === this.nextId) return null;
+    }
+    this.nextId = id >= MAX_ENTITY_ID ? 1 : id + 1;
+
     const player = this.pool.pop() ?? new Player();
     player.reset();
-    player.id = this.nextId;
+    player.id = id;
     player.wsId = wsId;
     player.name = name;
     player.appearance = appearance;
@@ -156,7 +183,6 @@ export class World {
     player.y = y;
     player.applyState(DIRECTION.Down, POSE.Idle, false);
     player.needsViewRefresh = true;
-    this.nextId = this.nextId >= 0xfffe ? 1 : this.nextId + 1;
     this.players.set(player.id, player);
     return player;
   }

@@ -19,6 +19,8 @@ export const SYSTEM_NOTICE_KIND = {
   Leave: 2,
   /** 本地在岗时长提醒：只有自己看得到，不走网络 */
   OnDuty: 3,
+  /** 园区公告（装修 / 活动）：入场后本地播一条，只有自己看得到 */
+  Renovation: 4,
 } as const;
 
 export type SystemNoticeKind = (typeof SYSTEM_NOTICE_KIND)[keyof typeof SYSTEM_NOTICE_KIND];
@@ -43,6 +45,8 @@ const TEMPLATES: Readonly<Record<number, NoticeTemplate>> = {
   [SYSTEM_NOTICE_KIND.Leave]: ({ name }) => (name ? `${name} 离开了园区` : null),
   [SYSTEM_NOTICE_KIND.OnDuty]: ({ minutes }) =>
     minutes && minutes > 0 ? `你已经在岗 ${formatDuration(minutes)}，起来走动两步。` : null,
+  [SYSTEM_NOTICE_KIND.Renovation]: () =>
+    '园区重装修完成：北门内四角新院已启用，工作区 / 会议室 / 宿舍区 / 卫生间已归位。',
 };
 
 /**

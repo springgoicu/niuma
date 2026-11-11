@@ -14,6 +14,9 @@ import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
 import { pickCharacter, type PickCandidate } from './badge';
 import { cameraFocus } from './camera';
+import { bakeCritterArt, type CritterArt } from './critter-art';
+import { CritterField } from './critters';
+import { FishField } from './fish';
 import { GroundFx, SHADOW_NORMAL } from './fx';
 import {
   bubbleTopY,
@@ -475,6 +478,15 @@ export class GameRenderer {
   private props?: PropsView;
   /** 北门迎宾地标：横幅与指路牌，构造期烘焙一次（ADR-0036） */
   private welcome?: WelcomeView;
+  /** 园区小动物与蝴蝶：纯客户端氛围，`?critters=0` 时整层不构造（ADR-0042） */
+  private critters?: CritterField;
+  /** 河道小鱼：与 critters 共用图集，`?fish=0` 时只关鱼（ADR-0045） */
+  private fish?: FishField;
+  /** 小动物 / 鱼的共享图集：由 renderer 持有并统一销毁 */
+  private critterArt?: CritterArt;
+  /** 相机焦点：小动物要按「玩家在哪」判定受惊，取同一帧 updateCamera 的结果 */
+  private focusX = 0;
+  private focusY = 0;
   /** 屏幕空间的乘算柔光层；`?light=0` 时整层不建 */
   private light?: AmbientLight;
   private shadowTextures: Texture[] = [];
@@ -583,6 +595,16 @@ export class GameRenderer {
     this.props.build(this.sortLayer, this.app.renderer);
     this.world.addChild(this.props.base);
 
+    // 氛围图集与小鱼层（ADR-0045）：鱼在水面之上、道具与角色之下，先于 y 排序层入场景。
+    // 图集与地面小动物共用，只烘焙一次；`?fish=0` 只关鱼，`?critters=0` 两者都关。
+    const seed = Date.now() >>> 0;
+    const crittersEnabled = params?.get('critters') !== '0';
+    this.critterArt = crittersEnabled ? bakeCritterArt(this.app.renderer) : undefined;
+    if (this.critterArt && params?.get('fish') !== '0') {
+      this.fish = new FishField(this.critterArt, seed);
+      this.world.addChild(this.fish.layer);
+    }
+
     // 北门迎宾地标：自己按脚底 y 进排序层，和树、桌椅、角色共用同一套遮挡关系
     this.welcome = new WelcomeView();
     this.welcome.build(this.sortLayer, this.app.renderer, this.metrics.devicePxPerTexel);
@@ -597,6 +619,21 @@ export class GameRenderer {
     this.world.addChild(this.waterFx.container);
 
     this.world.addChild(this.sortLayer.container);
+
+    // 氛围层：地面小动物进 y 排序层（会被树冠挡住），蝴蝶单独一层浮在景物之上、昵称之下。
+    // `?critters=0` 时整层不构造：烘焙与撒点都发生在构造函数里，关掉就是真的零开销。
+    if (crittersEnabled && this.critterArt) {
+      const started = performance.now();
+      this.critters = new CritterField(this.sortLayer, this.critterArt, seed);
+      this.world.addChild(this.critters.butterflyLayer);
+      if (params?.get('critters') === 'debug') {
+        console.info(
+          `[critters] ${this.critters.groundCount} 只地面动物 / ${this.critters.butterflyCount} 只蝴蝶 / ` +
+            `${this.fish?.fishCount ?? 0} 条小鱼，构造 ${(performance.now() - started).toFixed(1)}ms`,
+        );
+      }
+    }
+
     this.world.addChild(this.labels);
 
     const walk = this.atlas.manifest.clips.walk;
@@ -801,6 +838,9 @@ export class GameRenderer {
     this.fx?.update(dtMs);
     this.waterFx?.update(dtMs);
     this.terrain?.update(dtMs);
+    // 相机在 session 里先于本方法更新，这里拿到的边界与焦点属于同一帧
+    this.critters?.update(dtMs, this.focusX, this.focusY, this.cameraBounds);
+    this.fish?.update(dtMs, this.cameraBounds, this.focusX, this.focusY);
     this.syncOccluders();
   }
 
@@ -854,6 +894,9 @@ export class GameRenderer {
     // 表现为角色相对背景约 15Hz 横跳（ADR-0021）。
     const camX = cameraFocus(x, bounds.x, bounds.w, halfW);
     const camY = cameraFocus(y, bounds.y, bounds.h, halfH);
+    // 小动物用相机焦点当「玩家在哪」：相机永远跟着本地角色，两者只差一个夹紧偏移
+    this.focusX = camX;
+    this.focusY = camY;
 
     // 缓存相机可见范围（用于实体筛选）
     this.cameraBounds = {
@@ -966,6 +1009,10 @@ export class GameRenderer {
     this.terrain?.destroy();
     this.props?.destroy();
     this.welcome?.destroy();
+    // 先放两个 Field 的精灵，再放共享图集：反了会让还在引用纹理的 Sprite 悬空
+    this.fish?.destroy();
+    this.critters?.destroy();
+    this.critterArt?.destroy();
     this.app.destroy(true, { children: true });
   }
 }

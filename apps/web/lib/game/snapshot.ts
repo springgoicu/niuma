@@ -1,6 +1,12 @@
 'use client';
 
-import { DIRECTION, POSE, type Direction, type Pose } from '@niuma/shared-types';
+import {
+  DIRECTION,
+  POSE,
+  type Direction,
+  type Pose,
+  type ResumeState,
+} from '@niuma/shared-types';
 import { browserStorage, readJson, readRawObject, removeKey, writeJson, type StorageLike } from '../storage';
 
 export const SNAPSHOT_KEY = 'niuma:session:v1';
@@ -23,6 +29,14 @@ export interface SessionSnapshot {
   pose: Pose;
   /** 上次所坐的座位 id；0 表示没坐 */
   seatId: number;
+  /**
+   * 这份落点属于哪座园区。
+   *
+   * 地图是同一张，但「上次坐的工位」和「身边站着谁」都是 per-park 的：
+   * 在 A 服的座位搬到 B 服可能已经被别人占了。所以换园区时不带落点，
+   * 让角色从新园区门口重新开始。
+   */
+  park?: string;
   /** 允许后续模块直接扩展，不需要再动存储层 */
   [key: string]: unknown;
 }
@@ -99,6 +113,31 @@ export function loadSnapshot(
       seatId,
     } satisfies SessionSnapshot;
   });
+}
+
+/**
+ * 取某座园区的落点。
+ *
+ * 三种情况都返回 undefined，让角色从新园区门口重新开始：
+ * - 没有存档；
+ * - 存档属于另一座园区；
+ * - 老存档压根没有 `park` 字段（那时候只有一座园区，落点在 B 上不保证还合理）。
+ *
+ * 不升 `v` 是刻意的：升版本会让所有老玩家的落点一起失效，而这里只需要让
+ * 「换园区」这一种情况失效。
+ */
+export function resumeForPark(
+  snapshot: SessionSnapshot | null,
+  parkId: string,
+): ResumeState | undefined {
+  if (!snapshot || snapshot.park !== parkId) return undefined;
+  return {
+    x: snapshot.x,
+    y: snapshot.y,
+    direction: snapshot.direction,
+    pose: snapshot.pose,
+    seatId: snapshot.seatId,
+  };
 }
 
 /**

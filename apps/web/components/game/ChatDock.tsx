@@ -31,14 +31,23 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
   /** 本地预检的即时解释：被拦下时保留草稿，打码时照常发出 */
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** 上一次真正处理过的聚焦序号：恢复常驻时不聚焦 */
+  const focusSeqRef = useRef(focusSeq);
 
   /**
-   * 聚焦由 `open` 与 `chatFocusSeq` 共同驱动：
-   * 面板已展开但输入框失焦时（点过游戏画面），只改 open 不会让 effect 重跑，
-   * 所以每次「打开 / 重新聚焦」都推进一次序号。
+   * 聚焦只看 `chatFocusSeq` 是否真的推进过：
+   * - 点头部按钮 / 按 Enter / 动作盘打字键走 `requestChat`，序号 +1，这里聚焦；
+   * - 刷新后从 localStorage 恢复常驻只改 `chatOpen`，序号没变，不能自动聚焦，
+   *   否则手机端一进页面就弹输入法。
    */
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      focusSeqRef.current = focusSeq;
+      return;
+    }
+    if (focusSeqRef.current === focusSeq) return;
+    focusSeqRef.current = focusSeq;
+
     const input = inputRef.current;
     if (!input) return;
     input.focus();
@@ -46,6 +55,19 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
     const end = input.value.length;
     input.setSelectionRange(end, end);
   }, [open, focusSeq]);
+
+  // 聊天常驻后输入框经常是失焦的：Esc 必须仍然能关，不然只能点头部按钮。
+  // 输入框自己的 Esc 已经 preventDefault，这里靠 defaultPrevented 去重。
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      inputRef.current?.blur();
+      setOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, setOpen]);
 
   // 提示条自动消失：被拦下 / 打码的文案只对上一次提交成立
   useEffect(() => {
@@ -68,10 +90,9 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
     onSend(verdict.text);
     setDraft('');
     setNotice(verdict.verdict === 'mask' ? '不文明用词已自动打码' : null);
-    // 发送成功一律收起：桌面端也把焦点还给游戏，WASD 立刻可用，再按 Enter 重新打开；
-    // 手机端还额外收回输入法，别让它常驻压住摇杆
-    inputRef.current?.blur();
-    setOpen(false);
+    // 聊天常驻：发送成功不再收起面板。
+    // 桌面端保留焦点，方便连着说几句；触屏仍要 blur 收键盘，否则输入法会常驻压住摇杆。
+    if (compact) inputRef.current?.blur();
   };
 
   const charCount = draft.length;
@@ -80,7 +101,7 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
 
   return (
     <div
-      className={`pointer-events-auto max-w-[calc(100vw-2rem)] border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm ${compact ? 'w-[250px]' : 'w-[340px]'}`}
+      className={`pointer-events-auto max-w-[calc(100vw-2rem)] border-2 border-ink-600 bg-ink-900/65 backdrop-blur-md ${compact ? 'w-[250px]' : 'w-[340px]'}`}
     >
       <button
         type="button"
@@ -99,7 +120,7 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
         <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mist-300">
           <MessageSquare className="h-3.5 w-3.5 text-mint-400" />
           园区频道
-          <span className="text-mist-500">/local</span>
+          <span className="text-mist-400">/local</span>
         </span>
         <span className="flex items-center gap-2">
           {/* 收起态显示未读而不是总数：200 条这个数字不携带任何信息 */}
@@ -108,12 +129,12 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
               {unreadLabel}
             </span>
           ) : (
-            <span className="font-mono text-[9px] tabular-nums text-mist-500">{messages.length}</span>
+            <span className="font-mono text-[9px] tabular-nums text-mist-400">{messages.length}</span>
           )}
           {/* 未读同时用文案表达，不只靠颜色 */}
           {!open && unread > 0 && <span className="sr-only">{unread} 条未读</span>}
           <ChevronDown
-            className={`h-3.5 w-3.5 text-mist-500 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+            className={`h-3.5 w-3.5 text-mist-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
           />
         </span>
       </button>
@@ -163,7 +184,7 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
                 autoCapitalize="off"
                 spellCheck={false}
                 // 根节点是 select-none / no-callout：输入框必须拿回文本选择与系统放大镜
-                className="min-w-0 flex-1 select-text border-2 border-ink-600 bg-ink-950 px-2.5 py-1.5 font-mono text-[11px] text-mist-100 outline-none [-webkit-touch-callout:default] focus:border-mint-400"
+                className="min-w-0 flex-1 select-text border-2 border-ink-600 bg-ink-950/85 px-2.5 py-1.5 font-mono text-[11px] text-mist-100 outline-none placeholder:text-mist-400 [-webkit-touch-callout:default] focus:border-mint-400"
               />
               <button
                 type="submit"
@@ -181,7 +202,7 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
                 {notice}
               </span>
               <span
-                className={`shrink-0 font-mono text-[9px] tabular-nums ${isNearLimit ? 'text-amber-400' : 'text-mist-500'}`}
+                className={`shrink-0 font-mono text-[9px] tabular-nums ${isNearLimit ? 'text-amber-400' : 'text-mist-400'}`}
               >
                 {charCount} / {MAX_INPUT_LENGTH}
               </span>
@@ -190,7 +211,7 @@ export function ChatDock({ onSend, onOpen, onLoadHistory, compact = false }: Cha
         </>
       )}
 
-      {/* 发送成功即收起，打码提示不能被一起关掉：收起态在面板底部留一条 */}
+      {/* 用户手动收起时也要留住打码提示：收起态在面板底部留一条 */}
       {!open && notice && (
         <p
           role="status"

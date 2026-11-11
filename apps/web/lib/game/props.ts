@@ -123,8 +123,12 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   cooler: { w: 20, h: 30 },
   coffee: { w: 22, h: 28 },
   sideTable: { w: 20, h: 18 },
-  /** 树篱：一段 32 宽的灌木，沿办公区四边拼成软边界（ADR-0028，不参与碰撞） */
+  /** 树篱：一段 32 宽的灌木，沿南侧休息庭院围边（不参与碰撞） */
   hedge: { w: 32, h: 18 },
+  /** 上下铺爬梯：两根木轨 + 四根横档，贴在床沿侧面示意上下层（ADR-0044） */
+  ladder: { w: 14, h: 34 },
+  /** 区域 logo 立牌：一块小板 + 木柱，variant 决定图标 */
+  logo: { w: 28, h: 38 },
 };
 
 const TOILET_SPRITE = { w: 22, h: 28 };
@@ -167,7 +171,7 @@ function drawPlantPot(g: Graphics, cx: number, bottom: number, scale = 1): void 
   dot(g, cx, bottom - potH - 7 * scale, 3 * scale, COLOR.mintDark);
 }
 
-function drawProp(kind: PropKind, g: Graphics): void {
+function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
   const { w, h } = PROP_SIZE[kind];
   shadow(g, w / 2, h - 1, Math.max(6, w / 2 - 2), 2);
   switch (kind) {
@@ -289,6 +293,57 @@ function drawProp(kind: PropKind, g: Graphics): void {
       rect(g, 20, 5, 2, 1, COLOR.mint);
       rect(g, 5, 8, 2, 1, COLOR.mintDark);
       return;
+    case 'ladder':
+      // 上下铺爬梯：两根木轨 + 四根横档，靠在下铺床沿外侧
+      box(g, 1, 1, 3, 32, COLOR.woodLight, COLOR.woodDark);
+      box(g, 10, 1, 3, 32, COLOR.woodLight, COLOR.woodDark);
+      for (const y of [6, 13, 20, 27]) rect(g, 3, y, 8, 2, COLOR.woodDark);
+      rect(g, 2, 3, 1, 28, COLOR.deskTopLight);
+      return;
+    case 'logo': {
+      // 区域立牌：木板 + 木柱 + 底座，四种图标由 variant 决定（ADR-0044）
+      box(g, 1, 0, 26, 20, COLOR.signPaper, COLOR.signEdge);
+      box(g, 12, 20, 4, 15, COLOR.woodLight, COLOR.woodDark);
+      rect(g, 7, 35, 14, 2, COLOR.woodDark);
+      switch (variant) {
+        case 1:
+          // 会议桌 + 三把椅子
+          rect(g, 6, 11, 16, 3, COLOR.woodDark);
+          rect(g, 7, 6, 3, 3, COLOR.lilacDark);
+          rect(g, 13, 6, 3, 3, COLOR.lilacDark);
+          rect(g, 19, 6, 3, 3, COLOR.lilacDark);
+          rect(g, 6, 15, 2, 2, COLOR.woodDark);
+          rect(g, 20, 15, 2, 2, COLOR.woodDark);
+          return;
+        case 2:
+          // 上下铺：两层床垫 + 四根立柱
+          rect(g, 5, 4, 18, 2, COLOR.woodDark);
+          rect(g, 5, 7, 18, 4, COLOR.linen);
+          rect(g, 5, 13, 18, 4, COLOR.blanket);
+          rect(g, 5, 4, 2, 14, COLOR.woodLight);
+          rect(g, 21, 4, 2, 14, COLOR.woodLight);
+          rect(g, 6, 8, 5, 2, COLOR.pillow);
+          rect(g, 6, 14, 5, 2, COLOR.pillow);
+          return;
+        case 3:
+          // 男 / 女：两个小人夹一道分割线
+          dot(g, 9, 7, 2, COLOR.sky);
+          dot(g, 19, 7, 2, COLOR.peach);
+          rect(g, 8, 10, 3, 7, COLOR.skyDark);
+          rect(g, 18, 10, 3, 7, COLOR.peachDark);
+          rect(g, 14, 12, 1, 6, COLOR.fixtureEdge);
+          return;
+        default:
+          // 工作区：显示器 + 键盘
+          rect(g, 5, 5, 18, 11, COLOR.bezel);
+          rect(g, 7, 7, 14, 7, COLOR.screenIdle);
+          rect(g, 8, 9, 5, 1, COLOR.ceramic);
+          rect(g, 12, 11, 7, 1, COLOR.screenInk);
+          rect(g, 13, 16, 2, 2, COLOR.bezel);
+          rect(g, 9, 18, 10, 1, COLOR.bezel);
+          return;
+      }
+    }
   }
 }
 
@@ -472,7 +527,7 @@ function fillFloorTile(g: Graphics, r: WorldRect): void {
   for (let y = r.y; y < r.y + r.h; y += 16) rect(g, r.x, y, r.w, 1, COLOR.tileSeam);
 }
 
-/** 休息室地毯：暖色横向条带 + 内圈收边，软地面与木地板的读感差一档 */
+/** 宿舍区地毯：暖色横向条带 + 内圈收边，软地面与木地板的读感差一档 */
 function fillFloorCarpet(g: Graphics, r: WorldRect): void {
   rect(g, r.x, r.y, r.w, r.h, COLOR.carpetA);
   for (let y = r.y + 16, row = 0; y < r.y + r.h; y += 16, row += 1) {
@@ -535,8 +590,9 @@ export class PropsView {
   /**
    * 每种装饰只烘焙一次：加密道具之后同类道具会有几十个，
    * 逐个烘焙等于几十张同内容的纹理，显存与初始化时间都会被放大。
+   * 键是 `kind:variant`——logo 四个变体共用一张尺寸表、四张图标纹理。
    */
-  private readonly propTextures = new Map<PropKind, Texture>();
+  private readonly propTextures = new Map<string, Texture>();
 
   /** 构造期一次性生成全部贴图与精灵；`depth` 负责按脚底 y 归入深度层 */
   build(depth: DepthSink, renderer: TextureFactory): void {
@@ -620,19 +676,23 @@ export class PropsView {
     for (const prop of WORLD_LAYOUT.props) this.addProp(depth, renderer, prop);
   }
 
-  private propTexture(renderer: TextureFactory, kind: PropKind): Texture {
-    const cached = this.propTextures.get(kind);
+  private propTexture(renderer: TextureFactory, prop: PropInstance): Texture {
+    const variant = prop.variant ?? 0;
+    const key = `${prop.kind}:${variant}`;
+    const cached = this.propTextures.get(key);
     if (cached) return cached;
-    const size = PROP_SIZE[kind];
-    const texture = bake(renderer, (g) => drawProp(kind, g), { frame: new Rectangle(0, 0, size.w, size.h) });
-    this.propTextures.set(kind, texture);
+    const size = PROP_SIZE[prop.kind];
+    const texture = bake(renderer, (g) => drawProp(prop.kind, g, variant), {
+      frame: new Rectangle(0, 0, size.w, size.h),
+    });
+    this.propTextures.set(key, texture);
     this.textures.push(texture);
     return texture;
   }
 
   private addProp(depth: DepthSink, renderer: TextureFactory, prop: PropInstance): void {
     const size = PROP_SIZE[prop.kind];
-    const texture = this.propTexture(renderer, prop.kind);
+    const texture = this.propTexture(renderer, prop);
     const sprite = new Sprite(texture);
     sprite.anchor.set(0.5, 1);
     sprite.position.set(prop.x, prop.y);

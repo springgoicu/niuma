@@ -1,7 +1,8 @@
 'use client';
 
-import { POSE, type Pose, type QueueStatusPacket, type SeatKind } from '@niuma/shared-types';
+import { POSE, type NavTargetId, type Pose, type QueueStatusPacket, type SeatKind } from '@niuma/shared-types';
 import { create } from 'zustand';
+import { loadChatOpen, saveChatOpen } from './chat-prefs';
 import type { ChatEntry, SessionStats } from './game/session';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'queued' | 'online' | 'offline' | 'error';
@@ -41,7 +42,7 @@ interface GameUiState {
    * React 的 effect 重跑，回车就会没反应；用序号把这次请求变成一次真实变化。
    */
   chatFocusSeq: number;
-  /** 工牌卡上的状态编辑面板：与聊天面板互斥收起，点击画布空白处一并关闭 */
+  /** 工牌卡上的状态编辑面板：与常驻聊天互不打扰，点击画布空白处一并关闭 */
   statusOpen: boolean;
   /** 园区公告栏（微信群二维码）：右上角的下拉小块，点开才展开 */
   noticeOpen: boolean;
@@ -53,8 +54,11 @@ interface GameUiState {
   seatKind: SeatKind | null;
   /** 环境提示或动作被拦下的瞬时提示；null 表示不显示 */
   hint: string | null;
+  /** 正在自动前往的导览目标；null 表示没有导航 */
+  navTarget: { id: NavTargetId; name: string } | null;
   setLocalState: (state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }) => void;
   setHint: (hint: string | null) => void;
+  setNavTarget: (nav: { id: NavTargetId; name: string } | null) => void;
   setStatus: (status: ConnectionStatus, detail?: string) => void;
   setStats: (stats: SessionStats) => void;
   setQueue: (queue: QueueStatusPacket | null) => void;
@@ -66,9 +70,15 @@ interface GameUiState {
    */
   applyHistory: (entries: ChatEntry[], meta: { replace: boolean; hasMore: boolean }) => void;
   setHistoryLoading: (loading: boolean) => void;
+  /** 只切展开态并写盘；已展开时再调不会触发聚焦 */
   setChatOpen: (open: boolean) => void;
   /** 打开聊天并请求聚焦输入框：与 setChatOpen(true) 的区别是「已展开也必须重新聚焦」 */
   requestChat: () => void;
+  /**
+   * 从 localStorage 恢复上次的展开状态。
+   * 只恢复面板，不推进聚焦序号——刷新后不该自动弹输入法。
+   */
+  restoreChatOpen: () => void;
   setStatusOpen: (open: boolean) => void;
   setNoticeOpen: (open: boolean) => void;
   reset: () => void;
@@ -115,6 +125,7 @@ const INITIAL = {
   seated: false,
   seatKind: null as SeatKind | null,
   hint: null,
+  navTarget: null as { id: NavTargetId; name: string } | null,
 };
 
 export const useGameUi = create<GameUiState>((set) => ({
@@ -123,6 +134,8 @@ export const useGameUi = create<GameUiState>((set) => ({
   setLocalState: ({ pose, seated, seatKind }) => set({ localPose: pose, seated, seatKind }),
 
   setHint: (hint) => set({ hint }),
+
+  setNavTarget: (navTarget) => set({ navTarget }),
 
   setStatus: (status, detail = '') => set({ status, detail }),
 
@@ -181,26 +194,32 @@ export const useGameUi = create<GameUiState>((set) => ({
   setHistoryLoading: (loading) =>
     set((state) => ({ history: { ...state.history, loading } })),
 
-  // 两块面板都贴在左上角：任一方展开就把另一方收起，避免叠成一列。
-  // 展开时顺手推进聚焦序号，头部按钮与回车共用同一条聚焦路径
+  // 只切展开态并落盘。聊天是常驻面板：桌面端工牌在左上、聊天在左下，不必互相收起；
+  // 手机端的空间互斥由 Hud 组件按 compact 显式处理。
+  // 聚焦不在这里做——头部按钮 / 回车走 requestChat，恢复 last-opened 走 restoreChatOpen。
   setChatOpen: (chatOpen) =>
-    set((state) =>
-      chatOpen
-        ? { chatOpen, statusOpen: false, noticeOpen: false, chatFocusSeq: state.chatFocusSeq + 1, unread: 0 }
-        : { chatOpen },
-    ),
+    set((state) => {
+      if (state.chatOpen === chatOpen) return {};
+      saveChatOpen(chatOpen);
+      return chatOpen ? { chatOpen, unread: 0 } : { chatOpen };
+    }),
 
   requestChat: () =>
-    set((state) => ({
-      chatOpen: true,
-      statusOpen: false,
-      noticeOpen: false,
-      chatFocusSeq: state.chatFocusSeq + 1,
-      unread: 0,
-    })),
+    set((state) => {
+      if (!state.chatOpen) saveChatOpen(true);
+      return {
+        chatOpen: true,
+        chatFocusSeq: state.chatFocusSeq + 1,
+        unread: 0,
+      };
+    }),
 
+  restoreChatOpen: () =>
+    set(() => (loadChatOpen() ? { chatOpen: true, unread: 0 } : {})),
+
+  // 状态编辑面板仍占左上角：桌面端与左下角的聊天不冲突，只让开右上角的公告栏
   setStatusOpen: (statusOpen) =>
-    set(statusOpen ? { statusOpen, chatOpen: false, noticeOpen: false } : { statusOpen }),
+    set(statusOpen ? { statusOpen, noticeOpen: false } : { statusOpen }),
 
   // 公告栏是右上角的下拉小块，不抢焦点，也不替用户关掉正在用的面板
   setNoticeOpen: (noticeOpen) => set({ noticeOpen }),

@@ -27,10 +27,11 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(bearingDegOf(0, 0)).toBe(0);
   });
 
-  it('出生点四个目标全部可读，最近的是休息室', () => {
+  it('出生点四个目标全部可读，最近的是西侧的工作区', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     expect(readings.map((reading) => reading.target.id)).toEqual(NAV_TARGETS.map((target) => target.id));
-    expect(nearestReading(readings)?.target.name).toBe('休息室');
+    // 工作区与会议室到北门的直线距离并列，并列时按 NAV_TARGETS 顺序取工作区（ADR-0044）
+    expect(nearestReading(readings)?.target.name).toBe('工作区');
     for (const reading of readings) {
       expect(reading.distance).toBeGreaterThan(0);
       expect(reading.seconds).toBe(Math.max(1, Math.round(reading.distance / MOVE_SPEED)));
@@ -40,14 +41,16 @@ describe('园区导览方位（ADR-0036）', () => {
     }
   });
 
-  it('卫生间与会议室在南侧：越往南走，步行秒数越小', () => {
+  it('卫生间、会议室、宿舍区都在入口南侧：越往南走，步行秒数越小', () => {
     const before = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     const after = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y + 400);
     const pick = (list: typeof before, id: string) => list.find((reading) => reading.target.id === id)!;
     expect(pick(after, 'restroom').seconds).toBeLessThan(pick(before, 'restroom').seconds);
     expect(pick(after, 'meeting').seconds).toBeLessThan(pick(before, 'meeting').seconds);
-    // 工作区在东侧：往南走 400px 后仍在右手边
-    expect(pick(after, 'workroom').octant).toBe(2);
+    expect(pick(after, 'lounge').seconds).toBeLessThan(pick(before, 'lounge').seconds);
+    // 工作区在西北角：进门时在西南向，走到院落中段后基本正西
+    expect(pick(before, 'workroom').octant).toBe(5);
+    expect(pick(after, 'workroom').octant).toBe(6);
   });
 
   it('空列表没有最近目标', () => {

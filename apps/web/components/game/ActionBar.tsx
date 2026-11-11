@@ -14,8 +14,8 @@ interface ActionBarProps {
 const ACTIONS: Array<{ key: string; label: string; hint: string; Icon: typeof Armchair; action?: ActionKey }> = [
   { key: 'sit', label: '坐下', hint: 'Z', Icon: Armchair, action: 'sit' },
   { key: 'lie', label: '躺平', hint: 'X', Icon: Sandwich, action: 'lie' },
-  { key: 'emote', label: '叫唤', hint: 'C', Icon: Music4, action: 'emote' },
-  { key: 'wave', label: '打招呼', hint: 'E', Icon: Hand, action: 'wave' },
+  { key: 'emote', label: '叫唤', hint: 'E', Icon: Music4, action: 'emote' },
+  { key: 'wave', label: '打招呼', hint: 'C', Icon: Hand, action: 'wave' },
   { key: 'jump', label: '跳一下', hint: 'Space', Icon: Rabbit, action: 'jump' },
   { key: 'interact', label: '互动', hint: 'F', Icon: Coffee, action: 'interact' },
 ];

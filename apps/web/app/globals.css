@@ -174,6 +174,16 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  /*
+   * 园区卡片栅格：卡片数量由 GAME_PARKS 决定，列数由可用宽度决定。
+   * auto-fit 让 2 座排两列、3 座在宽屏排三列、更多自动换行，不需要按数量写
+   * grid-cols-N（数量是运行时配置，写死就得为每种规模留一份样式）。
+   * min(100%, 280px) 保证窄屏不被 280px 撑出横向滚动。
+   */
+  .park-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  }
 }
 
 @media (hover: none) {

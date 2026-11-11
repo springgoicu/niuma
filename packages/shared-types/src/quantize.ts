@@ -1,4 +1,13 @@
-import { DIRECTION, Direction, FIXED_SCALE, POSE, Pose, WORLD_HEIGHT, WORLD_WIDTH } from './constants';
+import {
+  DIRECTION,
+  Direction,
+  FIXED_SCALE,
+  POSE,
+  Pose,
+  SYNC_COORD_SCALE,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from './constants';
 
 /**
  * 坐标量化：像素浮点 -> u16 定点。
@@ -16,6 +25,24 @@ export function quantizeCoord(value: number): number {
 
 export function dequantizeCoord(value: number): number {
   return value / FIXED_SCALE;
+}
+
+/**
+ * 紧凑同步条目用的坐标：1/8px 定点 → 1/4px 定点（15 bit）。
+ *
+ * 只在同步条目内部降精度，`quantizeCoord` / `dequantizeCoord` 的 1/8px 语义不变；
+ * 解码时左移一位还原成 1/8px 单位，消费方（`dequantizeCoord`、插值环）完全不用改。
+ */
+const SYNC_SHIFT = 1;
+const MAX_SYNC_COORD = WORLD_WIDTH * SYNC_COORD_SCALE - 1;
+
+export function toSyncCoord(q8: number): number {
+  const scaled = q8 >> SYNC_SHIFT;
+  return scaled > MAX_SYNC_COORD ? MAX_SYNC_COORD : scaled;
+}
+
+export function fromSyncCoord(qSync: number): number {
+  return qSync << SYNC_SHIFT;
 }
 
 export function clampWorldX(x: number): number {

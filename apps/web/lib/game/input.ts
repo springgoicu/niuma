@@ -29,7 +29,7 @@ export class InputController {
 
   attach(onAction: (action: ActionKey) => void, onChat: () => void): void {
     const onKeyDown = (event: KeyboardEvent) => {
-      // 输入法组合态：C / Z / X / 空格的 keydown 属于选词，不是游戏动作。
+      // 输入法组合态：Z / X / C / E / 空格的 keydown 属于选词，不是游戏动作。
       // 不同浏览器分别报 isComposing 与 keyCode 229，两个都要判。
       if (event.isComposing || event.keyCode === 229) return;
       const inField = isEditableTarget(event.target);
@@ -46,15 +46,16 @@ export class InputController {
       // Ctrl/Cmd/Alt 组合交给浏览器（撤销、搜索等），不当动作键
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       // pressed 必须维护：长按移动靠它，重复 keydown 只是不能重复派发动作，
-      // 否则按住 Z 会来回坐/起，按住 C 会把叫唤无限重播
+      // 否则按住 Z 会来回坐/起，按住 E 会把叫唤无限重播
       this.pressed.add(event.code);
       if (event.repeat) return;
 
       if (event.code === 'KeyZ') onAction('sit');
       else if (event.code === 'KeyX') onAction('lie');
-      else if (event.code === 'KeyC') onAction('emote');
-      // E 贴着 WASD，且不在页面快捷键里：抬手打招呼
-      else if (event.code === 'KeyE') onAction('wave');
+      // C 与 Z / X 同排，抬手更方便：打招呼
+      else if (event.code === 'KeyC') onAction('wave');
+      // E 紧贴 W，且不在页面快捷键里：叫唤一声
+      else if (event.code === 'KeyE') onAction('emote');
       // F 贴着 WASD 另一侧：取饮料 / 接水 / 打咖啡
       else if (event.code === 'KeyF') onAction('interact');
       // 空格本来就在 BLOCKED 里（防止页面滚动），正好拿来当跳跃键

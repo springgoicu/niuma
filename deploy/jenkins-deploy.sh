@@ -6,6 +6,13 @@
 #   $APP_BASE/web         线上 Web（Next standalone），${WEB_DIR}.old 为上一版本
 #
 # 可覆盖的环境变量：
+#   DEPLOY_ROLE              all | web | game，默认 all
+#                            all = 完整站点（页面 + 游戏服）
+#                            game = 只部署游戏服，跳过 Next 构建与 Web 目录切换
+#                            web = 只部署 Web，跳过游戏服
+#                            多园区部署时：主站机器 all，第二台机器 game
+#   GAME_PARK_ID             园区 id，默认 main；/health 原样下发，选园页用它核对身份
+#   GAME_PARK_NAME           园区名，默认 主园区；选园页卡片上的大字
 #   APP_BASE                 默认 /var/jenkins_home/app/niuma
 #   WEB_PORT                 默认 3000
 #   GAME_SERVER_PORT         默认 3001
@@ -46,6 +53,19 @@ WEB_HOST="${WEB_HOST:-0.0.0.0}"
 NEXT_WS_URL="${NEXT_PUBLIC_GAME_WS_URL:-}"
 RUN_TESTS="${RUN_TESTS:-1}"
 WEB_HEAP_MB="${WEB_HEAP_MB:-512}"
+
+DEPLOY_ROLE="${DEPLOY_ROLE:-all}"
+case "$DEPLOY_ROLE" in
+  all)  DEPLOY_GAME=1; DEPLOY_WEB=1 ;;
+  game) DEPLOY_GAME=1; DEPLOY_WEB=0 ;;
+  web)  DEPLOY_GAME=0; DEPLOY_WEB=1 ;;
+  *) echo "✖ DEPLOY_ROLE 只能是 all / web / game，当前是 $DEPLOY_ROLE"; exit 1 ;;
+esac
+
+# 园区身份：export 之后 pm2 --update-env 会把它带进进程，不必改两处 pm2 调用
+export GAME_PARK_ID="${GAME_PARK_ID:-main}"
+export GAME_PARK_NAME="${GAME_PARK_NAME:-主园区}"
+echo ">>> 部署角色：$DEPLOY_ROLE（game=$DEPLOY_GAME web=$DEPLOY_WEB）园区：$GAME_PARK_ID / $GAME_PARK_NAME"
 
 WS="${WORKSPACE:-$(pwd)}"
 
@@ -100,18 +120,22 @@ fi
 
 # ==================== 2. 构建（全部成功后才动线上）====================
 log "[2/4] 构建前端 standalone + 游戏服务器单文件"
-if [ -d "$WS/apps/web/.next" ]; then
-  find "$WS/apps/web/.next" -mindepth 1 -maxdepth 1 ! -name 'cache' -exec rm -rf {} +
-fi
+if [ "$DEPLOY_WEB" = "1" ]; then
+  if [ -d "$WS/apps/web/.next" ]; then
+    find "$WS/apps/web/.next" -mindepth 1 -maxdepth 1 ! -name 'cache' -exec rm -rf {} +
+  fi
 
-# 根 build = 生成像素图集（写入 apps/web/public/sprites）+ turbo 构建全部包
-NEXT_PUBLIC_GAME_WS_URL="$NEXT_WS_URL" \
-NODE_OPTIONS="--max-old-space-size=2048" \
-pnpm run build
+  # 根 build = 生成像素图集（写入 apps/web/public/sprites）+ turbo 构建全部包
+  NEXT_PUBLIC_GAME_WS_URL="$NEXT_WS_URL" \
+  NODE_OPTIONS="--max-old-space-size=2048" \
+  pnpm run build
 
-if [ ! -f "$WS/apps/web/.next/BUILD_ID" ]; then
-  echo "✖ 前端构建失败：缺少 .next/BUILD_ID"
-  exit 1
+  if [ ! -f "$WS/apps/web/.next/BUILD_ID" ]; then
+    echo "✖ 前端构建失败：缺少 .next/BUILD_ID"
+    exit 1
+  fi
+else
+  echo ">>> DEPLOY_ROLE=$DEPLOY_ROLE：跳过 Next 构建（这台机器不跑 Web）"
 fi
 
 BUN_BIN="$(command -v bun || true)"
@@ -136,7 +160,8 @@ echo "✔ 构建完成"
 mkdir -p "$APP_BASE"
 
 # ==================== 3. 部署游戏服务器 ====================
-log "[3/4] 部署游戏服务器（端口 $GAME_PORT，重启即清空内存世界）"
+if [ "$DEPLOY_GAME" = "1" ]; then
+log "[3/4] 部署游戏服务器（端口 $GAME_PORT，园区 $GAME_PARK_ID，重启即清空内存世界）"
 rm -rf "$GAME_NEW"
 mkdir -p "$GAME_NEW/dist" "$GAME_NEW/logs"
 cp -a "$WS/apps/game-server/dist/index.mjs" "$GAME_NEW/dist/"
@@ -176,8 +201,12 @@ if ! wait_http_200 "http://127.0.0.1:$GAME_PORT/health" 20; then
   fi
   exit 1
 fi
+else
+  echo ">>> DEPLOY_ROLE=$DEPLOY_ROLE：跳过游戏服务器部署"
+fi
 
 # ==================== 4. 部署 Web (Next standalone) ====================
+if [ "$DEPLOY_WEB" = "1" ]; then
 log "[4/4] 部署 Web（端口 $WEB_PORT）"
 STANDALONE="$WS/apps/web/.next/standalone"
 if [ -f "$STANDALONE/server.js" ]; then
@@ -245,9 +274,12 @@ if ! wait_http_200 "http://127.0.0.1:$WEB_PORT/sprites/manifest.json" 30 ||
   fi
   exit 1
 fi
+else
+  echo ">>> DEPLOY_ROLE=$DEPLOY_ROLE：跳过 Web 部署"
+fi
 
 pm2 save
 
 echo "================================================="
-echo "✔ 部署完成：web :$WEB_PORT   game :$GAME_PORT"
+echo "✔ 部署完成（$DEPLOY_ROLE）：web :$WEB_PORT   game :$GAME_PORT   园区 $GAME_PARK_ID / $GAME_PARK_NAME"
 pm2 ls

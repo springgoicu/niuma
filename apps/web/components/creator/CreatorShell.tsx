@@ -69,7 +69,8 @@ export function CreatorShell() {
     setName(finalName);
     saveProfile({ name: finalName, appearance, status: statusRef.current });
     markSaved();
-    router.push('/play');
+    // 上岗的下一步是选园：单园区部署时 /enter 会直接把这一跳让给 /play
+    router.push('/enter');
   };
 
   return (

@@ -3,7 +3,7 @@
  * 该文件不依赖任何运行时，可被 Bun / Node / 浏览器直接引用。
  */
 
-import type { Direction, Pose } from './constants';
+import type { Direction, Pose, SyncFormat } from './constants';
 
 export type Species = 'cow' | 'horse';
 
@@ -153,6 +153,12 @@ export interface WelcomePacket {
   y: number;
   /** 服务端裁决后的权威 state：客户端据此初始化朝向与姿态，不再自行假设 */
   state: number;
+  /**
+   * 服务端实际采用的同步条目格式。条目格式必须由服务端说清而不是按包长猜：
+   * 截断的 7 字节条目恰好等于一条 6 字节条目，猜错只会把垃圾字节读成坐标。
+   * 旧服务端不带这一段时为 undefined，客户端按 7 字节处理。
+   */
+  syncFormat?: SyncFormat;
 }
 
 /**

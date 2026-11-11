@@ -22,6 +22,8 @@ import {
   encodePing,
   encodeSetAppearance,
   encodeSetStatus,
+  SYNC_FORMAT_COMPACT,
+  SYNC_FORMAT_LEGACY,
   ByteWriter,
   type CharacterAppearance,
   type ChatHistoryPacket,
@@ -31,6 +33,7 @@ import {
   type ResumeState,
   type SeatStateEntry,
   type SpawnPacket,
+  type SyncFormat,
   type SystemNoticePacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
@@ -48,8 +51,11 @@ export interface NetHandlers {
   /**
    * 同步包的原始字节。交给会话自己用 `readSync` 逐条消费：
    * 中转一层数组会在 200 人同屏时每秒造出 4000 个短命对象。
+   *
+   * `format` 是服务端在 WELCOME 里定下的条目格式，必须透传：
+   * 按包长去猜会在截断包上把尾部字节读成坐标。
    */
-  onSync(data: Uint8Array): void;
+  onSync(data: Uint8Array, format: SyncFormat): void;
   onChat(packet: ChatPacket): void;
   /** 历史聊天页（首屏补发或上翻），`flags` 见 CHAT_HISTORY_FLAG */
   onChatHistory(packet: ChatHistoryPacket): void;
@@ -93,6 +99,11 @@ export class NetClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPingAt = 0;
+  /**
+   * 服务端实际采用的同步条目格式，来自 WELCOME 尾部。
+   * 连到旧服务端时这一段缺席，按 7 字节处理，新旧两端都能正常显示。
+   */
+  private syncFormat: SyncFormat = SYNC_FORMAT_LEGACY;
   private selfId = 0;
   /** 上行移动包复用：缓冲与对象都只建一次 */
   private readonly moveWriter = new ByteWriter(16);
@@ -153,7 +164,10 @@ export class NetClient {
     socket.onopen = () => {
       this.attempts = 0;
       if (this.appearance) {
-        socket.send(encodeHello(this.name, this.appearance, this.resume, this.status));
+        // 声明支持 6 字节紧凑条目：服务端按能力协商决定用不用，旧服务端会忽略这一段
+        socket.send(
+          encodeHello(this.name, this.appearance, this.resume, this.status, SYNC_FORMAT_COMPACT),
+        );
       }
       this.handlers.onOpen();
       this.startPing();
@@ -179,9 +193,13 @@ export class NetClient {
 
   private handle(data: Uint8Array): void {
     switch (data[0]) {
-      case OpCode.S2C_WELCOME:
-        this.handlers.onWelcome(decodeWelcome(data));
+      case OpCode.S2C_WELCOME: {
+        const packet = decodeWelcome(data);
+        // 格式以服务端为准：客户端声明的是「支持」，不是「已经用上」
+        this.syncFormat = packet.syncFormat ?? SYNC_FORMAT_LEGACY;
+        this.handlers.onWelcome(packet);
         break;
+      }
       case OpCode.S2C_ENTITY_SPAWN:
         this.handlers.onSpawn(decodeSpawn(data));
         break;
@@ -191,7 +209,7 @@ export class NetClient {
         break;
       }
       case OpCode.S2C_SYNC_ENTITIES:
-        this.handlers.onSync(data);
+        this.handlers.onSync(data, this.syncFormat);
         break;
       case OpCode.S2C_CHAT_BROADCAST:
         this.handlers.onChat(decodeChatBroadcast(data));

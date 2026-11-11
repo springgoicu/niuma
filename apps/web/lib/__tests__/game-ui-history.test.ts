@@ -76,4 +76,28 @@ describe('园区频道历史合并', () => {
     useGameUi.getState().pushMessage(chat(4, 4_000));
     expect(useGameUi.getState().unread).toBe(0);
   });
+
+  it('状态编辑面板与聊天可以并存，不再互相收起', () => {
+    const ui = useGameUi.getState();
+    ui.setChatOpen(true);
+    ui.setStatusOpen(true);
+
+    expect(useGameUi.getState().chatOpen).toBe(true);
+    expect(useGameUi.getState().statusOpen).toBe(true);
+
+    // 收起状态面板也不该顺带关掉常驻的聊天
+    useGameUi.getState().setStatusOpen(false);
+    expect(useGameUi.getState().chatOpen).toBe(true);
+  });
+
+  it('没有本地记录时恢复保持收起，也不推进聚焦序号', () => {
+    useGameUi.getState().setChatOpen(true);
+    useGameUi.getState().reset();
+    const seq = useGameUi.getState().chatFocusSeq;
+
+    useGameUi.getState().restoreChatOpen();
+
+    expect(useGameUi.getState().chatOpen).toBe(false);
+    expect(useGameUi.getState().chatFocusSeq).toBe(seq);
+  });
 });

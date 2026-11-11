@@ -40,8 +40,9 @@ export function WelcomeBanner({ compact = false, portrait = false }: { compact?:
     [],
   );
 
-  // 打字时让位给输入框与候选词：欢迎条只是引导，不该压在聊天上
-  if (phase === 'idle' || chatOpen) return null;
+  // 触屏聊天浮层与底部引导没有并存空间：打字时让位给输入框与候选词。
+  // 桌面端聊天在左下、欢迎条在中上，不重叠，不必因为常驻聊天把欢迎条藏掉。
+  if (phase === 'idle' || (chatOpen && compact)) return null;
 
   return (
     <div

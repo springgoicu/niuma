@@ -25,6 +25,7 @@ import {
   encodeStatusBroadcast,
   encodeWelcome,
   quantizeCoord,
+  SYNC_FORMAT_LEGACY,
   readOpCode,
   type SeatStateEntry,
 } from '@niuma/shared-types';
@@ -132,6 +133,8 @@ export function startGameServer(config: ServerConfig) {
       return;
     }
     ws.data.playerId = player.id;
+    // 必须在 refreshView 之前：入场首帧的视野同步就该按协商好的格式编码
+    player.syncFormat = payload.syncFormat ?? SYNC_FORMAT_LEGACY;
     // 先落姿态再占座：occupy 会用座位锚点与座位姿态覆盖一次，顺序反了会把地面姿态写丢
     player.applyState(spawn.direction, spawn.pose, false);
     if (spawn.seat) {
@@ -148,6 +151,8 @@ export function startGameServer(config: ServerConfig) {
         x: quantizeCoord(player.x),
         y: quantizeCoord(player.y),
         state: player.state,
+        // 条目格式由服务端说了算：客户端据此用对应的长度解析同步包
+        syncFormat: player.syncFormat,
       }),
     );
     const occupied = seats.snapshot();
@@ -195,6 +200,8 @@ export function startGameServer(config: ServerConfig) {
       status: statusVerdict && statusVerdict.verdict !== 'reject' ? statusVerdict.text : '',
       // 排队期间跟着 payload 一起等；放行时才由 admit 重新校验
       resume: hello.resume,
+      // 能力协商结果同样要跟着排队走：放行时才知道该给这个连接编 6 还是 7 字节
+      syncFormat: hello.syncFormat,
     };
     const alreadyQueued = admission.isQueued(ws.data.wsId);
     const decision = admission.decide(ws.data.wsId, payload, world.size, Date.now());
@@ -369,6 +376,9 @@ export function startGameServer(config: ServerConfig) {
         return Response.json(
           {
             ok: true,
+            // 园区自述身份：选园页用它确认「连的确实是这一座」
+            parkId: config.parkId,
+            parkName: config.parkName,
             online: world.size,
             tick: tickCount,
             tickMs: {

@@ -8,6 +8,7 @@ import {
   type QueueRejectReason,
   type QueueStatusPacket,
   type ResumeState,
+  type SyncFormat,
 } from '@niuma/shared-types';
 import { AdmissionGovernor, type GovernorConfig, type GovernorEvent } from './governor';
 import { FifoQueue, type QueueEntry } from './queue';
@@ -21,6 +22,8 @@ export interface HelloPayload {
   status: string;
   /** 上一次会话的落点；缺席表示旧客户端或压测机器人，按随机出生点处理 */
   resume?: ResumeState;
+  /** 客户端声明的同步条目格式；旧客户端与压测机器人缺席，按 7 字节处理 */
+  syncFormat?: SyncFormat;
 }
 
 export interface AdmissionConfig extends GovernorConfig {

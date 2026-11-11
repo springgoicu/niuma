@@ -16,6 +16,9 @@ import {
   QUEUE_STATUS_BYTES,
   RESUME_BYTES,
   SYNC_ENTRY_BYTES,
+  SYNC_ENTRY_BYTES_COMPACT,
+  SYNC_FORMAT_COMPACT,
+  SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
   DEFAULT_APPEARANCE,
   decodeAppearance,
@@ -59,6 +62,7 @@ import {
   writeSyncEntry,
   writeSyncHeader,
   ByteWriter,
+  OpCode,
   decodeQueueRejected,
   decodeQueueStatus,
   normalizeColor,
@@ -296,6 +300,125 @@ describe('sync packet', () => {
       { id: 2, x: 30, y: 40, state: 5 },
     ]);
     expect([...scalar]).toEqual([...expected]);
+  });
+});
+
+/**
+ * 紧凑条目是「静态去脏」之后的成本主项，位表一旦写错不会崩，只会让所有人错位一点点。
+ * 因此这里按文档里的位表逐字节断言，而不是拿实现自己算一遍再比。
+ */
+describe('compact sync entry', () => {
+  it('packs id 10bit + x/y 各 15bit(1/4px) + state 8bit 到 6 字节', () => {
+    // id=1, x=8(1px), y=16(2px), state=0x25
+    const packet = encodeSync(0, [{ id: 1, x: 8, y: 16, state: 0x25 }], SYNC_FORMAT_COMPACT);
+    expect(packet.byteLength).toBe(SYNC_HEADER_BYTES + SYNC_ENTRY_BYTES_COMPACT);
+    expect([...packet]).toEqual([
+      OpCode.S2C_SYNC_ENTITIES,
+      0, 0, 0, 0, // tick
+      1, 0, // count
+      1, // id 低 8 位
+      16, // id 高位 2bit | x 低 6bit << 2
+      0, // x 中 8bit
+      16, // x 最高 1bit | y 低 7bit << 1
+      0, // y 高 8bit
+      0x25, // state
+    ]);
+  });
+
+  it('round-trips the whole id / coordinate / state range', () => {
+    const entities = [
+      { id: 1023, x: 65534, y: 65534, state: 255 },
+      { id: 1, x: 0, y: 0, state: 0 },
+      { id: 500, x: 21456, y: 19568, state: 0b10100101 },
+    ];
+    const decoded = decodeSync(encodeSync(7, entities, SYNC_FORMAT_COMPACT), SYNC_FORMAT_COMPACT);
+    expect(decoded).toEqual({ tick: 7, entities });
+  });
+
+  it('loses at most 1/8 px on odd quantized coordinates', () => {
+    const packet = encodeSync(1, [{ id: 3, x: 101, y: 99, state: 0 }], SYNC_FORMAT_COMPACT);
+    const decoded = decodeSync(packet, SYNC_FORMAT_COMPACT);
+    expect(decoded.entities[0]!.x).toBe(100);
+    expect(decoded.entities[0]!.y).toBe(98);
+  });
+
+  it('逐条访问器对两种格式给出同一组 1/8px 坐标', () => {
+    // 取偶数定点：1/4px 能无损表达，两种格式才该给出完全相同的值
+    const entities = [{ id: 888, x: 12346, y: 4320, state: 0b00110011 }];
+    const compact: typeof entities = [];
+    const legacy: typeof entities = [];
+    readSync(
+      encodeSync(9, entities, SYNC_FORMAT_COMPACT),
+      (id, x, y, state) => compact.push({ id, x, y, state }),
+      SYNC_FORMAT_COMPACT,
+    );
+    readSync(
+      encodeSync(9, entities, SYNC_FORMAT_LEGACY),
+      (id, x, y, state) => legacy.push({ id, x, y, state }),
+      SYNC_FORMAT_LEGACY,
+    );
+    expect(compact).toEqual(legacy);
+  });
+
+  it('keeps decoding the legacy 7 byte format', () => {
+    const packet = encodeSync(5, [{ id: 9, x: 65535, y: 65535, state: 255 }]);
+    expect(packet.byteLength).toBe(SYNC_HEADER_BYTES + SYNC_ENTRY_BYTES);
+    expect(decodeSync(packet).entities[0]).toEqual({ id: 9, x: 65535, y: 65535, state: 255 });
+  });
+
+  it('rejects a truncated compact packet instead of guessing the format', () => {
+    const packet = encodeSync(1, [{ id: 1, x: 2, y: 3, state: 4 }], SYNC_FORMAT_COMPACT);
+    expect(() =>
+      readSync(packet.subarray(0, packet.byteLength - 1), () => {}, SYNC_FORMAT_COMPACT),
+    ).toThrow(/payload mismatch/);
+  });
+
+  it('把 7 字节包当 6 字节读会直接报错，而不是把尾部字节当坐标', () => {
+    const legacy = encodeSync(1, [{ id: 1, x: 2, y: 3, state: 4 }]);
+    expect(() => readSync(legacy, () => {}, SYNC_FORMAT_COMPACT)).toThrow(/payload mismatch/);
+  });
+});
+
+describe('hello 的同步格式能力段', () => {
+  it('不声明能力段时与旧版逐字节相同，解码回落到 7 字节格式', () => {
+    const packet = encodeHello('牛马', DEFAULT_APPEARANCE.cow);
+    expect(decodeHello(packet).syncFormat).toBe(SYNC_FORMAT_LEGACY);
+  });
+
+  it('声明紧凑格式后追加 [0xfd][1]，落点与状态照常解析', () => {
+    const resume = { x: 100, y: 200, direction: DIRECTION.Left, pose: POSE.Sit, seatId: 7 };
+    const packet = encodeHello('牛马', DEFAULT_APPEARANCE.cow, resume, '摸鱼中', SYNC_FORMAT_COMPACT);
+    const decoded = decodeHello(packet);
+    expect(decoded.syncFormat).toBe(SYNC_FORMAT_COMPACT);
+    expect(decoded.resume).toEqual(resume);
+    expect(decoded.status).toBe('摸鱼中');
+  });
+
+  it('没有落点也没有状态时，能力段不会被误读成落点', () => {
+    const packet = encodeHello('牛马', DEFAULT_APPEARANCE.cow, undefined, '', SYNC_FORMAT_COMPACT);
+    const decoded = decodeHello(packet);
+    expect(decoded.resume).toBeUndefined();
+    expect(decoded.status).toBe('');
+    expect(decoded.syncFormat).toBe(SYNC_FORMAT_COMPACT);
+  });
+
+  it('WELCOME 尾部回告服务端实际采用的条目格式', () => {
+    const packet = encodeWelcome({
+      entityId: 7,
+      tick: 99,
+      x: 100,
+      y: 200,
+      state: 5,
+      syncFormat: SYNC_FORMAT_COMPACT,
+    });
+    expect(decodeWelcome(packet)).toEqual({
+      entityId: 7,
+      tick: 99,
+      x: 100,
+      y: 200,
+      state: 5,
+      syncFormat: SYNC_FORMAT_COMPACT,
+    });
   });
 });
 

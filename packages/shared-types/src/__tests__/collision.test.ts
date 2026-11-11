@@ -33,7 +33,7 @@ describe('开放式办公区', () => {
     expect(resolveMotion(CENTER.x, SOUTH - 60, CENTER.x, SOUTH + 60).y).toBeGreaterThan(SOUTH);
   });
 
-  it('工位桌仍然挡人，树篱只是视觉分区', () => {
+  it('工位桌仍然挡人，南园树篱只是视觉分区', () => {
     for (const desk of WORLD_LAYOUT.desks.slice(0, 8)) {
       expect(isBlocked(desk.x, desk.y)).toBe(true);
     }
@@ -42,9 +42,13 @@ describe('开放式办公区', () => {
     for (const hedge of hedges) expect(isBlocked(hedge.x, hedge.y)).toBe(false);
   });
 
-  it('沿办公区南缘可以自由绕行', () => {
-    const path = resolveMotion(WEST + 20, SOUTH - 20, EAST - 20, SOUTH - 20);
-    expect(path.x).toBeGreaterThan(EAST - 40);
+  it('四角房间之间留出十字通道，可以横穿院落', () => {
+    // 南北通道：北门 → 中庭 → 南侧庭院（x 4032–4160 全程无碰撞）
+    const vertical = resolveMotion(CENTER.x, NORTH - 60, CENTER.x, SOUTH + 60);
+    expect(vertical.y).toBeGreaterThan(SOUTH);
+    // 东西通道：西侧土路 → 中庭 → 东侧土路
+    const horizontal = resolveMotion(WEST - 60, CENTER.y, EAST + 60, CENTER.y);
+    expect(horizontal.x).toBeGreaterThan(EAST);
   });
 });
 
@@ -65,13 +69,33 @@ describe('水体', () => {
   });
 
   it('晨会溪两座桥都能过', () => {
-    const bridges = WORLD_LAYOUT.bridges.slice(1);
+    const bridges = WORLD_LAYOUT.bridges.slice(1, 3);
     expect(bridges.length).toBe(2);
     for (const bridge of bridges) {
       const midX = bridge.x + bridge.w / 2;
       const result = resolveMotion(midX, bridge.y - 100, midX, bridge.y + bridge.h + 100);
       expect(result.y).toBeGreaterThan(bridge.y + bridge.h + 90);
     }
+  });
+
+  it('护园溪三座桥都能过，南向复用晨会溪桥形成四向环水', () => {
+    // D 北门桥、E 西桥、F 东桥：通行方向由桥的长宽决定（北桥竖直、东西桥水平）
+    const [north, west, east] = WORLD_LAYOUT.bridges.slice(3);
+    expect(north && west && east).toBeTruthy();
+    for (const bridge of [north!, west!, east!]) {
+      const midX = bridge.x + bridge.w / 2;
+      const midY = bridge.y + bridge.h / 2;
+      const vertical = bridge.h > bridge.w;
+      const result = vertical
+        ? resolveMotion(midX, bridge.y - 100, midX, bridge.y + bridge.h + 100)
+        : resolveMotion(bridge.x - 100, midY, bridge.x + bridge.w + 100, midY);
+      if (vertical) expect(result.y).toBeGreaterThan(bridge.y + bridge.h + 90);
+      else expect(result.x).toBeGreaterThan(bridge.x + bridge.w + 90);
+    }
+    // 南向没有新桥：既有晨会溪桥同时承担环河第四向
+    const south = WORLD_LAYOUT.bridges[1]!;
+    expect(south.x).toBeLessThan(4096);
+    expect(south.x + south.w).toBeGreaterThan(4096);
   });
 
   it('桥面以外的河段也可以涉水', () => {

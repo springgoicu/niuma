@@ -31,6 +31,8 @@ export const BAND_HEIGHT = 256;
 export interface DepthSink {
   add(y: number, child: Container): void;
   remove(child: Container): void;
+  /** 帧循环用：会移动的物体（角色、小动物）位置变化后重新归 band */
+  update(child: Container, y: number): void;
 }
 
 /** 纯函数：给定世界 y 返回 band 下标，越界钳到两端；NaN 归第一个 band */

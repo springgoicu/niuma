@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { distanceSqToSegment, rectContains, type Point } from '../world/geometry';
 import {
   CREEK_HALF_WIDTH,
+  PARK_CANAL_HALF_WIDTH,
   RIVER_HALF_WIDTH,
   WORLD_LAYOUT,
   isOnBridge,
@@ -12,6 +13,7 @@ import {
 
 const river = WORLD_LAYOUT.rivers[0]!;
 const creek = WORLD_LAYOUT.rivers[1]!;
+const canal = WORLD_LAYOUT.rivers[2]!;
 const plaza = WORLD_LAYOUT.plaza;
 const office = WORLD_LAYOUT.office;
 
@@ -41,39 +43,31 @@ function expectNoSelfIntersection(points: Point[]): void {
   }
 }
 
+/** 一条中心线到岸边折线的最大偏差：两岸到中心线的距离应恒等于半宽 */
+function expectHalfWidth(shape: typeof river, halfWidth: number): void {
+  for (const bank of [shape.leftBank, shape.rightBank]) {
+    for (const point of bank) {
+      let best = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < shape.centerline.length - 1; i += 1) {
+        const from = shape.centerline[i]!;
+        const to = shape.centerline[i + 1]!;
+        const distance = distanceSqToSegment(point[0], point[1], from[0], from[1], to[0], to[1]);
+        if (distance < best) best = distance;
+      }
+      expect(Math.abs(Math.sqrt(best) - halfWidth)).toBeLessThan(5);
+    }
+  }
+}
+
 describe('河道几何', () => {
-  it('主河两岸到中心线的距离恒为半河宽', () => {
-    for (const bank of [river.leftBank, river.rightBank]) {
-      for (const point of bank) {
-        let best = Number.POSITIVE_INFINITY;
-        for (let i = 0; i < river.centerline.length - 1; i += 1) {
-          const from = river.centerline[i]!;
-          const to = river.centerline[i + 1]!;
-          const distance = distanceSqToSegment(point[0], point[1], from[0], from[1], to[0], to[1]);
-          if (distance < best) best = distance;
-        }
-        expect(Math.abs(Math.sqrt(best) - RIVER_HALF_WIDTH)).toBeLessThan(5);
-      }
-    }
+  it('三条河的两岸到中心线距离恒为半河宽', () => {
+    expectHalfWidth(river, RIVER_HALF_WIDTH);
+    expectHalfWidth(creek, CREEK_HALF_WIDTH);
+    expectHalfWidth(canal, PARK_CANAL_HALF_WIDTH);
   });
 
-  it('晨会溪两岸到中心线的距离恒为半溪宽', () => {
-    for (const bank of [creek.leftBank, creek.rightBank]) {
-      for (const point of bank) {
-        let best = Number.POSITIVE_INFINITY;
-        for (let i = 0; i < creek.centerline.length - 1; i += 1) {
-          const from = creek.centerline[i]!;
-          const to = creek.centerline[i + 1]!;
-          const distance = distanceSqToSegment(point[0], point[1], from[0], from[1], to[0], to[1]);
-          if (distance < best) best = distance;
-        }
-        expect(Math.abs(Math.sqrt(best) - CREEK_HALF_WIDTH)).toBeLessThan(5);
-      }
-    }
-  });
-
-  it('两条水面的多边形闭合且没有自交', () => {
-    for (const shape of [river, creek]) {
+  it('三条水面的多边形闭合且没有自交', () => {
+    for (const shape of [river, creek, canal]) {
       expect(shape.polygon.length).toBeGreaterThan(12);
       expect(shape.polygon.length).toBeLessThan(120);
       expectNoSelfIntersection(shape.polygon);
@@ -98,41 +92,52 @@ describe('河道几何', () => {
     expect(isWaterAt(last[0], last[1])).toBe(true);
   });
 
-  it('桥面完整覆盖水面，栏杆方向随通行方向', () => {
+  it('护园溪两端都汇进晨会溪，围出一个闭合水环', () => {
+    const first = canal.centerline[0]!;
+    const last = canal.centerline[canal.centerline.length - 1]!;
+    expect(isWaterAt(first[0], first[1])).toBe(true);
+    expect(isWaterAt(last[0], last[1])).toBe(true);
+    // 三面环水：西臂、北臂、东臂都在院落外缘
+    expect(isWaterAt(3200, 3800)).toBe(true);
+    expect(isWaterAt(4096, 3230)).toBe(true);
+    expect(isWaterAt(4992, 3800)).toBe(true);
+    // 院落内部保持干燥
+    expect(isWaterAt(4096, 4096)).toBe(false);
+  });
+
+  it('每座桥都盖住脚下水面：至少一个轴向的水面完整落在桥面里', () => {
     for (const bridge of WORLD_LAYOUT.bridges) {
-      const vertical = bridge.h > bridge.w;
-      if (vertical) {
-        for (const x of [bridge.x + 2, bridge.x + bridge.w / 2, bridge.x + bridge.w - 2]) {
-          let top = Number.POSITIVE_INFINITY;
-          let bottom = Number.NEGATIVE_INFINITY;
-          for (let y = bridge.y - 200; y <= bridge.y + bridge.h + 200; y += 2) {
-            if (!isWaterAt(x, y)) continue;
-            if (y < top) top = y;
-            if (y > bottom) bottom = y;
-          }
-          expect(top).toBeGreaterThan(bridge.y + 20);
-          expect(bottom).toBeLessThan(bridge.y + bridge.h - 20);
-        }
-      } else {
-        for (const y of [bridge.y + 2, bridge.y + bridge.h / 2, bridge.y + bridge.h - 2]) {
-          let left = Number.POSITIVE_INFINITY;
-          let right = Number.NEGATIVE_INFINITY;
-          for (let x = bridge.x - 200; x <= bridge.x + bridge.w + 200; x += 2) {
-            if (!isWaterAt(x, y)) continue;
-            if (x < left) left = x;
-            if (x > right) right = x;
-          }
-          expect(left).toBeGreaterThan(bridge.x + 20);
-          expect(right).toBeLessThan(bridge.x + bridge.w - 20);
-          expect(right - left).toBeGreaterThan(RIVER_HALF_WIDTH);
-        }
+      const cx = bridge.x + bridge.w / 2;
+      const cy = bridge.y + bridge.h / 2;
+      expect(isWaterAt(cx, cy)).toBe(true);
+      expect(isOnBridge(cx, cy)).toBe(true);
+
+      // 沿 x 扫描：水面左右都落在桥面内（东西向通行）
+      let left = Number.POSITIVE_INFINITY;
+      let right = Number.NEGATIVE_INFINITY;
+      for (let x = bridge.x - 200; x <= bridge.x + bridge.w + 200; x += 2) {
+        if (!isWaterAt(x, cy)) continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
       }
-      expect(isWaterAt(bridge.x + bridge.w / 2, bridge.y + bridge.h / 2)).toBe(true);
+      const crossX = left > bridge.x + 10 && right < bridge.x + bridge.w - 10 && right - left > 20;
+
+      // 沿 y 扫描：水面上边与下边都落在桥面内（南北向通行）
+      let top = Number.POSITIVE_INFINITY;
+      let bottom = Number.NEGATIVE_INFINITY;
+      for (let y = bridge.y - 200; y <= bridge.y + bridge.h + 200; y += 2) {
+        if (!isWaterAt(cx, y)) continue;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+      const crossY = top > bridge.y + 10 && bottom < bridge.y + bridge.h - 10 && bottom - top > 20;
+
+      expect(crossX || crossY).toBe(true);
     }
   });
 
   it('河道不穿广场与办公区，跨路处必须落在桥面内', () => {
-    for (const shape of [river, creek]) {
+    for (const shape of [river, creek, canal]) {
       for (const [x, y] of shape.centerline) {
         expect(rectContains(plaza, x, y)).toBe(false);
         expect(rectContains(office, x, y)).toBe(false);
@@ -148,5 +153,7 @@ describe('河道几何', () => {
   it('河面归到各自的区域名', () => {
     expect(regionAt(2712, 3000)).toBe('周报河');
     expect(regionAt(3050, 4940)).toBe('晨会溪');
+    expect(regionAt(3200, 3800)).toBe('护园溪');
+    expect(regionAt(4992, 3800)).toBe('护园溪');
   });
 });

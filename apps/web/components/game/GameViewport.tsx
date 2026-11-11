@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { LogOut, Maximize, Minimize } from 'lucide-react';
+import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
+import type { NavTargetId } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import type { ActionKey } from '@/lib/game/input';
 import { GameSession } from '@/lib/game/session';
-import { loadSnapshot } from '@/lib/game/snapshot';
+import { loadSnapshot, resumeForPark } from '@/lib/game/snapshot';
+import type { ParkEntry } from '@/lib/park';
 import {
   defaultAppearance,
   loadProfile,
@@ -28,7 +30,29 @@ import { WelcomeBanner } from './WelcomeBanner';
 import { Joystick, TouchActions } from './TouchControls';
 import { useImmersiveStage, useIsPortrait, useIsTouch, useVisualViewportSize } from '@/lib/use-touch-stage';
 
-export function GameViewport() {
+export interface GameViewportProps {
+  /** 服务端下发的园区白名单：只用于名字展示与「切换园区」的去向校验 */
+  parks: readonly ParkEntry[];
+  parkId: string;
+  parkName: string;
+  /** 已按白名单解析好的 WebSocket 端点，一次会话内不变 */
+  wsUrl: string;
+  /** 首选园区不可达时被顶替掉的那座的名称；null 表示正常进入 */
+  fallbackFrom: string | null;
+  /** 深链参数：/play?name=夜班实习生&species=horse */
+  initialName?: string;
+  initialSpecies?: string;
+}
+
+export function GameViewport({
+  parks,
+  parkId,
+  parkName,
+  wsUrl,
+  fallbackFrom,
+  initialName,
+  initialSpecies,
+}: GameViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<GameSession | null>(null);
   const isTouch = useIsTouch();
@@ -44,6 +68,19 @@ export function GameViewport() {
   const [checked, setChecked] = useState(false);
   /** 正在查看的角色 netId；null 表示没有打开详情 */
   const [inspectId, setInspectId] = useState<number | null>(null);
+  /**
+   * 入场兜底的告知条：首选园区探活失败、被顶替到另一座时要让玩家知道
+   * 自己去的不是原本那座，而不是安静地换一个世界。几秒后自行消失。
+   */
+  const [notice, setNotice] = useState<string | null>(
+    fallbackFrom ? `${fallbackFrom}暂时不可达，已进入${parkName}` : null,
+  );
+  /**
+   * 只有多园区部署时「切换园区」才有意义。
+   * 同一个开关也决定工牌要不要带园区名前缀：单园区时顶着「主园区 · 工作区」
+   * 只是多一段没有信息量的字，不如保持改造前只显示区域名。
+   */
+  const canSwitchPark = parks.length > 1;
 
   const setStatus = useGameUi((state) => state.setStatus);
   const setStats = useGameUi((state) => state.setStats);
@@ -53,6 +90,7 @@ export function GameViewport() {
   const applyHistory = useGameUi((state) => state.applyHistory);
   const setHint = useGameUi((state) => state.setHint);
   const setLocalState = useGameUi((state) => state.setLocalState);
+  const setNavTarget = useGameUi((state) => state.setNavTarget);
   const hint = useGameUi((state) => state.hint);
 
   /**
@@ -66,6 +104,8 @@ export function GameViewport() {
 
   useEffect(() => {
     useGameUi.getState().reset();
+    // reset 会清空 chatOpen：必须排在其后恢复上次的常驻状态（只开面板，不抢焦点）
+    useGameUi.getState().restoreChatOpen();
     setInspectId(null);
     const stored = loadProfile();
     if (stored) {
@@ -73,22 +113,27 @@ export function GameViewport() {
       setChecked(true);
       return;
     }
-    // 深链：/play?name=夜班实习生&species=horse 可直接入场，便于演示与分享
-    const params = new URLSearchParams(window.location.search);
-    const name = params.get('name');
-    if (name) {
-      const species = params.get('species') === 'horse' ? 'horse' : 'cow';
-      // 深链同样过钳制与审核：这是唯一一条绕过表单的取名路径
+    // 深链：/play?name=夜班实习生&species=horse 可直接入场，便于演示与分享。
+    // 参数由 Server Component 解析后作为 props 传下来，客户端不再读 window.location
+    if (initialName) {
       const profile: Profile = {
-        name: resolveProfileName(name),
-        appearance: defaultAppearance(species),
+        // 深链同样过钳制与审核：这是唯一一条绕过表单的取名路径
+        name: resolveProfileName(initialName),
+        appearance: defaultAppearance(initialSpecies === 'horse' ? 'horse' : 'cow'),
         status: '',
       };
       saveProfile(profile);
       setProfile(profile);
     }
     setChecked(true);
-  }, []);
+  }, [initialName, initialSpecies]);
+
+  // 兜底告知条只播一次：入场几秒后收起，别在游戏画面上常驻一条运维信息
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   // 已经存过工牌的人不会经过上岗按钮，只有在园区里的第一次按下才能补上全屏。
   // 浏览器要求全屏由用户手势触发，所以这一次按下之后就不再重试：用户主动退出全屏也不会被拉回去。
@@ -109,6 +154,7 @@ export function GameViewport() {
   useEffect(() => {
     const host = hostRef.current;
     if (!profile || !host || sessionRef.current) return;
+    // 园区在会话构造期绑定：重连沿用同一个端点，不会在断线恢复时漂到另一座园区
     const session = new GameSession({
       onStatus: (status, detail) => setStatus(status, detail),
       onQueue: (queue) => setQueue(queue),
@@ -119,10 +165,12 @@ export function GameViewport() {
       onRequestChat: openChat,
       onHint: (next) => setHint(next),
       onLocalState: (state) => setLocalState(state),
-    });
+      onNav: (nav) => setNavTarget(nav),
+    }, { wsUrl, parkId });
     sessionRef.current = session;
-    // 上次的落点只作为「入场偏好」交给服务端裁决：座位可能已被占、坐标可能已经不可走
-    session.start(host, profile, loadSnapshot() ?? undefined).catch((error: unknown) => {
+    // 上次的落点只作为「入场偏好」交给服务端裁决：座位可能已被占、坐标可能已经不可走。
+    // 换过园区时 resumeForPark 会把它丢掉，角色从新园区门口开始
+    session.start(host, profile, resumeForPark(loadSnapshot(), parkId)).catch((error: unknown) => {
       console.error('[game] session failed', error);
       setStatus('error', '渲染器初始化失败');
     });
@@ -130,7 +178,7 @@ export function GameViewport() {
       session.stop();
       sessionRef.current = null;
     };
-  }, [profile, setStatus, setStats, pushMessage, applyHistory, openChat, setHint, setLocalState]);
+  }, [profile, wsUrl, parkId, setStatus, setStats, pushMessage, applyHistory, openChat, setHint, setLocalState, setNavTarget]);
 
   const getSession = useCallback(() => sessionRef.current, []);
   const handleChat = useCallback((text: string) => sessionRef.current?.sendChat(text), []);
@@ -149,6 +197,12 @@ export function GameViewport() {
   }, []);
   const handleMove = useCallback((x: number, y: number) => {
     sessionRef.current?.setMoveVector(x, y);
+  }, []);
+  const handleNavigate = useCallback((id: NavTargetId) => {
+    sessionRef.current?.navigateTo(id);
+  }, []);
+  const handleCancelNavigation = useCallback(() => {
+    sessionRef.current?.cancelNavigation();
   }, []);
 
   /**
@@ -186,12 +240,17 @@ export function GameViewport() {
     [profile],
   );
 
-  /** 点画布空白处收面板：聊天、状态与他人工牌都回到收起态，焦点交还给移动 */
+  /**
+   * 点画布空白处 / 摇杆落下：只收状态编辑与他人工牌，把焦点交还给移动。
+   * 聊天是常驻面板——用户没主动关就一直开着，只有 Esc 与面板头部按钮能收起。
+   */
   const closePanels = useCallback(() => {
     const ui = useGameUi.getState();
-    ui.setChatOpen(false);
     ui.setStatusOpen(false);
     setInspectId(null);
+    // 面板常驻后输入框可能还拿着焦点：点画布 / 落摇杆要把焦点还给移动，
+    // 但不动 chatOpen——收面板只能由用户按 Esc 或点头部按钮决定。
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }, []);
 
   return (
@@ -255,6 +314,7 @@ export function GameViewport() {
                   species={profile.appearance.species}
                   statusText={profile.status}
                   onStatusChange={handleStatusChange}
+                  parkName={canSwitchPark ? parkName : undefined}
                   compact={isTouch}
                 />
                 {/* 聊天浮层挂在工牌下方（top-full）而不是写死偏移：工牌展开时它会自己让位，
@@ -290,6 +350,20 @@ export function GameViewport() {
                     >
                       {immersive.active ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
                     </button>
+                  )}
+                  {canSwitchPark && (
+                    <Link
+                      href="/enter?from=play"
+                      aria-label="切换园区"
+                      title={`切换园区（当前在${parkName}）`}
+                      data-no-immersive
+                      className={`pointer-events-auto flex min-h-9 items-center border-2 border-ink-600 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-mint-400/60 hover:text-mint-400 ${
+                        portrait ? 'w-9 justify-center px-0' : 'gap-1.5 px-2 py-1.5'
+                      }`}
+                    >
+                      <Shuffle className="h-3 w-3" />
+                      {!portrait && '切换园区'}
+                    </Link>
                   )}
                   <Link
                     href="/"
@@ -339,7 +413,12 @@ export function GameViewport() {
           )}
 
           {/* 出生点的引导层：实体地标在画面里，这两块负责「说清楚」与随时可查（ADR-0036） */}
-          <NavCard compact={isTouch} portrait={portrait} />
+          <NavCard
+            compact={isTouch}
+            portrait={portrait}
+            onNavigate={handleNavigate}
+            onCancelNavigation={handleCancelNavigation}
+          />
           <WelcomeBanner compact={isTouch} portrait={portrait} />
 
           <QueueGate onRetry={handleRetry} />
@@ -354,6 +433,15 @@ export function GameViewport() {
             </div>
           )}
           <ConnectionBanner />
+          {/* 兜底告知条排在重连横幅下面：入场瞬间两者可能同时在，不能互相盖住 */}
+          {notice && (
+            <div role="status" className="pointer-events-none absolute left-1/2 top-32 z-30 -translate-x-1/2">
+              <div className="flex items-center gap-3 border-2 border-amber-400/60 bg-ink-900/95 px-4 py-2 backdrop-blur">
+                <span className="h-2 w-2 shrink-0 bg-amber-400" aria-hidden />
+                <span className="font-mono text-[11px] tracking-[0.18em] text-amber-400">{notice}</span>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

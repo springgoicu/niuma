@@ -62,7 +62,11 @@ export const STATUS_EXTENSION_MAGIC = 0xff;
 export const ONLINE_EXTENSION_MAGIC = 0xfe;
 export const ONLINE_EXTENSION_BYTES = 5;
 export const MAX_PACKET_BYTES = 2048;
-export const MAX_ENTITIES = 1024;
+/**
+ * 与 `MAX_ENTITY_ID` 对齐：紧凑同步条目只给 id 留 10 bit。
+ * 收到 1023 个实体后 `World.create` 就会拒绝，正好在回绕之前停下，不会出现重复 id。
+ */
+export const MAX_ENTITIES = 1023;
 export const MAX_SYNC_ENTRIES = 255;
 
 /** 移动包固定长度：op(1) + id(2) + x(2) + y(2) + state(1) = 8 字节基础版本
@@ -73,8 +77,34 @@ export const MOVE_PACKET_BYTES = 8;
 export const MOVE_PACKET_WITH_TIMING_BYTES = 14;
 /** 同步包内每条实体增量 */
 export const SYNC_ENTRY_BYTES = 7;
+/**
+ * 紧凑条目：id 10 bit + x/y 各 15 bit + state 8 bit = 48 bit = 6 字节。
+ *
+ * 48 bit 扣掉 state 的 8 位只剩 40 位，1/8px 下 x/y 各要 16 位（8192px × 8 = 65536），
+ * 留给 id 的只剩 8 位——装不下 1023 个实体。用偏移基址也不行：岛屿南北跨度
+ * 33696 个单位已经超过 15 bit 的 32767。所以条目内部改用 1/4px：
+ * 15 位正好覆盖 8192px，位置误差 ≤0.25px，肉眼不可见。
+ */
+export const SYNC_ENTRY_BYTES_COMPACT = 6;
+/** 紧凑条目内部的坐标精度（1/4 px）；解码后左移还原成 1/8px 单位，消费方无需改动 */
+export const SYNC_COORD_SCALE = 4;
+/** 紧凑条目 id 的位宽上限：10 bit */
+export const MAX_ENTITY_ID = 0x3ff;
 /** 同步包头部：op(1) + tick(4) + count(2) */
 export const SYNC_HEADER_BYTES = 7;
+/**
+ * HELLO 尾部的能力段魔数：`[0xfd][format]`。
+ *
+ * 0xfd 大于 MAX_STATUS_BYTES(48)，不可能是合法的状态长度，也不与 0xff 状态段冲突；
+ * 不声明这一段的老客户端继续收 7 字节条目，服务端按每人各自的格式编码。
+ */
+export const SYNC_CAPABILITY_MAGIC = 0xfd;
+/** 同步条目格式：7 字节（旧） */
+export const SYNC_FORMAT_LEGACY = 0;
+/** 同步条目格式：6 字节紧凑 */
+export const SYNC_FORMAT_COMPACT = 1;
+/** 解码端按包长自适应的格式判定结果 */
+export type SyncFormat = typeof SYNC_FORMAT_LEGACY | typeof SYNC_FORMAT_COMPACT;
 /**
  * 外观压缩后固定长度（ADR-0011）：
  * [0] species | [1..22] 11×u16 RGB565 | [23..26] parts | [27..30] 配件索引 | [31] reserved

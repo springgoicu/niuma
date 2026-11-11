@@ -7,7 +7,7 @@ import {
   rectExpanded,
   type TreeInstance,
 } from '../index';
-import { CAMPUS_RECT } from '../world/campus';
+import { SOUTH_YARD } from '../world/campus';
 
 /**
  * 空地密度（ADR-0028）：岛缩小后不允许再出现「走一段只有草」的走廊。
@@ -42,7 +42,7 @@ function covered(x: number, y: number): boolean {
   for (const field of WORLD_LAYOUT.flowerFields) if (rectContains(field.rect, x, y)) return true;
   if (rectContains(WORLD_LAYOUT.office, x, y)) return true;
   if (rectContains(WORLD_LAYOUT.plaza, x, y)) return true;
-  if (rectContains(CAMPUS_RECT, x, y)) return true;
+  if (rectContains(SOUTH_YARD, x, y)) return true;
   for (const building of WORLD_LAYOUT.buildings) if (rectContains(building.rect, x, y)) return true;
   for (const area of WORLD_LAYOUT.paved) if (rectContains(area, x, y)) return true;
   for (const prop of PROPS) {
@@ -98,15 +98,18 @@ describe('空地密度', () => {
   });
 
   it('水系与桥梁数量达到加密目标', () => {
-    expect(WORLD_LAYOUT.rivers.length).toBe(2);
+    // ADR-0045：新增护园溪与三座环河桥，南向复用既有晨会溪桥
+    expect(WORLD_LAYOUT.rivers.length).toBe(3);
     expect(WORLD_LAYOUT.lakes.length).toBe(6);
-    expect(WORLD_LAYOUT.bridges.length).toBe(3);
+    expect(WORLD_LAYOUT.bridges.length).toBe(6);
     expect(WORLD_LAYOUT.docks.length).toBe(2);
   });
 
   it('林地与花海数量达到加密目标', () => {
-    expect(WORLD_LAYOUT.forests.length).toBe(7);
-    expect(WORLD_LAYOUT.flowerFields.length).toBe(4);
+    // ADR-0045：环河外补三片近景林带
+    expect(WORLD_LAYOUT.forests.length).toBe(10);
+    // ADR-0044 补了西北角与西岸水塘北侧两片草甸
+    expect(WORLD_LAYOUT.flowerFields.length).toBe(6);
     const trees = WORLD_LAYOUT.forests.reduce((sum, forest) => sum + forest.trees.length, 0);
     expect(trees).toBeGreaterThan(200);
     expect(WORLD_LAYOUT.wildTrees.length).toBeGreaterThan(60);

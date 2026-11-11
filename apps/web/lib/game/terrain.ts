@@ -11,7 +11,6 @@ import {
   WORLD_LAYOUT,
   WORLD_WIDTH,
   distanceSqToPolygon,
-  isWaterAt,
   pointInPolygon,
   rectContains,
   type LakeShape,
@@ -29,6 +28,7 @@ import {
   type ContourPoint,
 } from './autotile';
 import { WILDFLOWER_KINDS, bloomDecalKind, scatterDecals, type DecalPlacement } from './decals';
+import { isOutdoorGround } from './ground';
 import { seeded } from './seeded';
 import type { DepthSink } from './sort-layer';
 import {
@@ -629,26 +629,34 @@ export class TerrainView {
         placed += 1;
       }
     }
-    // 河岸：沿两条岸线每隔一个站点放一丛，外法线朝水面外挑 15px
+    // 河岸：沿两条岸线每 72px 采样一次，外法线朝水面外挑 15px（ADR-0045 加密）
     for (const river of WORLD_LAYOUT.rivers) {
       const banks: Array<{ bank: ReadonlyArray<Point>; outward: 1 | -1 }> = [
         { bank: river.leftBank, outward: 1 },
         { bank: river.rightBank, outward: -1 },
       ];
       for (const { bank, outward } of banks) {
-        for (let i = 1; i < bank.length - 1; i += 2) {
-          const [x, y] = bank[i]!;
-          if (!pointInPolygon(x, y, ISLAND.points)) continue;
-          const [prevX, prevY] = bank[i - 1]!;
-          const [nextX, nextY] = bank[i + 1]!;
-          const dx = nextX - prevX;
-          const dy = nextY - prevY;
+        let placed = 0;
+        for (let i = 0; i < bank.length - 1 && placed < 24; i += 1) {
+          const [x0, y0] = bank[i]!;
+          const [x1, y1] = bank[i + 1]!;
+          const dx = x1 - x0;
+          const dy = y1 - y0;
           const length = Math.sqrt(dx * dx + dy * dy) || 1;
-          const rx = x + (dy / length) * REED_OFFSET * outward;
-          const ry = y + (-dx / length) * REED_OFFSET * outward;
-          if (WORLD_LAYOUT.bridges.some((bridge) => rectContains(bridge, rx, ry))) continue;
-          if (random() > 0.7) continue;
-          this.addDecalSprite(random() > 0.35 ? 'reed' : 'rock', rx, ry);
+          const steps = Math.max(1, Math.floor(length / 72));
+          for (let s = 0; s < steps && placed < 24; s += 1) {
+            const t = (s + 0.5) / steps;
+            const bx = x0 + dx * t;
+            const by = y0 + dy * t;
+            if (!pointInPolygon(bx, by, ISLAND.points)) continue;
+            const rx = bx + (dy / length) * REED_OFFSET * outward;
+            const ry = by + (-dx / length) * REED_OFFSET * outward;
+            if (!pointInPolygon(rx, ry, ISLAND.points)) continue;
+            if (WORLD_LAYOUT.bridges.some((bridge) => rectContains(bridge, rx, ry))) continue;
+            if (random() > 0.5) continue;
+            this.addDecalSprite(random() > 0.35 ? 'reed' : 'rock', rx, ry);
+            placed += 1;
+          }
         }
       }
     }
@@ -718,16 +726,12 @@ export class TerrainView {
     }
   }
 
-  /** 草地贴花只长在草地上：水面、土路、桥面都不生成（广场已是草地，ADR-0017） */
+  /**
+   * 草地贴花只长在草地上：水面、土路、桥面都不生成（广场已是草地，ADR-0017）。
+   * 判定本体在 `ground.ts`——小动物撒点读的是同一份规则。
+   */
   private grassDecorAllowed(x: number, y: number): boolean {
-    if (!pointInPolygon(x, y, ISLAND.points)) return false;
-    for (const path of WORLD_LAYOUT.paths) if (rectContains(path, x, y)) return false;
-    for (const bridge of WORLD_LAYOUT.bridges) if (rectContains(bridge, x, y)) return false;
-    for (const dock of WORLD_LAYOUT.docks) if (rectContains(dock, x, y)) return false;
-    for (const area of WORLD_LAYOUT.paved) if (rectContains(area, x, y)) return false;
-    for (const building of WORLD_LAYOUT.buildings) if (rectContains(building.rect, x, y)) return false;
-    if (isWaterAt(x, y)) return false;
-    return true;
+    return isOutdoorGround(x, y);
   }
 
   /** 基础层不进花海：花海由 addDecals 单独按配色撒，避免三种花混成噪点 */

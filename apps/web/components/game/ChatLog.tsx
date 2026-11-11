@@ -1,7 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { ArrowDown } from 'lucide-react';
+import { Fragment, useLayoutEffect, useRef } from 'react';
 import {
   MAX_NAME_DISPLAY_UNITS,
   SYSTEM_NOTICE_KIND,
@@ -21,8 +20,6 @@ interface ChatLogProps {
   onLoadHistory?: (cursor: number) => void;
 }
 
-/** 距底部多远算「贴底」：留 24px 容差，别让 1px 取整误差把跟随关掉 */
-const BOTTOM_TOLERANCE = 24;
 /** 距顶部多远触发上翻 */
 const TOP_TRIGGER = 16;
 
@@ -40,68 +37,75 @@ function systemMarker(kind: number | undefined): { glyph: string; tone: string }
     case SYSTEM_NOTICE_KIND.Enter:
       return { glyph: '+', tone: 'text-mint-400/80' };
     case SYSTEM_NOTICE_KIND.Leave:
-      return { glyph: '−', tone: 'text-mist-500' };
+      return { glyph: '−', tone: 'text-mist-400' };
     case SYSTEM_NOTICE_KIND.OnDuty:
       return { glyph: '·', tone: 'text-amber-400/80' };
     default:
-      return { glyph: '·', tone: 'text-mist-500' };
+      return { glyph: '·', tone: 'text-mist-400' };
   }
 }
 
 /**
- * 频道消息区：滚动、上翻加载与「贴底才跟随」都在这里。
+ * 频道消息区：滚动、上翻加载与「始终贴底」都在这里。
  *
  * 两条纪律：
- * 1. 用户往上翻时新消息不许抢滚动条，只累计数字，由「↓ N 条新消息」带回底部；
- * 2. 前插更早的一页时按高度差回填 `scrollTop`，正在读的那句话不能跳走。
+ * 1. 打开即贴底；任何新消息都立刻跟到底部，即使会打断上翻历史；
+ * 2. 只有「前插更早一页」按高度差回填 `scrollTop`，正在读的那句话不能跳走。
+ *    历史不是新消息，不该触发贴底，否则上翻功能会立刻把自己顶回底部。
  */
 export function ChatLog({ messages, history, open, compact, onLoadHistory }: ChatLogProps) {
   const listRef = useRef<HTMLDivElement>(null);
-  /** 贴底标志用 ref：滚动回调里要立刻可读，不必等一次渲染 */
-  const atBottomRef = useRef(true);
-  const [atBottom, setAtBottom] = useState(true);
-  const [newCount, setNewCount] = useState(0);
   const scrollHeightRef = useRef(0);
   const firstKeyRef = useRef<string | null>(null);
   const lastKeyRef = useRef<string | null>(null);
-  const countRef = useRef(0);
 
-  // 打开面板一律贴底：从最新处开始读，而不是接着上次翻到的地方
-  useEffect(() => {
+  // 打开面板一律贴底：从最新处开始读，而不是接着上次翻到的地方。
+  // 用 layout effect 在绘制前落位，避免看见一帧旧位置；宽度/字体在首帧后可能再变，
+  // 再补一次 rAF 校正，保证「每次打开都在最下方」。
+  useLayoutEffect(() => {
     if (!open) return;
     const node = listRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
     scrollHeightRef.current = node.scrollHeight;
-    atBottomRef.current = true;
-    setAtBottom(true);
-    setNewCount(0);
+    const frame = requestAnimationFrame(() => {
+      const current = listRef.current;
+      if (!current) return;
+      current.scrollTop = current.scrollHeight;
+      scrollHeightRef.current = current.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [open]);
 
-  useEffect(() => {
+  // 消息变化：首尾条目身份判断，不依赖长度——200 条封顶后长度恒定，
+  // 按「有没有变长」判断会让新消息永远滚不到底。
+  useLayoutEffect(() => {
     const firstKey = messages.length > 0 ? entryKey(messages[0]!) : null;
     const lastKey = messages.length > 0 ? entryKey(messages[messages.length - 1]!) : null;
-    const grew = messages.length > countRef.current;
-    const prepended = firstKeyRef.current !== null && firstKeyRef.current !== firstKey;
-    const appended = lastKeyRef.current !== lastKey;
+    const previousFirst = firstKeyRef.current;
+    const previousLast = lastKeyRef.current;
     const previousHeight = scrollHeightRef.current;
 
     firstKeyRef.current = firstKey;
     lastKeyRef.current = lastKey;
-    countRef.current = messages.length;
 
     const node = listRef.current;
     if (!node) return;
     const height = node.scrollHeight;
-    if (!open) {
+
+    // 首次挂载由上面的 open effect 负责落位，这里只记录基准
+    if (previousFirst === null && previousLast === null) {
+      node.scrollTop = height;
       scrollHeightRef.current = height;
       return;
     }
-    if (prepended && grew) {
+
+    // 只有「尾部没变、头部前移」才是历史前插：按高度差回填，阅读位置不动。
+    // 其余情况（追加、整表替换、前插同时夹带新消息）一律贴底。
+    if (firstKey !== previousFirst && lastKey === previousLast) {
       node.scrollTop += height - previousHeight;
-    } else if (appended && grew) {
-      if (atBottomRef.current) node.scrollTop = height;
-      else setNewCount((count) => count + 1);
+    } else {
+      node.scrollTop = height;
     }
     scrollHeightRef.current = height;
   }, [messages, open]);
@@ -109,10 +113,6 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
   const handleScroll = () => {
     const node = listRef.current;
     if (!node) return;
-    const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < BOTTOM_TOLERANCE;
-    atBottomRef.current = bottom;
-    setAtBottom(bottom);
-    if (bottom) setNewCount(0);
     // 加载中 / 没有更多 / 还没有游标都直接跳过，滚动抖动不该连发请求
     if (
       node.scrollTop < TOP_TRIGGER &&
@@ -123,17 +123,6 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
     ) {
       onLoadHistory(history.cursor);
     }
-  };
-
-  const jumpToLatest = () => {
-    const node = listRef.current;
-    if (!node) return;
-    const reduced =
-      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    node.scrollTo({ top: node.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
-    atBottomRef.current = true;
-    setAtBottom(true);
-    setNewCount(0);
   };
 
   // 一条聊天都没有时，「没有更早的消息了」没有意义，别在空频道里故意提醒用户翻不动
@@ -155,19 +144,19 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
         }`}
       >
         {history.loading && (
-          <p role="status" className="flex items-center gap-2 font-mono text-[9px] text-mist-500">
+          <p role="status" className="flex items-center gap-2 font-mono text-[9px] text-mist-400">
             <span className="h-3 w-0.5 animate-pulse bg-mint-400" aria-hidden />
             正在加载更早的消息…
           </p>
         )}
         {!history.loading && hasChat && !history.hasMore && (
-          <p role="status" className="text-center font-mono text-[9px] tracking-[0.14em] text-mist-500">
+          <p role="status" className="text-center font-mono text-[9px] tracking-[0.14em] text-mist-400">
             没有更早的消息了
           </p>
         )}
 
         {messages.length === 0 && (
-          <div className="space-y-1.5 font-mono text-[11px] leading-relaxed text-mist-500">
+          <div className="space-y-1.5 font-mono text-[11px] leading-relaxed text-mist-400">
             <p>频道很安静。按 Enter 说点什么，附近 900px 内的牛马都能看到。</p>
             <p className="text-[10px]">有人进园、离园，或你在岗满 30 分钟，这里会自动播报。</p>
           </div>
@@ -186,7 +175,7 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
               <Fragment key={entryKey(message)}>
                 {divider && <HistoryDivider />}
                 <p className="flex items-baseline gap-1.5 font-mono text-[10px] leading-relaxed text-mist-400">
-                  <span className="shrink-0 tabular-nums text-mist-500" title={full}>
+                  <span className="shrink-0 tabular-nums text-mist-400" title={full}>
                     {time}
                   </span>
                   <span className={`shrink-0 ${marker.tone}`} aria-hidden>
@@ -202,7 +191,7 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
             <Fragment key={entryKey(message)}>
               {divider && <HistoryDivider />}
               <p className="text-[12px] leading-relaxed">
-                <span className="mr-1.5 font-mono text-[9px] tabular-nums text-mist-500" title={full}>
+                <span className="mr-1.5 font-mono text-[9px] tabular-nums text-mist-400" title={full}>
                   {time}
                 </span>
                 <span
@@ -220,17 +209,6 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
           );
         })}
       </div>
-
-      {!atBottom && (
-        <button
-          type="button"
-          onClick={jumpToLatest}
-          className="absolute bottom-2 right-2 flex cursor-pointer items-center gap-1 border-2 border-mint-400 bg-ink-950/95 px-2 py-1 font-mono text-[9px] tabular-nums text-mint-400 backdrop-blur-sm transition-colors hover:bg-mint-400 hover:text-ink-950"
-        >
-          <ArrowDown className="h-3 w-3" aria-hidden />
-          {newCount > 0 ? `${newCount} 条新消息` : '回到最新'}
-        </button>
-      )}
     </div>
   );
 }
@@ -239,7 +217,7 @@ function HistoryDivider() {
   return (
     <p
       role="separator"
-      className="flex items-center gap-2 py-0.5 font-mono text-[9px] tracking-[0.14em] text-mist-500"
+      className="flex items-center gap-2 py-0.5 font-mono text-[9px] tracking-[0.14em] text-mist-400"
     >
       <span className="h-px flex-1 bg-ink-600" aria-hidden />
       以上为进入园区前的消息

@@ -35,7 +35,8 @@ function rectsOverlap(a: SolidRect, b: { x: number; y: number; w: number; h: num
 
 describe('座位布局', () => {
   it('座位 id 从 1 连续编号，seatById 可反查', () => {
-    expect(seats.length).toBeGreaterThanOrEqual(40);
+    // ADR-0044：四边散布的工位删除后，座位只剩工作区 8 + 会议 6 + 马桶 4 + 宿舍 7
+    expect(seats.length).toBeGreaterThanOrEqual(20);
     seats.forEach((seat, index) => {
       expect(seat.id).toBe(index + 1);
       expect(seatById(seat.id)).toBe(seat);
@@ -94,18 +95,18 @@ describe('座位布局', () => {
     }
   });
 
-  it('休息室与工作区的门都能穿过', () => {
-    // 休息室南墙 y 3230–3240 开门（x 3130–3190），从室内向北岸横路走
-    expect(resolveMotion(3160, 3190, 3160, 3300).y).toBeGreaterThan(3240);
-    // 工作区西墙 x 5100–5110 开门，从办公区一侧向东进屋
-    expect(resolveMotion(5080, 3790, 5160, 3790).x).toBeGreaterThan(5110);
+  it('宿舍区与卫生间的北门都能穿过', () => {
+    // 宿舍区北墙 y 4356–4366、门洞 x 3536–3596：从室内向北走
+    expect(resolveMotion(3566, 4400, 3566, 4330).y).toBeLessThan(4356);
+    // 卫生间北墙同一条 y、门洞 x 4596–4656
+    expect(resolveMotion(4626, 4400, 4626, 4330).y).toBeLessThan(4356);
   });
 
-  it('会议室与卫生间的南门都能穿过', () => {
-    // 会议室南墙 y 5450–5460、门洞 x 3430–3490（桌子东侧的走道）：从室内向南出门
-    expect(resolveMotion(3460, 5440, 3460, 5500).y).toBeGreaterThan(5460);
-    // 卫生间南墙同一条 y、门洞 x 4450–4510，洗手台已贴墙让开门口
-    expect(resolveMotion(4480, 5440, 4480, 5500).y).toBeGreaterThan(5460);
+  it('会议室南门能穿过，工作区没有墙', () => {
+    // 会议室南墙 y 3826–3836、门洞 x 4726–4786：从室内向南出门
+    expect(resolveMotion(4756, 3790, 4756, 3900).y).toBeGreaterThan(3836);
+    // 工作区是开放区：从南侧草地直接走进木地板，不存在门洞
+    expect(resolveMotion(3566, 3900, 3566, 3770).y).toBeLessThan(3836);
   });
 });
 
@@ -151,10 +152,16 @@ describe('座位朝向与家具一致', () => {
     }
   });
 
-  it('四排工位覆盖四个朝向：渲染端四张贴图都有真实座位在用', () => {
+  it('工作区两排背靠背：只有上与下两个朝向，椅子在中间相对', () => {
     const facings = new Set(chairs.map((seat) => seat.facing));
-    for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
-      expect(facings.has(facing)).toBe(true);
+    expect(facings).toEqual(new Set([DIRECTION.Up, DIRECTION.Down]));
+    // 每条纵向列都有一对上下朝向的椅子，且两排桌面朝相反方向（ADR-0044）
+    const xs = [...new Set(chairs.map((seat) => seat.x))];
+    expect(xs).toHaveLength(4);
+    for (const x of xs) {
+      const column = chairs.filter((seat) => seat.x === x);
+      expect(column).toHaveLength(2);
+      expect(new Set(column.map((seat) => seat.facing))).toEqual(new Set([DIRECTION.Up, DIRECTION.Down]));
     }
   });
 
@@ -182,7 +189,7 @@ describe('座位朝向与家具一致', () => {
     expect([DIRECTION.Left, DIRECTION.Right]).toContain(beds[0]!.facing as Direction);
   });
 
-  it('休息室的凳子面朝南侧茶几，而不是朝向随机', () => {
+  it('宿舍区的凳子面朝南侧茶几，而不是朝向随机', () => {
     const stools = seats.filter((seat) => seat.kind === 'stool');
     expect(stools.length).toBeGreaterThanOrEqual(2);
     const tables = props.filter((prop) => prop.kind === 'sideTable');
@@ -207,9 +214,14 @@ describe('地图碰撞与装饰', () => {
     }
   });
 
-  it('南北门通道不被任何碰撞体挡住', () => {
-    const lane = { x: 4032, y: 3404, w: 128, h: 1384 };
-    for (const solid of solids) expect(rectsOverlap(solid, lane)).toBe(false);
+  it('南北通道与东西通道不被任何碰撞体挡住', () => {
+    const lanes = [
+      { x: 4032, y: 3404, w: 128, h: 1312 },
+      { x: 3336, y: 4032, w: 1520, h: 128 },
+    ];
+    for (const lane of lanes) {
+      for (const solid of solids) expect(rectsOverlap(solid, lane)).toBe(false);
+    }
   });
 
   it('每张工位桌的碰撞盒就是它的朝向占地', () => {
@@ -254,8 +266,8 @@ describe('地图碰撞与装饰', () => {
     }
   });
 
-  it('研发园与南向两栋新房间归入各自区域', () => {
-    for (const name of ['会议室', '卫生间', '研发园', '工作区', '休息室']) {
+  it('四角房间与南侧庭院归入各自区域', () => {
+    for (const name of ['会议室', '卫生间', '研发园', '工作区', '宿舍区']) {
       expect(WORLD_LAYOUT.regions.find((region) => region.name === name)).toBeDefined();
     }
   });

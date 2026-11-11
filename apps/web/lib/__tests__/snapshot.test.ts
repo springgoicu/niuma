@@ -5,6 +5,7 @@ import {
   SNAPSHOT_VERSION,
   clearSnapshot,
   loadSnapshot,
+  resumeForPark,
   saveSnapshot,
   toSnapshotPatch,
 } from '../game/snapshot';
@@ -118,6 +119,48 @@ describe('session snapshot', () => {
       JSON.stringify({ v: SNAPSHOT_VERSION, savedAt: 1, x: Number.NaN, y: 20, direction: 0, pose: 0, seatId: 0 }),
     );
     expect(loadSnapshot(storage)).toBeNull();
+  });
+});
+
+describe('resumeForPark', () => {
+  it('returns the landing spot for the park it was written in', () => {
+    const storage = memoryStorage();
+    saveSnapshot({ ...HOME, park: 'a' }, storage);
+
+    const resume = resumeForPark(loadSnapshot(storage), 'a');
+    expect(resume).toEqual({
+      x: HOME.x,
+      y: HOME.y,
+      direction: HOME.direction,
+      pose: HOME.pose,
+      seatId: HOME.seatId,
+    });
+  });
+
+  it('drops the landing spot when the player switched parks', () => {
+    const storage = memoryStorage();
+    saveSnapshot({ ...HOME, park: 'a' }, storage);
+    expect(resumeForPark(loadSnapshot(storage), 'b')).toBeUndefined();
+  });
+
+  it('treats a snapshot without a park as not matching, so old saves start at the gate', () => {
+    const storage = memoryStorage();
+    saveSnapshot(HOME, storage);
+    expect(loadSnapshot(storage)!.park).toBeUndefined();
+    expect(resumeForPark(loadSnapshot(storage), 'a')).toBeUndefined();
+  });
+
+  it('returns undefined when there is nothing stored', () => {
+    expect(resumeForPark(null, 'a')).toBeUndefined();
+  });
+
+  it('keeps the park across a partial write so the position is never orphaned', () => {
+    const storage = memoryStorage();
+    saveSnapshot({ ...HOME, park: 'b' }, storage);
+    saveSnapshot({ seatId: 0 }, storage);
+
+    expect(loadSnapshot(storage)!.park).toBe('b');
+    expect(resumeForPark(loadSnapshot(storage), 'b')!.x).toBeCloseTo(HOME.x, 3);
   });
 });
 
