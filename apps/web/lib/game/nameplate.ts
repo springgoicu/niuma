@@ -1,6 +1,11 @@
 'use client';
 
-import { MAX_NAME_DISPLAY_UNITS, truncateToDisplayWidth, type CharacterAppearance } from '@niuma/shared-types';
+import {
+  MAX_NAME_DISPLAY_UNITS,
+  MAX_STATUS_DISPLAY_UNITS,
+  truncateToDisplayWidth,
+  type CharacterAppearance,
+} from '@niuma/shared-types';
 
 /**
  * 昵称与聊天气泡的纵向几何：唯一真相。
@@ -26,6 +31,16 @@ export function nameplateText(name: string, maxUnits: number = MAX_NAME_DISPLAY_
   return truncateToDisplayWidth(name.trim(), maxUnits);
 }
 
+/**
+ * 头顶状态的显示文本：与协议同一份 16 显示宽预算，超宽换省略号。
+ *
+ * 协议层已经截过一刀；这里再截是防御旧包与自造包——
+ * 一条 200 字的状态足以把整屏的名字连成一片。
+ */
+export function statusLabelText(status: string, maxUnits: number = MAX_STATUS_DISPLAY_UNITS): string {
+  return truncateToDisplayWidth(status.trim(), maxUnits);
+}
+
 /** 裸头：头顶再留 1 纹素 */
 const CLEARANCE_BARE = 1;
 /** 牛角 / 马鬃尖端高出头顶约 4.8 */
@@ -36,6 +51,8 @@ const CLEARANCE_HAIR = 6;
 const CLEARANCE_HEADWEAR = 11;
 /** 昵称上沿到气泡底边的固定间隙 */
 const BUBBLE_GAP = 2;
+/** 状态行底边与昵称上沿之间的间隙：两行文字要能一眼分开，又不能拱出一个身位 */
+export const STATUS_GAP = 2;
 /** manifest 缺锚点时的兜底：实测头顶（含跳跃弹跳）在脚底上方 50 纹素，绝不退回脚底 */
 const FALLBACK_HEAD_TOP = -50;
 
@@ -89,9 +106,30 @@ export function nameBottomY(headTopY: number, appearance: CharacterAppearance): 
 }
 
 /**
- * 气泡容器的顶边：气泡整体落在昵称上沿之外，两者永不重叠。
- * 传入的是昵称底边与测量后的文字高度，避免几何模块反过来依赖渲染对象。
+ * 状态行底边（相对脚底原点，供 anchor.y = 1 直接使用）。
+ * 状态永远在昵称**上方**：昵称紧贴头顶，再往头顶方向塞字会压住帽檐。
  */
-export function bubbleTopY(nameBottom: number, nameHeight: number, bubbleHeight: number): number {
-  return nameBottom - nameHeight - BUBBLE_GAP - bubbleHeight;
+export function statusBottomY(nameBottom: number, nameHeight: number): number {
+  return nameBottom - nameHeight - STATUS_GAP;
+}
+
+/**
+ * 状态行给气泡让出的高度：没有状态时是 0，气泡可以贴着昵称。
+ * 传的是测量后的状态文字高度——空串按 0 处理，不占位。
+ */
+export function statusStackHeight(statusHeight: number): number {
+  return statusHeight > 0 ? STATUS_GAP + statusHeight : 0;
+}
+
+/**
+ * 气泡容器的顶边：气泡整体落在昵称（以及它上方的状态行）之外，永不重叠。
+ * `stackHeight` 是昵称之上已经占掉的高度（目前只来自状态行），默认 0 时行为与旧版一致。
+ */
+export function bubbleTopY(
+  nameBottom: number,
+  nameHeight: number,
+  bubbleHeight: number,
+  stackHeight = 0,
+): number {
+  return nameBottom - nameHeight - stackHeight - BUBBLE_GAP - bubbleHeight;
 }

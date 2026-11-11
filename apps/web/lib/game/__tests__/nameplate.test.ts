@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'bun:test';
-import { DEFAULT_APPEARANCE, displayWidth, MAX_NAME_DISPLAY_UNITS, type CharacterAppearance } from '@niuma/shared-types';
+import {
+  DEFAULT_APPEARANCE,
+  displayWidth,
+  MAX_NAME_DISPLAY_UNITS,
+  MAX_STATUS_DISPLAY_UNITS,
+  type CharacterAppearance,
+} from '@niuma/shared-types';
 import {
   bubbleTopY,
   headTopYOf,
   nameBottomY,
   nameClearanceFor,
   nameplateText,
+  statusBottomY,
+  statusLabelText,
+  statusStackHeight,
   NAME_STROKE_WIDTH,
+  STATUS_GAP,
 } from '../nameplate';
 
 /** 锚点结构同 manifest.cosmeticAnchors：物种 → 朝向 → 帧列 → 类别 */
@@ -120,5 +130,40 @@ describe('气泡堆叠', () => {
   it('气泡变高时只向上生长，底边不动', () => {
     const base = bubbleTopY(-50, 12, 20) + 20;
     expect(bubbleTopY(-50, 12, 60) + 60).toBe(base);
+  });
+
+  it('没有状态时堆叠高度为 0，气泡几何与旧版逐像素一致', () => {
+    expect(statusStackHeight(0)).toBe(0);
+    expect(bubbleTopY(-50, 12, 24, 0)).toBe(bubbleTopY(-50, 12, 24));
+  });
+
+  it('有状态时气泡整体再上移「状态高度 + 间隙」，不会压在状态上', () => {
+    const statusHeight = 10;
+    const withStatus = bubbleTopY(-50, 12, 24, statusStackHeight(statusHeight));
+    const without = bubbleTopY(-50, 12, 24, 0);
+    expect(without - withStatus).toBe(statusHeight + STATUS_GAP);
+    // 气泡底边仍严格高于状态行上沿
+    const statusTop = statusBottomY(-50, 12) - statusHeight;
+    expect(withStatus + 24).toBeLessThan(statusTop);
+  });
+});
+
+describe('状态行', () => {
+  it('状态行贴在昵称上沿之外，不会被昵称压住', () => {
+    const nameBottom = -50;
+    const nameHeight = 12;
+    const bottom = statusBottomY(nameBottom, nameHeight);
+    expect(bottom).toBe(nameBottom - nameHeight - STATUS_GAP);
+    expect(bottom).toBeLessThan(nameBottom - nameHeight);
+  });
+
+  it('状态文本同样截到 16 显示宽，空串表示不显示', () => {
+    expect(statusLabelText('摸鱼中🐟')).toBe('摸鱼中🐟');
+    // 省略号也吃预算，截断后可能停在 15 宽：只要不超 16，就不会横跨身位
+    expect(displayWidth(statusLabelText('摸鱼中🐟摸鱼中🐟摸'))).toBeLessThanOrEqual(
+      MAX_STATUS_DISPLAY_UNITS,
+    );
+    expect(displayWidth(statusLabelText('🐟'.repeat(9)))).toBeLessThanOrEqual(MAX_STATUS_DISPLAY_UNITS);
+    expect(statusLabelText('   ')).toBe('');
   });
 });

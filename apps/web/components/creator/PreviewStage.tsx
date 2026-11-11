@@ -93,7 +93,7 @@ export function PreviewStage({ className = '' }: { className?: string }) {
   }, [direction]);
 
   return (
-    <section className={`panel relative flex min-h-0 flex-1 flex-col overflow-hidden xl:min-h-[540px] ${className}`}>
+    <section className={`panel relative flex min-h-0 flex-1 flex-col overflow-hidden xl:min-h-[440px] ${className}`}>
       {/* 手机端把 44px 让给画布：标题条隐藏，只留右上角浮动读数 */}
       <header className="hidden shrink-0 items-center justify-between gap-3 border-b border-ink-700/80 px-5 py-3 sm:flex [@media(max-height:500px)]:hidden">
         <div className="flex items-center gap-2.5">

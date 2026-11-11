@@ -12,6 +12,8 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  // 输入法弹起时让布局视口跟着缩：摇杆与动作盘随可视视口上移，不被键盘盖住
+  interactiveWidget: 'resizes-content',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

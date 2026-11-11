@@ -6,34 +6,53 @@ import { POSE } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { actionPresentation } from '@/lib/game/actions';
 import type { ActionKey } from '@/lib/game/input';
-
-/** 摇杆死区：小于该比例的推动视为静止，避免拇指轻碰就滑步 */
-const DEAD_ZONE = 0.18;
+import { STICK_BASE, STICK_KNOB, STICK_RADIUS, stickKnob, stickVector } from '@/lib/game/joystick';
 
 interface JoystickProps {
   onMove: (x: number, y: number) => void;
+  /** 落下拇指开始移动：宿主借此收起到聊天 / 状态面板，把画面让给角色 */
+  onEngage?: () => void;
+  /** 轻点（没有拖动）时把舞台局部坐标交给宿主做角色点选 */
+  onTap?: (stageX: number, stageY: number) => void;
   /** 舞台被 CSS 旋转 90° 时，屏幕坐标需要换算回舞台坐标 */
   rotated?: boolean;
 }
 
-/** 左下角虚拟摇杆：输出 -1..1 的方向，松手即回零 */
-export function Joystick({ onMove, rotated = false }: JoystickProps) {
-  const padRef = useRef<HTMLDivElement>(null);
+/** 轻点判定：位移超过 10px 或按住超过 320ms 都算拖动，避免选中抢走走位 */
+const TAP_SLOP = 10;
+const TAP_HOLD_MS = 320;
+
+/**
+ * 左半屏浮动摇杆：在热区内任意落点按下即在落点生成摇杆。
+ *
+ * 拇指不用低头找固定的 124px 圆；松手立即回零并淡出。
+ * 指针位移只写 `ref.style.transform` 并直接算向量，不触发 React 渲染，
+ * 120Hz 触摸采样下也不会每帧跑一次布局。
+ */
+export function Joystick({ onMove, onEngage, onTap, rotated = false }: JoystickProps) {
+  const knobRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<number | null>(null);
-  const [knob, setKnob] = useState({ x: 0, y: 0 });
+  const centerRef = useRef({ x: 0, y: 0 });
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
+  const onTapRef = useRef(onTap);
+  onTapRef.current = onTap;
+  /** 一次按下的轻点判定状态：位移与时长任一超限就不再算点选 */
+  const tapRef = useRef({ clientX: 0, clientY: 0, at: 0, dragging: false });
+
+  const [active, setActive] = useState(false);
+  const [origin, setOrigin] = useState({ x: 0, y: 0 });
 
   const release = useCallback(() => {
+    if (pointerRef.current === null) return;
     pointerRef.current = null;
-    setKnob({ x: 0, y: 0 });
+    setActive(false);
+    if (knobRef.current) knobRef.current.style.transform = 'translate(-50%, -50%)';
     onMoveRef.current(0, 0);
   }, []);
 
   useEffect(() => {
-    const reset = () => {
-      if (pointerRef.current !== null) release();
-    };
+    const reset = () => release();
     const onVisibility = () => {
       if (document.hidden) reset();
     };
@@ -50,80 +69,109 @@ export function Joystick({ onMove, rotated = false }: JoystickProps) {
 
   // 旋转切换时，正在进行的拖动已无意义
   useEffect(() => {
-    if (pointerRef.current !== null) release();
+    release();
   }, [rotated, release]);
 
   const update = (clientX: number, clientY: number) => {
-    const pad = padRef.current;
-    if (!pad) return;
-    const rect = pad.getBoundingClientRect();
-    const radius = Math.max(rect.width, rect.height) / 2;
-    const sx = clientX - (rect.left + rect.width / 2);
-    const sy = clientY - (rect.top + rect.height / 2);
-    let dx = rotated ? sy : sx;
-    let dy = rotated ? -sx : sy;
-    const length = Math.hypot(dx, dy);
-    if (length > radius) {
-      dx = (dx / length) * radius;
-      dy = (dy / length) * radius;
+    const sx = clientX - centerRef.current.x;
+    const sy = clientY - centerRef.current.y;
+    const knob = stickKnob(sx, sy);
+    if (knobRef.current) {
+      knobRef.current.style.transform = `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))`;
     }
-    const nx = dx / radius;
-    const ny = dy / radius;
-    const magnitude = Math.hypot(nx, ny);
-    let x = 0;
-    let y = 0;
-    if (magnitude > DEAD_ZONE) {
-      const scale = (magnitude - DEAD_ZONE) / (1 - DEAD_ZONE) / magnitude;
-      x = nx * scale;
-      y = ny * scale;
-    }
-    setKnob({ x: dx, y: dy });
-    onMove(x, y);
+    const vector = stickVector(sx, sy, rotated);
+    onMoveRef.current(vector.x, vector.y);
   };
 
   return (
     <div
-      ref={padRef}
       role="application"
-      aria-label="移动摇杆"
-      className="pointer-events-auto no-callout relative h-[124px] w-[124px] shrink-0 touch-none select-none rounded-full border-2 border-ink-600 bg-ink-900/80 backdrop-blur-sm"
+      aria-label="移动摇杆：左半屏任意位置按下并拖动"
+      data-no-immersive
+      className="pointer-events-auto absolute inset-y-0 left-0 w-[54%] touch-none select-none"
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
         if (pointerRef.current !== null) return;
         event.preventDefault();
+        // 左半屏是摇杆热区，不会冒泡到舞台：展开的聊天面板要在这里顺手收起
+        onEngage?.();
         pointerRef.current = event.pointerId;
         event.currentTarget.setPointerCapture(event.pointerId);
-        update(event.clientX, event.clientY);
+        centerRef.current = { x: event.clientX, y: event.clientY };
+        tapRef.current = { clientX: event.clientX, clientY: event.clientY, at: performance.now(), dragging: false };
+        // offset 是热区（舞台局部坐标）里的落点：旋转舞台上也不会把摇杆画到别处
+        const native = event.nativeEvent;
+        setOrigin({ x: native.offsetX, y: native.offsetY });
+        setActive(true);
+        onMoveRef.current(0, 0);
       }}
       onPointerMove={(event: ReactPointerEvent<HTMLDivElement>) => {
         if (pointerRef.current !== event.pointerId) return;
+        const tap = tapRef.current;
+        if (!tap.dragging) {
+          const dx = event.clientX - tap.clientX;
+          const dy = event.clientY - tap.clientY;
+          if (dx * dx + dy * dy > TAP_SLOP * TAP_SLOP) tap.dragging = true;
+        }
         update(event.clientX, event.clientY);
       }}
       onPointerUp={(event) => {
-        if (pointerRef.current === event.pointerId) release();
+        if (pointerRef.current !== event.pointerId) return;
+        const tap = tapRef.current;
+        // 没拖动且抬手够快：这次按下只是想看人，不是想走位
+        if (!tap.dragging && performance.now() - tap.at <= TAP_HOLD_MS) {
+          const native = event.nativeEvent;
+          onTapRef.current?.(native.offsetX, native.offsetY);
+        }
+        release();
       }}
       onPointerCancel={(event) => {
+        tapRef.current.dragging = true;
         if (pointerRef.current === event.pointerId) release();
       }}
       onLostPointerCapture={(event) => {
         if (pointerRef.current === event.pointerId) release();
       }}
     >
-      <div className="pointer-events-none absolute inset-[30px] rounded-full border border-dashed border-ink-600" />
+      {/* 未按下：左下角留一枚虚线基座作提示，不占拇指的落点 */}
       <div
-        className="pointer-events-none absolute left-1/2 top-1/2 h-[44px] w-[44px] rounded-full border-2 border-mint-400 bg-mint-400/25 shadow-[0_0_12px_rgba(94,234,212,0.35)]"
-        style={{ transform: `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))` }}
-      />
+        aria-hidden
+        className={`pointer-events-none absolute bottom-6 left-6 grid place-items-center rounded-full border-2 border-dashed border-ink-600/80 bg-ink-900/35 transition-opacity duration-150 ${
+          active ? 'opacity-0' : 'opacity-100'
+        }`}
+        style={{ width: STICK_BASE, height: STICK_BASE }}
+      >
+        <span className="font-mono text-[9px] tracking-[0.2em] text-mist-500">移动</span>
+      </div>
+
+      {/* 按下：摇杆在落点生成，松手淡出（元素常挂载，ref 不会在拖动中途丢失） */}
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-ink-600 bg-ink-900/75 backdrop-blur-sm transition-opacity duration-150 ${
+          active ? 'opacity-100' : 'opacity-0'
+        }`}
+        style={{ width: STICK_BASE, height: STICK_BASE, left: origin.x, top: origin.y }}
+      >
+        <div
+          className="absolute rounded-full border border-dashed border-ink-600"
+          style={{ inset: (STICK_BASE - STICK_RADIUS * 2) / 2 }}
+        />
+        <div
+          ref={knobRef}
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-mint-400 bg-mint-400/25 shadow-[0_0_12px_rgba(94,234,212,0.35)]"
+          style={{ width: STICK_KNOB, height: STICK_KNOB }}
+        />
+      </div>
     </div>
   );
 }
 
 const ACTION_BUTTONS: Array<{ label: string; action: ActionKey; Icon: typeof Armchair }> = [
+  { label: '跳', action: 'jump', Icon: Rabbit },
+  { label: '招手', action: 'wave', Icon: Hand },
+  { label: '叫唤', action: 'emote', Icon: Music4 },
   { label: '坐下', action: 'sit', Icon: Armchair },
   { label: '躺平', action: 'lie', Icon: Sandwich },
-  { label: '叫唤', action: 'emote', Icon: Music4 },
-  { label: '打招呼', action: 'wave', Icon: Hand },
-  { label: '跳', action: 'jump', Icon: Rabbit },
   { label: '互动', action: 'interact', Icon: Coffee },
 ];
 
@@ -132,7 +180,17 @@ interface TouchActionsProps {
   onChat: () => void;
 }
 
-/** 右下角动作按钮：按下即触发，与键盘 Z/X/C/E/Space/F 一一对应 */
+/** 轻震动反馈：支持的设备给一记 8ms，不支持就静默跳过 */
+function haptic(): void {
+  navigator.vibrate?.(8);
+}
+
+/**
+ * 右下动作盘：3 列 × 2 行 + 独立的打字键。
+ *
+ * 原来的 3×3 网格最后一格是空的，打字键挤在紧邻摇杆的左下角，误触率最高；
+ * 现在动作盘压成两排（总高从 190 降到 128），打字键单独放大到 68px 放在右手主位。
+ */
 export function TouchActions({ onAction, onChat }: TouchActionsProps) {
   const localPose = useGameUi((state) => state.localPose);
   const seated = useGameUi((state) => state.seated);
@@ -141,46 +199,51 @@ export function TouchActions({ onAction, onChat }: TouchActionsProps) {
   const state = { pose: localPose, seated, seatKind, moving: localPose === POSE.Walk };
 
   return (
-    <div className="pointer-events-auto grid grid-cols-3 gap-2 touch-none select-none">
-      {ACTION_BUTTONS.map(({ label, action, Icon }) => {
-        const view = actionPresentation(action, state);
-        const text = view.label ?? label;
-        const toggles = action === 'sit' || action === 'lie';
+    <div className="pointer-events-auto flex touch-none items-end gap-3 select-none">
+      <div className="grid grid-cols-3 gap-2">
+        {ACTION_BUTTONS.map(({ label, action, Icon }) => {
+          const view = actionPresentation(action, state);
+          const text = view.label ?? label;
+          const toggles = action === 'sit' || action === 'lie';
 
-        return (
-          <button
-            key={action}
-            type="button"
-            aria-label={text}
-            aria-pressed={toggles ? view.active : undefined}
-            aria-disabled={view.unavailable || undefined}
-            title={view.reason}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              onAction(action);
-            }}
-            className={`flex h-[58px] w-[58px] flex-col items-center justify-center gap-0.5 rounded-full border-2 backdrop-blur-sm transition-colors active:scale-95 ${
-              view.active
-                ? 'border-mint-400 bg-mint-400/15 text-mint-400'
-                : 'border-ink-600 bg-ink-900/85 text-mist-300 active:border-mint-400 active:text-mint-400'
-            } ${view.unavailable ? 'opacity-45' : ''}`}
-          >
-            <Icon className="h-4 w-4" />
-            <span className="font-mono text-[8px] tracking-[0.08em]">{text}</span>
-          </button>
-        );
-      })}
+          return (
+            <button
+              key={action}
+              type="button"
+              aria-label={text}
+              aria-pressed={toggles ? view.active : undefined}
+              aria-disabled={view.unavailable || undefined}
+              title={view.reason}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                haptic();
+                onAction(action);
+              }}
+              className={`flex h-[60px] w-[60px] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-full border-2 backdrop-blur-sm transition-colors active:scale-95 ${
+                view.active
+                  ? 'border-mint-400 bg-mint-400/15 text-mint-400'
+                  : 'border-ink-600 bg-ink-900/85 text-mist-300 active:border-mint-400 active:text-mint-400'
+              } ${view.unavailable ? 'opacity-45' : ''}`}
+            >
+              <Icon className="h-4 w-4" />
+              <span className="font-mono text-[8px] tracking-[0.08em]">{text}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <button
         type="button"
         aria-label="打字"
         onPointerDown={(event) => {
           event.preventDefault();
+          haptic();
           onChat();
         }}
-        className="flex h-[58px] w-[58px] flex-col items-center justify-center gap-0.5 rounded-full border-2 border-ink-600 bg-ink-900/85 text-mist-300 backdrop-blur-sm active:scale-95 active:border-mint-400 active:text-mint-400"
+        className="flex h-[68px] w-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-full border-2 border-mint-400/70 bg-ink-900/90 text-mint-400 backdrop-blur-sm transition-colors active:scale-95 active:bg-mint-400/15"
       >
-        <MessageSquare className="h-4 w-4" />
-        <span className="font-mono text-[8px] tracking-[0.08em]">打字</span>
+        <MessageSquare className="h-5 w-5" />
+        <span className="font-mono text-[9px] tracking-[0.08em]">打字</span>
       </button>
     </div>
   );

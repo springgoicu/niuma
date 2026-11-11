@@ -39,6 +39,28 @@ export const MAX_NAME_BYTES = 48;
  * 名字比这个宽就会横跨两个身位，压住邻座的头顶——超出的部分换省略号。
  */
 export const MAX_NAME_DISPLAY_UNITS = 16;
+/**
+ * 状态标签的长度预算：与昵称共用一把显示宽尺子，但是**独立的一份额度**。
+ * 16 显示宽 = 8 个汉字或 8 个 emoji；状态独占头顶一行，不与昵称宽度叠加。
+ */
+export const MAX_STATUS_CHARS = 16;
+/** 状态字节上限：与 HELLO / SPAWN 尾部扩展段的 u8 长度字段对齐 */
+export const MAX_STATUS_BYTES = 48;
+export const MAX_STATUS_DISPLAY_UNITS = 16;
+/**
+ * 状态扩展段的魔数。HELLO 与 SPAWN 都在尾部追加 `[0xff][statusLen u8][status]`，
+ * 旧解码器读到 0xff 会按「未知版本」整段忽略（RESUME_VERSION 恒为 1，永不撞车）。
+ */
+export const STATUS_EXTENSION_MAGIC = 0xff;
+/**
+ * SPAWN 尾部的「已在线秒数」扩展段：`[0xfe][onlineSec u32 小端]`。
+ *
+ * 0xfe 大于 MAX_STATUS_BYTES（48），不可能是合法状态长度，所以可以紧跟在可选状态段
+ * 之后按首字节窥视。没有这一段的旧服务端包与上一版逐字节相同；旧解码器读完状态后
+ * 不校验尾部，且状态长度超出剩余字节时会回退空串，天然忽略这 5 字节。
+ */
+export const ONLINE_EXTENSION_MAGIC = 0xfe;
+export const ONLINE_EXTENSION_BYTES = 5;
 export const MAX_PACKET_BYTES = 2048;
 export const MAX_ENTITIES = 1024;
 export const MAX_SYNC_ENTRIES = 255;
@@ -58,6 +80,15 @@ export const SYNC_HEADER_BYTES = 7;
  * [0] species | [1..22] 11×u16 RGB565 | [23..26] parts | [27..30] 配件索引 | [31] reserved
  */
 export const APPEARANCE_BYTES = 32;
+
+/**
+ * HELLO 尾部可选的恢复段：`[version u8][x u16][y u16][state u8][seatId u16]`。
+ *
+ * 不带这一段的帧长与旧版完全一致（压测机器人、旧客户端走原路径），
+ * 解码端按「剩余字节数」判断，不需要任何版本协商包。
+ */
+export const RESUME_VERSION = 1;
+export const RESUME_BYTES = 8;
 
 /**
  * 排队快照：op(1) + ticket(4) + position(2) + length(2) + etaSec(2) + capacity(2)

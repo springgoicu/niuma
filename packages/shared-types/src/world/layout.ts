@@ -58,6 +58,7 @@ export {
   DESK_H,
   DESK_W,
   chairOffset,
+  deskDepthOffset,
   deskFootprint,
   isSelfSolidProp,
   propSolid,
@@ -148,10 +149,64 @@ export interface WorldLayout {
 export const WORLD_CENTER = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 } as const;
 
 /**
- * 出生点散布上限，与服务端 config.spawnRadius 默认值一致。
- * 300 在 1120×936 的广场里留有余量：出生圈再大就会落到广场外。
+ * 出生中心（ADR-0036）：北门入园口，落在北向土路与门肩的空地上。
+ *
+ * 旧版以世界中心为出生圈，玩家一进场就站在办公广场正中、四面工位环之间；
+ * 现在把入场点挪到门外的迎宾区，第一眼看到的是横幅与指路牌，而不是一堵桌子。
  */
-export const SPAWN_RADIUS = 300;
+export const SPAWN_CENTER = { x: 4096, y: 3300 } as const;
+
+/**
+ * 出生点散布上限，与服务端 config.spawnRadius 默认值一致。
+ *
+ * 72 让整个出生圆完整落在北门土路与门肩（x 4024–4168 / y 3228–3372）：
+ * 再大就会穿过门洞落进工位环，或退到北湾沙滩上。北门口袋没有碰撞道具，
+ * 服务端的拒绝采样几乎一次命中，不会触发 `findFreePoint` 的兜底挪位。
+ */
+export const SPAWN_RADIUS = 72;
+
+/**
+ * 园区导览目标（ADR-0036）：北门指路牌、HUD 导览卡与测试共用这一份。
+ *
+ * 坐标取房间矩形中心；改房间位置时箭头自动跟着转，
+ * 不允许在客户端或 HUD 里再写一份同名坐标。
+ */
+export type NavTargetId = 'workroom' | 'restroom' | 'lounge' | 'meeting';
+
+export interface NavTarget {
+  readonly id: NavTargetId;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+function rectCenter(rect: WorldRect): { x: number; y: number } {
+  return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+}
+
+const NAV_SOURCES: ReadonlyArray<{ id: NavTargetId; name: string; rect: WorldRect }> = [
+  { id: 'workroom', name: '工作区', rect: WORKROOM },
+  { id: 'restroom', name: '卫生间', rect: RESTROOM },
+  { id: 'lounge', name: '休息室', rect: LOUNGE },
+  { id: 'meeting', name: '会议室', rect: MEETING_ROOM },
+];
+
+export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, rect }) => ({
+  id,
+  name,
+  ...rectCenter(rect),
+}));
+
+/**
+ * 北门迎宾地标（ADR-0036）：横幅跨门洞、指路牌立在门东肩。
+ * 只描述位置与尺寸，木料、布幡与文字由 apps/web 的 WelcomeView 决定。
+ */
+export const WELCOME_LANDMARKS = {
+  /** 横幅拱门：底边中心落在北门通道（GATE_LANE_X）正中，宽度盖住整个门洞 */
+  banner: { x: 4096, y: 3404, width: 292, height: 96 },
+  /** 指路牌：门东肩、树篱缺口外侧，脚底中心 */
+  signpost: { x: 4280, y: 3396 },
+} as const;
 
 /** 树干碰撞半径：>3 才挡得住人，<14 才能从树缝里穿过去 */
 export const TREE_TRUNK_RADIUS = 12;
@@ -719,6 +774,9 @@ const REGIONS: RegionSpec[] = [
   })),
   ...RIVERS.map((river, index) => ({ name: index === 0 ? '周报河' : '晨会溪', rect: rectExpanded(river.rect, 30) })),
   ...FOREST_RECTS.map((rect) => ({ name: '加班林', rect })),
+  // 北门入园口（ADR-0036）：从海滩到办公区北缘的一小段，含横幅与指路牌。
+  // 排在办公区之前，压在边界上时优先报「牛马园北门」。
+  { name: '牛马园北门', rect: { x: 3824, y: 3184, w: 544, h: 220 } },
   { name: '办公区', rect: OFFICE_RECT },
   { name: '会议室', rect: MEETING_ROOM },
   { name: '卫生间', rect: RESTROOM },

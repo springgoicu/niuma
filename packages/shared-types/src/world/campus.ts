@@ -229,6 +229,19 @@ export function chairOffset(facing: Direction): number {
 }
 
 /**
+ * 工位桌精灵的深度键相对桌心的偏移（ADR-0032）。
+ *
+ * 深度键 = 桌心 y + 本偏移。南北朝向取占地南边（前景边缘，与 ADR-0029 一致）；
+ * 东西朝向的桌心与座位锚点同 y（`workstation()` 只沿 x 让开座位），
+ * 若仍取南边（+44）就会把椅子（`seat.y - 1`）与坐着的人（`seat.y`）压到桌下，
+ * 因此让到它们之后再两格，形成「人 > 椅子 > 桌子」的显式全序。
+ */
+export function deskDepthOffset(facing: Direction): number {
+  const horizontal = facing === DIRECTION.Left || facing === DIRECTION.Right;
+  return horizontal ? -2 : DESK_H / 2;
+}
+
+/**
  * 工位工厂：桌子 + 屏幕朝向，椅子锚点由朝向反推。
  *
  * 「椅子永远在屏幕背面一侧」因此是构造性质，而不是靠布局手写字面量维持——

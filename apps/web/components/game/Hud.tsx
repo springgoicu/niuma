@@ -1,9 +1,24 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Activity, Cpu, Gauge, Users, Volume2, VolumeX, Wifi, WifiOff } from 'lucide-react';
+import {
+  Activity,
+  ChevronDown,
+  Cpu,
+  Gauge,
+  MapPin,
+  Pencil,
+  Timer,
+  Users,
+  Volume2,
+  VolumeX,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
+import { formatOnline } from '@/lib/game/badge';
 import { sfx } from '@/lib/game/sfx';
+import { StatusEditor } from './StatusEditor';
 
 const SFX_STORAGE_KEY = 'niuma:sfx:muted';
 
@@ -42,71 +57,272 @@ export function SfxToggle({ compact = false }: { compact?: boolean }) {
   );
 }
 
-export function PlayerCard({ name, species, compact = false }: { name: string; species: string; compact?: boolean }) {
+/** 物种标签：桌面工牌、手机折叠条与他人工牌共用，dense 用于更紧凑的一行 */
+export function SpeciesTag({ species, dense = false }: { species: string; dense?: boolean }) {
+  return (
+    <span className={`tag shrink-0 ${dense ? 'px-1 py-0 text-[9px] tracking-[0.08em]' : ''}`}>
+      {species === 'cow' ? 'cow' : 'horse'}
+    </span>
+  );
+}
+
+/**
+ * 所在地 + 在线时长：桌面常显，手机展开工牌时出现。
+ * 断线 / 未入场时时长显示 --:--，不用 00:00:00 假装刚上线。
+ */
+function BadgeMeta({
+  region,
+  onlineSec,
+  online,
+  dense = false,
+}: {
+  region: string;
+  onlineSec: number;
+  online: boolean;
+  dense?: boolean;
+}) {
+  const icon = dense ? 'h-2.5 w-2.5' : 'h-3 w-3';
+  const text = online ? formatOnline(onlineSec) : '--:--';
+  return (
+    <div
+      role="group"
+      className={`flex items-center gap-2 font-mono text-mist-500 ${
+        dense ? 'px-2.5 pb-1.5 text-[9px]' : 'mt-1 text-[10px]'
+      }`}
+      aria-label={`所在地 ${region || '园区'}，在线 ${text}`}
+    >
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        <MapPin className={`${icon} shrink-0 text-mint-400`} />
+        <span className="truncate text-mist-300">{region || '园区'}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1 tabular-nums">
+        <Timer className={`${icon} shrink-0`} />
+        {text}
+      </span>
+    </div>
+  );
+}
+
+interface CardStatsProps {
+  fps: number;
+  ping: number;
+  x: number;
+  y: number;
+  online: boolean;
+  dense?: boolean;
+}
+
+/** FPS / PING / POS：桌面常显，手机端只在展开工牌时出现 */
+function CardStats({ fps, ping, x, y, online, dense = false }: CardStatsProps) {
+  const icon = dense ? 'h-2.5 w-2.5' : 'h-3 w-3';
+  return (
+    <dl
+      className={
+        dense
+          ? 'grid grid-cols-2 gap-x-2 gap-y-1.5 font-mono text-[9px]'
+          : 'grid grid-cols-2 gap-x-3 gap-y-2 font-mono text-[10px]'
+      }
+    >
+      <div className="flex items-center justify-between gap-1">
+        <dt className="flex items-center gap-1 text-mist-500">
+          <Gauge className={icon} />
+          FPS
+        </dt>
+        <dd className="text-mist-100">{fps}</dd>
+      </div>
+      <div className="flex items-center justify-between gap-1">
+        <dt className="flex items-center gap-1 text-mist-500">
+          {online ? <Wifi className={icon} /> : <WifiOff className={`${icon} text-amber-400`} />}
+          PING
+        </dt>
+        <dd className={ping > 150 ? 'text-amber-400' : 'text-mist-100'}>{ping}ms</dd>
+      </div>
+      <div className="col-span-2 flex items-center justify-between gap-1">
+        <dt className="flex items-center gap-1 text-mist-500">
+          <Activity className={icon} />
+          POS
+        </dt>
+        <dd className="text-mist-300">
+          {x} , {y}
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
+/**
+ * 工牌上的状态行 + 下方抽出的编辑表单。
+ * 没设状态时整行是一句「设置状态…」，视觉权重压到最低，不抢名字。
+ */
+function StatusBlock({
+  statusText,
+  onStatusChange,
+  dense = false,
+  compact = false,
+}: {
+  statusText: string;
+  onStatusChange: (status: string) => void;
+  dense?: boolean;
+  compact?: boolean;
+}) {
+  const statusOpen = useGameUi((state) => state.statusOpen);
+  const setStatusOpen = useGameUi((state) => state.setStatusOpen);
+  // 打开面板时 game-ui 会顺手收起聊天，两块面板不叠在同一个角落
+  const toggle = () => setStatusOpen(!statusOpen);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={statusOpen}
+        aria-controls="status-editor"
+        title={statusText ? '修改状态' : '设置状态'}
+        data-no-immersive
+        className={`flex w-full cursor-pointer items-center gap-2 border-t-2 border-ink-700 text-left transition-colors duration-150 hover:bg-ink-800/60 ${
+          dense ? 'h-8 px-2.5' : 'h-9 px-3'
+        }`}
+      >
+        <span
+          className={`min-w-0 flex-1 truncate font-mono ${dense ? 'text-[10px]' : 'text-[11px]'} ${
+            statusText ? 'text-mint-400' : 'text-mist-500'
+          }`}
+        >
+          {statusText || '设置状态…'}
+        </span>
+        <Pencil className="h-3 w-3 shrink-0 text-mist-500" />
+      </button>
+      {statusOpen && (
+        <StatusEditor
+          value={statusText}
+          compact={compact}
+          onSave={onStatusChange}
+          onClose={() => setStatusOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+export function PlayerCard({
+  name,
+  species,
+  statusText,
+  onStatusChange,
+  compact = false,
+}: {
+  name: string;
+  species: string;
+  /** 常驻状态：空串表示还没设置 */
+  statusText: string;
+  onStatusChange: (status: string) => void;
+  compact?: boolean;
+}) {
   const fps = useGameUi((state) => state.fps);
   const ping = useGameUi((state) => state.ping);
   const x = useGameUi((state) => state.x);
   const y = useGameUi((state) => state.y);
+  const region = useGameUi((state) => state.region);
+  const onlineSec = useGameUi((state) => state.onlineSec);
   const backend = useGameUi((state) => state.backend);
   const status = useGameUi((state) => state.status);
+  const chatOpen = useGameUi((state) => state.chatOpen);
+  const setChatOpen = useGameUi((state) => state.setChatOpen);
+  /** 手机端默认只露一条名字，详情按需展开；桌面端永远展开 */
+  const [open, setOpen] = useState(false);
+  const stats = { fps, ping, x, y, online: status === 'online' };
+
+  // 聊天浮层与展开的工牌抢同一块左上角：聊天一开，工牌就退回折叠态
+  useEffect(() => {
+    if (chatOpen) setOpen(false);
+  }, [chatOpen]);
+
+  const toggle = () => {
+    if (!compact) return;
+    // 展开前先收起聊天，两块面板不同时占用左上角
+    if (!open) setChatOpen(false);
+    setOpen(!open);
+  };
+
+  if (compact) {
+    return (
+      <div className="pointer-events-auto max-w-[200px] border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          aria-controls="player-card-detail"
+          aria-label={open ? '收起工牌详情' : `${name} 的工牌，展开详情`}
+          title={open ? '收起工牌详情' : '展开工牌详情'}
+          data-no-immersive
+          className={`flex w-full items-center gap-2 text-left transition-colors ${
+            open ? 'justify-between border-b-2 border-ink-700 px-2 py-1.5' : 'h-9 px-2'
+          }`}
+        >
+          {open ? (
+            <>
+              <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.18em] text-mist-500">
+                <Cpu className="h-3 w-3 text-mint-400" />
+                工牌
+              </span>
+              <span className="flex items-center gap-1.5">
+                <SpeciesTag species={species} dense />
+                <ChevronDown className="h-3 w-3 rotate-180 text-mist-500" />
+              </span>
+            </>
+          ) : (
+            <>
+              <Cpu className="h-3.5 w-3.5 shrink-0 text-mint-400" />
+              <span className="min-w-0 flex-1 truncate font-display text-[13px] font-semibold tracking-wide text-mist-100">
+                {name}
+              </span>
+              <SpeciesTag species={species} dense />
+              <ChevronDown className="h-3 w-3 shrink-0 text-mist-500" />
+            </>
+          )}
+        </button>
+
+        <div id="player-card-detail" hidden={!open} className="w-[184px]">
+          <p className="truncate px-2.5 pt-1.5 font-display text-base font-semibold tracking-wide text-mist-100">{name}</p>
+          <BadgeMeta region={region} onlineSec={onlineSec} online={status === 'online'} dense />
+          <StatusBlock statusText={statusText} onStatusChange={onStatusChange} dense compact />
+          <div className="border-t-2 border-ink-700 px-2.5 py-2">
+            <CardStats {...stats} dense />
+          </div>
+          <div className="flex items-center justify-between border-t-2 border-ink-700 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-mist-500">
+            <span>renderer</span>
+            <span className="text-mint-400">{backend}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className={`pointer-events-auto border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm ${compact ? 'w-[190px]' : 'w-[268px]'}`}
-    >
+    <div className="pointer-events-auto w-[268px] border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm">
       <div className="flex items-center justify-between border-b-2 border-ink-700 px-3 py-2">
         <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mist-500">
           <Cpu className="h-3.5 w-3.5 text-mint-400" />
           工牌
         </span>
-        <span className="tag">{species === 'cow' ? 'cow' : 'horse'}</span>
+        <SpeciesTag species={species} />
       </div>
 
       <div className="px-3 py-3">
         <p className="truncate font-display text-xl font-semibold tracking-wide text-mist-100">{name}</p>
-        {!compact && (
-          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-mist-500">floor 03 · corridor b</p>
-        )}
+        <BadgeMeta region={region} onlineSec={onlineSec} online={status === 'online'} />
       </div>
-      {!compact && (
-        <>
 
-        <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 font-mono text-[10px]">
-          <div className="flex items-center justify-between">
-            <dt className="flex items-center gap-1 text-mist-500">
-              <Gauge className="h-3 w-3" />
-              FPS
-            </dt>
-            <dd className="text-mist-100">{fps}</dd>
-          </div>
-          <div className="flex items-center justify-between">
-            <dt className="flex items-center gap-1 text-mist-500">
-              {status === 'online' ? (
-                <Wifi className="h-3 w-3" />
-              ) : (
-                <WifiOff className="h-3 w-3 text-amber-400" />
-              )}
-              PING
-            </dt>
-            <dd className={ping > 150 ? 'text-amber-400' : 'text-mist-100'}>{ping}ms</dd>
-          </div>
-          <div className="col-span-2 flex items-center justify-between">
-            <dt className="flex items-center gap-1 text-mist-500">
-              <Activity className="h-3 w-3" />
-              POS
-            </dt>
-            <dd className="text-mist-300">
-              {x} , {y}
-            </dd>
-          </div>
-        </dl>
+      <StatusBlock statusText={statusText} onStatusChange={onStatusChange} />
+
+      <div className="mt-3">
+        <CardStats {...stats} />
+      </div>
 
       <div className="flex items-center justify-between border-t-2 border-ink-700 px-3 py-2 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500">
         <span>renderer</span>
         <span className="text-mint-400">{backend}</span>
       </div>
-        </>
-      )}
     </div>
   );
 }
@@ -117,13 +333,21 @@ export function OnlineBadge({ compact = false }: { compact?: boolean }) {
   const detail = useGameUi((state) => state.detail);
 
   return (
-    <div className="pointer-events-auto flex items-center gap-3 border-2 border-ink-600 bg-ink-900/92 px-3 py-2 backdrop-blur-sm">
+    <div
+      className={`pointer-events-auto flex items-center border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm ${
+        compact ? 'gap-1.5 px-2 py-1.5' : 'gap-3 px-3 py-2'
+      }`}
+    >
       <span
-        className={`h-2 w-2 ${status === 'online' ? 'animate-blink bg-mint-400' : 'bg-amber-400'}`}
+        className={`${compact ? 'h-1.5 w-1.5' : 'h-2 w-2'} ${status === 'online' ? 'animate-blink bg-mint-400' : 'bg-amber-400'}`}
         aria-hidden
       />
-      <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-300">
-        <Users className="h-3.5 w-3.5" />
+      <span
+        className={`flex items-center font-mono uppercase text-mist-300 ${
+          compact ? 'gap-1 text-[9px] tracking-[0.14em]' : 'gap-1.5 text-[10px] tracking-[0.18em]'
+        }`}
+      >
+        <Users className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
         视野内 {nearby}
       </span>
       {!compact && (

@@ -3,11 +3,14 @@
 import { DIRECTION, type Direction } from '@niuma/shared-types';
 
 /**
- * 工位椅的四向几何（ADR-0029）。
+ * 工位椅的四向几何（ADR-0029 / ADR-0032）。
  *
  * 椅子是实物：靠背永远在入座朝向的反侧，空椅才不会「背对桌子」。
- * 四个朝向共用 26×30 的帧与同一个锚点（`SEAT_ART.chair.sink`），
+ * 四个朝向共用 26×30 的帧与同一个锚点（椅子 sink 见 `seat-art.ts`），
  * 换朝向只换盒子，不改尺寸——否则椅子会在四个方向上来回伸缩。
+ *
+ * 座面顶面统一在帧内 `y = SEAT_TOP`：同一把椅子转 90° 不会一会儿高一会儿低，
+ * 角色坐在椅子上的抬升量（`seat-art.ts`）才能只用一套数值。
  *
  * 本模块不 import pixi：几何可单独单测，绘制留在 `props.ts`。
  */
@@ -36,10 +39,13 @@ export interface ChairArt {
 
 const FRAME = { w: 26, h: 30 } as const;
 
+/** 座面顶面在帧内的 y（四向一致）：世界高度 = 座位锚点 + sink - (帧高 - SEAT_TOP) */
+export const SEAT_TOP = 13;
+
 /** 人朝南（椅子朝南）：靠背在远侧（北），座面朝镜头 */
 const FACING_DOWN_ART: ChairArt = {
   frame: FRAME,
-  seat: { x: 4, y: 13, w: 18, h: 10 },
+  seat: { x: 4, y: SEAT_TOP, w: 18, h: 10 },
   back: { x: 6, y: 2, w: 14, h: 13 },
   highlight: { x: 8, y: 15, w: 10, h: 2 },
   stem: { x: 11, y: 23, w: 4, h: 4 },
@@ -50,9 +56,9 @@ const FACING_DOWN_ART: ChairArt = {
 /** 人朝北（椅子朝北）：镜头看到椅背，靠背落在近侧（南），座面只露一条边 */
 const FACING_UP_ART: ChairArt = {
   frame: FRAME,
-  seat: { x: 4, y: 8, w: 18, h: 10 },
-  back: { x: 6, y: 17, w: 14, h: 11 },
-  highlight: { x: 8, y: 10, w: 12, h: 2 },
+  seat: { x: 4, y: SEAT_TOP, w: 18, h: 8 },
+  back: { x: 6, y: 19, w: 14, h: 11 },
+  highlight: { x: 8, y: SEAT_TOP + 2, w: 12, h: 2 },
   stem: { x: 11, y: 26, w: 4, h: 2 },
   base: { x: 6, y: 28, w: 14, h: 2 },
   shadow: { cx: 13, cy: 29, rx: 10, ry: 2.5 },
@@ -61,10 +67,10 @@ const FACING_UP_ART: ChairArt = {
 /** 人朝西（椅子朝西）：侧视，靠背直立在东侧，座面向西伸出 */
 const FACING_LEFT_ART: ChairArt = {
   frame: FRAME,
-  seat: { x: 3, y: 15, w: 15, h: 8 },
+  seat: { x: 3, y: SEAT_TOP, w: 15, h: 8 },
   back: { x: 17, y: 5, w: 6, h: 19 },
-  highlight: { x: 5, y: 17, w: 11, h: 2 },
-  stem: { x: 10, y: 23, w: 4, h: 4 },
+  highlight: { x: 5, y: SEAT_TOP + 2, w: 11, h: 2 },
+  stem: { x: 10, y: 21, w: 4, h: 6 },
   base: { x: 6, y: 26, w: 14, h: 2 },
   shadow: { cx: 13, cy: 29, rx: 12, ry: 2.5 },
 };
@@ -72,10 +78,10 @@ const FACING_LEFT_ART: ChairArt = {
 /** 人朝东（椅子朝东）：侧视镜像，靠背直立在西侧 */
 const FACING_RIGHT_ART: ChairArt = {
   frame: FRAME,
-  seat: { x: 8, y: 15, w: 15, h: 8 },
+  seat: { x: 8, y: SEAT_TOP, w: 15, h: 8 },
   back: { x: 3, y: 5, w: 6, h: 19 },
-  highlight: { x: 10, y: 17, w: 11, h: 2 },
-  stem: { x: 10, y: 23, w: 4, h: 4 },
+  highlight: { x: 10, y: SEAT_TOP + 2, w: 11, h: 2 },
+  stem: { x: 10, y: 21, w: 4, h: 6 },
   base: { x: 6, y: 26, w: 14, h: 2 },
   shadow: { cx: 13, cy: 29, rx: 12, ry: 2.5 },
 };

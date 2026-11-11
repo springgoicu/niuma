@@ -127,15 +127,28 @@
   html {
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
+    height: 100%;
+    /* 边缘拖拽不要触发下拉刷新：全屏游戏里一次误触就是一局重开 */
+    overscroll-behavior: none;
   }
 
   body {
+    height: 100%;
     overflow-x: hidden;
+    overscroll-behavior: none;
   }
 
   button,
   a {
     touch-action: manipulation;
+  }
+
+  /* 长按输入框要能用系统选词与放大镜：覆盖 .no-callout 的继承 */
+  input,
+  textarea {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   /* iOS 聚焦 <16px 的输入框会自动放大页面 */
@@ -335,6 +348,15 @@
   .animate-scan {
     animation: scan 6s linear infinite;
   }
+
+  /* 入场欢迎条：出现时轻推一下，进度线在 5.6s 内走完（ADR-0036） */
+  .animate-welcome-in {
+    animation: welcome-in 320ms var(--ease-out-expo);
+  }
+
+  .animate-welcome-run {
+    animation: welcome-run 5.6s linear forwards;
+  }
 }
 
 @keyframes marquee {
@@ -383,6 +405,26 @@
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes welcome-in {
+  from {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-run {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
   }
 }
 

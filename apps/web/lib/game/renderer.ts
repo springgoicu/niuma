@@ -12,9 +12,19 @@ import {
 import { ISLAND, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { AmbientLight } from './ambient-light';
 import { loadAtlas, type Atlas } from './atlas';
+import { pickCharacter, type PickCandidate } from './badge';
 import { cameraFocus } from './camera';
 import { GroundFx, SHADOW_NORMAL } from './fx';
-import { bubbleTopY, headTopYOf, nameBottomY, nameplateText, NAME_STROKE_WIDTH } from './nameplate';
+import {
+  bubbleTopY,
+  headTopYOf,
+  nameBottomY,
+  nameplateText,
+  statusBottomY,
+  statusLabelText,
+  statusStackHeight,
+  NAME_STROKE_WIDTH,
+} from './nameplate';
 import { PonyRenderer } from './pony';
 import type { PonyMotion } from './pony-motion';
 import { PropsView } from './props';
@@ -23,6 +33,7 @@ import { SortLayer } from './sort-layer';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
 import { WaterFx, makeWadingTexture } from './water-fx';
+import { WelcomeView } from './welcome';
 
 /**
  * 世界倍率：1 纹素画 1.5 个 CSS 像素，角色站立 48 纹素 ≈ 72 CSS 像素（DPR 2）。
@@ -74,6 +85,20 @@ const NAME_STYLE = {
   letterSpacing: 0.4,
 };
 
+/**
+ * 状态行样式：比昵称小一号、用唯一的薄荷强调色，视觉上让位给名字。
+ *
+ * 字体栈末尾必须挂系统彩色 emoji：`JetBrains Mono` 与 `Noto Sans SC` 都没有 emoji 字形，
+ * 缺了 fallback，🍵 与 🐟 会渲染成豆腐块。emoji 由系统字体自己上色，描边只作用于文字。
+ */
+const STATUS_STYLE = {
+  fontFamily: 'JetBrains Mono, Noto Sans SC, Segoe UI Emoji, Apple Color Emoji, sans-serif',
+  fontSize: 7,
+  fill: 0x4fe3c1,
+  stroke: { color: 0x2b2118, width: 3 },
+  letterSpacing: 0.3,
+};
+
 class EntityView {
   /** 本体与阴影进 y 排序层，会被树冠正确遮挡 */
   readonly root = new Container();
@@ -81,6 +106,15 @@ class EntityView {
   readonly labels = new Container();
   readonly body: PonyRenderer;
   private readonly label: Text;
+  /**
+   * 状态行：只在真的有状态时才创建。
+   * 多数人没设状态，为每个人常备一个空 Text 等于给整屏多挂一层纹理与一次绘制调用。
+   */
+  private statusText: Text | null = null;
+  /** 状态文字高度（0 = 没有状态）：气泡据此整体上移 */
+  private statusHeight = 0;
+  /** 当前文字位图分辨率：DPR 变化时状态行要跟着重建，否则小字发虚 */
+  private textResolution: number;
   private readonly bubbleText: Text;
   private readonly bubbleBg = new Graphics();
   private readonly shadows: Texture[];
@@ -93,6 +127,8 @@ class EntityView {
   private lastWadingY = Number.NaN;
   /** 跳跃弧线的抬升纹素（0 或负值）：本体与昵称同步抬高，阴影留在地面 */
   private jumpLift = 0;
+  /** 坐在座位上时整体上移的纹素（ADR-0032）：阴影与水线留在地面，昵称同步抬高 */
+  private seatLift = 0;
   bubbleUntil = 0;
   private lastColumn = -1;
   /** 上一次的可见状态：只在翻转时才改 `renderable` */
@@ -115,11 +151,13 @@ class EntityView {
     private readonly atlas: Atlas,
     name: string,
     appearance: CharacterAppearance,
+    status: string,
     devicePxPerTexel: number,
     shadows: Texture[],
     wadingTexture: Texture,
     private readonly onFootfall: (x: number, y: number, wading: boolean) => void,
   ) {
+    this.textResolution = devicePxPerTexel;
     // 接触阴影先入容器：它永远压在所有角色图层之下。
     // 阴影是 root 的直接子节点，角色本体的起伏只作用在 body.container 上，
     // 所以人抬起来时影子不会跟着飞。
@@ -140,6 +178,20 @@ class EntityView {
     this.label = new Text({ text: nameplateText(name), style: NAME_STYLE, resolution: devicePxPerTexel });
     this.label.anchor.set(0.5, 1);
     this.label.position.set(0, this.nameBottom);
+
+    // 有状态才建第二行：没设置的人与上一版逐帧一致
+    const statusLabel = statusLabelText(status);
+    if (statusLabel.length > 0) {
+      const statusText = new Text({
+        text: statusLabel,
+        style: STATUS_STYLE,
+        resolution: devicePxPerTexel,
+      });
+      statusText.anchor.set(0.5, 1);
+      statusText.position.set(0, statusBottomY(this.nameBottom, this.label.height));
+      this.statusText = statusText;
+      this.statusHeight = Math.ceil(statusText.height);
+    }
 
     this.bubbleText = new Text({
       text: '',
@@ -165,20 +217,35 @@ class EntityView {
     await this.body.build();
     // 水线覆盖层压在 body 之上：腿在水下，上半身仍是干的
     this.root.addChild(this.shadow, this.body.container, this.wading);
+    // 状态行先入层：它永远在昵称与气泡之上，层级顺序不影响永不重叠的几何
+    if (this.statusText) this.labels.addChild(this.statusText);
     this.labels.addChild(this.label, this.bubble);
   }
 
   /** DPR 变化时按新的设备纹素重建文字位图，否则文字会被拉伸到 2 倍而发虚 */
   setTextResolution(devicePxPerTexel: number): void {
     if (this.label.resolution === devicePxPerTexel) return;
+    this.textResolution = devicePxPerTexel;
     this.label.resolution = devicePxPerTexel;
     this.bubbleText.resolution = devicePxPerTexel;
+    if (this.statusText) this.statusText.resolution = devicePxPerTexel;
   }
 
   setPosition(x: number, y: number): void {
     this.root.position.set(x, y);
-    // 昵称与气泡跟着跳跃抬升：不然人跳起来会「穿」过自己的名字
-    this.labels.position.set(x, y + this.jumpLift);
+    // 昵称与气泡跟着跳跃 / 入座抬升：不然人会「穿」过自己的名字
+    this.labels.position.set(x, y + this.jumpLift - this.seatLift);
+  }
+
+  /**
+   * 入座抬升（ADR-0032）：只抬身体与昵称，阴影、水线与深度键留在座位锚点。
+   * 深度键不动，是为了让「人 > 椅子 > 桌子」的排序在四向都成立。
+   */
+  setSeatLift(liftTexels: number): void {
+    if (this.seatLift === liftTexels) return;
+    this.seatLift = liftTexels;
+    this.body.setSeatLift(liftTexels);
+    this.labels.position.y = this.root.position.y + this.jumpLift - liftTexels;
   }
 
   /**
@@ -240,7 +307,7 @@ class EntityView {
     if (lift !== this.jumpLift) {
       this.jumpLift = lift;
       this.body.setBob(lift);
-      this.labels.position.y = this.root.position.y + lift;
+      this.labels.position.y = this.root.position.y + lift - this.seatLift;
     }
     this.setShadow(shadow);
   }
@@ -252,20 +319,65 @@ class EntityView {
     this.shadow.texture = this.shadows[index] ?? this.shadows[SHADOW_NORMAL]!;
   }
 
-  /** 换装会改变头顶高度（帽子 / 发型 / 角）：昵称与气泡立即重新让位，不用重新入场 */
+  /** 换装会改变头顶高度（帽子 / 发型 / 角）：昵称、状态与气泡立即重新让位，不用重新入场 */
   setAppearance(appearance: CharacterAppearance): void {
     this.body.setAppearance(appearance);
     const nameBottom = nameBottomY(headTopYOf(this.atlas.manifest, appearance.species), appearance);
     if (nameBottom === this.nameBottom) return;
     this.nameBottom = nameBottom;
     this.label.position.y = nameBottom;
+    // 状态行贴在昵称上沿：不跟着重排就会压到新帽檐上
+    if (this.statusText) {
+      this.statusText.position.y = statusBottomY(nameBottom, this.label.height);
+    }
     if (this.bubble.visible) this.layoutBubble(this.bubbleHeight);
   }
 
-  /** 气泡整体叠在昵称上沿之外：底边与名字保持固定间隙，不向人物方向回落 */
+  /**
+   * 设置常驻状态。空串即清除：隐藏那一行并让气泡落回昵称上沿。
+   * 只有行高真的变了才重排气泡——改字但高度不变时不必动虚拟机的布局。
+   */
+  setStatus(status: string): void {
+    const text = statusLabelText(status);
+    if (text.length === 0) {
+      if (!this.statusText) return;
+      this.statusText.visible = false;
+      this.statusText.text = '';
+      if (this.statusHeight === 0) return;
+      this.statusHeight = 0;
+      if (this.bubble.visible) this.layoutBubble(this.bubbleHeight);
+      return;
+    }
+
+    let label = this.statusText;
+    if (!label) {
+      label = new Text({ text, style: STATUS_STYLE, resolution: this.textResolution });
+      label.anchor.set(0.5, 1);
+      label.position.set(0, statusBottomY(this.nameBottom, this.label.height));
+      this.statusText = label;
+      // 放在最前面：状态行永远在昵称与气泡之上，层级不影响永不重叠的几何
+      this.labels.addChildAt(label, 0);
+    } else {
+      label.visible = true;
+      if (label.text !== text) label.text = text;
+    }
+
+    // 字体 fallback 可能改变行高（emoji 与等宽字的行盒不同），按实测更新
+    const height = Math.ceil(label.height);
+    if (height !== this.statusHeight) {
+      this.statusHeight = height;
+      if (this.bubble.visible) this.layoutBubble(this.bubbleHeight);
+    }
+  }
+
+  /** 气泡整体叠在昵称与状态行之外：底边与最后一行的间距固定，不向人物方向回落 */
   private layoutBubble(height: number): void {
     this.bubbleHeight = height;
-    this.bubble.position.set(0, Math.round(bubbleTopY(this.nameBottom, this.label.height, height)));
+    const stack = statusStackHeight(this.statusHeight);
+    this.bubble.position.set(
+      0,
+      Math.round(bubbleTopY(this.nameBottom, this.label.height, height, stack)),
+    );
   }
 
   showBubble(text: string, now: number, duration = 6000): void {
@@ -347,6 +459,8 @@ export class GameRenderer {
   private atlas!: Atlas;
   private terrain?: TerrainView;
   private props?: PropsView;
+  /** 北门迎宾地标：横幅与指路牌，构造期烘焙一次（ADR-0036） */
+  private welcome?: WelcomeView;
   /** 屏幕空间的乘算柔光层；`?light=0` 时整层不建 */
   private light?: AmbientLight;
   private shadowTextures: Texture[] = [];
@@ -446,6 +560,10 @@ export class GameRenderer {
     this.props.build(this.sortLayer, this.app.renderer);
     this.world.addChild(this.props.base);
 
+    // 北门迎宾地标：自己按脚底 y 进排序层，和树、桌椅、角色共用同一套遮挡关系
+    this.welcome = new WelcomeView();
+    this.welcome.build(this.sortLayer, this.app.renderer, this.metrics.devicePxPerTexel);
+
     this.shadowTextures = GroundFx.shadowTextures(this.app.renderer);
     this.fx = new GroundFx(this.app.renderer);
     this.world.addChild(this.fx.container);
@@ -472,7 +590,14 @@ export class GameRenderer {
    * 加入一个角色。`x/y` 只用于首次归 band：之后每帧由 `updateEntity` 维护，
    * 传进来的目的是避免角色在加入的第一帧被塞进错误的 band 里闪一下。
    */
-  async addEntity(id: number, name: string, appearance: CharacterAppearance, x = 0, y = 0): Promise<void> {
+  async addEntity(
+    id: number,
+    name: string,
+    appearance: CharacterAppearance,
+    status: string,
+    x = 0,
+    y = 0,
+  ): Promise<void> {
     if (!this.ready || this.views.has(id)) return;
     
     // 为本次初始化分配 generation token 和 abort signal
@@ -484,6 +609,7 @@ export class GameRenderer {
       this.atlas,
       name,
       appearance,
+      status,
       this.metrics.devicePxPerTexel,
       this.shadowTextures,
       this.wadingTexture!,
@@ -585,6 +711,14 @@ export class GameRenderer {
     this.views.get(id)?.setPose(direction, column, this.dustFrames);
   }
 
+  /**
+   * 入座 / 起身抬升：由 session 按座位种类与朝向算出（`seat-art.ts`），
+   * 这里只负责把身体与昵称抬起来。`0` 表示地面坐 / 躺或已起身。
+   */
+  setSeatLift(id: number, liftTexels: number): void {
+    this.views.get(id)?.setSeatLift(liftTexels);
+  }
+
   /** 待机呼吸 / 行走起伏 / 阴影 squash：全部是整数纹素与纹理切换 */
   setMotion(id: number, motion: PonyMotion): void {
     this.views.get(id)?.applyMotion(motion);
@@ -597,6 +731,11 @@ export class GameRenderer {
 
   setAppearance(id: number, appearance: CharacterAppearance): void {
     this.views.get(id)?.setAppearance(appearance);
+  }
+
+  /** 状态变更：本机与视野内的远端角色走同一条路径，空串即清除 */
+  setStatus(id: number, status: string): void {
+    this.views.get(id)?.setStatus(status);
   }
 
   showBubble(id: number, text: string): void {
@@ -742,10 +881,31 @@ export class GameRenderer {
     this.world.scale.set(next.cssScale);
     if (this.app.renderer.resolution !== next.dpr) this.app.renderer.resolution = next.dpr;
     for (const view of this.views.values()) view.setTextResolution(next.devicePxPerTexel);
+    this.welcome?.setTextResolution(next.devicePxPerTexel);
   }
 
   get entityCount(): number {
     return this.views.size;
+  }
+
+  /**
+   * 舞台局部 CSS 坐标 → 世界坐标 → 最近角色 id。
+   *
+   * `world` 容器按 `cssScale` 缩放并平移，反变换只有一次除法和两次减法；
+   * 拾取只在点击 / 轻点时执行，O(可见角色数) 的线性扫描不会进帧循环。
+   * 屏外被 `setShown(false)` 的角色不参与命中——它们的位置停留在最后一次可见处。
+   */
+  pickEntityAt(stageX: number, stageY: number): number | null {
+    const scale = this.metrics.cssScale;
+    if (!Number.isFinite(stageX) || !Number.isFinite(stageY) || scale <= 0) return null;
+    const worldX = (stageX - this.world.x) / scale;
+    const worldY = (stageY - this.world.y) / scale;
+    const candidates: PickCandidate[] = [];
+    for (const [id, view] of this.views) {
+      if (!view.isShown) continue;
+      candidates.push({ id, x: view.root.position.x, y: view.root.position.y });
+    }
+    return pickCharacter(candidates, worldX, worldY);
   }
 
   /** 座位占用变化：对应工位的显示器随之点亮或熄灭 */
@@ -772,6 +932,7 @@ export class GameRenderer {
     this.wadingTexture?.destroy(true);
     this.terrain?.destroy();
     this.props?.destroy();
+    this.welcome?.destroy();
     this.app.destroy(true, { children: true });
   }
 }

@@ -91,13 +91,21 @@ export class SeatRegistry {
     return this.occupy(player, bed, now, out);
   }
 
-  /** 释放座位但不改姿态：用于断线与移动时的起身前置步骤 */
+  /**
+   * 释放座位但不改姿态：用于断线与移动时的起身前置步骤。
+   *
+   * 只清自己名下的占用：刷新时新旧两条连接短暂并存，旧连接迟到的 `onClose`
+   * 不能把新连接刚占住的同一张椅子重新标成空位——那样别人会坐进来，
+   * 而新玩家本地仍以为自己坐着。
+   */
   release(player: Player, out: SeatStateEntry[] = []): SeatStateEntry[] {
     const seatId = player.seat;
     if (seatId === 0) return out;
     player.seat = 0;
-    if (seatById(seatId)) this.occupant[seatId] = 0;
-    out.push({ seatId, occupant: 0 });
+    if (seatById(seatId) && this.occupant[seatId] === player.id) {
+      this.occupant[seatId] = 0;
+      out.push({ seatId, occupant: 0 });
+    }
     return out;
   }
 

@@ -11,17 +11,20 @@ import {
   decodeQueueStatus,
   decodeSeatState,
   decodeSpawn,
+  decodeStatusBroadcast,
   decodeWelcome,
   encodeChatSend,
   encodeHello,
   encodeMoveInto,
   encodePing,
   encodeSetAppearance,
+  encodeSetStatus,
   ByteWriter,
   type CharacterAppearance,
   type ChatPacket,
   type MovePacket,
   type QueueStatusPacket,
+  type ResumeState,
   type SeatStateEntry,
   type SpawnPacket,
   type WelcomePacket,
@@ -46,6 +49,8 @@ export interface NetHandlers {
   /** 服务端拦下了一条发言（政治敏感 / 限速），只带原因，不回传原文 */
   onChatRejected(reason: number): void;
   onAppearance(id: number, appearance: CharacterAppearance): void;
+  /** 某个实体的常驻状态变了（自己也会收到一条，用于对齐服务端裁决后的文本） */
+  onStatus(id: number, status: string): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -68,6 +73,10 @@ export class NetClient {
   private socket: WebSocket | null = null;
   private name = '';
   private appearance: CharacterAppearance | null = null;
+  /** 常驻状态：重连时随 HELLO 一起带上，否则断线回来状态会凭空消失 */
+  private status = '';
+  /** 上一次会话的落点：每次（重）连都随 HELLO 上报，由服务端重新校验 */
+  private resume: ResumeState | undefined;
   private attempts = 0;
   private disposed = false;
   /** 被服务端拒绝后进入终止态：不自动重连，否则队列满时会自造重连风暴 */
@@ -89,12 +98,19 @@ export class NetClient {
     private readonly url = defaultUrl(),
   ) {}
 
-  connect(name: string, appearance: CharacterAppearance): void {
+  connect(name: string, appearance: CharacterAppearance, resume?: ResumeState, status = ''): void {
     this.name = name;
     this.appearance = appearance;
+    this.resume = resume;
+    this.status = status;
     this.disposed = false;
     this.terminal = false;
     this.open();
+  }
+
+  /** 断线重连前由会话刷新：重连同样带着最新落点，而不是首次入场时的旧快照 */
+  setResume(resume: ResumeState | undefined): void {
+    this.resume = resume;
   }
 
   /** 用户点「重新排队」：清掉终止态并立刻重连，不等指数退避 */
@@ -127,7 +143,9 @@ export class NetClient {
 
     socket.onopen = () => {
       this.attempts = 0;
-      if (this.appearance) socket.send(encodeHello(this.name, this.appearance));
+      if (this.appearance) {
+        socket.send(encodeHello(this.name, this.appearance, this.resume, this.status));
+      }
       this.handlers.onOpen();
       this.startPing();
     };
@@ -175,6 +193,11 @@ export class NetClient {
       case OpCode.S2C_APPEARANCE: {
         const packet = decodeAppearanceBroadcast(data);
         this.handlers.onAppearance(packet.entityId, packet.appearance);
+        break;
+      }
+      case OpCode.S2C_STATUS: {
+        const packet = decodeStatusBroadcast(data);
+        this.handlers.onStatus(packet.entityId, packet.status);
         break;
       }
       case OpCode.S2C_SEAT_STATE:
@@ -248,6 +271,13 @@ export class NetClient {
     this.appearance = appearance;
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeSetAppearance(appearance));
+  }
+
+  /** 空串即清除状态；离线时也记下来，重连的 HELLO 会带上 */
+  sendStatus(status: string): void {
+    this.status = status;
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeSetStatus(status));
   }
 
   dispose(): void {

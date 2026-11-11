@@ -78,7 +78,7 @@ const RULES = [
   {
     icon: EyeOff,
     title: '不留痕',
-    body: '昵称与外观只写进 sessionStorage。关掉标签页，浏览器自己会把它删干净。',
+    body: '服务端不存任何数据。工牌与上次的落点只留在你自己的浏览器里，换设备就重新开始。',
   },
 ];
 

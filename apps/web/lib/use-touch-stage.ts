@@ -2,21 +2,55 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-/** 触屏设备（主输入为粗指针）：决定是否显示虚拟摇杆与按钮 */
+/**
+ * 触屏设备：决定是否显示虚拟摇杆与按钮。
+ *
+ * 只要有任意一个粗指针就算触屏——带触屏的二合一笔记本、接了鼠标的平板
+ * 原来会被判成桌面端，摇杆消失而用户手里没有键盘，直接不可玩（ADR-0032）。
+ */
 export function useIsTouch(): boolean {
   const detect = () =>
     typeof window !== 'undefined' &&
-    (window.matchMedia('(pointer: coarse)').matches ||
-      (window.matchMedia('(any-pointer: coarse)').matches && !window.matchMedia('(any-hover: hover)').matches));
+    (window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(any-pointer: coarse)').matches);
   const [touch, setTouch] = useState(detect);
   useEffect(() => {
-    const query = window.matchMedia('(pointer: coarse)');
+    const queries = [window.matchMedia('(pointer: coarse)'), window.matchMedia('(any-pointer: coarse)')];
     const sync = () => setTouch(detect());
     sync();
-    query.addEventListener('change', sync);
-    return () => query.removeEventListener('change', sync);
+    for (const query of queries) query.addEventListener('change', sync);
+    return () => {
+      for (const query of queries) query.removeEventListener('change', sync);
+    };
   }, []);
   return touch;
+}
+
+/**
+ * 可视视口尺寸（CSS px）：iOS 键盘弹起时 `dvh` 不变，只有 `visualViewport` 会缩。
+ * 返回 `{ width: 0, height: 0 }` 表示还没测量（SSR / 首帧），调用方据此退回 CSS 单位。
+ */
+export function useVisualViewportSize(): { width: number; height: number } {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const sync = () =>
+      setSize({
+        width: Math.round(viewport?.width ?? window.innerWidth),
+        height: Math.round(viewport?.height ?? window.innerHeight),
+      });
+    sync();
+    viewport?.addEventListener('resize', sync);
+    viewport?.addEventListener('scroll', sync);
+    window.addEventListener('resize', sync);
+    return () => {
+      viewport?.removeEventListener('resize', sync);
+      viewport?.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+    };
+  }, []);
+
+  return size;
 }
 
 /**

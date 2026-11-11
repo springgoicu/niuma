@@ -7,6 +7,7 @@ import {
   type LimitKind,
   type QueueRejectReason,
   type QueueStatusPacket,
+  type ResumeState,
 } from '@niuma/shared-types';
 import { AdmissionGovernor, type GovernorConfig, type GovernorEvent } from './governor';
 import { FifoQueue, type QueueEntry } from './queue';
@@ -16,6 +17,10 @@ import { measureLoad, toPermille, type LoadSample, type LoadWatermark } from './
 export interface HelloPayload {
   name: string;
   appearance: CharacterAppearance;
+  /** 常驻状态：排队期间跟着载荷一起等，放行时才真正上屏；空串表示没设置 */
+  status: string;
+  /** 上一次会话的落点；缺席表示旧客户端或压测机器人，按随机出生点处理 */
+  resume?: ResumeState;
 }
 
 export interface AdmissionConfig extends GovernorConfig {

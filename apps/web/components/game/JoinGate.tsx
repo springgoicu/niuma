@@ -31,6 +31,8 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
       // 钳制与审核都只有 shared-types 一份实现，这里不再自己 slice 或查词表
       name: resolveProfileName(name.trim() || randomNickname()),
       appearance: defaultAppearance(species),
+      // 入职登记只填工牌名与工种：状态进园区后在工牌卡上设
+      status: '',
     };
     saveProfile(profile);
     onEnter(profile);

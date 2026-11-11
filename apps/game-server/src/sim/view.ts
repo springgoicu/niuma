@@ -34,12 +34,16 @@ function withinView(a: Player, b: Player): boolean {
 
 /**
  * 把某个玩家的入场包编码到他自己持有的缓冲里。
- * 名字与外观走 `spawnBody` 的缓存，这里只现写 8 字节头，
- * 所以除了首次構建 body 之外，稳态下一份入场包不产生任何分配。
+ * 名字、外观与状态走 `spawnBody` 的缓存，这里只现写 6 字节头与在线秒数，
+ * 所以除了首次构建 body 之外，稳态下一份入场包不产生任何分配。
+ *
+ * 在线秒数必须现算：它每秒变化，写进 `spawnBody` 会让后进入视野的人看到旧值。
+ * 这段逻辑只在视野重算时执行，不在 20Hz Tick 热路径。
  */
 function spawnPacketOf(player: Player): Uint8Array {
   const writer = player.spawnWriter;
   writer.reset();
+  const onlineSec = player.joinedAt > 0 ? Math.max(0, Math.floor((Date.now() - player.joinedAt) / 1000)) : 0;
   encodeSpawnInto(
     writer,
     player.id,
@@ -47,6 +51,7 @@ function spawnPacketOf(player: Player): Uint8Array {
     quantizeCoord(player.y),
     player.state,
     player.spawnBody,
+    onlineSec,
   );
   return writer.finish();
 }

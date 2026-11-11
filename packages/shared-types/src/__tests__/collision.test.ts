@@ -3,7 +3,9 @@ import { findFreePoint, isBlocked, resolveMotion } from '../world/collision';
 import { pointInPolygon, rectContains } from '../world/geometry';
 import {
   ISLAND,
+  SPAWN_CENTER,
   SPAWN_RADIUS,
+  WELCOME_LANDMARKS,
   WORLD_CENTER,
   WORLD_LAYOUT,
   isOnBridge,
@@ -118,7 +120,7 @@ describe('水体', () => {
 });
 
 describe('出生点与坐标兜底', () => {
-  it('中心 SPAWN_RADIUS 内的随机出生点都能落到空地上', () => {
+  it('北门 SPAWN_RADIUS 内的随机出生点都能落到空地上', () => {
     let seed = 0x1f2e3d4c;
     const next = () => {
       seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -127,15 +129,43 @@ describe('出生点与坐标兜底', () => {
     for (let i = 0; i < 400; i += 1) {
       const angle = next() * Math.PI * 2;
       const distance = Math.sqrt(next()) * SPAWN_RADIUS;
-      const x = CENTER.x + Math.cos(angle) * distance;
-      const y = CENTER.y + Math.sin(angle) * distance;
-      // 花箱与咖啡座就摆在出生点四周，服务端也是先采样再就近挪到空地
+      const x = SPAWN_CENTER.x + Math.cos(angle) * distance;
+      const y = SPAWN_CENTER.y + Math.sin(angle) * distance;
+      // 北门口袋没有碰撞道具，服务端也是先采样再判一次可站立
       const spawn = findFreePoint(x, y);
       expect(isBlocked(spawn.x, spawn.y)).toBe(false);
       // 水虽可涉，出生点仍要避开水面（findFreePoint 默认 avoidWater）
       expect(isWaterAt(spawn.x, spawn.y)).toBe(false);
-      expect(Math.hypot(spawn.x - x, spawn.y - y)).toBeLessThan(120);
+      // 出生圈不能再被推回工位环：整个圆都在北门区域里，挪位最多一圈（24px）
+      expect(regionAt(spawn.x, spawn.y)).toBe('牛马园北门');
+      expect(Math.hypot(spawn.x - x, spawn.y - y)).toBeLessThan(48);
     }
+  });
+
+  it('出生圈不再与任何工位桌相交', () => {
+    for (const desk of WORLD_LAYOUT.desks) {
+      const dx = desk.x - SPAWN_CENTER.x;
+      const dy = desk.y - SPAWN_CENTER.y;
+      expect(Math.hypot(dx, dy)).toBeGreaterThan(SPAWN_RADIUS + 60);
+    }
+  });
+
+  it('北门横幅与指路牌都立在欢迎区内，且让开出生圈', () => {
+    const { banner, signpost } = WELCOME_LANDMARKS;
+    for (const point of [
+      { x: banner.x, y: banner.y },
+      { x: signpost.x, y: signpost.y - 40 },
+      signpost,
+    ]) {
+      expect(isOnLand(point.x, point.y)).toBe(true);
+      expect(regionAt(point.x, point.y)).toBe('牛马园北门');
+      expect(isWaterAt(point.x, point.y)).toBe(false);
+    }
+    // 布幡要盖住整个门洞，而不是只挂在土路中间
+    expect(banner.x - banner.width / 2).toBeLessThanOrEqual(3960);
+    expect(banner.x + banner.width / 2).toBeGreaterThanOrEqual(4232);
+    // 指路牌在门东肩，不占出生圆
+    expect(Math.hypot(signpost.x - SPAWN_CENTER.x, signpost.y - SPAWN_CENTER.y)).toBeGreaterThan(SPAWN_RADIUS);
   });
 
   it('广场花箱挡人', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { DIRECTION, type Direction } from '@niuma/shared-types';
-import { chairArtFor, type ChairArt } from '../chair-art';
+import { SEAT_TOP, chairArtFor, type ChairArt } from '../chair-art';
 
 const FACINGS: Array<{ facing: Direction; name: string }> = [
   { facing: DIRECTION.Up, name: '人朝北：靠背在南' },
@@ -68,6 +68,14 @@ describe('工位椅四向几何', () => {
       const seatTowardPerson =
         dir.x !== 0 ? Math.sign(seat.x - back.x) === -dir.x : Math.sign(seat.y - back.y) === -dir.y;
       expect({ facing: name, seatTowardPerson }).toEqual({ facing: name, seatTowardPerson: true });
+    }
+  });
+
+  it('四向座面顶面同高：同一把椅子转 90° 不会一会儿高一会儿低（ADR-0032）', () => {
+    for (const { facing, name } of FACINGS) {
+      const art = chairArtFor(facing);
+      // 座面顶面在世界坐标里的高度只由 SEAT_TOP 决定，四向必须落在同一行
+      expect({ facing: name, top: art.seat.y }).toEqual({ facing: name, top: SEAT_TOP });
     }
   });
 

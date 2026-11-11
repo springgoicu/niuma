@@ -4,6 +4,7 @@ import { Container, Graphics, Rectangle, Sprite, Texture, type Application } fro
 import {
   DIRECTION,
   WORLD_LAYOUT,
+  deskDepthOffset,
   deskFootprint,
   type BuildingSpec,
   type Direction,
@@ -16,6 +17,7 @@ import {
 } from '@niuma/shared-types';
 import { chairArtFor, type ChairArt } from './chair-art';
 import { deskArtFor, type DeskArt } from './desk-art';
+import { seatArtFor } from './seat-art';
 import { bake } from './terrain-textures';
 import type { DepthSink } from './sort-layer';
 
@@ -125,8 +127,6 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   hedge: { w: 32, h: 18 },
 };
 
-/** 椅子的尺寸与朝向无关：四个朝向共用同一帧，直接读几何模块，避免两处各写一份 */
-const CHAIR_SPRITE = chairArtFor(DIRECTION.Down).frame;
 const TOILET_SPRITE = { w: 22, h: 28 };
 const STOOL_SPRITE = { w: 18, h: 22 };
 const SOFA_SPRITE = { w: 58, h: 30 };
@@ -135,18 +135,6 @@ const SOFA_SPRITE = { w: 58, h: 30 };
  * 角色帧是 64×64、锚点在脚底中心，所以床要往锚点下方压 16px 才托住躯干。
  */
 const BED_SPRITE = { w: 64, h: 42 };
-
-/**
- * 座位精灵相对锚点的下沉量与尺寸。
- * 椅子 / 马桶沿用 6；凳子面更矮、沙发更厚、床要把身体托起来。
- */
-const SEAT_ART: Record<SeatKind, { w: number; h: number; sink: number }> = {
-  chair: { ...CHAIR_SPRITE, sink: 6 },
-  toilet: { ...TOILET_SPRITE, sink: 6 },
-  stool: { ...STOOL_SPRITE, sink: 4 },
-  sofa: { ...SOFA_SPRITE, sink: 8 },
-  bed: { ...BED_SPRITE, sink: 16 },
-};
 
 function rect(g: Graphics, x: number, y: number, w: number, h: number, color: number): void {
   g.rect(x, y, w, h).fill(color);
@@ -564,8 +552,8 @@ export class PropsView {
     this.base.addChild(ground);
 
     const frame = (w: number, h: number) => new Rectangle(0, 0, w, h);
-    // 四个朝向各烘焙一对 idle / lit：桌子随朝向转置（横桌 96×66、侧放桌 48×92），
-    // 每张桌子按自己的帧尺寸烘焙，显示器永远落在远侧长边（ADR-0027 / ADR-0028）
+    // 四个朝向各烘焙一对 idle / lit：桌子随朝向转置（横桌 96×66、侧放桌 48×110），
+    // 每张桌子按自己的帧尺寸烘焙，显示器永远立在远侧长边之上（ADR-0027 / ADR-0032）
     const deskTextures = new Map<Direction, { idle: Texture; lit: Texture; frame: { w: number; h: number } }>();
     for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
       const art = deskArtFor(facing);
@@ -601,13 +589,15 @@ export class PropsView {
       const sprite = new Sprite(art.idle);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(desk.x, bottom);
-      depth.add(bottom, sprite);
+      // 深度键按朝向派生：东西向的桌子与椅子同 y，必须让到人与椅子之后（ADR-0032）
+      depth.add(desk.y + deskDepthOffset(desk.facing), sprite);
       this.desks.push({ sprite, idle: art.idle, lit: art.lit });
       this.cullables.push({ sprite, x: desk.x, y: bottom, padX: art.frame.w / 2 + 4, padY: art.frame.h });
     }
 
     for (const seat of WORLD_LAYOUT.seats) {
-      const art = SEAT_ART[seat.kind];
+      // 尺寸、下沉量与接触高度共用座位契约：渲染层不再自己写一份 SEAT_ART（ADR-0032）
+      const art = seatArtFor(seat.kind, seat.facing);
       const texture =
         seat.kind === 'chair'
           ? chairTextures.get(seat.facing) ?? chairTextures.get(DIRECTION.Down)!
@@ -617,7 +607,14 @@ export class PropsView {
       sprite.position.set(seat.x, seat.y + art.sink);
       // 座椅排在入座者脚底 y 之下：角色坐上去 / 躺下去时家具在身后
       depth.add(seat.y - 1, sprite);
-      this.cullables.push({ sprite, x: seat.x, y: seat.y, padX: art.w / 2 + 4, padY: art.h + art.sink });
+      this.cullables.push({
+        sprite,
+        x: seat.x,
+        y: seat.y,
+        padX: art.frame.w / 2 + 4,
+        // 精灵顶边 = 锚点 + sink - 帧高；多出来的 sink 不该再算进裁剪余量
+        padY: art.frame.h - art.sink,
+      });
     }
 
     for (const prop of WORLD_LAYOUT.props) this.addProp(depth, renderer, prop);

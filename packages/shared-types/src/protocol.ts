@@ -6,13 +6,23 @@ import {
   MAX_CHAT_CHARS,
   MAX_NAME_BYTES,
   MAX_NAME_CHARS,
+  MAX_STATUS_BYTES,
+  MAX_STATUS_CHARS,
+  MAX_STATUS_DISPLAY_UNITS,
   MOVE_PACKET_BYTES,
   MOVE_PACKET_WITH_TIMING_BYTES,
+  ONLINE_EXTENSION_BYTES,
+  ONLINE_EXTENSION_MAGIC,
   QUEUE_REJECT_BYTES,
   QUEUE_STATUS_BYTES,
+  RESUME_BYTES,
+  RESUME_VERSION,
+  STATUS_EXTENSION_MAGIC,
   SYNC_ENTRY_BYTES,
   SYNC_HEADER_BYTES,
 } from './constants';
+import { displayWidth } from './name';
+import { dequantizeCoord, packState, quantizeCoord, unpackState } from './quantize';
 import type {
   CharacterAppearance,
   ChatPacket,
@@ -21,6 +31,7 @@ import type {
   MovePacket,
   QueueRejectedPacket,
   QueueStatusPacket,
+  ResumeState,
   SpawnPacket,
   WelcomePacket,
 } from './types';
@@ -185,6 +196,37 @@ export function truncateChat(text: string): string {
   return out;
 }
 
+/**
+ * 状态标签钳制：显示宽 / 码点 / 字节三重尺子同时生效，空串表示「没有状态」。
+ *
+ * 与 `truncateName` 的两点不同：
+ * 1) 空输入是合法结果，不做兜底（清除状态就是发空串）；
+ * 2) 多一把显示宽尺子——16 个单位就是 8 个汉字或 8 个 emoji，超出部分直接丢，
+ *    不补省略号：状态在头顶独占一行，省略号白占一个身位还看不清。
+ */
+export function truncateStatus(text: string | undefined | null): string {
+  if (typeof text !== 'string') return '';
+  const cleaned = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (cleaned.length === 0) return '';
+  let out = '';
+  let chars = 0;
+  let bytes = 0;
+  let width = 0;
+  // 按码点遍历：slice 会把 emoji 的代理对切成半个字符
+  for (const ch of cleaned) {
+    if (chars >= MAX_STATUS_CHARS) break;
+    const size = textEncoder.encode(ch).length;
+    if (bytes + size > MAX_STATUS_BYTES) break;
+    const w = displayWidth(ch);
+    if (width + w > MAX_STATUS_DISPLAY_UNITS) break;
+    out += ch;
+    chars += 1;
+    bytes += size;
+    width += w;
+  }
+  return out.trim();
+}
+
 /** 写进调用方复用的缓冲：客户端 20Hz 上行不必每次都新建一条 14 字节包 */
 export function encodeMoveInto(writer: ByteWriter, packet: MovePacket): void {
   writer.u8(OpCode.C2S_MOVE).u16(packet.id).u16(packet.x).u16(packet.y).u8(packet.state);
@@ -302,12 +344,19 @@ export function decodeSync(data: Uint8Array): { tick: number; entities: EntitySn
  * 与 DataView，并做 11 次 sanitize），200 人同秒涌入时是 4 万次重复编码——这就是
  * README 里那次 158ms 长帧的根因。名字与外观在一局内不变，算一次存着即可。
  */
-export function buildSpawnBody(name: string, appearance: CharacterAppearance): Uint8Array {
+export function buildSpawnBody(name: string, appearance: CharacterAppearance, status = ''): Uint8Array {
   const nameBytes = textEncoder.encode(name);
-  const body = new Uint8Array(1 + nameBytes.length + APPEARANCE_BYTES);
+  // 没设状态就不追加任何字节：包体与上一版完全一致，旧客户端不需要理解这段
+  const statusBytes = textEncoder.encode(truncateStatus(status));
+  const body = new Uint8Array(1 + nameBytes.length + APPEARANCE_BYTES + (statusBytes.length > 0 ? 1 : 0) + statusBytes.length);
   body[0] = nameBytes.length;
   body.set(nameBytes, 1);
   body.set(encodeAppearance(appearance), 1 + nameBytes.length);
+  if (statusBytes.length > 0) {
+    const at = 1 + nameBytes.length + APPEARANCE_BYTES;
+    body[at] = statusBytes.length;
+    body.set(statusBytes, at + 1);
+  }
   return body;
 }
 
@@ -319,14 +368,17 @@ export function encodeSpawnInto(
   y: number,
   state: number,
   body: Uint8Array,
+  onlineSec?: number,
 ): void {
   writer.u8(OpCode.S2C_ENTITY_SPAWN).u16(id).u16(x).u16(y).u8(state).raw(body);
+  // 在线秒数每秒变化，不能进 spawnBody 缓存；只有调用方现算时才追加这一段
+  if (onlineSec !== undefined) writer.u8(ONLINE_EXTENSION_MAGIC).u32(onlineSec);
 }
 
 export function encodeSpawn(packet: SpawnPacket): Uint8Array {
-  const body = buildSpawnBody(packet.name, packet.appearance);
-  const writer = new ByteWriter(6 + body.length);
-  encodeSpawnInto(writer, packet.id, packet.x, packet.y, packet.state, body);
+  const body = buildSpawnBody(packet.name, packet.appearance, packet.status);
+  const writer = new ByteWriter(6 + body.length + ONLINE_EXTENSION_BYTES);
+  encodeSpawnInto(writer, packet.id, packet.x, packet.y, packet.state, body, packet.onlineSec);
   return writer.finish();
 }
 
@@ -340,7 +392,21 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
   const nameLength = reader.u8();
   const name = reader.utf8(nameLength);
   const appearance = decodeAppearance(data, reader.offset);
-  return { id, x, y, state, name, appearance };
+  reader.offset += APPEARANCE_BYTES;
+  // 旧服务端的入场包没有状态段：剩余 0 字节即「没设置」，不能因此拒收整条 spawn。
+  // 0xfe 是在线秒数段的魔数，不是状态长度，必须先排除再按长度读状态。
+  let status = '';
+  if (reader.remaining >= 1 && data[reader.offset] !== ONLINE_EXTENSION_MAGIC) {
+    const statusLength = reader.u8();
+    // 长度字段与剩余字节不符说明包被截断或伪造：丢掉状态而不是猜半个字符
+    status = statusLength <= reader.remaining ? truncateStatus(reader.utf8(statusLength)) : '';
+  }
+  // 在线秒数段：旧服务端没有这 5 字节，按 undefined 回退「首次看到起算」
+  if (reader.remaining >= ONLINE_EXTENSION_BYTES && data[reader.offset] === ONLINE_EXTENSION_MAGIC) {
+    reader.u8();
+    return { id, x, y, state, name, appearance, status, onlineSec: reader.u32() };
+  }
+  return { id, x, y, state, name, appearance, status };
 }
 
 /** 写进调用方复用的缓冲：一次视野重算可能连发几十条 despawn，不必每条都新建 */
@@ -390,32 +456,99 @@ export function decodeChatSend(data: Uint8Array): string {
   return reader.utf8(length);
 }
 
-export function encodeHello(name: string, appearance: CharacterAppearance): Uint8Array {
+export function encodeHello(
+  name: string,
+  appearance: CharacterAppearance,
+  resume?: ResumeState,
+  status?: string,
+): Uint8Array {
   const nameBytes = textEncoder.encode(truncateName(name));
-  const writer = new ByteWriter(2 + nameBytes.length + APPEARANCE_BYTES);
+  const statusBytes = textEncoder.encode(truncateStatus(status));
+  // 状态段只在真的有内容时写：空状态的 HELLO 与旧版逐字节相同
+  const statusSize = statusBytes.length > 0 ? 2 + statusBytes.length : 0;
+  const writer = new ByteWriter(
+    2 + nameBytes.length + APPEARANCE_BYTES + (resume ? RESUME_BYTES : 0) + statusSize,
+  );
   writer.u8(OpCode.C2S_HELLO).u8(nameBytes.length).raw(nameBytes).raw(encodeAppearance(appearance));
+  if (resume) {
+    writer
+      .u8(RESUME_VERSION)
+      .u16(quantizeCoord(resume.x))
+      .u16(quantizeCoord(resume.y))
+      .u8(packState(resume.direction, resume.pose, false))
+      .u16(resume.seatId);
+  }
+  if (statusBytes.length > 0) {
+    writer.u8(STATUS_EXTENSION_MAGIC).u8(statusBytes.length).raw(statusBytes);
+  }
   return writer.finish();
 }
 
-export function decodeHello(data: Uint8Array): { name: string; appearance: CharacterAppearance } {
+export function decodeHello(data: Uint8Array): {
+  name: string;
+  appearance: CharacterAppearance;
+  resume?: ResumeState;
+  /** 常驻状态；空串表示没设置（旧客户端整段缺席时同样是空串） */
+  status: string;
+} {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.C2S_HELLO) throw new Error('not a hello packet');
   const nameLength = reader.u8();
   const name = truncateName(reader.utf8(nameLength));
   const appearance = decodeAppearance(data, reader.offset);
-  return { name, appearance };
+  reader.offset += APPEARANCE_BYTES;
+
+  let resume: ResumeState | undefined;
+  // 0xff 是状态段的魔数，不是 resume 版本号：先把它排除，免得把状态字节读成落点
+  if (reader.remaining >= RESUME_BYTES && data[reader.offset] !== STATUS_EXTENSION_MAGIC) {
+    const version = reader.u8();
+    const x = reader.u16();
+    const y = reader.u16();
+    const state = reader.u8();
+    const seatId = reader.u16();
+    // 未来客户端可能写入新字段：版本不认识就整段忽略，出生逻辑回落到随机点
+    if (version !== RESUME_VERSION) return { name, appearance, status: '' };
+    const unpacked = unpackState(state);
+    resume = {
+      x: dequantizeCoord(x),
+      y: dequantizeCoord(y),
+      direction: unpacked.direction,
+      pose: unpacked.pose,
+      seatId,
+    };
+  }
+
+  let status = '';
+  if (reader.remaining >= 2 && data[reader.offset] === STATUS_EXTENSION_MAGIC) {
+    reader.u8();
+    const statusLength = reader.u8();
+    status = statusLength <= reader.remaining ? truncateStatus(reader.utf8(statusLength)) : '';
+  }
+  return resume ? { name, appearance, resume, status } : { name, appearance, status };
 }
 
 export function encodeWelcome(packet: WelcomePacket): Uint8Array {
-  const writer = new ByteWriter(11);
-  writer.u8(OpCode.S2C_WELCOME).u16(packet.entityId).u32(packet.tick).u16(packet.x).u16(packet.y);
+  const writer = new ByteWriter(12);
+  writer
+    .u8(OpCode.S2C_WELCOME)
+    .u16(packet.entityId)
+    .u32(packet.tick)
+    .u16(packet.x)
+    .u16(packet.y)
+    .u8(packet.state ?? 0);
   return writer.finish();
 }
 
 export function decodeWelcome(data: Uint8Array): WelcomePacket {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_WELCOME) throw new Error('not a welcome packet');
-  return { entityId: reader.u16(), tick: reader.u32(), x: reader.u16(), y: reader.u16() };
+  const entityId = reader.u16();
+  const tick = reader.u32();
+  const x = reader.u16();
+  const y = reader.u16();
+  // 旧服务端的 11 字节包没有 state：按 Idle + Down 处理，不让入场流程直接失败
+  const state = reader.remaining >= 1 ? reader.u8() : 0;
+  return { entityId, tick, x, y, state };
 }
 
 export function encodeAction(entityId: number, action: number): Uint8Array {
@@ -491,6 +624,37 @@ export function decodeSetAppearance(data: Uint8Array): CharacterAppearance {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.C2S_SET_APPEARANCE) throw new Error('not an appearance packet');
   return decodeAppearance(data, reader.offset);
+}
+
+/** 设置状态：`[op][len u16][utf8]`；空串即清除，服务端按同一把尺子再钳一次 */
+export function encodeSetStatus(status: string): Uint8Array {
+  const bytes = textEncoder.encode(truncateStatus(status));
+  const writer = new ByteWriter(3 + bytes.length);
+  writer.u8(OpCode.C2S_SET_STATUS).u16(bytes.length).raw(bytes);
+  return writer.finish();
+}
+
+export function decodeSetStatus(data: Uint8Array): string {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_SET_STATUS) throw new Error('not a set status packet');
+  const length = reader.u16();
+  // 长度字段超出实际负载说明包被截断或伪造：按「清除」处理，绝不越过缓冲
+  return length <= reader.remaining ? truncateStatus(reader.utf8(length)) : '';
+}
+
+export function encodeStatusBroadcast(entityId: number, status: string): Uint8Array {
+  const bytes = textEncoder.encode(truncateStatus(status));
+  const writer = new ByteWriter(5 + bytes.length);
+  writer.u8(OpCode.S2C_STATUS).u16(entityId).u16(bytes.length).raw(bytes);
+  return writer.finish();
+}
+
+export function decodeStatusBroadcast(data: Uint8Array): { entityId: number; status: string } {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_STATUS) throw new Error('not a status broadcast');
+  const entityId = reader.u16();
+  const length = reader.u16();
+  return { entityId, status: length <= reader.remaining ? truncateStatus(reader.utf8(length)) : '' };
 }
 
 export function encodeAppearanceBroadcast(entityId: number, appearance: CharacterAppearance): Uint8Array {

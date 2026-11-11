@@ -19,19 +19,27 @@ import {
   resolveMotionInto,
   seatById,
   seatPose,
+  unpackState,
   type CharacterAppearance,
   type Direction,
   type MotionTarget,
   type Pose,
   type QueueStatusPacket,
+  type ResumeState,
   type SeatInstance,
   type SeatKind,
   type SeatStateEntry,
   type SpawnPacket,
+  type Species,
+  type WelcomePacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
+import type { PlayerBadge } from './badge';
+import { saveSnapshot, toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
+import { seatLift } from './seat-art';
+import { sfx } from './sfx';
 import { Ecs, Local, Motion, POSE, Position } from './ecs';
 import { INTERP_DELAY_MS, type RemoteSample } from './interp';
 import { InputController, type ActionKey } from './input';
@@ -54,6 +62,10 @@ export interface SessionStats {
   y: number;
   nearby: number;
   backend: string;
+  /** 本地角色所在园区区域名；未入场为空串 */
+  region: string;
+  /** 本地会话已在线秒数；未入场为 0，断线时 UI 显示 --:-- */
+  onlineSec: number;
 }
 
 export interface WorldSnapshot {
@@ -87,6 +99,13 @@ const MOVEMENT_SEND_INTERVAL = 50;
 const INTERACT_COOLDOWN_MS = 900;
 /** 瞬时提示的保留时长：房间里的环境提示晚一步再抢回这一行 */
 const HINT_HOLD_MS = 1600;
+/**
+ * 会话快照的落盘间隔。
+ *
+ * localStorage 是同步 API，不能进每帧路径；2s 一次已经足够精确——
+ * 即使浏览器直接被杀掉，最多也只在关页面前有 2s 的位移丢失。
+ */
+const SNAPSHOT_INTERVAL_MS = 2000;
 
 /**
  * 本地玩家与服务端坐标的最大合法偏差（像素）。
@@ -118,8 +137,21 @@ export class GameSession {
   ];
   private readonly input = new InputController();
   private readonly names = new Map<number, string>();
+  /** netId → 物种：工牌与点击详情共用，换装广播时同步 */
+  private readonly speciesById = new Map<number, Species>();
+  /** netId → 常驻状态；空串表示没设置 */
+  private readonly statusById = new Map<number, string>();
+  /**
+   * netId → 入场包携带的已在线秒数 + 本地接收时刻。
+   * 用「收到时的秒数 + 本地时钟增量」而不是服务端绝对时间，规避两端时钟偏差。
+   */
+  private readonly onlineById = new Map<number, { sec: number; at: number }>();
+  /** 本地入场成功时刻（performance.now）：自己的在线时长从 WELCOME 起算 */
+  private welcomeAt = 0;
   /** 座位占用镜像：seatId → 占用者的 netId，以服务端广播为准 */
   private readonly seatOwner = new Map<number, number>();
+  /** 反向镜像：netId → seatId，用于把入座抬升算到正确的角色上（ADR-0032） */
+  private readonly entitySeat = new Map<number, number>();
   /** 本地所坐 / 所躺的座位（0 表示未入座）：预测后由服务端广播校正 */
   private localSeat = 0;
   /** 已发出入座 / 上床请求且尚未起身：只有此时服务端的占座结果才会吸附本地角色 */
@@ -140,9 +172,18 @@ export class GameSession {
   private localSeatKind: SeatKind | null = null;
   private net: NetClient | null = null;
   private localId = 0;
+  /**
+   * 当前状态：重连后 `handleWelcome` 重建本地角色时要用它。
+   * 不能读 `start()` 的 profile 闭包——那是入场瞬间的快照，游戏内改过状态就是旧值。
+   */
+  private status = '';
+  /** 物种决定叫唤音色（牛哞 / 马嘶）：入场时锁定，运行期不变 */
+  private species: Species = 'cow';
   private elapsed = 0;
   private movementSendTime = 0;
   private clientMoveSequence = 0;
+  /** 距离上次落盘的累计时长：只在 tick 里累加，不在帧内碰 localStorage */
+  private snapshotAt = 0;
   private statsAt = 0;
   private frames = 0;
   private fps = 60;
@@ -161,18 +202,30 @@ export class GameSession {
     return this.renderer.backend;
   }
 
-  async start(host: HTMLElement, profile: { name: string; appearance: CharacterAppearance }): Promise<void> {
+  async start(
+    host: HTMLElement,
+    profile: { name: string; appearance: CharacterAppearance; status?: string },
+    resume?: ResumeState,
+  ): Promise<void> {
     this.callbacks.onStatus('connecting');
     await this.renderer.init(host);
     if (this.disposed) return;
     this.renderer.app.ticker.add(this.tick);
     this.statsAt = performance.now();
 
+    // pagehide 比 beforeunload 可靠：移动端与 bfcache 场景只有它会触发
+    window.addEventListener('pagehide', this.persistNow);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+
     this.net = new NetClient({
       // socket 打开不代表入场：真正的在线由 WELCOME 决定，中间可能隔着一条排队
       onOpen: () => this.callbacks.onStatus('connecting', '等待准入'),
-      // 断线时保留最后一份排队快照：面板转为「重连中」，而不是把人踢回空白页
-      onClose: () => this.callbacks.onStatus('offline', '连接中断，正在重连'),
+      // 断线时先落盘并刷新 resume：重连后服务端能把人放回断开处，
+      // 同时保留最后一份排队快照，面板转为「重连中」而不是把人踢回空白页
+      onClose: () => {
+        this.persistNow();
+        this.callbacks.onStatus('offline', '连接中断，正在重连');
+      },
       onQueue: (status) => {
         this.callbacks.onQueue(status);
         this.callbacks.onStatus('queued', '排队中');
@@ -185,7 +238,7 @@ export class GameSession {
           reason === QUEUE_REJECT_REASON.WaitTimeout ? '排队超时，请重新排队' : '园区已满，请稍后再来',
         );
       },
-      onWelcome: (packet) => this.handleWelcome(packet.entityId, packet.x, packet.y, profile),
+      onWelcome: (packet) => this.handleWelcome(packet, profile),
       onSpawn: (packet) => this.handleSpawn(packet),
       onDespawn: (id) => this.handleDespawn(id),
       onSync: (data) => this.handleSync(data),
@@ -198,7 +251,16 @@ export class GameSession {
             : '这句话里有不能发的词，换个说法',
         );
       },
-      onAppearance: (id, appearance) => this.renderer.setAppearance(id, appearance),
+      onAppearance: (id, appearance) => {
+        this.speciesById.set(id, appearance.species);
+        if (id === this.localId) this.species = appearance.species;
+        this.renderer.setAppearance(id, appearance);
+      },
+      onStatus: (id, status) => {
+        if (id === this.localId) this.status = status;
+        else this.statusById.set(id, status);
+        this.renderer.setStatus(id, status);
+      },
       onSeatState: (entries) => this.handleSeatState(entries),
       onPing: (rtt) => {
         this.ping = rtt;
@@ -209,49 +271,121 @@ export class GameSession {
       (action) => this.perform(action),
       () => this.callbacks.onRequestChat(),
     );
-    this.net.connect(profile.name, profile.appearance);
+    this.status = profile.status ?? '';
+    this.species = profile.appearance.species;
+    this.net.connect(profile.name, profile.appearance, resume, this.status);
     this.callbacks.onStatus('connecting', '握手');
   }
 
   private handleWelcome(
-    entityId: number,
-    x: number,
-    y: number,
-    profile: { name: string; appearance: CharacterAppearance },
+    packet: WelcomePacket,
+    profile: { name: string; appearance: CharacterAppearance; status?: string },
   ): void {
     this.callbacks.onQueue(null);
     this.callbacks.onRejected(0);
     this.clearWorld();
-    this.localId = entityId;
+    this.localId = packet.entityId;
     this.movementSendTime = 0;
     this.clientMoveSequence = 0;
-    this.names.set(entityId, profile.name);
-    const eid = this.ecs.spawn(entityId, dequantizeCoord(x), dequantizeCoord(y));
-    this.ecs.markLocal(entityId);
-    Motion.direction[eid] = 2;
-    this.net?.setEntityId(entityId);
-    void this.renderer.addEntity(entityId, profile.name, profile.appearance, Position.x[eid]!, Position.y[eid]!);
-    this.renderer.updateCamera(dequantizeCoord(x), dequantizeCoord(y));
+    this.snapshotAt = 0;
+    // 自己的在线时长从入场成功这一刻起算：断线重连会重建世界，计时随 WELCOME 归零
+    this.welcomeAt = performance.now();
+    this.names.set(packet.entityId, profile.name);
+    this.speciesById.set(packet.entityId, profile.appearance.species);
+    const x = dequantizeCoord(packet.x);
+    const y = dequantizeCoord(packet.y);
+    const eid = this.ecs.spawn(packet.entityId, x, y);
+    this.ecs.markLocal(packet.entityId);
+    // 朝向与姿态以服务端裁决为准：座位恢复、座位被占降级、落水回岸都体现在 state 里
+    const restored = unpackState(packet.state);
+    Motion.direction[eid] = restored.direction;
+    Motion.pose[eid] = restored.pose;
+    Motion.since[eid] = this.elapsed;
+    this.net?.setEntityId(packet.entityId);
+    void this.renderer.addEntity(
+      packet.entityId,
+      profile.name,
+      profile.appearance,
+      this.status,
+      x,
+      y,
+    );
+    this.renderer.updateCamera(x, y);
     this.callbacks.onStatus('online', this.renderer.backend);
   }
 
   private handleSpawn(packet: SpawnPacket): void {
-    const { id, name, appearance } = packet;
+    const { id, name, appearance, status } = packet;
     if (this.names.has(id)) return;
     this.names.set(id, name);
+    this.speciesById.set(id, appearance.species);
+    this.statusById.set(id, status ?? '');
+    // 旧服务端不带在线秒数：从 0 起算，退化为「首次看到」，不显示假的长时长
+    this.onlineById.set(id, { sec: packet.onlineSec ?? 0, at: performance.now() });
     const x = dequantizeCoord(packet.x);
     const y = dequantizeCoord(packet.y);
     const eid = this.ecs.spawn(id, x, y);
     // 先塞一帧快照：回放缓冲有时间戳，不塞的话这个人在延迟窗口内没有数据可采样。
     // 坐标取自 spawn 包，姿态与叠加位则由随后的 sync 校正。
     this.ecs.remote.push(eid, performance.now(), x, y, packet.state);
-    void this.renderer.addEntity(id, name, appearance, x, y);
+    void this.renderer.addEntity(id, name, appearance, status ?? '', x, y);
   }
 
   private handleDespawn(id: number): void {
     this.names.delete(id);
+    this.speciesById.delete(id);
+    this.statusById.delete(id);
+    this.onlineById.delete(id);
+    this.entitySeat.delete(id);
     this.ecs.despawn(id);
     this.renderer.removeEntity(id);
+  }
+
+  /**
+   * 点击 / 轻点舞台：命中的远端角色返回工牌，点空白或点到自己返回 null。
+   * 自己的工牌常显在 HUD，不需要再弹一份重复的详情。
+   */
+  inspectAt(stageX: number, stageY: number): PlayerBadge | null {
+    const id = this.renderer.pickEntityAt(stageX, stageY);
+    if (id === null || id === this.localId) return null;
+    return this.badgeOf(id);
+  }
+
+  /** 会话口径的已在线秒数：本地从 WELCOME 起算，远端在入场包秒数上叠加本地增量 */
+  private onlineSecOf(id: number): number {
+    if (id === this.localId) {
+      if (this.welcomeAt <= 0) return 0;
+      return Math.max(0, Math.floor((performance.now() - this.welcomeAt) / 1000));
+    }
+    const entry = this.onlineById.get(id);
+    if (!entry) return 0;
+    return entry.sec + Math.max(0, Math.floor((performance.now() - entry.at) / 1000));
+  }
+
+  /**
+   * 工牌展示模型：本地与远端共用一份，UI 不再自行拼字段。
+   * 实体已经离开世界（despawn / 断线）时返回 null，调用方据此自动关闭详情。
+   */
+  badgeOf(id: number): PlayerBadge | null {
+    const eid = this.ecs.get(id);
+    if (!eid) return null;
+    const local = id === this.localId;
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    const seatId = this.entitySeat.get(id) ?? (local && this.localSeat !== 0 ? this.localSeat : undefined);
+    const seat = seatId ? seatById(seatId) : undefined;
+    return {
+      id,
+      name: this.names.get(id) ?? '匿名牛马',
+      species: local ? this.species : this.speciesById.get(id) ?? 'cow',
+      status: local ? this.status : this.statusById.get(id) ?? '',
+      region: regionAt(x, y),
+      onlineSec: this.onlineSecOf(id),
+      pose: Motion.pose[eid] as Pose,
+      moving: Motion.moving[eid] === 1,
+      seated: seat !== undefined,
+      seatKind: seat?.kind ?? null,
+    };
   }
 
   /**
@@ -308,17 +442,47 @@ export class GameSession {
     for (const entry of entries) {
       const seat = seatById(entry.seatId);
       if (!seat) continue;
-      if (entry.occupant === 0) this.seatOwner.delete(entry.seatId);
-      else this.seatOwner.set(entry.seatId, entry.occupant);
+      const previous = this.seatOwner.get(entry.seatId);
+      if (entry.occupant === 0) {
+        this.seatOwner.delete(entry.seatId);
+        if (previous !== undefined) this.entitySeat.delete(previous);
+      } else {
+        // 座位换了人：旧占用者的反向映射要一起清掉，否则他会一直按「坐在椅子上」抬着
+        if (previous !== undefined && previous !== entry.occupant) this.entitySeat.delete(previous);
+        this.seatOwner.set(entry.seatId, entry.occupant);
+        this.entitySeat.set(entry.occupant, entry.seatId);
+      }
       this.renderer.setSeatOccupied(entry.seatId, entry.occupant !== 0);
 
       if (entry.occupant === this.localId) {
-        if (this.seatIntent && this.localSeat !== entry.seatId) this.sitAt(seat);
+        // 入场恢复入座时 seatIntent 还是 false，本地镜像也必须跟上；
+        // 否则按方向键不会触发起身，服务端会一直替你占着这张椅子
+        if (this.localSeat !== entry.seatId) this.sitAt(seat);
       } else if (entry.seatId === this.localSeat) {
         // 预测的座位被别人先占走：本地退回地面坐，随后服务端若分到新座位会再吸附过去
         this.localSeat = 0;
+        this.entitySeat.delete(this.localId);
       }
     }
+  }
+
+  /**
+   * 入座抬升（ADR-0032）：只抬身体，不改位置与深度键。
+   * 座位来源是服务端全园广播的占用表 + 本地 sitAt 的预测；地面坐 / 躺没有座位，抬升为 0。
+   */
+  private syncSeatLift(netId: number, eid: number): void {
+    const pose = Motion.pose[eid]!;
+    if (pose !== POSE.Sit && pose !== POSE.Lie) {
+      this.renderer.setSeatLift(netId, 0);
+      return;
+    }
+    const seatId = this.entitySeat.get(netId);
+    if (seatId === undefined) {
+      this.renderer.setSeatLift(netId, 0);
+      return;
+    }
+    const seat = seatById(seatId);
+    this.renderer.setSeatLift(netId, seat ? seatLift(seat.kind, seat.facing) : 0);
   }
 
   /**
@@ -329,6 +493,7 @@ export class GameSession {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
     this.localSeat = seat.id;
+    this.entitySeat.set(this.localId, seat.id);
     Position.x[eid] = seat.x;
     Position.y[eid] = seat.y;
     Motion.direction[eid] = seat.facing;
@@ -350,6 +515,7 @@ export class GameSession {
     const hadSeat = this.localSeat !== 0;
     const posed = eid !== 0 && (Motion.pose[eid] === POSE.Sit || Motion.pose[eid] === POSE.Lie);
     this.localSeat = 0;
+    this.entitySeat.delete(this.localId);
     this.seatIntent = false;
     this.lieAt = 0;
     this.snoreAt = 0;
@@ -448,14 +614,44 @@ export class GameSession {
     });
   }
 
+  /**
+   * 落盘当前本地状态。
+   *
+   * 调用点只有三处：2s 节流、页面隐藏 / 卸载、断线重连前。
+   * 写入失败（配额满 / 隐私模式）由 storage 层吞掉——缓存只是体验增强，不能挡住进服。
+   */
+  private readonly persistNow = (): void => {
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    const patch = toSnapshotPatch({
+      x: Position.x[eid]!,
+      y: Position.y[eid]!,
+      direction: Motion.direction[eid]! as Direction,
+      pose: Motion.pose[eid]! as Pose,
+      seatId: this.localSeat,
+    });
+    saveSnapshot(patch);
+    // 重连时服务端拿到的必须是最后一次落盘的落点，而不是首次入场时的旧快照
+    this.net?.setResume({ ...patch });
+  };
+
+  private readonly onVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') this.persistNow();
+  };
+
   private clearWorld(): void {
     for (const id of this.names.keys()) {
       this.ecs.despawn(id);
       this.renderer.removeEntity(id);
     }
     this.names.clear();
+    this.speciesById.clear();
+    this.statusById.clear();
+    this.onlineById.clear();
+    this.welcomeAt = 0;
     for (const seatId of this.seatOwner.keys()) this.renderer.setSeatOccupied(seatId, false);
     this.seatOwner.clear();
+    this.entitySeat.clear();
     this.localSeat = 0;
     this.seatIntent = false;
     this.seatHint = null;
@@ -487,9 +683,24 @@ export class GameSession {
     if (this.localId) this.renderer.setAppearance(this.localId, appearance);
   }
 
+  /**
+   * 改常驻状态：本机先乐观上屏，服务端回执再对齐（打码后的文本可能不同）。
+   * 空串即清除。
+   */
+  setStatus(status: string): void {
+    this.status = status;
+    this.net?.sendStatus(status);
+    if (this.localId) this.renderer.setStatus(this.localId, status);
+  }
+
   /** 触屏摇杆：把屏幕摇杆方向交给输入层，与键盘共用同一条移动通路 */
   setMoveVector(x: number, y: number): void {
     this.input.setTouchVector(x, y);
+  }
+
+  /** 打开聊天前清掉仍按住的移动键：输入框接管键盘后角色不该继续滑行（ADR-0023 §6） */
+  clearMovement(): void {
+    this.input.clear();
   }
 
   /**
@@ -561,10 +772,16 @@ export class GameSession {
         this.startOverlay(eid, 'jump');
         return;
       case 'emote':
+        // 叫唤始终出声（ADR-0023 §3）：行走中图集没有张嘴帧，只发声不播动画
+        sfx.emit(this.species);
+        if (!intent.animated) return;
+        this.startOverlay(eid, 'emote');
+        Motion.moving[eid] = 0;
+        return;
       case 'wave':
-        // 叫唤与打招呼只在站定时触发：图集没有行走叫唤 / 挥手帧，套到脚步上就是滑步
+        // 打招呼只在站定时触发：图集没有行走挥手帧，套到脚步上就是滑步
         if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) return;
-        this.startOverlay(eid, intent.kind === 'wave' ? 'wave' : 'emote');
+        this.startOverlay(eid, 'wave');
         Motion.moving[eid] = 0;
         return;
       case 'interact':
@@ -737,6 +954,7 @@ export class GameSession {
     if (!this.renderer.updateEntity(netId, Position.x[eid]!, Position.y[eid]!)) return;
 
     this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
+    this.syncSeatLift(netId, eid);
     // 跳跃弧线：图集只负责姿势与 5 纹素腾空，剩下的落差与阴影由客户端叠
     const jumping = Motion.jump[eid] === 1;
     const lift = jumping
@@ -750,6 +968,7 @@ export class GameSession {
     const netId = this.ecs.netOf[eid]!;
     this.renderer.updateLocalEntity(netId, Position.x[eid]!, Position.y[eid]!);
     this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
+    this.syncSeatLift(netId, eid);
     const jumping = Motion.jump[eid] === 1;
     const lift = jumping
       ? jumpLiftTexels(this.elapsed - Motion.jumpSince[eid]!, this.overlays.jumpMs)
@@ -818,6 +1037,11 @@ export class GameSession {
       this.renderer.updateCamera(Position.x[localEid]!, Position.y[localEid]!);
       this.movementSendTime += dtMs;
       this.sendMove(localEid);
+      this.snapshotAt += dtMs;
+      if (this.snapshotAt >= SNAPSHOT_INTERVAL_MS) {
+        this.snapshotAt = 0;
+        this.persistNow();
+      }
     }
 
     this.renderer.tickBubbles(dtMs);
@@ -843,6 +1067,8 @@ export class GameSession {
         y: localEid ? Math.round(Position.y[localEid]!) : 0,
         nearby: this.names.size,
         backend: this.renderer.backend,
+        region: localEid ? regionAt(Position.x[localEid]!, Position.y[localEid]!) : '',
+        onlineSec: this.onlineSecOf(this.localId),
       });
     }
   };
@@ -872,6 +1098,10 @@ export class GameSession {
 
   stop(): void {
     this.disposed = true;
+    // 关页面前的最后一道保险：pagehide 没来得及触发时（路由内跳转）也能落盘
+    this.persistNow();
+    window.removeEventListener('pagehide', this.persistNow);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.input.detach();
     this.net?.dispose();
     this.net = null;

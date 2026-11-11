@@ -16,6 +16,13 @@ export class Player {
   wsId = 0;
   name = '';
   appearance: CharacterAppearance = DEFAULT_APPEARANCE.cow;
+  /** 常驻状态：空串表示没设置，只活在内存里，不进任何持久层 */
+  status = '';
+  /**
+   * 入场时刻（毫秒）。在线时长按会话口径结算，断线重连会拿到新的 Player，
+   * 因此这里不承担跨会话身份；进程重启即清零（ADR-0004）。
+   */
+  joinedAt = 0;
   /** 世界坐标（像素浮点）；上线传输时才量化 */
   x = 0;
   y = 0;
@@ -33,6 +40,8 @@ export class Player {
   lastClientMoveSequence = -1; // 上次处理的移动包序号（用于防重复）
   chatWindowStart = 0;
   chatCount = 0;
+  /** 上一次状态变更的时间戳：广播节流用，防伪造包把它当放大器 */
+  lastStatusAt = 0;
   /** 当前占用的座位 id，0 表示站立或地面坐 */
   seat = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
@@ -50,17 +59,17 @@ export class Player {
   private spawnBodyCache: Uint8Array | null = null;
 
   /**
-   * 入场资料的「不变部分」。名字与外观在一局内不变，缓存后入场补发从
+   * 入场资料的「不变部分」。名字、外观与状态在一局内很长时间不变，缓存后入场补发从
    * O(视野人数) 次编码降到 O(1) 次——这是 200 人同秒涌入那次长帧的根因。
    */
   get spawnBody(): Uint8Array {
     if (this.spawnBodyCache === null) {
-      this.spawnBodyCache = buildSpawnBody(this.name, this.appearance);
+      this.spawnBodyCache = buildSpawnBody(this.name, this.appearance, this.status);
     }
     return this.spawnBodyCache;
   }
 
-  /** 名字或外观变更后必须调用，否则新入场者会看到上一套帽子与配色 */
+  /** 名字、外观或状态变更后必须调用，否则新入场者会看到上一套帽子、配色与状态 */
   markSpawnDirty(): void {
     this.spawnBodyCache = null;
   }
@@ -70,6 +79,8 @@ export class Player {
     this.wsId = 0;
     this.name = '';
     this.appearance = DEFAULT_APPEARANCE.cow;
+    this.status = '';
+    this.joinedAt = 0;
     this.x = 0;
     this.y = 0;
     this.state = 0;
@@ -86,6 +97,7 @@ export class Player {
     this.lastClientMoveSequence = -1;
     this.chatWindowStart = 0;
     this.chatCount = 0;
+    this.lastStatusAt = 0;
     this.spawnBodyCache = null;
     this.known.clear();
   }
@@ -119,7 +131,15 @@ export class World {
     return this.players.size;
   }
 
-  create(name: string, appearance: CharacterAppearance, wsId: number, x: number, y: number): Player | null {
+  create(
+    name: string,
+    appearance: CharacterAppearance,
+    wsId: number,
+    x: number,
+    y: number,
+    status = '',
+    joinedAt = Date.now(),
+  ): Player | null {
     if (this.players.size >= MAX_ENTITIES) return null;
     const player = this.pool.pop() ?? new Player();
     player.reset();
@@ -127,6 +147,8 @@ export class World {
     player.wsId = wsId;
     player.name = name;
     player.appearance = appearance;
+    player.status = status;
+    player.joinedAt = joinedAt;
     player.x = x;
     player.y = y;
     player.applyState(DIRECTION.Down, POSE.Idle, false);

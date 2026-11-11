@@ -12,19 +12,16 @@ import {
   decodeMove,
   decodePing,
   decodeSetAppearance,
+  decodeSetStatus,
   encodeAppearanceBroadcast,
   encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
   encodeSeatState,
+  encodeStatusBroadcast,
   encodeWelcome,
-  findFreePoint,
-  isBlocked,
-  isOnLand,
-  isWaterAt,
   quantizeCoord,
   readOpCode,
-  WORLD_CENTER,
   type SeatStateEntry,
 } from '@niuma/shared-types';
 import { AdmissionController, type HelloPayload } from './admission/controller';
@@ -34,6 +31,7 @@ import { SpatialGrid } from './spatial/grid';
 import { handleChat } from './sim/chat';
 import { loadModerationFilter } from './sim/moderation';
 import { applyMove } from './sim/movement';
+import { resolveSpawn } from './sim/resume';
 import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
 import { broadcastDespawn, refreshView, type Transport } from './sim/view';
@@ -48,26 +46,11 @@ interface SocketData {
 }
 
 const MOVE_SCRATCH = { id: 0, x: 0, y: 0, state: 0 };
-
 /**
- * 出生点在广场内散布；落进花坛/水面时由 findFreePoint 就近挪到空地。
- * 压测会把半径放大到 3000，采样点可能落海：先拒绝采样重抽，避免整批人被兜底塞回广场。
- *
- * 水已可涉水（ADR-0030），但出生仍要避开水面：`isWaterAt` 与 `findFreePoint`
- * 的 `avoidWater` 是两道保险，避免新玩家一进场就泡在湖心。
+ * 状态广播的节流窗口。状态变更会发给视野内所有人，
+ * 没有下限的话一条伪造包循环就能把整片 AOI 变成广播放大器。
  */
-function spawnPoint(radius: number): { x: number; y: number } {
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const angle = Math.random() * Math.PI * 2;
-    const distance = Math.sqrt(Math.random()) * radius;
-    const x = WORLD_CENTER.x + Math.cos(angle) * distance;
-    const y = WORLD_CENTER.y + Math.sin(angle) * distance;
-    // 连障碍与水面一起拒：出生点落在湖心/河心观感糟糕，也确实离广场太远
-    if (!isOnLand(x, y) || isBlocked(x, y) || isWaterAt(x, y)) continue;
-    return findFreePoint(x, y);
-  }
-  return findFreePoint(WORLD_CENTER.x, WORLD_CENTER.y);
-}
+const STATUS_THROTTLE_MS = 200;
 
 export function startGameServer(config: ServerConfig) {
   const world = new World();
@@ -104,13 +87,32 @@ export function startGameServer(config: ServerConfig) {
   /** 真正入场：建实体、回 WELCOME、结算首帧视野。排队者放行时复用的就是这条路径 */
   function admit(ws: ServerWebSocket<SocketData>, payload: HelloPayload): void {
     if (ws.data.playerId !== 0) return;
-    const point = spawnPoint(config.spawnRadius);
-    const player = world.create(payload.name, payload.appearance, ws.data.wsId, point.x, point.y);
+    const now = Date.now();
+    // resume 是不可信输入：坐标重新过地形判据，座位重新查权威占用表（见 resolveSpawn）
+    const spawn = resolveSpawn(payload.resume, (seatId) => seats.isFree(seatId), config.spawnRadius);
+    const player = world.create(
+      payload.name,
+      payload.appearance,
+      ws.data.wsId,
+      spawn.x,
+      spawn.y,
+      payload.status,
+      // 入场时刻即在线时长的起点：与座位占用共用同一个 now，避免同一次入场出现两个口径
+      now,
+    );
     if (!player) {
       ws.close(1013, 'server full');
       return;
     }
     ws.data.playerId = player.id;
+    // 先落姿态再占座：occupy 会用座位锚点与座位姿态覆盖一次，顺序反了会把地面姿态写丢
+    player.applyState(spawn.direction, spawn.pose, false);
+    if (spawn.seat) {
+      const changes: SeatStateEntry[] = [];
+      seats.occupy(player, spawn.seat, now, changes);
+      broadcastSeats(changes);
+    }
+    // 座位吸附会改坐标，空间索引必须用最终位置
     grid.insert(player.id, player.x, player.y);
     ws.send(
       encodeWelcome({
@@ -118,6 +120,7 @@ export function startGameServer(config: ServerConfig) {
         tick: tickCount,
         x: quantizeCoord(player.x),
         y: quantizeCoord(player.y),
+        state: player.state,
       }),
     );
     const occupied = seats.snapshot();
@@ -142,9 +145,19 @@ export function startGameServer(config: ServerConfig) {
         `[moderation] name ${nameVerdict.verdict} ws=${ws.data.wsId} hits=${nameVerdict.hits}`,
       );
     }
+    // 状态与昵称同一套审核：政治类清空（不能上屏），脏话用打码结果继续展示
+    const statusVerdict = hello.status.length > 0 ? moderation.inspect(hello.status) : null;
+    if (statusVerdict && statusVerdict.verdict !== 'allow') {
+      console.warn(
+        `[moderation] status ${statusVerdict.verdict} ws=${ws.data.wsId} hits=${statusVerdict.hits}`,
+      );
+    }
     const payload: HelloPayload = {
       name: nameVerdict.verdict === 'reject' ? FALLBACK_NICKNAME : nameVerdict.text,
       appearance: hello.appearance,
+      status: statusVerdict && statusVerdict.verdict !== 'reject' ? statusVerdict.text : '',
+      // 排队期间跟着 payload 一起等；放行时才由 admit 重新校验
+      resume: hello.resume,
     };
     const alreadyQueued = admission.isQueued(ws.data.wsId);
     const decision = admission.decide(ws.data.wsId, payload, world.size, Date.now());
@@ -226,6 +239,32 @@ export function startGameServer(config: ServerConfig) {
       // 换装会让缓存的入场资料失效：不失效的话，之后进入他视野的人会看到旧的帽子与配色
       player.markSpawnDirty();
       const packet = encodeAppearanceBroadcast(player.id, player.appearance);
+      transport.send(player.wsId, packet);
+      for (const id of player.known) {
+        const other = world.get(id);
+        if (other) transport.send(other.wsId, packet);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_SET_STATUS) {
+      // 节流只挡高频伪造包：正常用户在界面上改状态的间隔远大于 200ms
+      if (now - player.lastStatusAt < STATUS_THROTTLE_MS) return;
+      player.lastStatusAt = now;
+      const text = decodeSetStatus(data);
+      const verdict = text.length > 0 ? moderation.inspect(text) : null;
+      if (verdict && verdict.verdict === 'reject') {
+        console.warn(`[moderation] status reject ws=${player.wsId} hits=${verdict.hits}`);
+      }
+      // 与 HELLO 同一套规则：政治类清空，打码结果照常展示
+      const next = verdict && verdict.verdict !== 'reject' ? verdict.text : '';
+      if (next !== player.status) {
+        player.status = next;
+        // 状态进了入场资料的不变部分：不失效缓存，之后进入视野的人会看到旧状态
+        player.markSpawnDirty();
+      }
+      // 即便没变化也回给自己：客户端据此把本地乐观值对齐成服务端裁决后的文本
+      const packet = encodeStatusBroadcast(player.id, player.status);
       transport.send(player.wsId, packet);
       for (const id of player.known) {
         const other = world.get(id);

@@ -6,6 +6,17 @@ const LEFT_KEYS = new Set(['ArrowLeft', 'KeyA']);
 const RIGHT_KEYS = new Set(['ArrowRight', 'KeyD']);
 const BLOCKED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
 
+/**
+ * 可编辑元素：键按下去属于输入，不属于游戏。
+ * 除了输入框与文本域，下拉框与 contenteditable 同样会消费字母键。
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
 export type ActionKey = 'sit' | 'lie' | 'emote' | 'jump' | 'wave' | 'interact';
 
 export class InputController {
@@ -18,10 +29,15 @@ export class InputController {
 
   attach(onAction: (action: ActionKey) => void, onChat: () => void): void {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const inField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
-      if (event.code === 'Enter' && !inField) {
+      // 输入法组合态：C / Z / X / 空格的 keydown 属于选词，不是游戏动作。
+      // 不同浏览器分别报 isComposing 与 keyCode 229，两个都要判。
+      if (event.isComposing || event.keyCode === 229) return;
+      const inField = isEditableTarget(event.target);
+      // 小键盘 Enter 与主键盘 Enter 同效，否则外接全尺寸键盘按了没反应
+      if ((event.code === 'Enter' || event.code === 'NumpadEnter') && !inField) {
         event.preventDefault();
+        // 打开聊天前清空仍按住的移动键：面板接管键盘后角色不该继续滑行（ADR-0023 §6）
+        this.pressed.clear();
         onChat();
         return;
       }

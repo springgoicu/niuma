@@ -10,6 +10,7 @@ import {
   WORLD_LAYOUT,
   chairOffset,
   decodeSeatState,
+  deskDepthOffset,
   deskFootprint,
   encodeSeatState,
   findNearestSeat,
@@ -154,6 +155,21 @@ describe('座位朝向与家具一致', () => {
     const facings = new Set(chairs.map((seat) => seat.facing));
     for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
       expect(facings.has(facing)).toBe(true);
+    }
+  });
+
+  it('东西向桌子让到椅子与人之后；南北向保持占地南边（ADR-0032）', () => {
+    for (const seat of chairs) {
+      const desk = desks[seat.desk]!;
+      const depth = desk.y + deskDepthOffset(desk.facing);
+      const side = desk.facing === DIRECTION.Left || desk.facing === DIRECTION.Right;
+      if (side) {
+        // 东西向的椅子与桌子同 y：人坐在 seat.y、椅子排在 seat.y - 1，桌子必须更靠后
+        expect({ seat: seat.id, belowChair: depth < seat.y - 1 }).toEqual({ seat: seat.id, belowChair: true });
+      } else {
+        // 南北向保持现状：深度键仍是占地南边，人朝南时桌子在近侧（物理正确）
+        expect(depth).toBe(desk.y + DESK_H / 2);
+      }
     }
   });
 

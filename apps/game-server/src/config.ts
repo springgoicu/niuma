@@ -1,3 +1,4 @@
+import { SPAWN_RADIUS } from '@niuma/shared-types';
 import type { AdmissionConfig } from './admission/controller';
 
 export interface ModerationConfig {
@@ -73,8 +74,8 @@ export function loadConfig(): ServerConfig {
     hostname: process.env.GAME_SERVER_HOST ?? '0.0.0.0',
     maxMessagesPerSecond: readInt(process.env.GAME_SERVER_MAX_MPS, 120),
     helloTimeoutMs: 5000,
-    // 与 shared-types 的 SPAWN_RADIUS 对齐：世界放大 1.25 后出生圈同步放大
-    spawnRadius: readInt(process.env.GAME_SPAWN_RADIUS, 300),
+    // 直接读 shared-types 的 SPAWN_RADIUS：出生圈收进北门口袋后，这里不再各写一份字面量
+    spawnRadius: readInt(process.env.GAME_SPAWN_RADIUS, SPAWN_RADIUS),
     admission,
     moderation: {
       lexiconPath: process.env.GAME_MODERATION_LEXICON ?? '',

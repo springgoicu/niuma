@@ -28,7 +28,7 @@ const HEALTHY = { egressKbps: 60, online: 1, tickP95Ms: 2 };
 const OVERLOAD = { egressKbps: 400, online: 20, tickP95Ms: 3 };
 
 function payload(name: string, appearance: CharacterAppearance = DEFAULT_APPEARANCE.cow): HelloPayload {
-  return { name, appearance };
+  return { name, appearance, status: '' };
 }
 
 describe('AdmissionController', () => {

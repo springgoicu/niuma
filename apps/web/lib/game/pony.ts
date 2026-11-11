@@ -177,6 +177,9 @@ export class PonyRenderer {
   private entries: LayerEntry[] = [];
   private frameIndex = 0;
   private token = 0;
+  /** 呼吸 / 行走起伏（≤ 0）与座位抬升（≥ 0）分开记，合成后落在一个整数 y 上 */
+  private bobTexels = 0;
+  private seatLiftTexels = 0;
   private appearanceValue: CharacterAppearance;
   private builtKey = '';
 
@@ -201,8 +204,24 @@ export class PonyRenderer {
 
   /** 待机 / 行走的整数纹素起伏：只允许 0 或负值，角色永远不会陷进地面 */
   setBob(bobTexels: number): void {
-    if (this.container.y === bobTexels) return;
-    this.container.y = bobTexels;
+    if (this.bobTexels === bobTexels) return;
+    this.bobTexels = bobTexels;
+    this.applyOffset();
+  }
+
+  /**
+   * 坐在座位上时整体上移，让臀底落在座面顶面（ADR-0032）。
+   * 阴影挂在 container 之外，所以只抬身体，不抬阴影——人不会「飞起来」。
+   */
+  setSeatLift(liftTexels: number): void {
+    if (this.seatLiftTexels === liftTexels) return;
+    this.seatLiftTexels = liftTexels;
+    this.applyOffset();
+  }
+
+  private applyOffset(): void {
+    const y = this.bobTexels - this.seatLiftTexels;
+    if (this.container.y !== y) this.container.y = y;
   }
 
   async build(appearance: CharacterAppearance = this.appearanceValue): Promise<void> {

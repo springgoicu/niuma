@@ -3,6 +3,8 @@
  * 该文件不依赖任何运行时，可被 Bun / Node / 浏览器直接引用。
  */
 
+import type { Direction, Pose } from './constants';
+
 export type Species = 'cow' | 'horse';
 
 /**
@@ -98,6 +100,10 @@ export const OpCode = {
   S2C_QUEUE_REJECTED: 0x18,
   S2C_SEAT_STATE: 0x19,
   S2C_CHAT_REJECTED: 0x1a,
+  /** 设置常驻状态：`[op][len u16][utf8]`，空字符串表示清除 */
+  C2S_SET_STATUS: 0x1b,
+  /** 状态变更广播：`[op][entityId u16][len u16][utf8]` */
+  S2C_STATUS: 0x1c,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -125,6 +131,13 @@ export interface SpawnPacket {
   state: number;
   name: string;
   appearance: CharacterAppearance;
+  /** 常驻状态：空串（或旧包缺省）表示没设置 */
+  status?: string;
+  /**
+   * 服务端口径的已在线秒数：发送入场包那一刻的会话时长。
+   * 旧服务端不带这一段时为 undefined，客户端退化为「首次看到起算」。
+   */
+  onlineSec?: number;
 }
 
 export interface WelcomePacket {
@@ -132,6 +145,24 @@ export interface WelcomePacket {
   tick: number;
   x: number;
   y: number;
+  /** 服务端裁决后的权威 state：客户端据此初始化朝向与姿态，不再自行假设 */
+  state: number;
+}
+
+/**
+ * 上一次会话的落点，随 `C2S_HELLO` 上报。
+ *
+ * 一律当作不可信输入：坐标必须落在可行走的陆地上，座位必须仍然空闲，
+ * 裁决权完全在服务端（`resolveSpawn`）。姿态不允许 `Walk`——移动状态不跨会话。
+ */
+export interface ResumeState {
+  /** 世界像素坐标 */
+  x: number;
+  y: number;
+  direction: Direction;
+  pose: Pose;
+  /** 上次所坐的座位 id；0 表示当时没坐 */
+  seatId: number;
 }
 
 export interface ChatPacket {

@@ -3,11 +3,14 @@
 import { DIRECTION, type Direction } from '@niuma/shared-types';
 
 /**
- * 工位桌贴图的四向几何（ADR-0027 / ADR-0028）。
+ * 工位桌贴图的四向几何（ADR-0027 / ADR-0028 / ADR-0032）。
  *
  * 桌子是实物，不是贴在屏幕上的平面：屏幕朝东 / 朝西时整张桌子转 90°，人同样坐在长边外侧，
  * 显示器落在背对椅子的远端长边。本模块只提供几何（帧、桌面、前挡板、桌腿、显示器、陈设），
  * 不 import pixi——绘制在 `props.ts`，几何可以单独验算，位图里看不出「贴错边」这种 bug。
+ *
+ * 四个朝向共用同一条投影约定：桌面是俯视的一块平面，显示器与它的支架**立在桌面北缘之上**
+ * （`monitor.y + monitor.h <= top.y`）。侧放桌因此也要把帧向北加高，而不是把显示器画进桌面里。
  *
  * 帧底永远等于精灵锚点（桌脚占地的南边）：桌子不会陷进地里，也不会浮空。
  */
@@ -25,7 +28,7 @@ export interface Box {
 export type DeskScreenSide = 'front' | 'back' | 'west' | 'east';
 
 export interface DeskArt {
-  /** 单帧尺寸：横桌 96×66，侧放桌 48×92 */
+  /** 单帧尺寸：横桌 96×66，侧放桌 48×110（桌面北侧留出立式显示器的 22 高） */
   frame: { w: number; h: number };
   /** 桌面本体（顶面），不含前挡板 */
   top: Box;
@@ -67,17 +70,22 @@ const HORIZONTAL_BODY: DeskBody = {
   shadow: { cx: 48, cy: 64, rx: 42, ry: 3 },
 };
 
-/** 桌体共用部分：竖桌 40×88 占地，桌面 40×72 + 南端前挡板 14 */
+/**
+ * 桌体共用部分：竖桌 40×88 占地，桌面 40×72 + 南端前挡板 14。
+ *
+ * 帧高 110 = 桌面北侧 24（立式显示器与支架）+ 桌面 72 + 前挡板 14；
+ * 帧底仍是占地南边，加高只向上扩展，桌心与碰撞盒不动。
+ */
 const VERTICAL_BODY: DeskBody = {
-  frame: { w: 48, h: 92 },
-  top: { x: 4, y: 6, w: 40, h: 72 },
-  front: { x: 4, y: 78, w: 40, h: 14 },
-  handle: { x: 20, y: 82, w: 8, h: 2 },
+  frame: { w: 48, h: 110 },
+  top: { x: 4, y: 24, w: 40, h: 72 },
+  front: { x: 4, y: 96, w: 40, h: 14 },
+  handle: { x: 20, y: 100, w: 8, h: 2 },
   legs: [
-    { x: 7, y: 86, w: 5, h: 6 },
-    { x: 32, y: 86, w: 5, h: 6 },
+    { x: 7, y: 104, w: 5, h: 6 },
+    { x: 32, y: 104, w: 5, h: 6 },
   ],
-  shadow: { cx: 24, cy: 90, rx: 20, ry: 3 },
+  shadow: { cx: 24, cy: 108, rx: 20, ry: 3 },
 };
 
 /** 人朝北（椅子在桌南）：显示器在桌子的北侧远边，屏幕朝镜头，与实装前的唯一画法一致 */
@@ -92,10 +100,10 @@ const FACING_UP_ART: DeskArt = {
   },
 };
 
-/** 人朝南（椅子在桌北）：显示器在桌子的南侧远边，屏幕朝北，镜头只看到背壳 */
+/** 人朝南（椅子在桌北）：显示器贴桌子南侧长边，屏幕朝北，镜头只看到背壳 */
 const FACING_DOWN_ART: DeskArt = {
   ...HORIZONTAL_BODY,
-  monitor: { x: 32, y: 28, w: 32, h: 20 },
+  monitor: { x: 32, y: 32, w: 32, h: 20 },
   screen: 'back',
   details: {
     plant: { cx: 14, bottom: 28 },
@@ -104,27 +112,27 @@ const FACING_DOWN_ART: DeskArt = {
   },
 };
 
-/** 人朝西（椅子在桌东）：桌子转成竖桌，显示器贴西侧长边，屏幕朝东对着人 */
+/** 人朝西（椅子在桌东）：桌子转成竖桌，显示器贴西侧长边、立在桌面北缘，屏幕朝东对着人 */
 const FACING_LEFT_ART: DeskArt = {
   ...VERTICAL_BODY,
-  monitor: { x: 5, y: 34, w: 12, h: 22 },
+  monitor: { x: 5, y: 2, w: 12, h: 22 },
   screen: 'east',
   details: {
-    plant: { cx: 32, bottom: 24 },
-    mug: { x: 26, y: 66 },
-    note: { x: 26, y: 40 },
+    plant: { cx: 32, bottom: 42 },
+    mug: { x: 26, y: 84 },
+    note: { x: 26, y: 58 },
   },
 };
 
-/** 人朝东（椅子在桌西）：竖桌，显示器贴东侧长边，屏幕朝西对着人 */
+/** 人朝东（椅子在桌西）：竖桌，显示器贴东侧长边、立在桌面北缘，屏幕朝西对着人 */
 const FACING_RIGHT_ART: DeskArt = {
   ...VERTICAL_BODY,
-  monitor: { x: 31, y: 34, w: 12, h: 22 },
+  monitor: { x: 31, y: 2, w: 12, h: 22 },
   screen: 'west',
   details: {
-    plant: { cx: 16, bottom: 24 },
-    mug: { x: 10, y: 66 },
-    note: { x: 13, y: 40 },
+    plant: { cx: 16, bottom: 42 },
+    mug: { x: 10, y: 84 },
+    note: { x: 13, y: 58 },
   },
 };
 

@@ -74,12 +74,33 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
 }
 
 describe('工位桌贴图的四向几何', () => {
-  it('横桌 96×66、侧放桌 48×92，帧尺寸随朝向转置', () => {
+  it('横桌 96×66、侧放桌 48×110，帧尺寸随朝向转置', () => {
     for (const { facing } of FACINGS) {
       const { frame } = deskArtFor(facing);
       const side = facing === DIRECTION.Left || facing === DIRECTION.Right;
       expect(frame.w).toBe(side ? 48 : 96);
-      expect(frame.h).toBe(side ? 92 : 66);
+      expect(frame.h).toBe(side ? 110 : 66);
+    }
+  });
+
+  it('显示器立在桌沿上，不铺在桌面里（ADR-0032）', () => {
+    for (const { facing, name } of FACINGS) {
+      const { monitor, top, screen } = deskArtFor(facing);
+      expect(monitor.y).toBeGreaterThanOrEqual(0);
+      if (screen === 'back') {
+        // 背对镜头只看到背壳：显示器站在桌面靠南的一半（底边越过中线、不越出桌沿）
+        expect({ facing: name, southHalf: monitor.y + monitor.h > top.y + top.h / 2 }).toEqual({
+          facing: name,
+          southHalf: true,
+        });
+        expect(monitor.y + monitor.h).toBeLessThanOrEqual(top.y + top.h);
+      } else {
+        // 其余三向共用同一条投影约定：屏幕本体立在桌面北缘之上，支架落在桌面上
+        expect({ facing: name, aboveDesk: monitor.y + monitor.h <= top.y }).toEqual({
+          facing: name,
+          aboveDesk: true,
+        });
+      }
     }
   });
 

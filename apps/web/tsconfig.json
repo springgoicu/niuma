@@ -22,5 +22,5 @@
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   /* 单测跑在 bun 上（bun:test），类型由 bun 自带，不参与 Next 的 tsc 检查 */
-  "exclude": ["node_modules", "lib/game/__tests__"]
+  "exclude": ["node_modules", "lib/**/__tests__"]
 }
