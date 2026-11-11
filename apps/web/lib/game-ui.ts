@@ -34,6 +34,8 @@ interface GameUiState {
   chatFocusSeq: number;
   /** 工牌卡上的状态编辑面板：与聊天面板互斥收起，点击画布空白处一并关闭 */
   statusOpen: boolean;
+  /** 园区公告栏（微信群二维码）：整屏浮层，打开时把聊天与状态面板一起收起 */
+  noticeOpen: boolean;
   /** 本地角色姿态：动作按钮据此显示激活 / 不可用态 */
   localPose: Pose;
   /** 是否坐在座位锚点上 */
@@ -53,6 +55,7 @@ interface GameUiState {
   /** 打开聊天并请求聚焦输入框：与 setChatOpen(true) 的区别是「已展开也必须重新聚焦」 */
   requestChat: () => void;
   setStatusOpen: (open: boolean) => void;
+  setNoticeOpen: (open: boolean) => void;
   reset: () => void;
 }
 
@@ -75,6 +78,7 @@ const INITIAL = {
   chatOpen: false,
   chatFocusSeq: 0,
   statusOpen: false,
+  noticeOpen: false,
   localPose: POSE.Idle as Pose,
   seated: false,
   seatKind: null as SeatKind | null,
@@ -115,13 +119,25 @@ export const useGameUi = create<GameUiState>((set) => ({
   // 展开时顺手推进聚焦序号，头部按钮与回车共用同一条聚焦路径
   setChatOpen: (chatOpen) =>
     set((state) =>
-      chatOpen ? { chatOpen, statusOpen: false, chatFocusSeq: state.chatFocusSeq + 1 } : { chatOpen },
+      chatOpen
+        ? { chatOpen, statusOpen: false, noticeOpen: false, chatFocusSeq: state.chatFocusSeq + 1 }
+        : { chatOpen },
     ),
 
   requestChat: () =>
-    set((state) => ({ chatOpen: true, statusOpen: false, chatFocusSeq: state.chatFocusSeq + 1 })),
+    set((state) => ({
+      chatOpen: true,
+      statusOpen: false,
+      noticeOpen: false,
+      chatFocusSeq: state.chatFocusSeq + 1,
+    })),
 
-  setStatusOpen: (statusOpen) => set(statusOpen ? { statusOpen, chatOpen: false } : { statusOpen }),
+  setStatusOpen: (statusOpen) =>
+    set(statusOpen ? { statusOpen, chatOpen: false, noticeOpen: false } : { statusOpen }),
+
+  // 公告栏是整屏浮层：打开时把左上角的两块面板一并收起，避免遮罩下还有别的面板在动
+  setNoticeOpen: (noticeOpen) =>
+    set(noticeOpen ? { noticeOpen, chatOpen: false, statusOpen: false } : { noticeOpen }),
 
   reset: () => set(INITIAL),
 }));

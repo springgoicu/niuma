@@ -22,6 +22,7 @@ import { InspectCard } from './InspectCard';
 import { JoinGate } from './JoinGate';
 import { MiniMap } from './MiniMap';
 import { NavCard } from './NavCard';
+import { NoticeBoard, NoticeBoardButton } from './NoticeBoard';
 import { QueueGate } from './QueueGate';
 import { WelcomeBanner } from './WelcomeBanner';
 import { Joystick, TouchActions } from './TouchControls';
@@ -262,6 +263,7 @@ export function GameViewport() {
               <div className={`flex shrink-0 ${isTouch ? 'items-center gap-2' : 'flex-col items-end gap-2'}`}>
                 <OnlineBadge compact={isTouch} />
                 <div className="flex items-center gap-2">
+                  <NoticeBoardButton compact={isTouch} />
                   <SfxToggle compact={isTouch} />
                   {/* 手机端的收尾出口：自动全屏被系统拒掉之后，这里还能再要一次 */}
                   {isTouch && immersive.supported && (
@@ -316,9 +318,10 @@ export function GameViewport() {
             </div>
           )}
 
-          {/* 出生点的引导层：实体地标在画面里，这两块负责「说清楚」与随时可查（ADR-0036） */}
+          {/* 出生点的引导层：实体地标在画面里，这几块负责「说清楚」与随时可查（ADR-0036） */}
           <NavCard compact={isTouch} />
           <WelcomeBanner compact={isTouch} />
+          <NoticeBoard compact={isTouch} />
 
           <QueueGate onRetry={handleRetry} />
           {hint && (
