@@ -38,6 +38,10 @@ gzip_types
     application/xml
     image/svg+xml;
 
+# 静态资源并发上限要用的共享内存区：单 IP 12 条连接够浏览器用，
+# 又不至于让某个人开几十个下载把 5Mbps 出口吃干
+limit_conn_zone $binary_remote_addr zone=addr:10m;
+
 # ---- 静态文件元数据缓存 ----
 # 2 vCPU 机器上省掉的就是一次次 stat()：命中后连 open() 都省了
 open_file_cache          max=20000 inactive=60s;
@@ -46,14 +50,14 @@ open_file_cache_min_uses 2;
 open_file_cache_errors   on;
 
 # ---- TLS 会话复用 ----
-# 首访是完整握手，第二次起走 session ticket；5Mbps 机器上握手省下的几百毫秒很值钱
+# 首访是完整握手，第二次起走 session ticket；5Mbps 机器上握手省下的几百毫秒很值钱。
+# ssl_protocols / ssl_prefer_server_ciphers 由发行版 nginx.conf 提供（TLS1.2+1.3），
+# 这里不重复声明：重复会让 nginx -t 报 duplicate 并拒绝启动。
 ssl_session_cache   shared:SSL:20m;
 ssl_session_timeout 1d;
 ssl_session_tickets on;
-ssl_protocols       TLSv1.2 TLSv1.3;
-ssl_prefer_server_ciphers off;
 # 4k：证书链一次发完，减少一个 RTT
 ssl_buffer_size     4k;
 
-server_tokens off;
+# server_tokens 由发行版 nginx.conf 关闭，这里不再声明（重复会 nginx -t 失败）
 client_max_body_size 4m;

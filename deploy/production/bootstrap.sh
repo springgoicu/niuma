@@ -39,8 +39,12 @@ chown -R www-data:www-data "$ACME_ROOT"
 
 step "2. 代码"
 if [ -d "$SRC_DIR/.git" ]; then
-  sudo -u "$AS_USER" git -C "$SRC_DIR" fetch --prune origin "$BRANCH"
-  sudo -u "$AS_USER" git -C "$SRC_DIR" reset --hard "origin/$BRANCH"
+  # fetch 失败不该挡住后面的 nginx/证书步骤：先让站点能起来，公钥补好再拉
+  if sudo -u "$AS_USER" git -C "$SRC_DIR" fetch --prune origin "$BRANCH"; then
+    sudo -u "$AS_USER" git -C "$SRC_DIR" reset --hard "origin/$BRANCH"
+  else
+    echo "   ⚠ git fetch 失败（部署公钥没配？）继续用当前 HEAD"
+  fi
 else
   sudo -u "$AS_USER" git clone --branch "$BRANCH" "$REPO" "$SRC_DIR"
 fi
@@ -70,6 +74,12 @@ chmod 600 /etc/niuma/*.env
 chown "$AS_USER:$AS_USER" /etc/niuma/hook_path
 
 step "4. nginx"
+# 发行版自带的 nginx.conf 已经有一行 `gzip on;`，重复声明会让 nginx -t 直接失败；
+# 顺手把 worker_connections/multi_accept 调到能扛住 WebSocket 长连接的档位。
+sed -i 's/^[[:space:]]*gzip on;.*/# gzip on; 交给 conf.d\/00-niuma-http.conf 统一配置/' /etc/nginx/nginx.conf
+sed -i 's/^[[:space:]]*worker_connections[[:space:]].*;/    worker_connections 16384;/' /etc/nginx/nginx.conf
+sed -i 's/^[[:space:]]*# multi_accept on;/    multi_accept on;/' /etc/nginx/nginx.conf
+
 # 上游与 gzip/缓存参数（http 上下文）
 sed "s#@APP_BASE@#$APP_BASE#g" "$HERE/nginx/00-niuma-http.conf.template" \
   > /etc/nginx/conf.d/00-niuma-http.conf
@@ -82,6 +92,19 @@ elif [ -f "$APP_BASE/web/.next/BUILD_ID" ]; then
   WEB_ROOT="$APP_BASE/web"
 else
   WEB_ROOT="$APP_BASE/web/apps/web"   # 首次部署前先按经验值写，部署完再校正
+fi
+
+# 证书还没有时先用两天期的自签占位：让 nginx -t 能过、站点能起来，
+# 标记文件保证 certbot 之后会把它整个换掉（真实证书不会被动）
+CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
+if [ ! -f "$CERT_DIR/fullchain.pem" ]; then
+  echo "   尚无证书，生成自签占位"
+  mkdir -p "$CERT_DIR"
+  openssl req -x509 -nodes -newkey rsa:2048 -days 2 \
+    -subj "/CN=$DOMAIN" \
+    -keyout "$CERT_DIR/privkey.pem" -out "$CERT_DIR/fullchain.pem" 2>/dev/null
+  cp "$CERT_DIR/fullchain.pem" "$CERT_DIR/chain.pem"
+  touch "$CERT_DIR/.niuma-placeholder"
 fi
 
 sed -e "s#@DOMAIN@#$DOMAIN#g" \
@@ -97,19 +120,21 @@ systemctl enable --now nginx
 systemctl reload nginx
 echo "   静态根目录 $WEB_ROOT"
 
-step "5. HTTPS 证书（Let's Encrypt / webroot）"
+step "5. HTTPS 证书（Let's Encrypt / webroot，ECDSA P-256）"
 if [ "$SKIP_CERT" = "1" ]; then
-  echo "   跳过（SKIP_CERT=1）"
-elif [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
-  echo "   证书已存在"
-else
+  echo "   跳过（SKIP_CERT=1）——此时 443 用的是自签占位证书"
+elif [ -f "$CERT_DIR/.niuma-placeholder" ] || [ ! -f "$CERT_DIR/fullchain.pem" ]; then
+  # 清掉占位，让 certbot 建一条干净的 lineage
+  rm -rf "/etc/letsencrypt/live/$DOMAIN" "/etc/letsencrypt/archive/$DOMAIN" "/etc/letsencrypt/renewal/$DOMAIN.conf"
   # 证书签发要求域名已经解析到本机；没解析时这里会失败，改好 DNS 再重跑本脚本即可
   certbot certonly --webroot -w "$ACME_ROOT" \
     -d "$DOMAIN" -d "$WWW" \
     --key-type ecdsa --agree-tos -m "$CONTACT_EMAIL" \
     --non-interactive --keep-until-expiring \
     || die "证书签发失败：确认 $DOMAIN 已解析到本机公网 IP、安全组放通 80"
-  echo "   签发完成（ECDSA P-256）"
+  echo "   签发完成"
+else
+  echo "   证书已存在"
 fi
 
 if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
