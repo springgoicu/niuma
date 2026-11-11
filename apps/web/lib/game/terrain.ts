@@ -14,7 +14,6 @@ import {
   isWaterAt,
   pointInPolygon,
   rectContains,
-  type FenceSegment,
   type LakeShape,
   type Point,
   type WorldRect,
@@ -80,8 +79,6 @@ const DIRT_TILE = 128;
 const SEA_EXTENT = 2048;
 /** 水面滚动的最小时间片：湖慢河快靠 `every` 区分 */
 const WATER_TICK_MS = 140;
-/** 立柱间距 84：角色 48 texel 高，原 56 会让立柱比人还密 */
-const FENCE_POST_GAP = 84;
 /** 花海花朵密度：普通草地 0.12，花海要密到看得出「一片」 */
 const FLOWER_FIELD_CHANCE = 0.4;
 /** 全岛零散野花：只做点缀，压到普通贴花的五分之一 */
@@ -244,7 +241,7 @@ export class TerrainView {
     };
   }
 
-  /** `depth` 负责按脚底 y 把树、围栏与道具放进正确的深度层 */
+  /** `depth` 负责按脚底 y 把树与道具放进正确的深度层 */
   build(depth: DepthSink): void {
     this.depth = depth;
     this.addSea();
@@ -258,13 +255,13 @@ export class TerrainView {
     for (const lake of WORLD_LAYOUT.lakes) this.addLake(lake);
     this.addRivers();
     this.addBridges();
+    this.addDocks();
     // 底色全部就位后再画边缘：草缘压在土、石、水、沙的暗边之上
     this.flushEdges();
     this.addDecor();
     this.addDecals();
     this.addTrees(depth);
     this.addPlanters(depth);
-    for (const segment of WORLD_LAYOUT.fence.segments) this.addFence(depth, segment);
   }
 
   /** 深海铺在最底层，外扩一圈：任何视口都不会露出世界外的黑色 */
@@ -380,7 +377,7 @@ export class TerrainView {
 
     // 广场不是铺装（ADR-0017）：地面就是 `addGrass` 铺满全岛的那张草纹，
     // 这里只留一圈石色路缘标出办公区。外圈 2px 深缝压住草与石的交界，
-    // 内侧 10px 面层向外收，围栏与花箱继续承担「办公区」的辨识。
+    // 内侧 10px 面层向外收；ADR-0028 删除围栏后，办公区的辨识交给树篱、花箱与工位。
     const curb = new Graphics();
     // alignment 0 = 描边落在轮廓外侧（Pixi 8 的 1 才是内侧）
     curb.poly(flat).stroke({ color: C.plazaSeam, width: 12, alignment: 0, join: 'round' });
@@ -574,20 +571,47 @@ export class TerrainView {
   }
 
   private addBridges(): void {
-    for (const bridge of WORLD_LAYOUT.bridges) {
-      const g = new Graphics();
-      g.rect(bridge.x, bridge.y, bridge.w, bridge.h).fill(C.bridgeWood);
-      // 木板缝垂直于通行方向：桥是东西向的，缝就竖着排
-      for (let x = bridge.x + 8; x < bridge.x + bridge.w; x += 14) {
-        g.rect(x, bridge.y, 1, bridge.h).fill(C.bridgeSeam);
+    for (const bridge of WORLD_LAYOUT.bridges) this.addDeck(bridge, true);
+  }
+
+  /** 码头：与桥同一种木栈道，只是一端伸进水面、不设栏杆（ADR-0028） */
+  private addDocks(): void {
+    for (const dock of WORLD_LAYOUT.docks) this.addDeck(dock, false);
+  }
+
+  /**
+   * 木栈道：木板缝垂直于通行方向，长边两侧压栏杆。
+   *
+   * 南北向（h > w）时缝横排、栏杆压左右沿，否则缝竖排、栏杆压上下沿——
+   * 写死一个方向会让南北向的桥栏杆横在路中间（ADR-0028）。
+   */
+  private addDeck(deck: WorldRect, rail: boolean): void {
+    const vertical = deck.h > deck.w;
+    const g = new Graphics();
+    g.rect(deck.x, deck.y, deck.w, deck.h).fill(C.bridgeWood);
+    if (vertical) {
+      for (let y = deck.y + 8; y < deck.y + deck.h; y += 14) {
+        g.rect(deck.x, y, deck.w, 1).fill(C.bridgeSeam);
       }
-      // 两侧栏杆压在桥沿上
-      g.rect(bridge.x, bridge.y - 5, bridge.w, 5).fill(C.fenceDark);
-      g.rect(bridge.x, bridge.y - 5, bridge.w, 3).fill(C.bridgeRail);
-      g.rect(bridge.x, bridge.y + bridge.h, bridge.w, 5).fill(C.fenceDark);
-      g.rect(bridge.x, bridge.y + bridge.h + 3, bridge.w, 3).fill(C.bridgeRail);
-      this.base.addChild(g);
+    } else {
+      for (let x = deck.x + 8; x < deck.x + deck.w; x += 14) {
+        g.rect(x, deck.y, 1, deck.h).fill(C.bridgeSeam);
+      }
     }
+    if (rail) {
+      if (vertical) {
+        g.rect(deck.x - 5, deck.y, 5, deck.h).fill(C.fenceDark);
+        g.rect(deck.x - 5, deck.y, 3, deck.h).fill(C.bridgeRail);
+        g.rect(deck.x + deck.w, deck.y, 5, deck.h).fill(C.fenceDark);
+        g.rect(deck.x + deck.w + 3, deck.y, 3, deck.h).fill(C.bridgeRail);
+      } else {
+        g.rect(deck.x, deck.y - 5, deck.w, 5).fill(C.fenceDark);
+        g.rect(deck.x, deck.y - 5, deck.w, 3).fill(C.bridgeRail);
+        g.rect(deck.x, deck.y + deck.h, deck.w, 5).fill(C.fenceDark);
+        g.rect(deck.x, deck.y + deck.h + 3, deck.w, 3).fill(C.bridgeRail);
+      }
+    }
+    this.base.addChild(g);
   }
 
   /** 岸边碎石与芦苇：纯点缀，不参与碰撞 */
@@ -699,6 +723,7 @@ export class TerrainView {
     if (!pointInPolygon(x, y, ISLAND.points)) return false;
     for (const path of WORLD_LAYOUT.paths) if (rectContains(path, x, y)) return false;
     for (const bridge of WORLD_LAYOUT.bridges) if (rectContains(bridge, x, y)) return false;
+    for (const dock of WORLD_LAYOUT.docks) if (rectContains(dock, x, y)) return false;
     for (const area of WORLD_LAYOUT.paved) if (rectContains(area, x, y)) return false;
     for (const building of WORLD_LAYOUT.buildings) if (rectContains(building.rect, x, y)) return false;
     if (isWaterAt(x, y)) return false;
@@ -767,50 +792,6 @@ export class TerrainView {
     }
   }
 
-  private addFence(depth: DepthSink, segment: FenceSegment): void {
-    if (segment.y1 === segment.y2) {
-      const left = Math.min(segment.x1, segment.x2);
-      const right = Math.max(segment.x1, segment.x2);
-      const g = this.drawFenceSpan(left, segment.y1, right - left, true);
-      depth.add(segment.y1, g);
-      return;
-    }
-    const from = Math.min(segment.y1, segment.y2);
-    const to = Math.max(segment.y1, segment.y2);
-    // 竖向栏板按 120px 分段：一段越短，人绕过立柱时的前后判定越准
-    for (let y = from; y < to; y += 120) {
-      const end = Math.min(y + 120, to);
-      const g = this.drawFenceSpan(segment.x1, y, end - y, false);
-      // 竖向栏板按分段下沿排序：走过的人各归各的前后
-      depth.add(end, g);
-    }
-  }
-
-  /** 一段栏板：两根横栏 + 等距立柱；竖向栏板把角色反转 90° 画 */
-  private drawFenceSpan(x: number, y: number, length: number, horizontal: boolean): Graphics {
-    const g = new Graphics();
-    if (horizontal) {
-      g.rect(x, y - 16, length, 5).fill(C.fenceDark);
-      g.rect(x, y - 16, length, 3).fill(C.fenceRail);
-      g.rect(x, y - 8, length, 5).fill(C.fenceDark);
-      g.rect(x, y - 8, length, 3).fill(C.fenceRail);
-      for (let post = 0; post <= length - 7; post += FENCE_POST_GAP) {
-        g.rect(x + post, y - 26, 8, 26).fill(C.fenceDark);
-        g.rect(x + post + 1, y - 25, 6, 24).fill(C.fenceRail);
-        g.rect(x + post + 1, y - 25, 2, 24).fill(C.fenceLight);
-      }
-      return g;
-    }
-    g.rect(x - 16, y, 5, length).fill(C.fenceDark);
-    g.rect(x - 16, y, 3, length).fill(C.fenceLight);
-    g.rect(x - 8, y, 5, length).fill(C.fenceDark);
-    g.rect(x - 8, y, 3, length).fill(C.fenceLight);
-    for (let post = 0; post <= length - 8; post += FENCE_POST_GAP) {
-      g.rect(x - 13, y + post, 15, 8).fill(C.fenceDark);
-      g.rect(x - 12, y + post + 1, 13, 6).fill(C.fenceRail);
-    }
-    return g;
-  }
 
   /** 水面只滚平铺偏移，整数像素步进，帧率无关 */
   update(dtMs: number): void {

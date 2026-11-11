@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHAIR_GAP,
+  DESK_H,
+  DESK_W,
   DIRECTION,
   PLAYER_RADIUS,
   POSE,
@@ -7,16 +10,19 @@ import {
   WORLD_LAYOUT,
   chairOffset,
   decodeSeatState,
+  deskFootprint,
   encodeSeatState,
   findNearestSeat,
   isBlocked,
   isOnLand,
   isSelfSolidProp,
   isWaterAt,
+  propSolid,
   resolveMotion,
   seatById,
   seatPose,
   type Direction,
+  type PropKind,
   type SolidRect,
 } from '../index';
 
@@ -65,11 +71,12 @@ describe('座位布局', () => {
     }
   });
 
-  it('马桶位于卫生间内，面朝北墙', () => {
+  it('马桶位于卫生间内，背靠水箱、面朝房间', () => {
     const toilets = seats.filter((seat) => seat.kind === 'toilet');
     expect(toilets.length).toBe(4);
     for (const seat of toilets) {
-      expect(seat.facing).toBe(DIRECTION.Up);
+      // 水箱画在精灵北端（drawToilet），人必须背对它：面向南 = 背靠水箱
+      expect(seat.facing).toBe(DIRECTION.Down);
       expect(seat.desk).toBe(-1);
     }
   });
@@ -86,11 +93,18 @@ describe('座位布局', () => {
     }
   });
 
-  it('休息室与工作区的侧门都能穿过', () => {
-    // 休息室东墙 x 3920–3930 开门（y 5150–5210），从门前铺装向西进屋
-    expect(resolveMotion(3960, 5180, 3900, 5180).x).toBeLessThan(3920);
-    // 工作区西墙 x 4240–4250 开门，从主路一侧向东进屋
-    expect(resolveMotion(4220, 5180, 4280, 5180).x).toBeGreaterThan(4250);
+  it('休息室与工作区的门都能穿过', () => {
+    // 休息室南墙 y 3230–3240 开门（x 3130–3190），从室内向北岸横路走
+    expect(resolveMotion(3160, 3190, 3160, 3300).y).toBeGreaterThan(3240);
+    // 工作区西墙 x 5100–5110 开门，从办公区一侧向东进屋
+    expect(resolveMotion(5080, 3790, 5160, 3790).x).toBeGreaterThan(5110);
+  });
+
+  it('会议室与卫生间的南门都能穿过', () => {
+    // 会议室南墙 y 5450–5460、门洞 x 3430–3490（桌子东侧的走道）：从室内向南出门
+    expect(resolveMotion(3460, 5440, 3460, 5500).y).toBeGreaterThan(5460);
+    // 卫生间南墙同一条 y、门洞 x 4450–4510，洗手台已贴墙让开门口
+    expect(resolveMotion(4480, 5440, 4480, 5500).y).toBeGreaterThan(5460);
   });
 });
 
@@ -121,6 +135,18 @@ describe('座位朝向与家具一致', () => {
       const gap = chairOffset(seat.facing);
       expect(seat.x).toBe(desk.x - dir.x * gap);
       expect(seat.y).toBe(desk.y - dir.y * gap);
+    }
+  });
+
+  it('桌子随朝向转置：长边垂直于朝向，椅子坐在长边外侧', () => {
+    for (const seat of chairs) {
+      const { w, h } = deskFootprint(seat.facing);
+      const horizontal = seat.facing === DIRECTION.Left || seat.facing === DIRECTION.Right;
+      // 南北朝向是 88×40 的横桌，东西朝向整张桌子转 90° 变 40×88
+      expect(w).toBe(horizontal ? DESK_H : DESK_W);
+      expect(h).toBe(horizontal ? DESK_W : DESK_H);
+      // 椅子让开的永远是短边的一半 + 椅距，不是端头
+      expect(chairOffset(seat.facing)).toBe(Math.min(w, h) / 2 + CHAIR_GAP);
     }
   });
 
@@ -168,6 +194,36 @@ describe('地图碰撞与装饰', () => {
   it('南北门通道不被任何碰撞体挡住', () => {
     const lane = { x: 4032, y: 3404, w: 128, h: 1384 };
     for (const solid of solids) expect(rectsOverlap(solid, lane)).toBe(false);
+  });
+
+  it('每张工位桌的碰撞盒就是它的朝向占地', () => {
+    const deskSolids = solids.filter((solid) => solid.kind === 'desk');
+    expect(deskSolids.length).toBe(desks.length);
+    for (const desk of desks) {
+      const { w, h } = deskFootprint(desk.facing);
+      const expected = { kind: 'desk' as const, x: desk.x - w / 2, y: desk.y - h / 2, w, h };
+      expect(deskSolids).toContainEqual(expected);
+    }
+  });
+
+  it('有占地的道具：碰撞盒底边贴精灵底座，正面不留隐形墙', () => {
+    for (const prop of props) {
+      const solid = propSolid(prop);
+      if (!solid) continue;
+      expect(solid.y + solid.h).toBe(prop.y);
+      expect(solid.x + solid.w / 2).toBe(prop.x);
+      expect(solids).toContainEqual(solid);
+    }
+  });
+
+  it('大件装饰有碰撞，小件保持可穿过', () => {
+    const solidKinds = new Set<PropKind>(['vending', 'cooler', 'coffee', 'bench', 'table', 'bike']);
+    const passableKinds = new Set<PropKind>(['lamp', 'plant', 'bin', 'sign', 'board', 'sink', 'sideTable']);
+    for (const prop of props) {
+      const solid = propSolid(prop);
+      if (solidKinds.has(prop.kind)) expect(solid).toBeDefined();
+      if (passableKinds.has(prop.kind)) expect(solid).toBeUndefined();
+    }
   });
 
   it('装饰物落在陆地上，且不陷进碰撞体（售货机本体即碰撞体，除外）', () => {

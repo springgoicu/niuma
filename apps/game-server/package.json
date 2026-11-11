@@ -8,7 +8,9 @@
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "bench": "bun src/bench/bots.ts"
+    "bench": "bun src/bench/bots.ts",
+    "lexicon:check": "bun scripts/check-lexicon.ts",
+    "lexicon:import": "bun scripts/import-lexicon.ts"
   },
   "dependencies": {
     "@niuma/shared-types": "workspace:*"

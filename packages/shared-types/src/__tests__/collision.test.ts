@@ -1,64 +1,89 @@
 import { describe, expect, it } from 'vitest';
 import { findFreePoint, isBlocked, resolveMotion } from '../world/collision';
 import { pointInPolygon, rectContains } from '../world/geometry';
-import { ISLAND, SPAWN_RADIUS, WORLD_CENTER, WORLD_LAYOUT, isOnLand, isWaterAt, regionAt } from '../world/layout';
+import {
+  ISLAND,
+  SPAWN_RADIUS,
+  WORLD_CENTER,
+  WORLD_LAYOUT,
+  isOnBridge,
+  isOnLand,
+  isWaterAt,
+  regionAt,
+} from '../world/layout';
 
 const CENTER = WORLD_CENTER;
-const FENCE = WORLD_LAYOUT.fence.rect;
-const SOUTH = FENCE.y + FENCE.h;
-const NORTH = FENCE.y;
-const EAST = FENCE.x + FENCE.w;
-const WEST = FENCE.x;
+const OFFICE = WORLD_LAYOUT.office;
+const SOUTH = OFFICE.y + OFFICE.h;
+const NORTH = OFFICE.y;
+const EAST = OFFICE.x + OFFICE.w;
+const WEST = OFFICE.x;
 
-describe('围栏与门洞', () => {
-  it('四个门洞都能穿过围栏', () => {
-    const south = resolveMotion(CENTER.x, SOUTH - 60, CENTER.x, SOUTH + 60);
-    expect(south.y).toBeGreaterThan(SOUTH);
-
-    const north = resolveMotion(CENTER.x, NORTH + 60, CENTER.x, NORTH - 60);
-    expect(north.y).toBeLessThan(NORTH);
-
-    const east = resolveMotion(EAST - 60, CENTER.y, EAST + 60, CENTER.y);
-    expect(east.x).toBeGreaterThan(EAST);
-
-    const west = resolveMotion(WEST + 60, CENTER.y, WEST - 60, CENTER.y);
-    expect(west.x).toBeLessThan(WEST);
+describe('开放式办公区', () => {
+  it('四个方向都没有围栏挡路', () => {
+    // ADR-0028：栏板删除后，办公区四边只是树篱与花箱的软分区，本身不产生碰撞
+    expect(isBlocked(CENTER.x, NORTH)).toBe(false);
+    expect(isBlocked(CENTER.x, SOUTH)).toBe(false);
+    expect(isBlocked(WEST, CENTER.y)).toBe(false);
+    expect(isBlocked(EAST, CENTER.y)).toBe(false);
+    expect(resolveMotion(CENTER.x, NORTH - 60, CENTER.x, NORTH + 60).y).toBeGreaterThan(NORTH);
+    expect(resolveMotion(CENTER.x, SOUTH - 60, CENTER.x, SOUTH + 60).y).toBeGreaterThan(SOUTH);
   });
 
-  it('门洞之外的栏板挡住去路', () => {
-    // x=3600 落在两张南排桌子之间的走道上，只会被栏板挡住
-    const result = resolveMotion(3600, SOUTH - 80, 3600, SOUTH + 120);
-    expect(result.y).toBeLessThan(SOUTH);
-    expect(result.y).toBeGreaterThan(SOUTH - 30);
+  it('工位桌仍然挡人，树篱只是视觉分区', () => {
+    for (const desk of WORLD_LAYOUT.desks.slice(0, 8)) {
+      expect(isBlocked(desk.x, desk.y)).toBe(true);
+    }
+    const hedges = WORLD_LAYOUT.props.filter((prop) => prop.kind === 'hedge');
+    expect(hedges.length).toBeGreaterThan(40);
+    for (const hedge of hedges) expect(isBlocked(hedge.x, hedge.y)).toBe(false);
   });
 
-  it('贴着栏板会沿墙滑动而不是卡死', () => {
-    const result = resolveMotion(3800, SOUTH - 40, 3960, SOUTH + 80);
-    expect(result.x).toBeGreaterThan(3950);
-    expect(result.y).toBeLessThan(SOUTH);
+  it('沿办公区南缘可以自由绕行', () => {
+    const path = resolveMotion(WEST + 20, SOUTH - 20, EAST - 20, SOUTH - 20);
+    expect(path.x).toBeGreaterThan(EAST - 40);
   });
 });
 
 describe('水体', () => {
   it('湖面不可进入', () => {
-    const lake = WORLD_LAYOUT.lakes[0]!;
-    const result = resolveMotion(lake.rect.x + lake.rect.w / 2, lake.rect.y - 120, lake.rect.x + lake.rect.w / 2, lake.rect.y + 200);
-    expect(result.y).toBeLessThan(lake.rect.y + 80);
+    expect(isWaterAt(5450, 5575)).toBe(true);
+    const result = resolveMotion(5450, 5150, 5450, 5650);
+    expect(result.y).toBeLessThan(5300);
   });
 
-  it('桥面可以过河', () => {
+  it('主河木桥可以过河', () => {
     const bridge = WORLD_LAYOUT.bridges[0]!;
     const midY = bridge.y + bridge.h / 2;
     const result = resolveMotion(bridge.x - 100, midY, bridge.x + bridge.w + 100, midY);
     expect(result.x).toBeGreaterThan(bridge.x + bridge.w + 90);
   });
 
+  it('晨会溪两座桥都能过', () => {
+    const bridges = WORLD_LAYOUT.bridges.slice(1);
+    expect(bridges.length).toBe(2);
+    for (const bridge of bridges) {
+      const midX = bridge.x + bridge.w / 2;
+      const result = resolveMotion(midX, bridge.y - 100, midX, bridge.y + bridge.h + 100);
+      expect(result.y).toBeGreaterThan(bridge.y + bridge.h + 90);
+    }
+  });
+
   it('桥面以外的河段挡人', () => {
-    // 起点贴着东岸（离水 30px，树不会长这么近），一路向西应该停在水边
-    const result = resolveMotion(2920, 3000, 2600, 3000);
-    expect(result.x).toBeGreaterThan(2860);
-    expect(result.x).toBeLessThan(2920);
+    // 主河在 y=3000 处的水面约 x 2609–2833，从东岸向西应该停在水边（2870 是岸上无树的空地）
+    const result = resolveMotion(2870, 3000, 2600, 3000);
+    expect(result.x).toBeGreaterThan(2835);
+    expect(result.x).toBeLessThan(2870);
     expect(isWaterAt(result.x, 3000)).toBe(false);
+  });
+
+  it('码头伸进水面但可以站上去', () => {
+    const dock = WORLD_LAYOUT.docks[1]!;
+    const midX = dock.x + dock.w / 2;
+    const midY = dock.y + dock.h / 2;
+    expect(isWaterAt(midX, midY)).toBe(true);
+    expect(isOnBridge(midX, midY)).toBe(true);
+    expect(isBlocked(midX, midY)).toBe(false);
   });
 });
 
@@ -74,7 +99,7 @@ describe('出生点与坐标兜底', () => {
       const distance = Math.sqrt(next()) * SPAWN_RADIUS;
       const x = CENTER.x + Math.cos(angle) * distance;
       const y = CENTER.y + Math.sin(angle) * distance;
-      // 花箱就摆在出生点四周，服务端也是先采样再就近挪到空地
+      // 花箱与咖啡座就摆在出生点四周，服务端也是先采样再就近挪到空地
       const spawn = findFreePoint(x, y);
       expect(isBlocked(spawn.x, spawn.y)).toBe(false);
       expect(Math.hypot(spawn.x - x, spawn.y - y)).toBeLessThan(120);
@@ -98,11 +123,11 @@ describe('地形布局', () => {
     const lake = WORLD_LAYOUT.lakes[0]!.rect;
     expect(regionAt(CENTER.x, CENTER.y)).toBe('办公区');
     expect(regionAt(lake.x + lake.w / 2, lake.y + lake.h / 2)).toBe('摸鱼湖');
-    expect(regionAt(2000, 2000)).toBe('加班林');
-    expect(regionAt(1600, 3600)).toBe('园区野地');
+    expect(regionAt(4700, 2200)).toBe('加班林');
+    expect(regionAt(2200, 4300)).toBe('园区野地');
   });
 
-  it('树木不会长进广场、水面与道路上', () => {
+  it('树木不会长进广场、办公区、水面与道路上', () => {
     const trees = [
       ...WORLD_LAYOUT.forests.flatMap((forest) => forest.trees),
       ...WORLD_LAYOUT.wildTrees,
@@ -110,7 +135,7 @@ describe('地形布局', () => {
     expect(trees.length).toBeGreaterThan(200);
     for (const tree of trees) {
       expect(rectContains(WORLD_LAYOUT.plaza, tree.x, tree.y)).toBe(false);
-      expect(rectContains(WORLD_LAYOUT.fence.rect, tree.x, tree.y)).toBe(false);
+      expect(rectContains(WORLD_LAYOUT.office, tree.x, tree.y)).toBe(false);
       for (const path of WORLD_LAYOUT.paths) {
         expect(rectContains(path, tree.x, tree.y)).toBe(false);
       }
@@ -123,7 +148,7 @@ describe('地形布局', () => {
 
   it('孤树散布全岛，参与碰撞且不进林地与花海', () => {
     expect(WORLD_LAYOUT.wildTrees.length).toBeGreaterThan(60);
-    const gapSq = 170 * 170;
+    const gapSq = 112 * 112;
     for (const tree of WORLD_LAYOUT.wildTrees) {
       expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
       expect(isBlocked(tree.x, tree.y)).toBe(true);
@@ -180,12 +205,12 @@ describe('地形布局', () => {
 });
 
 describe('海岛边界', () => {
-  it('四个海湾与岛外都不可进入', () => {
+  it('三个海湾与岛外都不可进入', () => {
     const samples = [
-      [3950, 1200], // 北湾
-      [7350, 4000], // 东湾
-      [4000, 7500], // 南中湾
-      [1200, 6000], // 西南湾
+      [3950, 2500], // 北湾
+      [5750, 4200], // 东湾
+      [4000, 6050], // 南中湾
+      [1200, 6000], // 岛外（西南侧）
       [100, 100], // 岛外
     ] as const;
     for (const [x, y] of samples) {
@@ -195,14 +220,14 @@ describe('海岛边界', () => {
   });
 
   it('从岸边向海走会被挡住', () => {
-    const north = resolveMotion(3950, 2900, 3950, 1000);
-    expect(north.y).toBeGreaterThan(2756);
+    const north = resolveMotion(3950, 3300, 3950, 1800);
+    expect(north.y).toBeGreaterThan(3158);
 
-    const west = resolveMotion(1600, 2000, 1200, 2000);
-    expect(west.x).toBeGreaterThan(1310);
+    const west = resolveMotion(2400, 3900, 2100, 3900);
+    expect(west.x).toBeGreaterThan(2146);
 
-    const south = resolveMotion(6000, 6600, 6000, 7400);
-    expect(south.y).toBeLessThan(7056);
+    const south = resolveMotion(5500, 6100, 5500, 6300);
+    expect(south.y).toBeLessThan(6168);
   });
 
   it('所有静态地形都在岸线以内，且离海至少 24px', () => {
@@ -226,6 +251,10 @@ describe('海岛边界', () => {
       expect(isOnLand(bridge.x, bridge.y, 24)).toBe(true);
       expect(isOnLand(bridge.x + bridge.w, bridge.y + bridge.h, 24)).toBe(true);
     }
+    for (const dock of WORLD_LAYOUT.docks) {
+      expect(isOnLand(dock.x, dock.y, 24)).toBe(true);
+      expect(isOnLand(dock.x + dock.w, dock.y + dock.h, 24)).toBe(true);
+    }
     for (const path of WORLD_LAYOUT.paths) {
       expect(isOnLand(path.x, path.y, 24)).toBe(true);
       expect(isOnLand(path.x + path.w, path.y + path.h, 24)).toBe(true);
@@ -233,10 +262,10 @@ describe('海岛边界', () => {
     for (const planter of WORLD_LAYOUT.planters) {
       expect(isOnLand(planter.x, planter.y, 24)).toBe(true);
     }
-    for (const segment of WORLD_LAYOUT.fence.segments) {
-      expect(isOnLand(segment.x1, segment.y1, 24)).toBe(true);
-      expect(isOnLand(segment.x2, segment.y2, 24)).toBe(true);
-    }
+    expect(isOnLand(WORLD_LAYOUT.office.x, WORLD_LAYOUT.office.y, 24)).toBe(true);
+    expect(
+      isOnLand(WORLD_LAYOUT.office.x + WORLD_LAYOUT.office.w, WORLD_LAYOUT.office.y + WORLD_LAYOUT.office.h, 24),
+    ).toBe(true);
     expect(isOnLand(WORLD_LAYOUT.plaza.x, WORLD_LAYOUT.plaza.y, 24)).toBe(true);
     expect(isOnLand(WORLD_LAYOUT.plaza.x + WORLD_LAYOUT.plaza.w, WORLD_LAYOUT.plaza.y + WORLD_LAYOUT.plaza.h, 24)).toBe(true);
   });

@@ -122,21 +122,15 @@ function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number):
     ctx.stroke();
   }
 
+  // 桥与码头同一种木色：都是「可以踩上去的水面」（ADR-0028）
   ctx.fillStyle = M.bridge;
   for (const bridge of WORLD_LAYOUT.bridges) fillWorldRect(ctx, bridge, camX, camY);
+  for (const dock of WORLD_LAYOUT.docks) fillWorldRect(ctx, dock, camX, camY);
 
   // 研发园：铺装庭院与室内空间，颜色沿用路缘色以免小地图出现新色系
   ctx.fillStyle = M.plazaCurb;
   for (const area of WORLD_LAYOUT.paved) fillWorldRect(ctx, area, camX, camY);
   for (const building of WORLD_LAYOUT.buildings) fillWorldRect(ctx, building.rect, camX, camY);
-
-  ctx.strokeStyle = M.fence;
-  for (const segment of WORLD_LAYOUT.fence.segments) {
-    ctx.beginPath();
-    ctx.moveTo(screenX(segment.x1, camX) + 0.5, screenY(segment.y1, camY) + 0.5);
-    ctx.lineTo(screenX(segment.x2, camX) + 0.5, screenY(segment.y2, camY) + 0.5);
-    ctx.stroke();
-  }
 
   for (const forest of WORLD_LAYOUT.forests) drawTreeDots(ctx, forest.trees, camX, camY, M.forestDot);
   drawTreeDots(ctx, WORLD_LAYOUT.wildTrees, camX, camY, M.forestDot);

@@ -1,5 +1,10 @@
 import type { AdmissionConfig } from './admission/controller';
 
+export interface ModerationConfig {
+  /** 外部词库 JSON 路径；空串表示只用内置词库 */
+  lexiconPath: string;
+}
+
 export interface ServerConfig {
   port: number;
   hostname: string;
@@ -10,6 +15,8 @@ export interface ServerConfig {
   spawnRadius: number;
   /** 准入与排队策略；容量、水位、放行速率全部可配 */
   admission: AdmissionConfig;
+  /** 内容审核词库；内置表随版本发布，外置文件可覆盖/追加 */
+  moderation: ModerationConfig;
 }
 
 function readInt(value: string | undefined, fallback: number): number {
@@ -69,5 +76,8 @@ export function loadConfig(): ServerConfig {
     // 与 shared-types 的 SPAWN_RADIUS 对齐：世界放大 1.25 后出生圈同步放大
     spawnRadius: readInt(process.env.GAME_SPAWN_RADIUS, 300),
     admission,
+    moderation: {
+      lexiconPath: process.env.GAME_MODERATION_LEXICON ?? '',
+    },
   };
 }

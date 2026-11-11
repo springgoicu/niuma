@@ -1,6 +1,8 @@
 import { decodeAppearance, encodeAppearance } from './appearance-codec';
 import {
   APPEARANCE_BYTES,
+  CHAT_REJECT_BYTES,
+  FALLBACK_NICKNAME,
   MAX_CHAT_CHARS,
   MAX_NAME_BYTES,
   MAX_NAME_CHARS,
@@ -155,7 +157,7 @@ export function readOpCode(data: Uint8Array): number {
  */
 export function truncateName(name: string): string {
   const cleaned = name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
-  const fallback = cleaned.length > 0 ? cleaned : '无名牛马';
+  const fallback = cleaned.length > 0 ? cleaned : FALLBACK_NICKNAME;
   let out = '';
   let chars = 0;
   let bytes = 0;
@@ -168,7 +170,7 @@ export function truncateName(name: string): string {
     chars += 1;
     bytes += size;
   }
-  return out.length > 0 ? out : '无名牛马';
+  return out.length > 0 ? out : FALLBACK_NICKNAME;
 }
 
 export function truncateChat(text: string): string {
@@ -545,6 +547,26 @@ export function encodeQueueRejected(reason: number): Uint8Array {
   const writer = new ByteWriter(QUEUE_REJECT_BYTES);
   writer.u8(OpCode.S2C_QUEUE_REJECTED).u8(reason);
   return writer.finish();
+}
+
+/**
+ * 聊天被拦下的回执：2 字节，只带原因，不回传原文。
+ * 政治类命中与限速都走这条包——客户端据此在输入框下方给一句解释。
+ */
+export function encodeChatRejected(reason: number): Uint8Array {
+  const writer = new ByteWriter(CHAT_REJECT_BYTES);
+  writer.u8(OpCode.S2C_CHAT_REJECTED).u8(reason);
+  return writer.finish();
+}
+
+export function decodeChatRejected(data: Uint8Array): { reason: number } {
+  if (data.byteLength !== CHAT_REJECT_BYTES) {
+    throw new Error(`chat rejected must be ${CHAT_REJECT_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_CHAT_REJECTED) throw new Error('not a chat rejected packet');
+  // 原样返回：新服务端可能新增原因，客户端按「未知原因」给通用文案，不硬编码降级
+  return { reason: reader.u8() };
 }
 
 export function decodeQueueRejected(data: Uint8Array): QueueRejectedPacket {

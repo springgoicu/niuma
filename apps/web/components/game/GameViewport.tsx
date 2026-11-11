@@ -6,7 +6,7 @@ import { LogOut } from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
 import type { ActionKey } from '@/lib/game/input';
 import { GameSession } from '@/lib/game/session';
-import { defaultAppearance, loadProfile, saveProfile, type Profile } from '@/lib/profile';
+import { defaultAppearance, loadProfile, resolveProfileName, saveProfile, type Profile } from '@/lib/profile';
 import { ActionBar } from './ActionBar';
 import { ChatDock } from './ChatDock';
 import { ConnectionBanner, OnlineBadge, PlayerCard, SfxToggle } from './Hud';
@@ -61,7 +61,8 @@ export function GameViewport() {
     const name = params.get('name');
     if (name) {
       const species = params.get('species') === 'horse' ? 'horse' : 'cow';
-      const profile: Profile = { name: name.slice(0, 16) || '无名牛马', appearance: defaultAppearance(species) };
+      // 深链同样过钳制与审核：这是唯一一条绕过表单的取名路径
+      const profile: Profile = { name: resolveProfileName(name), appearance: defaultAppearance(species) };
       saveProfile(profile);
       setProfile(profile);
     }

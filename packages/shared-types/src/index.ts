@@ -5,6 +5,7 @@ export * from './quantize';
 export * from './catalog';
 export * from './appearance-codec';
 export * from './protocol';
+export * from './moderation/index';
 export * from './world/geometry';
 export * from './world/river';
 export * from './world/layout';

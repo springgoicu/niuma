@@ -6,10 +6,9 @@ import {
   MAX_NAME_CHARS,
   MAX_NAME_DISPLAY_UNITS,
   displayWidth,
-  truncateName,
 } from '@niuma/shared-types';
 import { useCreatorStore } from '@/lib/creator-store';
-import { randomNickname, saveProfile } from '@/lib/profile';
+import { checkProfileName, randomNickname, resolveProfileName, saveProfile } from '@/lib/profile';
 
 export function SaveBar() {
   const router = useRouter();
@@ -18,16 +17,20 @@ export function SaveBar() {
   const setName = useCreatorStore((state) => state.setName);
   const markSaved = useCreatorStore((state) => state.markSaved);
 
+  const tooWide = displayWidth(name.trim()) > MAX_NAME_DISPLAY_UNITS;
+  const nameCheck = checkProfileName(name.trim());
+  const nameBlocked = nameCheck.verdict === 'reject';
+  const nameMasked = nameCheck.verdict === 'mask';
+
   const handleSave = () => {
+    if (nameBlocked) return;
     // 与协议同一把尺子：16 字符 / 48 字节，超宽的名字只影响头顶显示
-    const finalName = truncateName(name.trim() || randomNickname());
+    const finalName = resolveProfileName(name.trim() || randomNickname());
     setName(finalName);
     saveProfile({ name: finalName, appearance });
     markSaved();
     router.push('/play');
   };
-
-  const tooWide = displayWidth(name.trim()) > MAX_NAME_DISPLAY_UNITS;
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700/80 bg-ink-900/[0.94] shadow-[0_-24px_48px_-32px_rgba(0,0,0,0.95)] backdrop-blur-md">
@@ -46,7 +49,11 @@ export function SaveBar() {
             onChange={(event) => setName(event.target.value)}
             placeholder="输入你的工牌名"
             autoComplete="off"
-            className="h-11 min-w-0 flex-1 border border-ink-700 bg-ink-950 px-2.5 font-mono text-[12px] text-mist-100 outline-none transition-colors duration-150 placeholder:text-mist-500 focus:border-mint-400 sm:h-9 sm:max-w-[220px] sm:flex-none sm:w-full"
+            aria-invalid={nameBlocked}
+            aria-describedby={nameBlocked || nameMasked ? 'save-name-notice' : undefined}
+            className={`h-11 min-w-0 flex-1 border bg-ink-950 px-2.5 font-mono text-[12px] text-mist-100 outline-none transition-colors duration-150 placeholder:text-mist-500 sm:h-9 sm:max-w-[220px] sm:flex-none sm:w-full ${
+              nameBlocked ? 'border-amber-400' : 'border-ink-700 focus:border-mint-400'
+            }`}
           />
           <button
             type="button"
@@ -56,7 +63,15 @@ export function SaveBar() {
           >
             <Dices className="h-3.5 w-3.5" />
           </button>
-          {tooWide ? (
+          {nameBlocked || nameMasked ? (
+            <span
+              id="save-name-notice"
+              role={nameBlocked ? 'alert' : 'status'}
+              className="shrink-0 font-mono text-[9px] tracking-[0.12em] text-amber-400"
+            >
+              {nameBlocked ? '名字用不了' : '将自动打码'}
+            </span>
+          ) : tooWide ? (
             <span
               className="hidden shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-amber-400 sm:inline"
               title={`头顶只显示 ${MAX_NAME_DISPLAY_UNITS} 显示宽，超出部分以省略号代替`}
@@ -74,6 +89,7 @@ export function SaveBar() {
         <button
           type="button"
           onClick={handleSave}
+          disabled={nameBlocked}
           className="btn-primary group h-11 shrink-0 px-4 text-[12px] sm:h-auto sm:px-6"
         >
           <span className="sm:hidden">上岗</span>

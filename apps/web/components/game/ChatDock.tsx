@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, MessageSquare, Send } from 'lucide-react';
-import { MAX_NAME_DISPLAY_UNITS, truncateToDisplayWidth } from '@niuma/shared-types';
+import { MAX_NAME_DISPLAY_UNITS, inspectText, truncateToDisplayWidth } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 
 interface ChatDockProps {
@@ -18,6 +18,8 @@ export function ChatDock({ onSend, compact = false }: ChatDockProps) {
   const open = useGameUi((state) => state.chatOpen);
   const setOpen = useGameUi((state) => state.setChatOpen);
   const [draft, setDraft] = useState('');
+  /** 本地预检的即时解释：被拦下时保留草稿，打码时照常发出 */
+  const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -33,8 +35,17 @@ export function ChatDock({ onSend, compact = false }: ChatDockProps) {
   const submit = () => {
     const text = draft.trim();
     if (text.length === 0) return;
-    onSend(text);
+
+    // 服务端仍会复核一次；这里先判是为了不让用户白等一个往返
+    const verdict = inspectText(text);
+    if (verdict.verdict === 'reject') {
+      setNotice('这句话里有不能发的词，换个说法');
+      return;
+    }
+
+    onSend(verdict.text);
     setDraft('');
+    setNotice(verdict.verdict === 'mask' ? '不文明用词已自动打码' : null);
   };
 
   const charCount = draft.length;
@@ -97,7 +108,11 @@ export function ChatDock({ onSend, compact = false }: ChatDockProps) {
               <input
                 ref={inputRef}
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  // 提示只对上一次提交成立，继续编辑就撤掉，避免误导
+                  if (notice) setNotice(null);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') setOpen(false);
                 }}
@@ -114,8 +129,18 @@ export function ChatDock({ onSend, compact = false }: ChatDockProps) {
                 <Send className="h-3.5 w-3.5" />
               </button>
             </div>
-            <div className={`text-right font-mono text-[9px] ${isNearLimit ? 'text-amber-400' : 'text-mist-500'}`}>
-              {charCount} / {MAX_INPUT_LENGTH}
+            <div className="flex items-baseline justify-between gap-2">
+              <span
+                role="status"
+                className="min-w-0 truncate font-mono text-[9px] leading-relaxed text-amber-400"
+              >
+                {notice}
+              </span>
+              <span
+                className={`shrink-0 font-mono text-[9px] ${isNearLimit ? 'text-amber-400' : 'text-mist-500'}`}
+              >
+                {charCount} / {MAX_INPUT_LENGTH}
+              </span>
             </div>
           </form>
         </>

@@ -15,7 +15,7 @@ const RIVER_INSIDE = { x: 2756, y: 3000 };
 const BRIDGE_INSIDE = { x: 2746, y: 4096 };
 const PATH_INSIDE = { x: 4096, y: 4800 };
 const OFFICE_LAWN = { x: 4096, y: 3800 };
-const GRASS_INSIDE = { x: 2000, y: 3000 };
+const GRASS_INSIDE = { x: 2400, y: 2600 };
 
 describe('材质判定', () => {
   it('优先级：桥压水、水压土、土路压草；办公区地面就是草（ADR-0017）', () => {
@@ -27,10 +27,10 @@ describe('材质判定', () => {
   });
 
   it('海岸三段：岸沙带 → 浅滩 → 海，宽度按 ISLAND_SAND / ISLAND_SHALLOW 收口', () => {
-    // 北岸线收到 y = 1038，向海 0 / 40 / 110 分别落在沙、浅滩、海
-    expect(materialAt(2000, 1038)).toBe(MATERIAL.sand);
-    expect(materialAt(2000, 998)).toBe(MATERIAL.shallow);
-    expect(materialAt(2000, 928)).toBe(MATERIAL.sea);
+    // ADR-0028 北岸线收到 y = 1956，向海 0 / 40 / 110 分别落在沙、浅滩、海
+    expect(materialAt(2400, 1956)).toBe(MATERIAL.sand);
+    expect(materialAt(2400, 1916)).toBe(MATERIAL.shallow);
+    expect(materialAt(2400, 1846)).toBe(MATERIAL.sea);
   });
 
   it('非有限坐标回落到海，不会把 NaN 传进多边形判定', () => {
@@ -62,7 +62,7 @@ describe('材质网格与 8 邻掩码', () => {
   });
 
   it('草地内部的掩码为 0，八邻全是同类', () => {
-    expect(edgeMaskAt(grid, 2000, 3000, MATERIAL.grass)).toBe(0);
+    expect(edgeMaskAt(grid, 2400, 2600, MATERIAL.grass)).toBe(0);
   });
 });
 

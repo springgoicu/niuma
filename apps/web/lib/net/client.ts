@@ -4,6 +4,7 @@ import {
   OpCode,
   decodeAppearanceBroadcast,
   decodeChatBroadcast,
+  decodeChatRejected,
   decodeDespawn,
   decodePong,
   decodeQueueRejected,
@@ -42,6 +43,8 @@ export interface NetHandlers {
    */
   onSync(data: Uint8Array): void;
   onChat(packet: ChatPacket): void;
+  /** 服务端拦下了一条发言（政治敏感 / 限速），只带原因，不回传原文 */
+  onChatRejected(reason: number): void;
   onAppearance(id: number, appearance: CharacterAppearance): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
@@ -165,6 +168,9 @@ export class NetClient {
         break;
       case OpCode.S2C_CHAT_BROADCAST:
         this.handlers.onChat(decodeChatBroadcast(data));
+        break;
+      case OpCode.S2C_CHAT_REJECTED:
+        this.handlers.onChatRejected(decodeChatRejected(data).reason);
         break;
       case OpCode.S2C_APPEARANCE: {
         const packet = decodeAppearanceBroadcast(data);

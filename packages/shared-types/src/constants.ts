@@ -28,6 +28,8 @@ export const MAX_STEP = (MOVE_SPEED * TICK_MS) / 1000;
 export const MAX_STEP_TOLERANCE = MAX_STEP * 1.15;
 
 export const MAX_CHAT_CHARS = 160;
+/** 昵称为空或被审核拦下时的兜底工牌名：协议钳制与客户端回退必须用同一个字面量 */
+export const FALLBACK_NICKNAME = '无名牛马';
 /** 昵称字符数上限（按码点计）：输入框与协议共用 */
 export const MAX_NAME_CHARS = 16;
 /** 昵称字节上限：与 C2S_HELLO / S2C_SPAWN 的 u8 长度字段对齐 */
@@ -64,6 +66,8 @@ export const APPEARANCE_BYTES = 32;
 export const QUEUE_STATUS_BYTES = 16;
 /** 排队拒绝：op(1) + reason(1) */
 export const QUEUE_REJECT_BYTES = 2;
+/** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */
+export const CHAT_REJECT_BYTES = 2;
 /** 排队位次推送间隔（毫秒）；排队者零广播，只有这一条心跳包 */
 export const QUEUE_STATUS_INTERVAL_MS = 1000;
 

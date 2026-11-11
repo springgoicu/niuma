@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   APPEARANCE_BYTES,
   APPEARANCE_COLOR_KEYS,
+  CHAT_REJECT_BYTES,
+  CHAT_REJECT_REASON,
   DIRECTION,
   LIMIT_KIND,
   MOVE_PACKET_BYTES,
@@ -15,6 +17,7 @@ import {
   decodeAppearance,
   decodeAppearanceBroadcast,
   decodeChatBroadcast,
+  decodeChatRejected,
   decodeDespawn,
   decodeHello,
   decodeMove,
@@ -25,6 +28,7 @@ import {
   encodeAppearance,
   encodeAppearanceBroadcast,
   encodeChatBroadcast,
+  encodeChatRejected,
   encodeDespawn,
   encodeHello,
   encodeMove,
@@ -383,5 +387,24 @@ describe('queue packets', () => {
       reason: QUEUE_REJECT_REASON.WaitTimeout,
     });
     expect(decodeQueueRejected(encodeQueueRejected(9))).toEqual({ reason: QUEUE_REJECT_REASON.QueueFull });
+  });
+});
+
+describe('chat rejected', () => {
+  it('encodes the reject reason in 2 bytes', () => {
+    const packet = encodeChatRejected(CHAT_REJECT_REASON.Political);
+    expect(packet.byteLength).toBe(CHAT_REJECT_BYTES);
+    expect(decodeChatRejected(packet)).toEqual({ reason: CHAT_REJECT_REASON.Political });
+    expect(decodeChatRejected(encodeChatRejected(CHAT_REJECT_REASON.RateLimited))).toEqual({
+      reason: CHAT_REJECT_REASON.RateLimited,
+    });
+  });
+
+  it('keeps unknown reasons raw so the client can show a generic hint', () => {
+    expect(decodeChatRejected(encodeChatRejected(7))).toEqual({ reason: 7 });
+  });
+
+  it('rejects a wrong-length packet instead of decoding garbage', () => {
+    expect(() => decodeChatRejected(new Uint8Array([0x1a]))).toThrow(/2 bytes/);
   });
 });

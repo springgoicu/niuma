@@ -2,10 +2,9 @@
 
 import { Container, Graphics, Rectangle, Sprite, Texture, type Application } from 'pixi.js';
 import {
-  DESK_H,
-  DESK_W,
   DIRECTION,
   WORLD_LAYOUT,
+  deskFootprint,
   type BuildingSpec,
   type Direction,
   type PropInstance,
@@ -15,7 +14,8 @@ import {
   type SolidRect,
   type WorldRect,
 } from '@niuma/shared-types';
-import { DESK_ART_SIZE, deskArtFor, type DeskArt } from './desk-art';
+import { chairArtFor, type ChairArt } from './chair-art';
+import { deskArtFor, type DeskArt } from './desk-art';
 import { bake } from './terrain-textures';
 import type { DepthSink } from './sort-layer';
 
@@ -121,9 +121,12 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   cooler: { w: 20, h: 30 },
   coffee: { w: 22, h: 28 },
   sideTable: { w: 20, h: 18 },
+  /** 树篱：一段 32 宽的灌木，沿办公区四边拼成软边界（ADR-0028，不参与碰撞） */
+  hedge: { w: 32, h: 18 },
 };
 
-const CHAIR_SPRITE = { w: 26, h: 30 };
+/** 椅子的尺寸与朝向无关：四个朝向共用同一帧，直接读几何模块，避免两处各写一份 */
+const CHAIR_SPRITE = chairArtFor(DIRECTION.Down).frame;
 const TOILET_SPRITE = { w: 22, h: 28 };
 const STOOL_SPRITE = { w: 18, h: 22 };
 const SOFA_SPRITE = { w: 58, h: 30 };
@@ -217,9 +220,12 @@ function drawProp(kind: PropKind, g: Graphics): void {
       dot(g, 27, 7, 2, COLOR.butter);
       return;
     case 'sink':
-      box(g, 0, 10, 20, 11, COLOR.fixture, COLOR.fixtureEdge);
-      box(g, 4, 5, 12, 6, COLOR.ceramic, COLOR.ceramicEdge);
-      rect(g, 9, 1, 2, 5, COLOR.gold);
+      // 靠墙的洗手台：底座贴墙（精灵底边），所以柜面朝房间（上），水龙头贴墙（下）。
+      // 旧画法把龙头画在上方，只有挂在北墙才成立；卫生间南墙用这套。
+      box(g, 0, 0, 20, 11, COLOR.fixture, COLOR.fixtureEdge);
+      rect(g, 2, 1, 16, 1, COLOR.wallCap);
+      box(g, 4, 9, 12, 7, COLOR.ceramic, COLOR.ceramicEdge);
+      rect(g, 9, 16, 2, 6, COLOR.gold);
       return;
     case 'vending':
       box(g, 0, 0, 34, 48, COLOR.vendingBody);
@@ -284,6 +290,16 @@ function drawProp(kind: PropKind, g: Graphics): void {
       g.ellipse(10, 5, 8, 3).fill(COLOR.woodLight);
       box(g, 9, 7, 2, 8, COLOR.woodDark);
       box(g, 4, 14, 12, 3, COLOR.woodDark);
+      return;
+    case 'hedge':
+      // 一段修剪过的树篱：左右两团深叶夹一团亮叶，顶面点两粒高光；
+      // 32 宽配 64 间距，沿边拼起来是一道连绵但不封路的软边界
+      dot(g, 8, 10, 6, COLOR.leafDark);
+      dot(g, 24, 10, 6, COLOR.leafDark);
+      dot(g, 16, 8, 7, COLOR.leaf);
+      rect(g, 12, 3, 3, 1, COLOR.mint);
+      rect(g, 20, 5, 2, 1, COLOR.mint);
+      rect(g, 5, 8, 2, 1, COLOR.mintDark);
       return;
   }
 }
@@ -350,41 +366,46 @@ function drawMonitor(g: Graphics, lit: boolean, art: DeskArt): void {
 }
 
 /**
- * 工位：显示器（带屏幕小代码 / 亮屏发光）+ 桌面（桌角有马克杯、绿植、便签）。
+ * 工位：桌面 + 前挡板 + 桌腿 + 显示器 + 桌角陈设，全部按 `DeskArt` 的盒子绘制。
  *
- * 桌面本体与工位位置四面一致，只有显示器按 `DeskInstance.facing` 换边换角度；
+ * 朝向只改几何（`desk-art.ts`），这里不再写四套画法：横桌与竖桌走同一条绘制路径，
+ * 侧放桌的桌面、前挡板、桌腿与显示器位置都来自同一份数据。
  * 绘制顺序是「桌面 → 显示器 → 陈设」，显示器才站得住桌面而不是被桌面盖住。
  */
 function drawDesk(g: Graphics, lit: boolean, art: DeskArt): void {
-  const { w, h } = DESK_ART_SIZE;
-  shadow(g, w / 2, h - 2, 42, 3);
+  const { top, front, handle, legs, shadow: sh, details } = art;
+  shadow(g, sh.cx, sh.cy, sh.rx, sh.ry);
   // 桌面与前挡板：顶面浅、前面深，带圆角与抽屉拉手
-  box(g, 4, 28, 88, 24, COLOR.deskTop);
-  rect(g, 6, 29, 84, 2, COLOR.deskTopLight);
-  box(g, 4, 52, 88, 12, COLOR.deskFront);
-  rect(g, 40, 56, 16, 2, COLOR.deskLeg);
-  box(g, 6, 60, 5, 6, COLOR.deskLeg);
-  box(g, 85, 60, 5, 6, COLOR.deskLeg);
+  box(g, top.x, top.y, top.w, top.h, COLOR.deskTop);
+  rect(g, top.x + 2, top.y + 1, top.w - 4, 2, COLOR.deskTopLight);
+  box(g, front.x, front.y, front.w, front.h, COLOR.deskFront);
+  rect(g, handle.x, handle.y, handle.w, handle.h, COLOR.deskLeg);
+  for (const leg of legs) box(g, leg.x, leg.y, leg.w, leg.h, COLOR.deskLeg);
   drawMonitor(g, lit, art);
-  // 桌角生活细节：左右朝向时让开显示器
-  const { plantCx, mugX, noteX } = art.details;
-  box(g, mugX, 19, 9, 9, COLOR.mint);
-  rect(g, mugX + 1, 21, 7, 2, COLOR.ceramic);
-  g.roundRect(mugX + 8, 22, 3, 4, 1).stroke({ width: 1, color: COLOR.outline });
-  box(g, noteX, 33, 9, 7, COLOR.butter);
-  rect(g, noteX + 2, 35, 5, 1, COLOR.peachDark);
-  drawPlantPot(g, plantCx, 28, 1);
+  // 桌角生活细节：侧放桌的显示器占住西 / 东长边，陈设让到靠人的半边
+  const { plant, mug, note } = details;
+  box(g, mug.x, mug.y, 9, 9, COLOR.mint);
+  rect(g, mug.x + 1, mug.y + 2, 7, 2, COLOR.ceramic);
+  g.roundRect(mug.x + 8, mug.y + 3, 3, 4, 1).stroke({ width: 1, color: COLOR.outline });
+  box(g, note.x, note.y, 9, 7, COLOR.butter);
+  rect(g, note.x + 2, note.y + 2, 5, 1, COLOR.peachDark);
+  drawPlantPot(g, plant.cx, plant.bottom, 1);
 }
 
-/** 工位椅：薰衣草色软垫，靠背圆润，五星脚 */
-function drawChair(g: Graphics): void {
-  const { w, h } = CHAIR_SPRITE;
-  shadow(g, w / 2, h - 1, 10, 2.5);
-  box(g, 6, 2, 14, 13, COLOR.lilacDark);
-  box(g, 4, 13, 18, 10, COLOR.lilac);
-  rect(g, 8, 15, 10, 2, COLOR.ceramic);
-  rect(g, 11, 23, 4, 4, COLOR.chairBase);
-  rect(g, 6, 26, 14, 2, COLOR.chairBase);
+/**
+ * 工位椅：薰衣草色软垫，靠背圆润，五星脚。
+ *
+ * 几何来自 `chairArtFor(facing)`：靠背永远在入座朝向的反侧，
+ * 空椅不会出现「靠背朝着桌子、人却要坐上去」的错觉。
+ */
+function drawChair(g: Graphics, art: ChairArt): void {
+  const { seat, back, highlight, stem, base, shadow: sh } = art;
+  shadow(g, sh.cx, sh.cy, sh.rx, sh.ry);
+  box(g, seat.x, seat.y, seat.w, seat.h, COLOR.lilac);
+  box(g, back.x, back.y, back.w, back.h, COLOR.lilacDark);
+  rect(g, highlight.x, highlight.y, highlight.w, highlight.h, COLOR.ceramic);
+  rect(g, stem.x, stem.y, stem.w, stem.h, COLOR.chairBase);
+  rect(g, base.x, base.y, base.w, base.h, COLOR.chairBase);
 }
 
 /** 马桶：白瓷水箱 + 圆润马桶圈，坐上去时后背靠水箱 */
@@ -543,40 +564,55 @@ export class PropsView {
     this.base.addChild(ground);
 
     const frame = (w: number, h: number) => new Rectangle(0, 0, w, h);
-    const deskFrame = frame(DESK_ART_SIZE.w, DESK_ART_SIZE.h);
-    // 四个朝向各烘焙一对 idle / lit：桌子只有一种桌面，显示器换边换角度（ADR-0027）
-    const deskTextures = new Map<Direction, { idle: Texture; lit: Texture }>();
+    // 四个朝向各烘焙一对 idle / lit：桌子随朝向转置（横桌 96×66、侧放桌 48×92），
+    // 每张桌子按自己的帧尺寸烘焙，显示器永远落在远侧长边（ADR-0027 / ADR-0028）
+    const deskTextures = new Map<Direction, { idle: Texture; lit: Texture; frame: { w: number; h: number } }>();
     for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
       const art = deskArtFor(facing);
+      const deskFrame = frame(art.frame.w, art.frame.h);
       deskTextures.set(facing, {
         idle: bake(renderer, (g) => drawDesk(g, false, art), { frame: deskFrame }),
         lit: bake(renderer, (g) => drawDesk(g, true, art), { frame: deskFrame }),
+        frame: art.frame,
       });
     }
-    const seatTextures: Record<SeatKind, Texture> = {
-      chair: bake(renderer, drawChair, { frame: frame(CHAIR_SPRITE.w, CHAIR_SPRITE.h) }),
+    // 椅子四个朝向各烘焙一张：靠背永远在入座朝向的反侧（ADR-0029）
+    const chairTextures = new Map<Direction, Texture>();
+    for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
+      const art = chairArtFor(facing);
+      chairTextures.set(
+        facing,
+        bake(renderer, (g) => drawChair(g, art), { frame: frame(art.frame.w, art.frame.h) }),
+      );
+    }
+    const seatTextures: Record<Exclude<SeatKind, 'chair'>, Texture> = {
       toilet: bake(renderer, drawToilet, { frame: frame(TOILET_SPRITE.w, TOILET_SPRITE.h) }),
       stool: bake(renderer, drawStool, { frame: frame(STOOL_SPRITE.w, STOOL_SPRITE.h) }),
       sofa: bake(renderer, drawSofa, { frame: frame(SOFA_SPRITE.w, SOFA_SPRITE.h) }),
       bed: bake(renderer, drawBed, { frame: frame(BED_SPRITE.w, BED_SPRITE.h) }),
     };
     for (const art of deskTextures.values()) this.textures.push(art.idle, art.lit);
-    this.textures.push(...Object.values(seatTextures));
+    this.textures.push(...Object.values(seatTextures), ...chairTextures.values());
 
     for (const desk of WORLD_LAYOUT.desks) {
-      const bottom = desk.y + DESK_H / 2;
-      const texture = deskTextures.get(desk.facing) ?? deskTextures.get(DIRECTION.Up)!;
-      const sprite = new Sprite(texture.idle);
+      const art = deskTextures.get(desk.facing) ?? deskTextures.get(DIRECTION.Up)!;
+      // 帧底 = 桌脚占地的南边：横桌让开 20、竖桌让开 44，桌子不会陷进地面
+      const bottom = desk.y + deskFootprint(desk.facing).h / 2;
+      const sprite = new Sprite(art.idle);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(desk.x, bottom);
       depth.add(bottom, sprite);
-      this.desks.push({ sprite, idle: texture.idle, lit: texture.lit });
-      this.cullables.push({ sprite, x: desk.x, y: bottom, padX: DESK_W / 2 + 8, padY: DESK_ART_SIZE.h });
+      this.desks.push({ sprite, idle: art.idle, lit: art.lit });
+      this.cullables.push({ sprite, x: desk.x, y: bottom, padX: art.frame.w / 2 + 4, padY: art.frame.h });
     }
 
     for (const seat of WORLD_LAYOUT.seats) {
       const art = SEAT_ART[seat.kind];
-      const sprite = new Sprite(seatTextures[seat.kind]);
+      const texture =
+        seat.kind === 'chair'
+          ? chairTextures.get(seat.facing) ?? chairTextures.get(DIRECTION.Down)!
+          : seatTextures[seat.kind];
+      const sprite = new Sprite(texture);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(seat.x, seat.y + art.sink);
       // 座椅排在入座者脚底 y 之下：角色坐上去 / 躺下去时家具在身后

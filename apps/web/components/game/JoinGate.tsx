@@ -7,29 +7,34 @@ import {
   MAX_NAME_CHARS,
   MAX_NAME_DISPLAY_UNITS,
   displayWidth,
-  truncateName,
   type Species,
 } from '@niuma/shared-types';
-import { defaultAppearance, randomNickname, saveProfile, type Profile } from '@/lib/profile';
+import { checkProfileName, defaultAppearance, randomNickname, resolveProfileName, saveProfile, type Profile } from '@/lib/profile';
 
 
 export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
   const [name, setName] = useState(randomNickname());
   const [species, setSpecies] = useState<Species>('cow');
 
+  // 字符数够用不代表宽度够用：16 个汉字是 32 宽，头顶只放得下 16
+  const nameWidth = displayWidth(name.trim());
+  const tooWide = nameWidth > MAX_NAME_DISPLAY_UNITS;
+
+  // 政治类命中不允许上岗；脏话打码后照常进入，只提前告知
+  const nameCheck = checkProfileName(name.trim());
+  const nameBlocked = nameCheck.verdict === 'reject';
+  const nameMasked = nameCheck.verdict === 'mask';
+
   const enter = () => {
+    if (nameBlocked) return;
     const profile: Profile = {
-      // 字符数与字节数的钳制只有协议一份实现，输入框不再自己 slice
-      name: truncateName(name.trim() || randomNickname()),
+      // 钳制与审核都只有 shared-types 一份实现，这里不再自己 slice 或查词表
+      name: resolveProfileName(name.trim() || randomNickname()),
       appearance: defaultAppearance(species),
     };
     saveProfile(profile);
     onEnter(profile);
   };
-
-  // 字符数够用不代表宽度够用：16 个汉字是 32 宽，头顶只放得下 16
-  const nameWidth = displayWidth(name.trim());
-  const tooWide = nameWidth > MAX_NAME_DISPLAY_UNITS;
 
   return (
     <div className="absolute inset-0 z-40 flex overflow-y-auto bg-ink-950/92 px-5 py-4 backdrop-blur-sm">
@@ -97,7 +102,9 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
             }}
             placeholder="例如：夜班实习生"
             autoComplete="off"
-            className="field"
+            aria-invalid={nameBlocked}
+            aria-describedby={nameBlocked || nameMasked ? 'join-name-notice' : undefined}
+            className={`field ${nameBlocked ? 'border-amber-400 focus:border-amber-400' : ''}`}
           />
           <button
             type="button"
@@ -109,7 +116,17 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
           </button>
         </div>
 
-        <button type="button" onClick={enter} className="btn-primary group mt-5 w-full">
+        {(nameBlocked || nameMasked) && (
+          <p
+            id="join-name-notice"
+            role={nameBlocked ? 'alert' : 'status'}
+            className="mt-2 font-mono text-[10px] leading-relaxed tracking-[0.08em] text-amber-400"
+          >
+            {nameBlocked ? '这个工牌名用不了，换个说法再上岗' : '提交后不文明用词会自动打码'}
+          </p>
+        )}
+
+        <button type="button" onClick={enter} disabled={nameBlocked} className="btn-primary group mt-5 w-full">
           上岗
           <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
         </button>

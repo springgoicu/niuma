@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from 'bun';
 import {
   ACTION,
+  FALLBACK_NICKNAME,
   MAX_PACKET_BYTES,
   OpCode,
   QUEUE_REJECT_REASON,
@@ -30,6 +31,7 @@ import type { ServerConfig } from './config';
 import { EgressMeter, RingSampler } from './metrics';
 import { SpatialGrid } from './spatial/grid';
 import { handleChat } from './sim/chat';
+import { loadModerationFilter } from './sim/moderation';
 import { applyMove } from './sim/movement';
 import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
@@ -72,6 +74,8 @@ export function startGameServer(config: ServerConfig) {
   const moveSampler = new RingSampler(1200);
   const egress = new EgressMeter();
   const admission = new AdmissionController(config.admission);
+  // 词表加载与 trie 构建只发生在这里一次，聊天路径只做走查
+  const moderation = loadModerationFilter(config.moderation.lexiconPath);
   let nextWsId = 1;
   let tickCount = 0;
   let lastSampleAt = 0;
@@ -127,7 +131,17 @@ export function startGameServer(config: ServerConfig) {
   function handleHello(ws: ServerWebSocket<SocketData>, data: Uint8Array): void {
     if (ws.data.playerId !== 0) return;
     const hello = decodeHello(data);
-    const payload: HelloPayload = { name: hello.name, appearance: hello.appearance };
+    // 昵称由客户端预检先挡一道，这里只是权威兜底：伪造 HELLO 也进不来违规名字
+    const nameVerdict = moderation.inspect(hello.name);
+    if (nameVerdict.verdict !== 'allow') {
+      console.warn(
+        `[moderation] name ${nameVerdict.verdict} ws=${ws.data.wsId} hits=${nameVerdict.hits}`,
+      );
+    }
+    const payload: HelloPayload = {
+      name: nameVerdict.verdict === 'reject' ? FALLBACK_NICKNAME : nameVerdict.text,
+      appearance: hello.appearance,
+    };
     const alreadyQueued = admission.isQueued(ws.data.wsId);
     const decision = admission.decide(ws.data.wsId, payload, world.size, Date.now());
 
@@ -198,7 +212,7 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_CHAT) {
-      handleChat(player, decodeChatSend(data), now, world, transport);
+      handleChat(player, decodeChatSend(data), now, world, transport, moderation);
       return;
     }
 

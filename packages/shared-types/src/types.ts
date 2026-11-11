@@ -97,6 +97,7 @@ export const OpCode = {
   S2C_QUEUE_STATUS: 0x17,
   S2C_QUEUE_REJECTED: 0x18,
   S2C_SEAT_STATE: 0x19,
+  S2C_CHAT_REJECTED: 0x1a,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -160,6 +161,16 @@ export const QUEUE_REJECT_REASON = {
 } as const;
 
 export type QueueRejectReason = (typeof QUEUE_REJECT_REASON)[keyof typeof QUEUE_REJECT_REASON];
+
+/** 聊天被拦下的原因：客户端只负责换一句人话，不暴露具体词条（ADR-0028） */
+export const CHAT_REJECT_REASON = {
+  /** 命中政治类词条：整条消息不广播 */
+  Political: 1,
+  /** 触发限速窗口：5s 内第 4 条起 */
+  RateLimited: 2,
+} as const;
+
+export type ChatRejectReason = (typeof CHAT_REJECT_REASON)[keyof typeof CHAT_REJECT_REASON];
 
 /** 排队位次快照：排队者每秒收到一条，零广播、零同步 */
 export interface QueueStatusPacket {

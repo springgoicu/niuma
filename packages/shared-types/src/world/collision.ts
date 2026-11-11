@@ -1,11 +1,13 @@
 /**
  * 地形碰撞：服务端权威结算与客户端本地预测跑的是同一份纯函数，因此双端坐标天然一致。
  *
- * 求解策略（见 ADR-0008）：
+ * 求解策略（见 ADR-0008 / ADR-0028）：
  * 1. 障碍按 128px 网格建索引，单次查询只遍历邻近桶；
- * 2. 4px 子步推进，薄栏板（2px 栏板 + 7px 玩家半径）不可能被一步跨过；
- * 3. 整段被挡时退化为单轴移动，贴着围栏走会自然滑行而不是卡死；
- * 4. 桥面是水域放行区，其余水面一律不可涉。
+ * 2. 4px 子步推进，薄隔断（6px 隔断 + 9px 玩家半径）不可能被一步跨过；
+ * 3. 整段被挡时退化为单轴移动，贴着墙体与家具走会自然滑行而不是卡死；
+ * 4. 桥面与码头是水域放行区，其余水面一律不可涉。
+ *
+ * 办公区已删除围栏（ADR-0028），软边界树篱不参与碰撞。
  */
 
 import { WORLD_WIDTH } from '../constants';
@@ -19,9 +21,9 @@ import {
 } from './geometry';
 import { ISLAND, PLANTER_RADIUS, TREE_TRUNK_RADIUS, WORLD_CENTER, WORLD_LAYOUT, isOnBridge, isOnLand } from './layout';
 
-/** 玩家碰撞半径：约等于身体宽度的一半（角色 48 texel 高、躯干 23 宽），围栏与树干的体感由此决定 */
+/** 玩家碰撞半径：约等于身体宽度的一半（角色 48 texel 高、躯干 23 宽），墙体与树干的体感由此决定 */
 export const PLAYER_RADIUS = 9;
-/** 单步最长 4px，小于最薄障碍的有效厚度（3px 栏板 + 9px 半径 = 15），避免高速穿模 */
+/** 单步最长 4px，小于最薄障碍的有效厚度（6px 隔断 + 9px 半径 = 15），避免高速穿模 */
 const MAX_SUBSTEP = 4;
 /** 障碍索引网格边长 */
 const GRID_SIZE = 128;
@@ -42,18 +44,7 @@ type Blocker =
 
 const blockers: Blocker[] = [];
 
-for (const segment of WORLD_LAYOUT.fence.segments) {
-  blockers.push({
-    kind: 'segment',
-    x1: segment.x1,
-    y1: segment.y1,
-    x2: segment.x2,
-    y2: segment.y2,
-    // 栏板视觉厚度 5px，碰撞半径取一半
-    r: 3,
-    water: false,
-  });
-}
+// ADR-0028：办公区删除围栏，树篱只做视觉分区（走 props 管线，不产生 blocker）
 for (const forest of WORLD_LAYOUT.forests) {
   for (const tree of forest.trees) {
     blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS, water: false });
@@ -168,7 +159,7 @@ function overlaps(blocker: Blocker, x: number, y: number, radius: number): boole
 /** 该点是否与地形相交；非有限坐标视为被挡，避免 NaN 污染权威状态 */
 export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return true;
-  // 海即边界：先判陆地，再查围栏/树/水。顺序反了会让「站在海里但没碰到障碍」被放行
+  // 海即边界：先判陆地，再查家具/树/水。顺序反了会让「站在海里但没碰到障碍」被放行
   if (!isOnLand(x, y, radius)) return true;
   const onBridge = isOnBridge(x, y);
   const list = gather(x, y, radius);

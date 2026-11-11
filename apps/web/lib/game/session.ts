@@ -2,6 +2,7 @@
 
 import {
   ACTION,
+  CHAT_REJECT_REASON,
   MOVE_SPEED,
   QUEUE_REJECT_REASON,
   SIT_RANGE,
@@ -189,6 +190,14 @@ export class GameSession {
       onDespawn: (id) => this.handleDespawn(id),
       onSync: (data) => this.handleSync(data),
       onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
+      onChatRejected: (reason) => {
+        // 服务端权威拦截的回执：正常路径被本地预检挡住了，走到这里基本是词库不同步或伪造包
+        this.showHint(
+          reason === CHAT_REJECT_REASON.RateLimited
+            ? '说得太快，缓一口气再说'
+            : '这句话里有不能发的词，换个说法',
+        );
+      },
       onAppearance: (id, appearance) => this.renderer.setAppearance(id, appearance),
       onSeatState: (entries) => this.handleSeatState(entries),
       onPing: (rtt) => {

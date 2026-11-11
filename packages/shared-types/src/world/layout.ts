@@ -5,6 +5,9 @@
  * 1) 坐标全部手写，或由 `Math.imul` 派生的 mulberry32 生成；禁止 Math.random / Math.sin / Math.cos，
  *    否则 Bun(JSC) 与浏览器(V8) 可能给出不同结果，双端会各画各的地图。
  * 2) 只描述「世界是什么」，不依赖 Pixi / Bun / DOM。渲染尺寸、贴图与配色由各自的消费方决定。
+ *
+ * ADR-0028：岛再按 0.7 收缩到 3805×4212（西南湾填成湿地），办公区删除围栏改为开放式软分区，
+ * 主河改到岛西侧纵贯、增开东西向的晨会溪，湖收到东南角并补五口水塘与三桥两码头。
  */
 
 import { WORLD_HEIGHT, WORLD_WIDTH, DIRECTION } from '../constants';
@@ -29,12 +32,14 @@ import {
   DESK_H,
   DESK_W,
   DOOR_PAVING,
+  deskFootprint,
+  propSolid,
+  propSolids,
   LOUNGE,
   LOUNGE_PROPS,
   LOUNGE_SEATS,
   MEETING_ROOM,
   PLAZA_PROPS,
-  PLAZA_SOLIDS,
   RESTROOM,
   WORKSTATIONS,
   WORKROOM,
@@ -48,8 +53,19 @@ import {
   type Workstation,
 } from './campus';
 
-export { CHAIR_GAP, DESK_H, DESK_W, chairOffset, isSelfSolidProp, seatPose, workstation } from './campus';
-export type { BuildingSpec, DeskInstance, PropInstance, SeatInstance, SolidRect, SeatKind, PropKind, SolidKind, Workstation } from './campus';
+export {
+  CHAIR_GAP,
+  DESK_H,
+  DESK_W,
+  chairOffset,
+  deskFootprint,
+  isSelfSolidProp,
+  propSolid,
+  propSolids,
+  seatPose,
+  workstation,
+} from './campus';
+export type { BuildingSpec, DeskInstance, PropInstance, SeatInstance, SolidRect, SolidKind, PropKind, SeatKind, Workstation } from './campus';
 
 export interface LakeShape {
   points: Point[];
@@ -79,14 +95,6 @@ export interface FlowerPatch {
   palette: 0 | 1 | 2;
 }
 
-export interface FenceSegment {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  side: 'north' | 'south' | 'east' | 'west';
-}
-
 export interface RegionSpec {
   name: string;
   rect: WorldRect;
@@ -105,11 +113,14 @@ export interface IslandShape {
 
 export interface WorldLayout {
   plaza: WorldRect;
-  fence: { rect: WorldRect; segments: FenceSegment[] };
+  /** 开放式办公区：只用于区域名、工位排布与撒树留白，不参与碰撞（ADR-0028 删除围栏） */
+  office: WorldRect;
   paths: WorldRect[];
   lakes: LakeShape[];
   rivers: RiverShape[];
   bridges: WorldRect[];
+  /** 码头木栈道：一端接岸、一端伸进水面，与 bridges 共用 isOnBridge 放行 */
+  docks: WorldRect[];
   forests: ForestPatch[];
   /** 散布全岛的孤树：与森林里的树一样参与碰撞，但不属于任何林地 */
   wildTrees: TreeInstance[];
@@ -124,7 +135,7 @@ export interface WorldLayout {
   desks: DeskInstance[];
   /** 可入座的座位（工位椅、会议椅、马桶、床、沙发、凳子），id 从 1 开始，0 表示无座位 */
   seats: SeatInstance[];
-  /** 装饰与小设施（灯、长椅、垃圾桶、标识、水槽、售货机、饮水机、咖啡机等），渲染端按 kind 选贴图 */
+  /** 装饰与小设施（灯、长椅、垃圾桶、标识、水槽、售货机、饮水机、咖啡机、树篱等） */
   props: PropInstance[];
   /** 墙体、桌面、隔断、售货机等轴对齐碰撞矩形 */
   solids: SolidRect[];
@@ -138,12 +149,9 @@ export const WORLD_CENTER = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 } as const
 
 /**
  * 出生点散布上限，与服务端 config.spawnRadius 默认值一致。
- * 240 → 300 是随角色从 41 texel 长到 48 texel 一起放的：出生圈太挤会一路互相顶。
+ * 300 在 1120×936 的广场里留有余量：出生圈再大就会落到广场外。
  */
 export const SPAWN_RADIUS = 300;
-
-/** 门洞宽度：南北门沿 x，东西门沿 y。120 = 三个角色宽，两人对穿不会卡住 */
-export const GATE_WIDTH = 120;
 
 /** 树干碰撞半径：>3 才挡得住人，<14 才能从树缝里穿过去 */
 export const TREE_TRUNK_RADIUS = 12;
@@ -158,36 +166,32 @@ export const ISLAND_SHALLOW = 72;
 /**
  * 海岸线（顺时针，屏幕坐标 y 向下）。
  *
- * ADR-0024：以世界中心为原点对上一版（6470×7164）做一次 0.84 的收缩，
- * 岛收到 5436×6018（面积约 −29%），广场到研发园的步行距离同比缩短约四分之一。
- * 收缩只作用于**地形与聚簇位置**，广场、围栏、房间与工位的内部尺寸一律不动。
+ * ADR-0028：以世界中心为原点对上一版（5436×6018）再乘 0.7，
+ * 岛收到 3805×4212（x 2146–5951 / y 1956–6168，面积约 −48%）。
+ * 与上一版不同的是**西南湾填成陆地**，改成湿地水塘群：
+ * 上一版西南角的深湾在新尺寸下会挤掉整片可玩陆地，填平后南段才有空间放研发园与湖。
  *
- * 四个海湾的开口全部保留：北湾（x 3092–4598）、东湾（x 6242–6746 / y 3092–5402）、
- * 南中湾（x 3092–5066 / y 6800–7056，内壁从连比例值再抬了一档，给研发园留出陆地）、
- * 西南湾（x 1310–2554 / y 4352–7056）。
- *
- * 全部轴对齐手写：与地形一样禁止 Math.random / Math.sin / Math.cos，
- * 否则 Bun(JSC) 与浏览器(V8) 的末位差异会让双端各画一条海岸线。
+ * 保留北湾（x 3392–4448，探到 y 3158）、东湾（x 5598–5951 / y 3393–5009）、
+ * 南中湾（x 3392–4775 / y 5989–6168）三个海湾；四个海岸段全部轴对齐手写，
+ * 与地形一样禁止 Math.random / Math.sin / Math.cos。
  */
 const ISLAND_POINTS: Point[] = [
-  [1310, 1038],
-  [3092, 1038],
-  [3092, 2756],
-  [4598, 2756],
-  [4598, 1038],
-  [6746, 1038],
-  [6746, 3092],
-  [6242, 3092],
-  [6242, 5402],
-  [6746, 5402],
-  [6746, 7056],
-  [5066, 7056],
-  [5066, 6800],
-  [3092, 6800],
-  [3092, 7056],
-  [2554, 7056],
-  [2554, 4352],
-  [1310, 4352],
+  [2146, 1956],
+  [3392, 1956],
+  [3392, 3158],
+  [4448, 3158],
+  [4448, 1956],
+  [5951, 1956],
+  [5951, 3393],
+  [5598, 3393],
+  [5598, 5009],
+  [5951, 5009],
+  [5951, 6168],
+  [4775, 6168],
+  [4775, 5989],
+  [3392, 5989],
+  [3392, 6168],
+  [2146, 6168],
 ];
 
 export const ISLAND: IslandShape = {
@@ -209,167 +213,222 @@ export function isOnLand(x: number, y: number, radius = 0): boolean {
 }
 
 /**
- * 尺度总则（ADR-0010 / ADR-0022 / ADR-0024）：角色站立高 48 texel，
- * 广场/围栏/道路/水域按 1.25 放大后，靠 MOVE_SPEED 165px/s 把通行时间拉回来。
+ * 尺度总则（ADR-0010 / ADR-0022 / ADR-0026 / ADR-0028）：角色站立高 48 texel，
+ * 广场/道路/水域按 1.25 放大后，靠 MOVE_SPEED 165px/s 把通行时间拉回来。
  * 坐标一律手写偶数，保持以 (4096,4096) 为中心对称。
  */
 
-/** 办公广场：冷灰绿地砖，出生点全部落在里面；与围栏同以世界中心为心 */
+/** 办公广场：冷灰绿地砖，出生点全部落在里面；与办公区同以世界中心为心 */
 const PLAZA: WorldRect = { x: 3536, y: 3628, w: 1120, h: 936 };
 
-const FENCE_RECT: WorldRect = { x: 3216, y: 3404, w: 1760, h: 1384 };
-
-const GATE_MIN = WORLD_CENTER.x - GATE_WIDTH / 2;
-const GATE_MAX = WORLD_CENTER.x + GATE_WIDTH / 2;
-
-function horizontal(label: 'north' | 'south', y: number): FenceSegment[] {
-  return [
-    { x1: FENCE_RECT.x, y1: y, x2: GATE_MIN, y2: y, side: label },
-    { x1: GATE_MAX, y1: y, x2: FENCE_RECT.x + FENCE_RECT.w, y2: y, side: label },
-  ];
-}
-
-function vertical(label: 'west' | 'east', x: number): FenceSegment[] {
-  return [
-    { x1: x, y1: FENCE_RECT.y, x2: x, y2: GATE_MIN, side: label },
-    { x1: x, y1: GATE_MAX, x2: x, y2: FENCE_RECT.y + FENCE_RECT.h, side: label },
-  ];
-}
-
-const FENCE_SEGMENTS: FenceSegment[] = [
-  ...horizontal('north', FENCE_RECT.y),
-  ...horizontal('south', FENCE_RECT.y + FENCE_RECT.h),
-  ...vertical('west', FENCE_RECT.x),
-  ...vertical('east', FENCE_RECT.x + FENCE_RECT.w),
-];
+/**
+ * 开放式办公区：上一版围栏的包围盒，ADR-0028 删掉栏板只留这个矩形。
+ * 工位沿四边排布，树篱与花箱做软分区，四个方向各留一条入口通道。
+ */
+const OFFICE_RECT: WorldRect = { x: 3216, y: 3404, w: 1760, h: 1384 };
 
 /**
- * 土路：四个门洞向外延伸，路宽 128（≈2.7 个角色宽）。
- * 南向长路直抵研发园北缘；东、西两条支路按收缩后的空地长度重新量过，
- * 西支路的起点跟着木桥东移到 2888，桥与路之间不再留一条走不过去的草缝。
+ * 土路：四个方向各一条，外加东侧两条支路把工作区与湖岸串起来。
+ * 北向与南向跨水处由 BRIDGES 放行；路宽 128（≈2.7 个角色宽）。
  */
 const PATHS: WorldRect[] = [
-  { x: 4032, y: 4788, w: 128, h: 1132 },
-  { x: 4032, y: 3020, w: 128, h: 384 },
-  { x: 4976, y: 4032, w: 266, h: 128 },
-  { x: 2888, y: 4032, w: 328, h: 128 },
+  // 北入口：北湾南岸 → 办公区北缘
+  { x: 4032, y: 3184, w: 128, h: 220 },
+  // 北岸横路：休息室南门 → 工作区西侧，沿北湾南岸绕一圈
+  { x: 2900, y: 3250, w: 2110, h: 128 },
+  // 南向主路：办公区南缘 → 研发园北缘（跨晨会溪）
+  { x: 4032, y: 4788, w: 128, h: 312 },
+  // 西向：办公区西缘 → 主河西岸（跨周报河）
+  { x: 2440, y: 4032, w: 776, h: 128 },
+  // 东向：办公区东缘 → 湖路上端
+  { x: 4976, y: 4032, w: 374, h: 128 },
+  // 东侧支路：东向路 → 晨会溪南岸
+  { x: 5140, y: 4160, w: 128, h: 660 },
+  // 湖路：晨会溪南岸 → 摸鱼湖北岸
+  { x: 5140, y: 5040, w: 128, h: 220 },
 ];
 
 /**
- * 湖面轮廓：上一版围 (5751,5601) 的 20 点椭圆按 0.84 收缩后手写落表，
- * 保证双端顶点完全一致（用三角函数生成会引入引擎间末位差异）。
- * 收缩后的包围盒约 4804–6170 × 4920–5802，仍在东岸林地与南向主路之间。
+ * 湖面轮廓：12 点手写，绕 (5450,5575) 做 300×320 的收放，
+ * 落在研发园以东、东湾以南的空地上，离两侧海岸至少 200px。
  */
 const LAKE_POINTS: Point[] = [
-  [6170, 5360],
-  [6136, 5498],
-  [6038, 5620],
-  [5888, 5718],
-  [5698, 5780],
-  [5486, 5802],
-  [5276, 5780],
-  [5086, 5718],
-  [4934, 5620],
-  [4838, 5498],
-  [4804, 5360],
-  [4838, 5224],
-  [4934, 5102],
-  [5086, 5004],
-  [5276, 4942],
-  [5486, 4920],
-  [5698, 4942],
-  [5888, 5004],
-  [6038, 5102],
-  [6136, 5224],
+  [5750, 5575],
+  [5710, 5735],
+  [5600, 5852],
+  [5450, 5895],
+  [5300, 5852],
+  [5190, 5735],
+  [5150, 5575],
+  [5190, 5415],
+  [5300, 5298],
+  [5450, 5255],
+  [5600, 5298],
+  [5710, 5415],
 ];
 
 /** 岸线宽度：只影响渲染，碰撞边界仍是水面轮廓 */
 export const LAKE_SHORE = 22;
 
-/** 半河宽：总宽 224，与 288 宽的木桥两侧各留 32px */
+/** 半河宽：主河总宽 224，与 520 宽的木桥两侧各留 32px */
 export const RIVER_HALF_WIDTH = 112;
+/** 支流（晨会溪）半宽：总宽 144，比主河窄一档，读起来是「溪」而不是第二条大河 */
+export const CREEK_HALF_WIDTH = 72;
 /** 河岸沙带：与湖岸同档，只影响渲染，碰撞边界仍是水面多边形 */
 export const RIVER_SHORE = 24;
 
 /**
- * 河道中心线（手写，顺时针自北向南）：南北两端各探进海里 50–60px，
- * 河口不再断在草地中央。中段摆动幅度 ≤ 30px，远小于半个河宽，
- * 岸线只做缓弯，斜接不会扎刺；桥段（y 4020–4172）保持 x=2746 直行，
- * 水面恒定落在 x 2634–2858，木桥全程覆盖。
+ * 主河（周报河）中心线：南北两端各探进海里 100px 左右，
+ * x 在 2696–2734 之间缓摆（幅度 ≤ 38，远小于半河宽 112），岸线只做微弯。
+ * 水面恒定落在 x 2584–2846，西岸留 438px 宽的林地与水塘带。
  */
 const RIVER_STATIONS: Point[] = [
-  [2756, 992],
-  [2782, 1176],
-  [2796, 1410],
-  [2776, 1730],
-  [2742, 2050],
-  [2722, 2372],
-  [2728, 2688],
-  [2756, 3008],
-  [2758, 3326],
-  [2736, 3646],
-  [2746, 3948],
-  [2746, 4100],
-  [2746, 4268],
-  [2738, 4486],
-  [2722, 4806],
-  [2716, 5108],
-  [2724, 5426],
-  [2740, 5746],
-  [2730, 6066],
-  [2746, 6384],
-  [2746, 6702],
-  [2750, 7114],
+  [2700, 1800],
+  [2718, 2150],
+  [2696, 2500],
+  [2712, 2850],
+  [2734, 3200],
+  [2716, 3550],
+  [2730, 3900],
+  [2712, 4250],
+  [2726, 4600],
+  [2708, 4950],
+  [2722, 5300],
+  [2706, 5650],
+  [2718, 6000],
+  [2712, 6220],
 ];
 
-const RIVERS: RiverShape[] = [buildRiver(RIVER_STATIONS, RIVER_HALF_WIDTH)];
+/**
+ * 支流（晨会溪）中心线：从主河分出、向东汇进东湾，两端都在水面内。
+ * 中心线 y 在 4926–4958 之间缓摆，水面恒定落在 y 4868–5012：
+ * 北侧离办公区南缘 80px，南侧离研发园北缘 88px，两侧都留得下走道。
+ */
+const CREEK_STATIONS: Point[] = [
+  [2700, 4940],
+  [3050, 4926],
+  [3450, 4956],
+  [3900, 4938],
+  [4350, 4958],
+  [4800, 4936],
+  [5250, 4954],
+  [5620, 4940],
+];
+
+const RIVERS: RiverShape[] = [
+  buildRiver(RIVER_STATIONS, RIVER_HALF_WIDTH),
+  buildRiver(CREEK_STATIONS, CREEK_HALF_WIDTH),
+];
 
 /**
- * 木桥：整段盖住河面，是河流唯一的通行口。
- * 宽度 288 = 河宽 224 + 两端各 32px——放行判定看的是角色中心点，
- * 桥面若刚好从水面开始，人会被「离岸 7px」的碰撞半径挡在桥头。
+ * 木桥：整段盖住河面，是跨水的唯一通行口。
+ *
+ * - A：西向路跨周报河，东西向通行，宽 208（路 128 + 两侧各 40）；
+ * - B：南向主路跨晨会溪，南北向通行；
+ * - C：东侧支路跨晨会溪，南北向通行。
+ *
+ * 放行判定看的是角色中心点，桥面若刚好从水面开始，人会被「离岸 9px」的碰撞半径挡在桥头。
  */
-const BRIDGES: WorldRect[] = [{ x: 2602, y: 4020, w: 288, h: 152 }];
+const BRIDGES: WorldRect[] = [
+  { x: 2440, y: 3992, w: 520, h: 208 },
+  { x: 3980, y: 4820, w: 232, h: 260 },
+  { x: 5100, y: 4820, w: 236, h: 260 },
+];
+
+/**
+ * 码头木栈道：一端踩在岸上、一端伸进水面，与桥共用 `isOnBridge` 放行。
+ * 单独建模而不是塞进 bridges——桥要求两端都在陆地，码头只有一端在陆地。
+ */
+const DOCKS: WorldRect[] = [
+  // 摸鱼湖北岸：从岸上往南伸进湖里
+  { x: 5376, y: 5240, w: 48, h: 160 },
+  // 周报河西岸：从岸上往东伸进河里
+  { x: 2500, y: 4600, w: 260, h: 48 },
+];
 
 /** 花箱碰撞半径：比视觉尺寸略小（视觉 26×34），擦身而过不会觉得黏 */
 export const PLANTER_RADIUS = 12;
 
 /**
- * 景观花箱：广场中心四角 + 广场内侧四条边 + 南向长路休息角。
+ * 景观花箱：广场内外两圈 + 办公区四角 + 桥头与东西两岸。
  * 出生点四周就有「会被挡住」的实物，走两步就能看出 y 排序；
- * 外圈四个把广场的空地面切成「中间一片 + 四周一圈」，视口放大后不再是一张空桌布。
+ * 26 个花箱把 1120×936 的广场与 1760×1384 的办公区切成若干可读的小空间。
  */
 const PLANTERS: PlanterInstance[] = [
+  // 广场中心四角
   { x: 3971, y: 3971 },
   { x: 4221, y: 3971 },
   { x: 3971, y: 4221 },
   { x: 4221, y: 4221 },
+  // 广场内侧四条边
   { x: 3671, y: 3971 },
   { x: 3671, y: 4221 },
   { x: 4521, y: 3971 },
   { x: 4521, y: 4221 },
-  { x: 3944, y: 5570 },
+  // 广场外圈：东西各三只，南北各两只（让开四个入口）
+  { x: 3470, y: 3760 },
+  { x: 3470, y: 4096 },
+  { x: 3470, y: 4432 },
+  { x: 4722, y: 3760 },
+  { x: 4722, y: 4096 },
+  { x: 4722, y: 4432 },
+  { x: 3760, y: 3540 },
+  { x: 4432, y: 3540 },
+  { x: 3760, y: 4652 },
+  { x: 4432, y: 4652 },
+  // 办公区四角
+  { x: 3270, y: 3470 },
+  { x: 3270, y: 4720 },
+  { x: 4930, y: 3470 },
+  { x: 4930, y: 4720 },
+  // 桥头与两岸
+  { x: 3960, y: 4820 },
+  { x: 4232, y: 4820 },
+  { x: 3320, y: 4850 },
+  { x: 4940, y: 4850 },
+  { x: 5050, y: 4400 },
 ];
 
 /**
- * 南向长路旁的休息角：两张长椅夹一盏灯，指路牌与垃圾桶收口。
- * 两栋新房间占掉了原来的位置，整组南移到房间与研发园之间的那段空路旁。
+ * 沿路休息角：北入口、南向桥头、西岸码头、东侧湖路、湖岸与湿地各一组。
+ * 每一组都是「灯 + 长椅 + 垃圾桶 / 野餐桌」的固定搭配，走一段就能遇到一处可坐下的地方。
  */
 const ROAD_PROPS: PropInstance[] = [
-  { kind: 'lamp', x: 3944, y: 5760 },
-  { kind: 'bench', x: 3820, y: 5740 },
-  { kind: 'bench', x: 3820, y: 5630 },
-  { kind: 'sign', x: 3700, y: 5680 },
-  { kind: 'bin', x: 3700, y: 5760 },
+  // 北入口
+  { kind: 'lamp', x: 3944, y: 3260 },
+  { kind: 'lamp', x: 4240, y: 3260 },
+  { kind: 'bench', x: 3860, y: 3300 },
+  { kind: 'bin', x: 4290, y: 3300 },
+  // 南向桥头
+  { kind: 'lamp', x: 3960, y: 4810 },
+  { kind: 'lamp', x: 4232, y: 4810 },
+  // 西岸码头区
+  { kind: 'lamp', x: 2520, y: 4420 },
+  { kind: 'table', x: 2500, y: 4500 },
+  { kind: 'bench', x: 2520, y: 4580 },
+  { kind: 'bin', x: 2560, y: 4430 },
+  // 东侧湖路
+  { kind: 'lamp', x: 5060, y: 4300 },
+  { kind: 'bench', x: 5060, y: 4420 },
+  { kind: 'sign', x: 5300, y: 4200 },
+  { kind: 'bin', x: 5300, y: 4310 },
+  // 湖岸
+  { kind: 'lamp', x: 5320, y: 5210 },
+  { kind: 'bench', x: 5300, y: 5220 },
+  { kind: 'table', x: 5600, y: 5200 },
+  // 西岸湿地
+  { kind: 'lamp', x: 2540, y: 5700 },
+  { kind: 'table', x: 2560, y: 5750 },
+  { kind: 'bench', x: 2560, y: 5830 },
 ];
 
 /**
- * 办公区工位：沿围栏内圈排布。北、南两排是横向工位（椅子在桌子外侧），
- * 东、西两列是纵向工位。南北门的通道与路口留白，人流不会被桌子堵住。
+ * 办公区工位：沿开放式办公区四边排布。北、南两排是横向工位（椅子在桌子外侧），
+ * 东、西两列是纵向工位。南北门通道与路口留白，人流不会被桌子堵住。
  * 坐标手写对称（中心 x = 4096）。
  */
-const DESK_NORTH_Y = FENCE_RECT.y + 66;
-const DESK_SOUTH_Y = FENCE_RECT.y + FENCE_RECT.h - 68;
+const DESK_NORTH_Y = OFFICE_RECT.y + 66;
+const DESK_SOUTH_Y = OFFICE_RECT.y + OFFICE_RECT.h - 68;
 const DESK_WEST_X = 3332;
 const DESK_EAST_X = 4860;
 const DESK_COLUMN_START = 3560;
@@ -393,8 +452,10 @@ function officeWorkstations(): Workstation[] {
   // 椅子由朝向反推：屏幕朝北 → 椅子在桌南；屏幕朝南 → 椅子在桌北；东西两列同理
   for (const cx of runX) out.push(workstation(cx, DESK_NORTH_Y, DIRECTION.Up));
   for (const cx of runX) out.push(workstation(cx, DESK_SOUTH_Y, DIRECTION.Down));
+  // 东西朝向的桌子整张转 90°，沿 y 的占地是 DESK_W 而不是 DESK_H
+  const columnHalf = DESK_W / 2;
   for (let cy = DESK_COLUMN_START; cy <= 4640; cy += DESK_COLUMN_PITCH) {
-    if (rangesOverlap(cy - DESK_H / 2, cy + DESK_H / 2, GATE_LANE_Y[0], GATE_LANE_Y[1])) continue;
+    if (rangesOverlap(cy - columnHalf, cy + columnHalf, GATE_LANE_Y[0], GATE_LANE_Y[1])) continue;
     out.push(workstation(DESK_WEST_X, cy, DIRECTION.Left));
     out.push(workstation(DESK_EAST_X, cy, DIRECTION.Right));
   }
@@ -409,13 +470,10 @@ const WORK_DESKS: DeskInstance[] = WORKSTATIONS.map((station) => station.desk);
 
 const DESKS: DeskInstance[] = [...PLAZA_DESKS, ...WORK_DESKS];
 
-const DESK_SOLIDS: SolidRect[] = DESKS.map((desk) => ({
-  kind: 'desk',
-  x: desk.x - DESK_W / 2,
-  y: desk.y - DESK_H / 2,
-  w: DESK_W,
-  h: DESK_H,
-}));
+const DESK_SOLIDS: SolidRect[] = DESKS.map((desk) => {
+  const { w, h } = deskFootprint(desk.facing);
+  return { kind: 'desk', x: desk.x - w / 2, y: desk.y - h / 2, w, h };
+});
 
 /**
  * 座位表：办公区工位 → 工作区工位 → 研发园会议椅与马桶 → 休息室床/沙发/凳子；id = 下标 + 1。
@@ -471,71 +529,129 @@ export function findNearestSeat(
 }
 
 /**
- * 林地：上一版 7 片按 0.84 收缩并合并——原「办公区—研发园之间的林带」
- * 与新工作区重叠，整片取消；其余六片的相对位置不变，靠 `isPlantable` 过滤水面与建筑。
+ * 林地：六片合计约 2.9M 平方像素，从北带东西两端一直铺到西岸与东南角。
+ * 林地矩形可以跨水塘（撒树用 `isPlantable` 过滤水面），
+ * 这样塘边就是一圈自然林间空地，而不是「树绕着塘摆」。
  */
 const FOREST_RECTS: WorldRect[] = [
-  { x: 1372, y: 1098, w: 1206, h: 1786 },
-  { x: 4626, y: 1202, w: 1996, h: 1786 },
-  { x: 5066, y: 5424, w: 1618, h: 1572 },
-  // 北湾以南、北门通道两侧的两小片
-  { x: 3134, y: 2806, w: 722, h: 638 },
-  { x: 4234, y: 3062, w: 538, h: 384 },
-  // 东湾与湖之间的空地
-  { x: 5360, y: 3638, w: 798, h: 1092 },
+  // 西岸北段（周报河与西海岸之间）
+  { x: 2180, y: 2050, w: 380, h: 950 },
+  // 北带西段：北湾西侧的整片台地，含 P3 水塘（南缘让开休息室）
+  { x: 2900, y: 2050, w: 450, h: 790 },
+  // 北带东段：北湾东侧最宽的一片，含 P4 水塘
+  { x: 4550, y: 2050, w: 1400, h: 1200 },
+  // 西岸中段：北段林地与水塘之间的过渡带
+  { x: 2180, y: 3060, w: 300, h: 320 },
+  // 西岸中段：码头与石桥之间
+  { x: 2200, y: 4350, w: 280, h: 450 },
+  // 西岸南段：湿地北缘
+  { x: 2200, y: 5450, w: 330, h: 600 },
+  // 东南角：摸鱼湖与南中湾之间的窄林带，含 P5 水塘
+  { x: 4800, y: 5910, w: 500, h: 220 },
 ];
 
 /**
- * 花海：三片开阔草甸上的不规则色块，白雏菊 / 金盏 / 暖粉各一片。
+ * 花海：四片开阔草甸上的不规则色块，白雏菊 / 金盏 / 暖粉各一片。
  * 全部避开广场、土路、林地、湖与河道，只做视觉分区，不参与碰撞。
- * 原「广场东南」那片与新休息室冲突，已移到周报河西岸的空白草甸。
  */
 const FLOWER_FIELDS: FlowerPatch[] = [
-  { rect: { x: 1450, y: 2950, w: 760, h: 980 }, palette: 0 },
-  { rect: { x: 4906, y: 2958, w: 756, h: 654 }, palette: 1 },
-  { rect: { x: 2940, y: 4830, w: 320, h: 520 }, palette: 2 },
-  // 白雏菊田与周报河之间的一条花带，把西岸水塘圈进草甸里
-  { rect: { x: 2126, y: 3982, w: 470, h: 252 }, palette: 0 },
+  { rect: { x: 2180, y: 3800, w: 250, h: 180 }, palette: 2 },
+  { rect: { x: 5300, y: 4300, w: 250, h: 280 }, palette: 1 },
+  { rect: { x: 2950, y: 5980, w: 380, h: 150 }, palette: 0 },
+  { rect: { x: 5300, y: 5920, w: 300, h: 200 }, palette: 0 },
 ];
 
 /**
- * 两口小水塘：各 11 个顶点手写，绕中心做不规则收放，读起来像天然积水而不是圆规坑。
- * 西塘在白雏菊田与西岸之间的空地；南塘贴着周报河东岸（与河面连成一片水洼），
- * 整体避开新研发园与南向主路。走 `lakes` 数组就等于自动接入水面碰撞、撒树留白、
+ * 五口水塘：各 12 个顶点手写，绕中心做不规则收放，读起来像天然积水而不是圆规坑。
+ * P1/P2 在西岸林地间，P3 在北带林中，P4 在北带东段林间，
+ * P5 贴东南角林带。走 `lakes` 数组就等于自动接入水面碰撞、撒树留白、
  * 芦苇碎石与小地图。
  */
-const POND_WEST_POINTS: Point[] = [
-  [1772, 4150],
-  [1792, 4232],
-  [1842, 4276],
-  [1914, 4282],
-  [1984, 4260],
-  [2034, 4208],
-  [2050, 4134],
-  [2014, 4068],
-  [1940, 4040],
-  [1862, 4056],
-  [1798, 4094],
+const POND_NORTH_WEST_POINTS: Point[] = [
+  [2400, 3500],
+  [2387, 3550],
+  [2350, 3587],
+  [2300, 3600],
+  [2250, 3587],
+  [2213, 3550],
+  [2200, 3500],
+  [2213, 3450],
+  [2250, 3413],
+  [2300, 3400],
+  [2350, 3413],
+  [2387, 3450],
 ];
 
-const POND_SOUTH_POINTS: Point[] = [
-  [2636, 5580],
-  [2656, 5664],
-  [2706, 5712],
-  [2780, 5724],
-  [2850, 5706],
-  [2898, 5654],
-  [2914, 5580],
-  [2880, 5506],
-  [2804, 5478],
-  [2728, 5492],
-  [2670, 5534],
+const POND_SOUTH_WEST_POINTS: Point[] = [
+  [2410, 5300],
+  [2395, 5355],
+  [2355, 5395],
+  [2300, 5410],
+  [2245, 5395],
+  [2205, 5355],
+  [2190, 5300],
+  [2205, 5245],
+  [2245, 5205],
+  [2300, 5190],
+  [2355, 5205],
+  [2395, 5245],
+];
+
+const POND_NORTH_MID_POINTS: Point[] = [
+  [3160, 2620],
+  [3145, 2675],
+  [3105, 2715],
+  [3050, 2730],
+  [2995, 2715],
+  [2955, 2675],
+  [2940, 2620],
+  [2955, 2565],
+  [2995, 2525],
+  [3050, 2510],
+  [3105, 2525],
+  [3145, 2565],
+];
+
+const POND_NORTH_EAST_POINTS: Point[] = [
+  [5370, 2620],
+  [5354, 2680],
+  [5310, 2724],
+  [5250, 2740],
+  [5190, 2724],
+  [5146, 2680],
+  [5130, 2620],
+  [5146, 2560],
+  [5190, 2516],
+  [5250, 2500],
+  [5310, 2516],
+  [5354, 2560],
+];
+
+const POND_SOUTH_EAST_POINTS: Point[] = [
+  [4990, 5980],
+  [4978, 6025],
+  [4945, 6058],
+  [4900, 6070],
+  [4855, 6058],
+  [4822, 6025],
+  [4810, 5980],
+  [4822, 5935],
+  [4855, 5902],
+  [4900, 5890],
+  [4945, 5902],
+  [4978, 5935],
 ];
 
 const LAKE: LakeShape = { points: LAKE_POINTS, rect: polygonBounds(LAKE_POINTS) };
 const LAKES: LakeShape[] = [
   LAKE,
-  ...[POND_WEST_POINTS, POND_SOUTH_POINTS].map((points) => ({ points, rect: polygonBounds(points) })),
+  ...[
+    POND_NORTH_WEST_POINTS,
+    POND_SOUTH_WEST_POINTS,
+    POND_NORTH_MID_POINTS,
+    POND_NORTH_EAST_POINTS,
+    POND_SOUTH_EAST_POINTS,
+  ].map((points) => ({ points, rect: polygonBounds(points) })),
 ];
 
 /**
@@ -557,7 +673,7 @@ export function distanceSqToWater(x: number, y: number): number {
   return best;
 }
 
-/** 是否踩在水面上（湖面或河面）。桥面由 isOnBridge 单独放行 */
+/** 是否踩在水面上（湖面或河面）。桥面与码头由 isOnBridge 单独放行 */
 export function isWaterAt(x: number, y: number): boolean {
   return distanceSqToWater(x, y) === 0;
 }
@@ -568,27 +684,26 @@ const REGIONS: RegionSpec[] = [
     name: index === 0 ? '摸鱼湖' : '小水塘',
     rect: rectExpanded(lake.rect, 50),
   })),
-  ...RIVERS.map((river) => ({ name: '周报河', rect: rectExpanded(river.rect, 30) })),
+  ...RIVERS.map((river, index) => ({ name: index === 0 ? '周报河' : '晨会溪', rect: rectExpanded(river.rect, 30) })),
   ...FOREST_RECTS.map((rect) => ({ name: '加班林', rect })),
-  { name: '办公区', rect: FENCE_RECT },
+  { name: '办公区', rect: OFFICE_RECT },
   { name: '会议室', rect: MEETING_ROOM },
   { name: '卫生间', rect: RESTROOM },
   { name: '研发园', rect: CAMPUS_RECT },
-  // 两栋新房间在围栏之外，按优先级排在研发园之后（互不重叠，顺序只求可读）
   { name: '工作区', rect: WORKROOM },
   { name: '休息室', rect: LOUNGE },
 ];
 
 /**
  * 撒树：给每个格心一次投骰，再抖动位置，比纯随机更像自然林。
- * 树冠宽 56–62，格距 120 时相邻树冠刚好交叠成林，再密就会糊成一片深绿。
+ * 树冠宽 56–62，格距 100 时相邻树冠交叠近 40 —— 成林，但不至于糊成一片深绿。
  */
-const TREE_CELL = 120;
-/** 0.6 → 0.7：视口放大后森林要更「满」，否则树间草地会透成一片空绿 */
-const TREE_CHANCE = 0.7;
-const TREE_JITTER = 32;
+const TREE_CELL = 96;
+/** 0.7 → 0.92：岛缩到原来的七成，林地数量不降反升，靠密度补回「满」的读感 */
+const TREE_CHANCE = 0.92;
+const TREE_JITTER = 28;
 /** 必须大于 TREE_JITTER，否则抖动会把树推出森林矩形 */
-const TREE_MARGIN = 40;
+const TREE_MARGIN = 36;
 const TREE_VARIANTS = 4;
 
 function mulberry32(seed: number): () => number {
@@ -603,20 +718,21 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * 树不能长进水里、路上、广场上，也不能贴到围栏、房间与门前铺装上。
- * 留白随地形件一起 ×1.25：漏改这一处，树就会重新长进广场与门口。
+ * 树不能长进水里、路上、广场上，也不能贴到办公区、房间与门前铺装上。
+ * 留白随地形件一起收紧：漏改这一处，树就会重新长进广场与门口。
  */
 function isPlantable(x: number, y: number): boolean {
   if (x < 150 || y < 150 || x > WORLD_WIDTH - 150 || y > WORLD_HEIGHT - 150) return false;
   if (rectContains(rectExpanded(PLAZA, 60), x, y)) return false;
-  if (rectContains(rectExpanded(FENCE_RECT, 70), x, y)) return false;
+  if (rectContains(rectExpanded(OFFICE_RECT, 70), x, y)) return false;
   if (rectContains(rectExpanded(CAMPUS_RECT, 40), x, y)) return false;
-  // 南向两栋房间与门前铺装：树不长进屋里，也不堵门
+  // 两栋小屋与门前铺装：树不长进屋里，也不堵门
   if (rectContains(rectExpanded(WORKROOM, 60), x, y)) return false;
   if (rectContains(rectExpanded(LOUNGE, 60), x, y)) return false;
   for (const paving of DOOR_PAVING) if (rectContains(rectExpanded(paving, 40), x, y)) return false;
   for (const path of PATHS) if (rectContains(rectExpanded(path, 55), x, y)) return false;
   for (const bridge of BRIDGES) if (rectContains(rectExpanded(bridge, 50), x, y)) return false;
+  for (const dock of DOCKS) if (rectContains(rectExpanded(dock, 40), x, y)) return false;
   for (const field of FLOWER_FIELDS) if (rectContains(rectExpanded(field.rect, 40), x, y)) return false;
   // 水面留白 95：湖岸和河岸都是细沙带，树冠不能压到沙上
   if (distanceSqToWater(x, y) < 95 * 95) return false;
@@ -644,23 +760,39 @@ function scatterTrees(rect: WorldRect, seed: number, variantBase: number): TreeI
 
 /**
  * 孤树：草地上的散点地标，密度远低于林地。
- * 格距 + 抖动后相邻格仍可能只隔 40，所以再加一道 170 的最小间距。
+ * 格距 + 抖动后相邻格仍可能只隔 40，所以再加一道 150 的最小间距。
  *
  * 岛缩到原来的七成之后，可种树的草地通量同比下降：
- * 160/0.72 → 130/0.90 补回数量，170 的最小间距不动——那是两团树冠不糊成一片的下限。
+ * 130/0.9 → 110/0.95 补回数量，150 的最小间距是两团树冠不糊成一片的下限。
  */
-const WILD_TREE_CELL = 130;
-const WILD_TREE_CHANCE = 0.9;
-const WILD_TREE_JITTER = 100;
-const WILD_TREE_MIN_GAP = 170;
+const WILD_TREE_CELL = 88;
+const WILD_TREE_CHANCE = 0.99;
+const WILD_TREE_JITTER = 72;
+const WILD_TREE_MIN_GAP = 112;
 /** 出生圈外才开始有孤树，广场四周留出干净的活动面 */
-const WILD_TREE_CLEAR = 520;
+const WILD_TREE_CLEAR = 300;
 
+/**
+ * 孤树用一套更宽松的留白：树冠压到路边、塘边、花海外缘都是自然的，
+ * 只要脚底不进水、不进建筑、不堵门。林地本身已经密植，只排除矩形内部。
+ */
 function canPlantWildTree(x: number, y: number): boolean {
-  if (!isPlantable(x, y)) return false;
+  if (x < 150 || y < 150 || x > WORLD_WIDTH - 150 || y > WORLD_HEIGHT - 150) return false;
   // 海岸留白：孤树不站在沙滩与浅滩上
-  if (!isOnLand(x, y, 90)) return false;
-  for (const rect of FOREST_RECTS) if (rectContains(rectExpanded(rect, 40), x, y)) return false;
+  if (!isOnLand(x, y, 60)) return false;
+  if (rectContains(rectExpanded(PLAZA, 40), x, y)) return false;
+  if (rectContains(rectExpanded(OFFICE_RECT, 50), x, y)) return false;
+  if (rectContains(rectExpanded(CAMPUS_RECT, 24), x, y)) return false;
+  if (rectContains(rectExpanded(WORKROOM, 30), x, y)) return false;
+  if (rectContains(rectExpanded(LOUNGE, 30), x, y)) return false;
+  for (const paving of DOOR_PAVING) if (rectContains(rectExpanded(paving, 20), x, y)) return false;
+  for (const path of PATHS) if (rectContains(rectExpanded(path, 30), x, y)) return false;
+  for (const bridge of BRIDGES) if (rectContains(rectExpanded(bridge, 30), x, y)) return false;
+  for (const dock of DOCKS) if (rectContains(rectExpanded(dock, 20), x, y)) return false;
+  for (const field of FLOWER_FIELDS) if (rectContains(rectExpanded(field.rect, 20), x, y)) return false;
+  // 树冠 56–62 宽：脚底离水 70 就不会把冠盖压到沙带上
+  if (distanceSqToWater(x, y) < 70 * 70) return false;
+  for (const rect of FOREST_RECTS) if (rectContains(rect, x, y)) return false;
   const dx = x - WORLD_CENTER.x;
   const dy = y - WORLD_CENTER.y;
   return dx * dx + dy * dy > WILD_TREE_CLEAR * WILD_TREE_CLEAR;
@@ -703,13 +835,56 @@ const FORESTS: ForestPatch[] = FOREST_RECTS.map((rect, index) => ({
 
 const WILD_TREES: TreeInstance[] = scatterWildTrees();
 
+/**
+ * 开放式办公区的软边界：沿四边每 64px 一段树篱，四个入口各留 350px 缺口。
+ * 树篱是纯装饰（走 props 管线、不产生 blocker），视觉上分区、脚上不封路。
+ */
+const HEDGE_STEP = 64;
+const HEDGE_INSET = 8;
+const HEDGE_ENTRY_PAD = 40;
+
+function softEdgeHedges(): PropInstance[] {
+  const out: PropInstance[] = [];
+  const { x, y, w, h } = OFFICE_RECT;
+  const gateX0 = GATE_LANE_X[0] - HEDGE_ENTRY_PAD;
+  const gateX1 = GATE_LANE_X[1] + HEDGE_ENTRY_PAD;
+  const gateY0 = GATE_LANE_Y[0] - HEDGE_ENTRY_PAD;
+  const gateY1 = GATE_LANE_Y[1] + HEDGE_ENTRY_PAD;
+  for (const edgeY of [y + HEDGE_INSET, y + h - HEDGE_INSET]) {
+    for (let px = x + 40; px <= x + w - 40; px += HEDGE_STEP) {
+      if (px > gateX0 && px < gateX1) continue;
+      out.push({ kind: 'hedge', x: px, y: edgeY });
+    }
+  }
+  for (const edgeX of [x + HEDGE_INSET, x + w - HEDGE_INSET]) {
+    for (let py = y + 40; py <= y + h - 40; py += HEDGE_STEP) {
+      if (py > gateY0 && py < gateY1) continue;
+      out.push({ kind: 'hedge', x: edgeX, y: py });
+    }
+  }
+  return out;
+}
+
+const PROPS: PropInstance[] = [
+  ...PLAZA_PROPS,
+  ...ROAD_PROPS,
+  ...CAMPUS_PROPS,
+  ...WORK_PROPS,
+  ...LOUNGE_PROPS,
+  ...softEdgeHedges(),
+];
+
+/** 有占地的装饰（售货机、长椅、野餐桌、单车）统一由 propSolid 生成碰撞盒 */
+const PROP_SOLIDS: SolidRect[] = propSolids(PROPS);
+
 export const WORLD_LAYOUT: WorldLayout = {
   plaza: PLAZA,
-  fence: { rect: FENCE_RECT, segments: FENCE_SEGMENTS },
+  office: OFFICE_RECT,
   paths: PATHS,
   lakes: LAKES,
   rivers: RIVERS,
   bridges: BRIDGES,
+  docks: DOCKS,
   forests: FORESTS,
   wildTrees: WILD_TREES,
   flowerFields: FLOWER_FIELDS,
@@ -718,8 +893,8 @@ export const WORLD_LAYOUT: WorldLayout = {
   regions: REGIONS,
   desks: DESKS,
   seats: SEATS,
-  props: [...PLAZA_PROPS, ...ROAD_PROPS, ...CAMPUS_PROPS, ...WORK_PROPS, ...LOUNGE_PROPS],
-  solids: [...DESK_SOLIDS, ...PLAZA_SOLIDS, ...CAMPUS_SOLIDS],
+  props: PROPS,
+  solids: [...DESK_SOLIDS, ...PROP_SOLIDS, ...CAMPUS_SOLIDS],
   buildings: CAMPUS_BUILDINGS,
   paved: [CAMPUS_YARD, ...DOOR_PAVING],
 };
@@ -733,10 +908,13 @@ export function regionAt(x: number, y: number): string {
   return FALLBACK_REGION;
 }
 
-/** 桥面：水域在这里放行 */
+/** 桥面与码头：水域在这里放行 */
 export function isOnBridge(x: number, y: number): boolean {
   for (const bridge of BRIDGES) {
     if (rectContains(bridge, x, y)) return true;
+  }
+  for (const dock of DOCKS) {
+    if (rectContains(dock, x, y)) return true;
   }
   return false;
 }
