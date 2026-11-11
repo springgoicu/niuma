@@ -79,6 +79,8 @@ step "4. nginx"
 sed -i 's/^[[:space:]]*gzip on;.*/# gzip on; 交给 conf.d\/00-niuma-http.conf 统一配置/' /etc/nginx/nginx.conf
 sed -i 's/^[[:space:]]*worker_connections[[:space:]].*;/    worker_connections 16384;/' /etc/nginx/nginx.conf
 sed -i 's/^[[:space:]]*# multi_accept on;/    multi_accept on;/' /etc/nginx/nginx.conf
+# server_tokens build 会把版本号写进 Server 头；关掉它省得被人按版本找漏洞
+sed -i 's/^[[:space:]]*server_tokens[[:space:]].*;/	server_tokens off;/' /etc/nginx/nginx.conf
 
 # 上游与 gzip/缓存参数（http 上下文）
 sed "s#@APP_BASE@#$APP_BASE#g" "$HERE/nginx/00-niuma-http.conf.template" \
