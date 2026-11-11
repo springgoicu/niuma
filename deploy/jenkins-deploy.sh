@@ -106,7 +106,9 @@ wait_http_200() {
 # ==================== 1. 依赖与质量门禁 ====================
 log "[1/4] 安装依赖 + 质量门禁"
 cd "$WS"
-corepack enable 2>/dev/null || true
+# pnpm 由 install.sh / CI 用 npm i -g 装好；corepack 只是兜底。
+# 它失败时会往日志里刷一大段 stack，对排查毫无价值，这里静音
+corepack enable >/dev/null 2>&1 || true
 pnpm config set store-dir "$HOME/.pnpm-store" >/dev/null 2>&1 || true
 pnpm install --frozen-lockfile --prefer-offline
 
