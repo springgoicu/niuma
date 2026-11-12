@@ -125,6 +125,8 @@ export const RESUME_BYTES = 8;
  *          + dominant(1) + utilizationPermille(2)
  */
 export const QUEUE_STATUS_BYTES = 16;
+/** 发泄结算：op(1) + attackerId(2) + targetId(2) + x(2) + y(2) */
+export const VENT_PACKET_BYTES = 9;
 /** 排队拒绝：op(1) + reason(1) */
 export const QUEUE_REJECT_BYTES = 2;
 /** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */
@@ -168,8 +170,8 @@ export const DIRECTION = {
 } as const;
 
 /**
- * 基础姿态只有四种。叫唤与跳跃不是姿态，而是 state 字节里的两个一次性标志位
- * （bit6 / bit7）：它们与姿态正交，播完自然回到原姿势，不需要服务端记忆与回滚（ADR-0018）。
+ * 基础姿态只有四种。发泄与跳跃不是姿态，而是 state 字节里的两个一次性标志位
+ * （bit6 / bit7）：它们与姿态正交，播完自然回到原姿势，不需要服务端记忆与回滚（ADR-0051）。
  */
 export const POSE = {
   Idle: 0,
@@ -182,7 +184,7 @@ export type Direction = (typeof DIRECTION)[keyof typeof DIRECTION];
 export type Pose = (typeof POSE)[keyof typeof POSE];
 
 /**
- * 动作：坐 / 躺 / 起身 / 咀嚼。叫唤与跳随 move 包上行（ADR-0018）；
+ * 动作：坐 / 躺 / 起身 / 咀嚼。发泄与跳随 move 包上行（ADR-0051）；
  * 咀嚼没有对应 state 位（字节已满），走一次性事件通道（ADR-0048）。
  * Sit 在附近有空闲座位时入座，否则落地坐；Stand 释放座位并回到站立。
  */
@@ -198,5 +200,29 @@ export const ACTION = {
  * 服务端必须自己防刷；500ms 与客户端本地音效节流同一口径。
  */
 export const GRAZE_COOLDOWN_MS = 500;
+
+/**
+ * 发泄（Vent）：出招者前方扇形的判定区。
+ *
+ * 64px 约等于两个身位——够到「贴在面前」的人，但站在工位另一侧不该被创飞；
+ * 合计 60°（±30°）把判定收成一条朝着正前方的楔形，侧后方的人不受影响。
+ * 客户端「点击相邻玩家」的范围检查与服务端命中判定共用同一组常量。
+ */
+export const VENT_RANGE_PX = 64;
+export const VENT_HALF_ANGLE_DEG = 30;
+/** 击退距离：32px 正好推出一个身位，撞墙时由碰撞求解器自然衰减 */
+export const VENT_KNOCKBACK_PX = 32;
+/**
+ * 倒地硬直：期间无法起身、无法移动。
+ * 1.5s 足够旁观者看清「他躺了」，又不至于让人以为掉线。
+ */
+export const VENT_STUN_MS = 1500;
+/**
+ * 两次结算之间的最小间隔。
+ *
+ * 客户端把 vent 位保持一整个播放窗口（440ms），20Hz 上行会在窗口内重复上报；
+ * 服务端必须靠这道闸门把「持续为真」收敛成「一次结算」，顺便挡住连点刷屏。
+ */
+export const VENT_COOLDOWN_MS = 700;
 
 export type ActionId = (typeof ACTION)[keyof typeof ACTION];

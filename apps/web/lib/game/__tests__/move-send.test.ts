@@ -41,9 +41,9 @@ describe('上行发包门槛', () => {
    * 位置没变、只有 state 的 bit 掉下来，也必须走「变化」分支。
    */
   it('叠加位到期清零必须立刻放行，不能被静止节流挡住', () => {
-    const emoting = packState(DIRECTION.Down, POSE.Idle, false, true);
+    const venting = packState(DIRECTION.Down, POSE.Idle, false, true);
     const silent = packState(DIRECTION.Down, POSE.Idle, false, false);
-    const last: MoveSample = { x: 32768, y: 32768, state: emoting };
+    const last: MoveSample = { x: 32768, y: 32768, state: venting };
     expect(shouldSendMove(last, 32768, 32768, silent, MOVE_SEND_INTERVAL_MS)).toBe(true);
     // 但同样受 20Hz 上限约束，不会因为到期瞬间的重排变成连发
     expect(shouldSendMove(last, 32768, 32768, silent, 0)).toBe(false);

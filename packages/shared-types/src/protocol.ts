@@ -27,6 +27,7 @@ import {
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
+  VENT_PACKET_BYTES,
   type SyncFormat,
 } from './constants';
 import { displayWidth } from './name';
@@ -52,6 +53,7 @@ import type {
   ResumeState,
   SpawnPacket,
   SystemNoticePacket,
+  VentEventPacket,
   WelcomePacket,
 } from './types';
 import { OpCode, QUEUE_REJECT_REASON } from './types';
@@ -545,6 +547,29 @@ export function decodeGraze(data: Uint8Array): number {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_GRAZE) throw new Error('not a graze packet');
   return reader.u16();
+}
+
+/**
+ * 发泄结算：`[op][attackerId u16][targetId u16][x u16][y u16]`，9 字节定长。
+ *
+ * 与 `encodeGraze` 同属一次性事件通道，但多带「谁打到谁」与受害者的权威坐标：
+ * 前者让旁观者能把倒地归因到具体的人（音效、台词、镜头都有对象），
+ * 后者让受害者本人越过 128px 的本地和解阈值，直接贴到服务端算出的落点上。
+ */
+export function encodeVent(attackerId: number, targetId: number, x: number, y: number): Uint8Array {
+  const writer = new ByteWriter(VENT_PACKET_BYTES);
+  writer.u8(OpCode.S2C_VENT).u16(attackerId).u16(targetId).u16(x).u16(y);
+  return writer.finish();
+}
+
+export function decodeVent(data: Uint8Array): VentEventPacket {
+  if (data.byteLength !== VENT_PACKET_BYTES) {
+    throw new Error(`vent packet must be ${VENT_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_VENT) throw new Error('not a vent packet');
+  // 坐标保持量化口径：调用方用 dequantizeCoord 还原成世界像素，与移动包同一把尺子
+  return { attackerId: reader.u16(), targetId: reader.u16(), x: reader.u16(), y: reader.u16() };
 }
 
 export function encodeChatBroadcast(packet: ChatPacket): Uint8Array {

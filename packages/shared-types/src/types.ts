@@ -115,6 +115,16 @@ export const OpCode = {
    * 只发给看得见发声者的人，旧客户端走 default 静默忽略（ADR-0048）。
    */
   S2C_GRAZE: 0x20,
+  /**
+   * 发泄结算：`[op][attackerId u16][targetId u16][x u16][y u16]`。
+   *
+   * 姿态与位移本身走 Tick，这条包只补 Tick 表达不了的两件事：
+   * 1) 归因——谁打了谁。二十多人同屏时，光看某个人倒下去无法判断是谁动的手；
+   * 2) 受害者本人的硬直——本地玩家姿态由客户端预测，Tick 里的 state 对它不生效。
+   * 因此必须显式下发一次，并带上服务端结算后的权威坐标。
+   * 空放（没打到人）也发一条，`targetId = 0`，让附近所有人播放破空音与台词。
+   */
+  S2C_VENT: 0x21,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -186,6 +196,21 @@ export interface ChatPacket {
   entityId: number;
   msgId: number;
   text: string;
+}
+
+/**
+ * 发泄结算事件（`S2C_VENT`）。
+ *
+ * `x` / `y` 是服务端结算后的受击者权威位置（1/8px 定点，与移动包同口径）。
+ * 受害者客户端必须直接采用它：击退只有 32px，低于本地和解的 128px 漂移阈值，
+ * 光等 Tick 回正会留下一次「先被拉开、再被拽回」的抖动。
+ * 空放时 `targetId = 0`，`x` / `y` 无意义。
+ */
+export interface VentEventPacket {
+  attackerId: number;
+  targetId: number;
+  x: number;
+  y: number;
 }
 
 /**

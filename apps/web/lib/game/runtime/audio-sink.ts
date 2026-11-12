@@ -12,9 +12,8 @@ export function applyAudioEvent(event: AudioEvent, listenerX: number, listenerY:
   // 听者坐标随事件一起到达：Worker 每帧都在动，主线程没有别的同步来源
   sfx.setListener(listenerX, listenerY);
   switch (event.kind) {
-    case 'emote':
-      if (event.local) sfx.emit(event.species, event.x, event.y);
-      else sfx.emitRemote(event.species, event.x, event.y);
+    case 'vent':
+      sfx.playVentImpactSound(event.x, event.y, event.hit, event.local);
       return;
     case 'interact':
       sfx.interact(event.target, event.x, event.y);

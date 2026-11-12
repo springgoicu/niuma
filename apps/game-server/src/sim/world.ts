@@ -33,8 +33,21 @@ export class Player {
   direction: Direction = DIRECTION.Down;
   pose: Pose = POSE.Idle;
   moving = false;
-  /** 叫唤 / 跳 / 打招呼：客户端上传的一次性标志，服务端只保存与回传，不做到期计时 */
-  emote = false;
+  /**
+   * 发泄 / 跳 / 打招呼：客户端上传的一次性标志，服务端只保存与回传，不做到期计时。
+   *
+   * 发泄位同时是「出招意图」：真正的命中裁决在 Tick 里由 `resolveVents` 完成，
+   * 客户端无法自证打到了谁。
+   */
+  vent = false;
+  /**
+   * 发泄位的 0→1 边沿标记。
+   *
+   * 客户端把位保持一整个播放窗口（440ms ≈ 9 个 Tick），若每 Tick 都结算，
+   * 一次出招会连打九次。边沿标记只让「第一次看到为真」的那 Tick 进结算，
+   * 由 `resolveVents` 消费后清零。
+   */
+  ventPending = false;
   jump = false;
   wave = false;
   dirty = false;
@@ -60,6 +73,18 @@ export class Player {
   lastHistoryAt = 0;
   /** 上一次咀嚼广播：一次性事件绕过 state 位，必须由服务端限频防伪造包放大 */
   lastGrazeAt = 0;
+  /**
+   * 上一次发泄结算的时刻。
+   *
+   * 与 `lastGrazeAt` 同口径，但这里还兼作边沿闸门的第二道保险：
+   * 限频窗口内的重复上报一律不结算，连点也刷不出第二下。
+   */
+  lastVentAt = 0;
+  /**
+   * 倒地硬直截止时刻（毫秒）。期间姿态被强制为躺姿、位置不接受客户端上报。
+   * 由 `resolveVents` 写入，`applyMove` 读取。
+   */
+  stunUntil = 0;
   /** 当前占用的座位 id，0 表示站立或地面坐 */
   seat = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
@@ -105,7 +130,8 @@ export class Player {
     this.direction = DIRECTION.Down;
     this.pose = POSE.Idle;
     this.moving = false;
-    this.emote = false;
+    this.vent = false;
+    this.ventPending = false;
     this.jump = false;
     this.wave = false;
     this.seat = 0;
@@ -122,6 +148,8 @@ export class Player {
     this.lastStatusAt = 0;
     this.lastHistoryAt = 0;
     this.lastGrazeAt = 0;
+    this.lastVentAt = 0;
+    this.stunUntil = 0;
     this.spawnBodyCache = null;
     this.known.clear();
   }
@@ -130,18 +158,21 @@ export class Player {
     direction: Direction,
     pose: Pose,
     moving: boolean,
-    emote = false,
+    vent = false,
     jump = false,
     wave = false,
   ): void {
+    // 边沿检测必须发生在覆盖之前：客户端把 vent 位保持一整个播放窗口，
+    // 只有 0→1 那一次才该进命中结算（见 `resolveVents`）
+    if (vent && !this.vent) this.ventPending = true;
     this.direction = direction;
     this.pose = pose;
     this.moving = moving;
-    this.emote = emote;
+    this.vent = vent;
     this.jump = jump;
     this.wave = wave;
     // state 是回传的唯一来源：一律重打包，不把客户端字节原样透传
-    this.state = packState(direction, pose, moving, emote, jump, wave);
+    this.state = packState(direction, pose, moving, vent, jump, wave);
   }
 }
 

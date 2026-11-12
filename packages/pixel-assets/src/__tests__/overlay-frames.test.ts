@@ -5,11 +5,11 @@ import { drawFrame, landmarksOf, type SpeciesName } from '../quadruped';
 
 const SPECIES: SpeciesName[] = ['cow', 'horse'];
 
-/** 叫唤三套：取「闭嘴帧 → 张嘴帧」两列对比，缺口正好是嘴 */
-const BARK = {
-  emote: [16, 17],
-  sitEmote: [19, 20],
-  lieEmote: [22, 23],
+/** 发泄三套：后撤蓄力 → 前冲头槌 → 后坐力（ADR-0051） */
+const VENT = {
+  vent: [16, 17, 18],
+  sitVent: [19, 20, 21],
+  lieVent: [22, 23, 24],
 } as const;
 
 /** 跳：蹲下帧 → 腾空帧，差异必须是整体位移而不是嘴 */
@@ -93,46 +93,129 @@ function diffPoints(a: Uint8Array, b: Uint8Array): Array<[number, number]> {
   return points;
 }
 
-describe('叫唤帧：只动嘴', () => {
-  it('张嘴帧与闭嘴帧的差异只落在吻部（正/左/右三个朝向）', () => {
+/**
+ * 1px 高、上下两行都空的速度线。
+ *
+ * 这条判据专挑「孤立的一行暗色」：角色自身的描边上下总贴着填充色，
+ * 只有画在描边之后、离开身体的那一小段拖影满足条件。
+ */
+function countSpeedLines(data: Uint8Array): number {
+  let count = 0;
+  for (let y = 2; y < FRAME_SIZE - 2; y += 1) {
+    let run = 0;
+    for (let x = 0; x < FRAME_SIZE; x += 1) {
+      const here = data[y * FRAME_SIZE + x]!;
+      const isolated =
+        here === S.Outline &&
+        data[(y - 1) * FRAME_SIZE + x] === 0 &&
+        data[(y - 2) * FRAME_SIZE + x] === 0 &&
+        data[(y + 1) * FRAME_SIZE + x] === 0 &&
+        data[(y + 2) * FRAME_SIZE + x] === 0;
+      run = isolated ? run + 1 : 0;
+      // 一段 2px 以上连续的水平暗线才算一根速度线
+      if (run === 2) count += 1;
+    }
+  }
+  return count;
+}
+
+describe('发泄帧：后撤蓄力 → 前冲头槌 → 后坐力', () => {
+  it('三帧两两不同，且改变量远超旧「只动嘴」的量级', () => {
     for (const species of SPECIES) {
-      for (const direction of [0, 1, 2]) {
-        for (const [closed, open] of Object.values(BARK)) {
-          const d = diff(render(species, direction, closed), render(species, direction, open));
-          const muzzle = toFrame(landmarksOf(species, direction, open).muzzle);
-          // 嘴只是吻部上一小块暗格：几个像素，绝不是整体位移
-          expect(d.count).toBeGreaterThan(0);
-          expect(d.count).toBeLessThanOrEqual(12);
-          expect(d.maxX - d.minX).toBeLessThanOrEqual(8);
-          expect(d.maxY - d.minY).toBeLessThanOrEqual(3);
-          // 差异中心必须贴着吻部，避免「动的是眼睛/耳朵」也算通过
-          expect(Math.hypot(d.cx - muzzle[0], d.cy - muzzle[1])).toBeLessThanOrEqual(4);
+      for (let direction = 0; direction < 4; direction += 1) {
+        for (const frames of Object.values(VENT)) {
+          for (let i = 1; i < frames.length; i += 1) {
+            const d = diff(render(species, direction, frames[i - 1]!), render(species, direction, frames[i]!));
+            expect(d.count).toBeGreaterThan(0);
+          }
+          // 蓄力 → 冲撞：整只身体下沉 + 前冲 + 前蹄下砸，量级必须是两位数以上
+          const charge = diff(render(species, direction, frames[0]!), render(species, direction, frames[1]!));
+          expect(charge.count).toBeGreaterThan(20);
         }
       }
     }
   });
 
-  it('背面看不见嘴：靠 1px 仰头给出反馈，且只动头不动身体', () => {
-    // 没有这一下，朝上叫唤会完全没有画面反馈（回归线）
+  it('冲撞帧不只动头：前蹄与躯干一起参与，差异一路延伸到脚底附近', () => {
     for (const species of SPECIES) {
-      for (const [closed, open] of Object.values(BARK)) {
-        const d = diff(render(species, 3, closed), render(species, 3, open));
-        const head = toFrame(landmarksOf(species, 3, open).head);
+      // 侧视才看得到前蹄下砸，正 / 背视只有头与身体
+      for (const direction of [1, 2]) {
+        const d = diff(render(species, direction, 16), render(species, direction, 17));
+        const head = toFrame(landmarksOf(species, direction, 17).head);
         expect(d.count).toBeGreaterThan(40);
-        // 头心到脚底的距离就是头部活动范围：差异不许蔓延到躯干和腿
-        expect(d.minY).toBeGreaterThan(head[1] - 40);
-        expect(d.maxY).toBeLessThanOrEqual(head[1] + 12);
+        // 差异的最下沿必须明显低于头心：只动脑袋的话会在头底就收住
+        expect(d.maxY).toBeGreaterThan(head[1] + 10);
+      }
+    }
+  });
+
+  it('冲撞帧带 1px 速度线，蓄力帧与复位帧没有', () => {
+    for (const species of SPECIES) {
+      for (let direction = 0; direction < 4; direction += 1) {
+        for (const frames of Object.values(VENT)) {
+          expect(countSpeedLines(render(species, direction, frames[1]))).toBeGreaterThanOrEqual(1);
+          expect(countSpeedLines(render(species, direction, frames[0]))).toBe(0);
+          expect(countSpeedLines(render(species, direction, frames[2]))).toBe(0);
+        }
+      }
+    }
+  });
+
+  it('不再有张嘴帧：吻部暗格不随帧增加', () => {
+    // 吻部暗格（鼻孔 + 嘴线）是唯一用 SnoutShade 落笔的地方。
+    // 旧的「张嘴呼叫」帧靠「第二拍多一块 3×1.6 的暗格」表达发声，这里守住它已经彻底消失：
+    // 容差 ±1 只吸收整数位移带来的椭圆栅格抖动，张嘴会多出 3 个以上像素。
+    for (const species of SPECIES) {
+      for (let direction = 0; direction < 4; direction += 1) {
+        const rest = render(species, direction, 0);
+        let restSnout = 0;
+        for (let i = 0; i < rest.length; i += 1) {
+          if (rest[i] === S.SnoutShade) restSnout += 1;
+        }
+        for (const column of [16, 17, 18, 19, 20, 21, 22, 23, 24]) {
+          const frame = render(species, direction, column);
+          let frameSnout = 0;
+          for (let i = 0; i < frame.length; i += 1) {
+            if (frame[i] === S.SnoutShade) frameSnout += 1;
+          }
+          expect(frameSnout).toBeLessThanOrEqual(restSnout + 1);
+        }
+      }
+    }
+  });
+
+  it('四向顶行仍为空：头槌不会把牛角 / 鬃毛顶出 64 帧', () => {
+    for (const species of SPECIES) {
+      for (let direction = 0; direction < 4; direction += 1) {
+        for (const frames of Object.values(VENT)) {
+          for (const column of frames) {
+            for (const extra of [0, 1, 2, 3]) {
+              const data = drawFrame({
+                species,
+                direction: direction as 0 | 1 | 2 | 3,
+                column,
+                tail: 0,
+                pattern: 0,
+                extra,
+                snout: 0,
+              }).data;
+              for (let x = 0; x < FRAME_SIZE; x += 1) {
+                expect(data[x]!).toBe(0);
+              }
+            }
+          }
+        }
       }
     }
   });
 });
 
-describe('跳跃帧：整体位移，与叫唤区分得开', () => {
-  it('腾空帧与蹲下帧的差异远大于叫唤的嘴部变化', () => {
+describe('跳跃帧：整体位移，与其它一次性动作区分得开', () => {
+  it('腾空帧与蹲下帧的差异远大于嘴部级别的变化', () => {
     for (const species of SPECIES) {
       for (let direction = 0; direction < 4; direction += 1) {
         const d = diff(render(species, direction, JUMP[0]), render(species, direction, JUMP[1]));
-        // 全身轮廓都会挪动，量级在数百像素；叫唤只有个位数
+        // 全身轮廓都会挪动，量级在数百像素；只动嘴那种变化只有个位数
         expect(d.count).toBeGreaterThan(200);
       }
     }
@@ -237,7 +320,7 @@ describe('挥手帧：只抬一条前腿', () => {
   });
 });
 
-describe('跳跃帧：整体位移，与叫唤区分得开', () => {
+describe('跳跃帧：腾空帧不越界', () => {
   it('腾空帧不会被 64 帧裁边：带角 / 鬃的变体顶行仍为空', () => {
     // 腾空 -6 贴着帧顶走：多 1px 描边就会被裁，观感是「角被削平」
     for (const species of SPECIES) {

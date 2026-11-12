@@ -4,12 +4,13 @@ import { KEY_BIT } from './runtime/control-channel';
  * 动作键的语义编号。跨线程传输用数字（见 `runtime/control-channel.ts` 的动作环），
  * 组件层仍然按字符串识别，两边靠 `ACTION_CODE` / `ACTION_BY_CODE` 互转。
  */
-export type ActionKey = 'sit' | 'lie' | 'emote' | 'jump' | 'wave' | 'interact' | 'graze';
+export type ActionKey = 'sit' | 'lie' | 'vent' | 'jump' | 'wave' | 'interact' | 'graze';
 
 export const ACTION_CODE: Readonly<Record<ActionKey, number>> = {
   sit: 1,
   lie: 2,
-  emote: 3,
+  // 编号沿用旧「叫唤」的 3：动作环是跨线程共享内存，改编号要两端同时上线
+  vent: 3,
   jump: 4,
   wave: 5,
   interact: 6,
@@ -19,7 +20,7 @@ export const ACTION_CODE: Readonly<Record<ActionKey, number>> = {
 export const ACTION_BY_CODE: Readonly<Record<number, ActionKey>> = {
   1: 'sit',
   2: 'lie',
-  3: 'emote',
+  3: 'vent',
   4: 'jump',
   5: 'wave',
   6: 'interact',

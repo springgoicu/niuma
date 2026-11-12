@@ -436,6 +436,56 @@ function waveAt(phase: number, reach: readonly number[], lift: readonly number[]
   return { reach: reach[phase] ?? 0, lift: lift[phase] ?? 0 };
 }
 
+/**
+ * 发泄三拍：后撤蓄力 → 前冲头槌 / 前蹄下砸 → 后坐力（ADR-0051）。
+ *
+ * 与挥手同构，但动的是重心而不是单条腿：
+ * 第一拍整体后撤 1px、头微抬、双耳竖起（「要来了」的预警）；
+ * 第二拍躯干前冲 2px、头再下压 3px、前蹄前探 5px 砸在地上，并补一道速度线；
+ * 第三拍只留 1px 的前倾残余，接回站姿时不会突然弹回去。
+ *
+ * 负数 `shiftX` 是向后：侧视帧朝右绘制，负数就是往尾巴方向挪。
+ */
+interface VentAnim {
+  /** 躯干整体水平位移（正为前冲） */
+  shiftX: number;
+  /** 躯干整体下沉；只有站姿用它，坐 / 躺的形状由三块几何拼出来，整体挪会散架 */
+  sinkY: number;
+  /** 头相对躯干再下压多少（头槌的落点） */
+  dropY: number;
+  /** 前蹄前探量：下砸的落点 */
+  slap: number;
+  /** 双耳上抬：蓄力时耳朵必须立起来，否则读成「低头吃草」 */
+  earsUp: number;
+  /** 速度线长度（像素）；0 表示这一帧不画 */
+  speedLine: number;
+}
+
+const VENT_PHASES: readonly VentAnim[] = [
+  { shiftX: -1, sinkY: 1, dropY: -1, slap: -1, earsUp: 1, speedLine: 0 },
+  { shiftX: 2, sinkY: 1, dropY: 3, slap: 5, earsUp: 1, speedLine: 3 },
+  { shiftX: 1, sinkY: 0, dropY: 1, slap: 0, earsUp: 0, speedLine: 0 },
+];
+
+/** 非发泄帧的零值：调用方不必到处写 `?? 0`，也不会多造对象 */
+const NO_VENT: VentAnim = { shiftX: 0, sinkY: 0, dropY: 0, slap: 0, earsUp: 0, speedLine: 0 };
+
+function ventOf(pose: PoseName, phase: number): VentAnim | null {
+  if (pose !== 'vent' && pose !== 'sitVent' && pose !== 'lieVent') return null;
+  return VENT_PHASES[Math.min(Math.max(0, phase), VENT_PHASES.length - 1)]!;
+}
+
+/**
+ * 速度线：画在**描边之后**。
+ *
+ * `px.outline()` 会给任何实体色块描一圈边，先画速度线的话它会变成一根带黑框的小棍子。
+ * 放在最后落笔、直接用描边色，就是一道扁平的拖影。
+ */
+function drawSpeedLine(px: Px, x: number, y: number, width: number): void {
+  if (width <= 0) return;
+  px.rect(x, y, width, 1, S.Outline);
+}
+
 /** 一块躯干形：站立时只有一块，坐姿由胸 / 腰 / 臀三块并集而成 */
 interface TorsoMass {
   cx: number;
@@ -462,11 +512,12 @@ interface SideOptions {
   frontFar: LegAnim;
   frontNear: LegAnim;
   tailSway: number;
-  openMouth: boolean;
+  /** 发泄三拍的运动参数；null 表示这一帧不是发泄帧 */
+  vent: VentAnim | null;
   /** 躺姿：不画腿，只露一截蹄子 */
   lying: boolean;
   /**
-   * 猫狗式坐姿（sit / sitEmote / sitWave 共用）：后腿折进臀部、不再画落地腿柱，
+   * 猫狗式坐姿（sit / sitVent / sitWave 共用）：后腿折进臀部、不再画落地腿柱，
    * 躯干前高后低、臀部贴地，两条前腿直立撑住前身。
    */
   sitting: boolean;
@@ -580,17 +631,22 @@ function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void
 
   // 耳朵先画，再让头顶盖住根部，才像长在头上而不是贴上去。
   // 牛耳横向贴一片、末端补圆头；马耳竖着立一支，根部加粗、压低——细长三角耳放大后像贴了片纸。
+  // 发泄蓄力时耳朵整只上抬 1px（`earsUp`）：耳朵立起来是「要动手了」的唯一预警。
+  const earsUp = o.vent?.earsUp ?? 0;
   if (spec.species === 'cow') {
     const earRootX = o.headX - a.headR * 0.72;
-    const earRootY = o.headCY - 2.8;
+    const earRootY = o.headCY - 2.8 - earsUp * 0.5;
     const earTipX = earRootX - a.earW;
-    const earTipY = earRootY + 1.6;
+    const earTipY = earRootY + 1.6 - earsUp;
     px.polygon(taper(earRootX, earRootY, earTipX, earTipY, a.earH, a.earH * 0.72), S.Body);
     px.ellipse(earTipX, earTipY, a.earH * 0.5, a.earH * 0.46, S.Body);
   } else {
-    const earRootY = o.headCY - a.headR * 0.66;
-    px.polygon(taper(o.headX - 1, earRootY, o.headX - 1.8, earRootY - a.earH, a.earW, a.earW * 0.72), S.Body);
-    px.ellipse(o.headX - 1.8, earRootY - a.earH, a.earW * 0.52, a.earW * 0.5, S.Body);
+    const earRootY = o.headCY - a.headR * 0.66 - earsUp * 0.5;
+    px.polygon(
+      taper(o.headX - 1, earRootY, o.headX - 1.8, earRootY - a.earH - earsUp, a.earW, a.earW * 0.72),
+      S.Body,
+    );
+    px.ellipse(o.headX - 1.8, earRootY - a.earH - earsUp, a.earW * 0.52, a.earW * 0.5, S.Body);
   }
 
   drawHornOrMane(px, spec.species, spec.extra, 'side', o.headX, o.headCY, a);
@@ -617,7 +673,6 @@ function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void
   });
   // 鼻孔：一个 1.5×1.2 的暗格，比描一圈深边更省像素也更清楚；吻缩小后鼻孔也要收
   px.rect(muzzleX + muzzleRx - 2.5, muzzleY - 1.2, 1.5, 1.2, S.SnoutShade);
-  if (o.openMouth) px.rect(muzzleX - 0.5, muzzleY + muzzleRy - 1, 3, 1.6, S.SnoutShade);
 
   const eye = eyeMetricsOf(a);
   drawEye(px, o.headX + 0.5, o.headCY + eye.dy, eye.w, eye.h, o.blink);
@@ -625,6 +680,13 @@ function drawSideBody(px: Px, spec: FrameSpec, a: Anatomy, o: SideOptions): void
   px.outline();
   px.retagOutline(S.Outline, 'tail', S.TailOutline);
   px.closeDiagonalGaps();
+
+  // 速度线落在描边之后：身前一击的拖影，方向朝尾侧（x 负向）
+  if (o.vent && o.vent.speedLine > 0) {
+    const rearX = BODY_CX - o.bodyW / 2 - 7;
+    drawSpeedLine(px, rearX, o.bodyCY - 3, o.vent.speedLine);
+    drawSpeedLine(px, rearX + 1.5, o.bodyCY + 3, Math.max(1, o.vent.speedLine - 1));
+  }
 }
 
 function sideLegs(phase: number, moving: boolean) {
@@ -642,8 +704,8 @@ function sideLegs(phase: number, moving: boolean) {
 /**
  * 呼吸：待机、坐下、躺下都在第二帧把身体抬 1px，是「活着」的最低成本信号。
  *
- * 叫唤（`emote` / `sitEmote` / `lieEmote`）不参与呼吸：叫唤只动嘴，
- * 任何整体位移都会让「坐着叫唤」读成「坐着弹一下」，也会让像素回归测试失去意义。
+ * 发泄三拍（`vent` / `sitVent` / `lieVent`）不参与呼吸：它们自己的位移已经写进
+ * `VentAnim`，再叠一层呼吸会让「蓄力 → 冲撞」的节奏被 1px 抬降打乱。
  */
 function breatheOffset(spec: FrameSpec, pose: PoseName, phase: number): number {
   if (spec.column === 1) return -1;
@@ -663,10 +725,13 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
   const blink = spec.column === 2;
   const walk = pose === 'walk';
   const legs = sideLegs(walk ? phase : 0, walk);
-  /** 叫唤只动嘴：站/坐/躺三套姿势共用同一条「第二拍张嘴」的节奏 */
-  const openMouth = (pose === 'emote' || pose === 'sitEmote' || pose === 'lieEmote') && phase === 1;
+  /** 发泄三拍共用一条节奏：站 / 坐 / 躺只是躯干形状不同，重心走向完全一致 */
+  const vent = ventOf(pose, phase);
+  const v = vent ?? NO_VENT;
+  /** 前蹄下砸：不给 lift，蹄子始终落在地面上，读作「砸」而不是「抬」 */
+  const slapLegs: LegAnim = { swing: v.slap, lift: 0 };
 
-  if (pose === 'sit' || pose === 'sitEmote' || pose === 'sitWave') {
+  if (pose === 'sit' || pose === 'sitVent' || pose === 'sitWave') {
     // 坐姿：整只动物压成「贴地宽圆团 + 两条短前腿」，与站立的「高躯干 + 四条长腿」一眼可分。
     // 躯干仍是胸 / 腰 / 臀三块圆角矩形的并集（顺序固定：胸 → 腰 → 臀，第三块永远是臀），
     // 只用比例把三块压扁、加宽、下移，背线从胸顶到臀底自然下斜。
@@ -690,30 +755,37 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
       bodyH: chestH,
       torso: [
         // 胸：最靠前、抬得最高，前腿从这里挂下去。窄而高才读得出「前身立起来」
-        { cx: BODY_CX + a.bodyW * 0.2, cy: chestCY, w: a.bodyW * 0.6, h: chestH, r: a.bodyR * 0.62 },
+        {
+          cx: BODY_CX + a.bodyW * 0.2 + v.shiftX,
+          cy: chestCY,
+          w: a.bodyW * 0.6,
+          h: chestH,
+          r: a.bodyR * 0.62,
+        },
         // 腰：垫在胸与臀的正中间，把两块的落差摊成两级矮台阶（再大的落差会读成「背上一级断崖」）。
         // 高度只到 0.62H、宽度只到 0.72W：压到前腿的高度/宽度上，前腿就会被躯干吃掉，
         // 侧视会退回「一块斜板」，读不出「前面两根柱子撑着、后面一坨坐在地上」。
         {
-          cx: BODY_CX,
+          cx: BODY_CX + v.shiftX,
           cy: (chestCY + hipCY) / 2,
           w: a.bodyW * 0.72,
           h: a.bodyH * 0.62,
           r: a.bodyR * 0.86,
         },
         // 臀：最靠后、最宽、坐在地上，读作折起来的后躯
-        { cx: BODY_CX - a.bodyW * 0.16, cy: hipCY, w: hipW, h: hipH, r: a.bodyR * 0.86 },
+        { cx: BODY_CX - a.bodyW * 0.16 + v.shiftX, cy: hipCY, w: hipW, h: hipH, r: a.bodyR * 0.86 },
       ],
       legTop: shoulderY - 2,
       tailTop: hipBottom - hipH + 2,
-      headCY: standHeadCY + 5 + breathe,
-      headX: HEAD_CX,
+      // 坐姿整体挪会散架（三块几何各自推导），所以只让头前探下压
+      headCY: standHeadCY + 5 + breathe + v.dropY,
+      headX: HEAD_CX + v.shiftX * 1.5,
       hindFar: STILL,
       hindNear: STILL,
-      frontFar: STILL,
-      frontNear: STILL,
+      frontFar: vent ? slapLegs : STILL,
+      frontNear: vent ? slapLegs : STILL,
       tailSway: 0,
-      openMouth,
+      vent,
       lying: false,
       sitting: true,
       wave: pose === 'sitWave' ? waveAt(phase, WAVE_REACH, WAVE_LIFT) : null,
@@ -721,24 +793,27 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
     };
   }
 
-  if (pose === 'lie' || pose === 'lieEmote' || pose === 'lieWave') {
+  if (pose === 'lie' || pose === 'lieVent' || pose === 'lieWave') {
     const bodyCY = FEET - (a.bodyH * 0.72) / 2 - 2 + breathe;
     const bodyH = a.bodyH * 0.72;
     return {
       bodyCY,
       bodyW: a.bodyW + 1,
       bodyH,
-      torso: [{ cx: BODY_CX, cy: bodyCY, w: a.bodyW + 1, h: bodyH, r: a.bodyR }],
+      torso: [{ cx: BODY_CX + v.shiftX, cy: bodyCY, w: a.bodyW + 1, h: bodyH, r: a.bodyR }],
       legTop: bodyCY + bodyH / 2 - 3,
       tailTop: bodyCY - bodyH / 2 + 2,
-      headCY: FEET - a.headR - 2 + breathe,
-      headX: HEAD_CX,
+      // 躺着只能甩头：躯干贴地，任何位移都会读成「土拨鼠探头」。
+      // 下压量取 `min(0, dropY)`：贴地躺姿的头已经没有下方余量，再往下压 3px
+      // 会把马的鬃毛顶出 64 帧底边（越界像素被裁掉，只剩一条断边）。
+      headCY: FEET - a.headR - 2 + breathe + Math.min(0, v.dropY),
+      headX: HEAD_CX + v.shiftX * 1.5,
       hindFar: STILL,
       hindNear: STILL,
       frontFar: STILL,
       frontNear: STILL,
       tailSway: 0,
-      openMouth,
+      vent,
       lying: true,
       sitting: false,
       wave: pose === 'lieWave' ? waveAt(phase, LIE_WAVE_REACH, LIE_WAVE_LIFT) : null,
@@ -752,22 +827,24 @@ function sideOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: number)
   const jumping = pose === 'jump';
   const hop = jumping ? ([3, -5, 0][phase] ?? 0) : 0;
   const jumpLegs: LegAnim = jumping && phase === 1 ? { swing: 0, lift: 5 } : STILL;
-  const bodyCY = standBodyCY + bob + hop + breathe;
+  // 发泄：躯干先下沉 1px 再前冲，重心压到前腿上才像「顶着人撞」
+  const bodyCY = standBodyCY + bob + hop + breathe + v.sinkY;
   return {
     bodyCY,
     bodyW: a.bodyW,
     bodyH: a.bodyH,
-    torso: [{ cx: BODY_CX, cy: bodyCY, w: a.bodyW, h: a.bodyH, r: a.bodyR }],
+    torso: [{ cx: BODY_CX + v.shiftX, cy: bodyCY, w: a.bodyW, h: a.bodyH, r: a.bodyR }],
     legTop: bodyCY + a.bodyH / 2 - 3,
     tailTop: bodyCY - a.bodyH / 2 + 2,
-    headCY: standHeadCY + bob + hop + breathe,
-    headX: HEAD_CX,
+    headCY: standHeadCY + bob + hop + breathe + v.sinkY + v.dropY,
+    // 头比躯干多前伸半格：头槌的「槌」必须比身体更靠前，否则读成整体平移
+    headX: HEAD_CX + v.shiftX * 1.5,
     hindFar: jumping ? jumpLegs : legs.hindFar,
     hindNear: jumping ? jumpLegs : legs.hindNear,
-    frontFar: jumping ? jumpLegs : legs.frontFar,
-    frontNear: jumping ? jumpLegs : legs.frontNear,
+    frontFar: vent ? slapLegs : jumping ? jumpLegs : legs.frontFar,
+    frontNear: vent ? slapLegs : jumping ? jumpLegs : legs.frontNear,
     tailSway: walk ? (TAIL_SWAY[phase] ?? 0) : 0,
-    openMouth,
+    vent,
     lying: false,
     sitting: false,
     wave: pose === 'wave' ? waveAt(phase, WAVE_REACH, WAVE_LIFT) : null,
@@ -793,7 +870,8 @@ interface FacingOptions {
   /** 躺姿：四条腿折在身下，只露贴地蹄子（与坐姿分开，ADR-0026 的床上语义） */
   lie: boolean;
   legLift: [number, number];
-  openMouth: boolean;
+  /** 发泄三拍的运动参数；null 表示这一帧不是发泄帧 */
+  vent: VentAnim | null;
   /** 打招呼：举起的近侧前腿与所在侧（0 = 屏幕左），null 表示四条腿都落地 */
   wave: (WaveAnim & { side: 0 | 1 }) | null;
   blink: boolean;
@@ -967,7 +1045,6 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
     px.rect(BODY_CX - muzzleRx + 1.2, muzzleY - 0.8, 1, 1.2, S.SnoutShade);
     px.rect(BODY_CX + muzzleRx - 2.2, muzzleY - 0.8, 1, 1.2, S.SnoutShade);
     px.rect(BODY_CX - 1.2, muzzleY + muzzleRy - 1, 2.4, 1, S.SnoutShade);
-    if (o.openMouth) px.rect(BODY_CX - 1.6, muzzleY + muzzleRy - 2, 3.2, 1.6, S.SnoutShade);
 
     const eye = eyeMetricsOf(a);
     const eyeGap = headRx * 0.52;
@@ -978,6 +1055,14 @@ function drawFacingBody(px: Px, spec: FrameSpec, a: Anatomy, o: FacingOptions): 
   px.outline();
   px.retagOutline(S.Outline, 'tail', S.TailOutline);
   px.closeDiagonalGaps();
+
+  // 正视 / 背视的冲撞是「朝屏幕外」的，横向速度线是唯一读得出来的位移线索
+  if (o.vent && o.vent.speedLine > 0) {
+    const halfW = o.bodyW / 2;
+    drawSpeedLine(px, BODY_CX - halfW - 8, o.headCY - 4, o.vent.speedLine);
+    drawSpeedLine(px, BODY_CX + halfW + 5, o.headCY - 1, Math.max(1, o.vent.speedLine - 1));
+    drawSpeedLine(px, BODY_CX - halfW - 6, o.headCY + 5, Math.max(1, o.vent.speedLine - 1));
+  }
 }
 
 /** 姿态 → 正视 / 背视构图参数，理由同 sideOptions */
@@ -990,28 +1075,30 @@ function facingOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: numbe
   const hop = pose === 'jump' ? ([3, -5, 0][phase] ?? 0) : 0;
   const breathe = breatheOffset(spec, pose, phase);
   // 坐与躺是两套下半身：坐姿要露出两条直立前腿，躺姿只露贴地蹄子（ADR-0026 的床上语义）
-  const sit = pose === 'sit' || pose === 'sitEmote' || pose === 'sitWave';
-  const lie = pose === 'lie' || pose === 'lieEmote' || pose === 'lieWave';
+  const sit = pose === 'sit' || pose === 'sitVent' || pose === 'sitWave';
+  const lie = pose === 'lie' || pose === 'lieVent' || pose === 'lieWave';
   const walkLift = pose === 'walk' ? phase % 2 : 0;
   const jumpLift = pose === 'jump' && phase === 1 ? 5 : 0;
-  const openMouth = (pose === 'emote' || pose === 'sitEmote' || pose === 'lieEmote') && phase === 1;
   // 正视 / 背视看不到哪条腿是「近侧」，统一举屏幕左侧那条前腿，四向看起来是同一个动作
   const waving = pose === 'wave' || pose === 'sitWave' || pose === 'lieWave';
   const faceWave = waveAt(phase, FACING_WAVE_REACH, FACING_WAVE_LIFT);
-  /**
-   * 背面看不见嘴：不补这一下，朝上叫唤会完全没有反馈。
-   * 只抬 1px 的头（耳、角跟着走），身体不动，读作「仰头叫一声」而不是蹦跳。
-   */
-  const backBarkLift = back && openMouth ? -1 : 0;
+  const vent = ventOf(pose, phase);
+  const v = vent ?? NO_VENT;
   // 坐姿下沉量比躺姿少 2.5：前腿仍要留出可读的长度，否则又会退回「四条短腿」。
   // 躯干压到 0.82H、加宽到 1.2W：正面坐下读的是「一团坐在地上的梨」，与站立的直筒躯干分开。
   const bodyCY = lie
-    ? standBodyCY + 9 + breathe
+    ? standBodyCY + 9 + breathe + v.sinkY
     : sit
-      ? standBodyCY + 6.5 + breathe
-      : standBodyCY + bob + hop + breathe;
+      ? standBodyCY + 6.5 + breathe + v.sinkY
+      : standBodyCY + bob + hop + breathe + v.sinkY;
   const bodyH = sit ? a.bodyH * 0.82 : lie ? a.bodyH * 0.92 : a.bodyH;
   const standLegTop = standBodyCY + a.bodyH / 2 - 3;
+  /**
+   * 正视看不到「前冲」，只能靠「头往下砸」。
+   * 背面还要减一档：看不见脸时，头下压 3px 会读成「整只矮了一截」，
+   * 所以背面只让头压 2px，剩下的交给两侧的速度线。
+   */
+  const ventDrop = v.dropY - (back ? 1 : 0);
 
   return {
     bodyCY,
@@ -1020,17 +1107,17 @@ function facingOptions(spec: FrameSpec, a: Anatomy, pose: PoseName, phase: numbe
     bodyW: a.bodyW * (sit ? 1.2 : 1.14),
     bodyH,
     headCY: lie
-      ? standHeadCY + 11 + breathe + backBarkLift
+      ? standHeadCY + 11 + breathe + ventDrop
       : sit
-        ? standHeadCY + 4 + breathe + backBarkLift
-        : standHeadCY + bob + hop + breathe + backBarkLift,
+        ? standHeadCY + 4 + breathe + ventDrop
+        : standHeadCY + bob + hop + breathe + ventDrop,
     // 坐姿前腿从坐姿肩线起画；躺姿与站姿沿用各自的腿根，挥手抬腿也读同一份
     legTop: sit ? bodyCY + bodyH / 2 - 1 : lie ? bodyCY + bodyH / 2 - 3 : standLegTop,
     back,
     sit,
     lie,
     legLift: [walkLift + jumpLift, 1 - walkLift + jumpLift],
-    openMouth,
+    vent,
     wave: waving ? { ...faceWave, side: 0 } : null,
     blink: spec.column === 2,
   };

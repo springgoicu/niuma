@@ -11,7 +11,7 @@ export interface GeneratedClip {
 }
 
 export const SPRITE_LAYOUT = {
-  "version": 7,
+  "version": 8,
   "frame": {
     "w": 64,
     "h": 64,
@@ -107,7 +107,7 @@ export const SPRITE_LAYOUT = {
       "loopFrom": 0,
       "loop": false
     },
-    "emote": {
+    "vent": {
       "frames": [
         16,
         17,
@@ -115,13 +115,13 @@ export const SPRITE_LAYOUT = {
       ],
       "frameMs": [
         140,
-        160,
-        140
+        120,
+        180
       ],
       "loopFrom": 0,
       "loop": false
     },
-    "sitEmote": {
+    "sitVent": {
       "frames": [
         19,
         20,
@@ -129,13 +129,13 @@ export const SPRITE_LAYOUT = {
       ],
       "frameMs": [
         140,
-        160,
-        140
+        120,
+        180
       ],
       "loopFrom": 0,
       "loop": false
     },
-    "lieEmote": {
+    "lieVent": {
       "frames": [
         22,
         23,
@@ -143,8 +143,8 @@ export const SPRITE_LAYOUT = {
       ],
       "frameMs": [
         140,
-        160,
-        140
+        120,
+        180
       ],
       "loopFrom": 0,
       "loop": false

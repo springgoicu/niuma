@@ -12,7 +12,7 @@
  * 12 texel 等于四分之一身高，那是漂移而不是呼吸。
  */
 
-export type PonyPoseName = 'idle' | 'walk' | 'sit' | 'lie' | 'emote';
+export type PonyPoseName = 'idle' | 'walk' | 'sit' | 'lie' | 'vent';
 
 export interface PonyMotion {
   /** 只允许 0 或 -1：抬高，永不下沉 */
@@ -110,4 +110,4 @@ export function jumpShadowFor(liftTexels: number): 0 | 1 {
 }
 
 /** 暴露给调用方的常量：服务端下发的 pose 字符串直接可用 */
-export const PONY_POSES: readonly PonyPoseName[] = ['idle', 'walk', 'sit', 'lie', 'emote'];
+export const PONY_POSES: readonly PonyPoseName[] = ['idle', 'walk', 'sit', 'lie', 'vent'];

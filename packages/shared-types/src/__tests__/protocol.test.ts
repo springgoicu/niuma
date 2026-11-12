@@ -20,6 +20,7 @@ import {
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
+  VENT_PACKET_BYTES,
   DEFAULT_APPEARANCE,
   decodeAppearance,
   decodeAppearanceBroadcast,
@@ -36,6 +37,7 @@ import {
   decodeStatusBroadcast,
   decodeSystemNotice,
   decodeSync,
+  decodeVent,
   decodeWelcome,
   dequantizeCoord,
   directionFromVector,
@@ -57,6 +59,7 @@ import {
   encodeStatusBroadcast,
   encodeSync,
   encodeSystemNotice,
+  encodeVent,
   encodeWelcome,
   buildSpawnBody,
   readSync,
@@ -87,6 +90,20 @@ describe('move packet', () => {
   it('round-trips every field', () => {
     const decoded = decodeMove(encodeMove({ id: 65535, x: 0, y: 65535, state: 255 }));
     expect(decoded).toEqual({ id: 65535, x: 0, y: 65535, state: 255 });
+  });
+
+  it('发泄位不改变包长：state 无论置哪一位都还是 8 字节', () => {
+    // bit6 换语义（ADR-0051）的前提就是「包长零变化」，这条是那份验收线的机器化
+    const silent = encodeMove({ id: 7, x: 100, y: 200, state: packState(DIRECTION.Down, POSE.Idle, false) });
+    const venting = encodeMove({
+      id: 7,
+      x: 100,
+      y: 200,
+      state: packState(DIRECTION.Down, POSE.Idle, false, true),
+    });
+    expect(venting.byteLength).toBe(silent.byteLength);
+    expect(venting.byteLength).toBe(8);
+    expect(unpackState(decodeMove(venting).state).vent).toBe(true);
   });
 
   it('rejects a truncated packet instead of silently decoding', () => {
@@ -137,12 +154,12 @@ describe('state byte', () => {
     for (const direction of [DIRECTION.Down, DIRECTION.Left, DIRECTION.Right, DIRECTION.Up]) {
       for (const pose of [POSE.Idle, POSE.Walk, POSE.Sit, POSE.Lie]) {
         for (const moving of [false, true]) {
-          for (const emote of [false, true]) {
+          for (const vent of [false, true]) {
             for (const jump of [false, true]) {
               for (const wave of [false, true]) {
-                const state = packState(direction, pose, moving, emote, jump, wave);
+                const state = packState(direction, pose, moving, vent, jump, wave);
                 expect(state).toBeLessThanOrEqual(0xff);
-                expect(unpackState(state)).toEqual({ direction, pose, moving, emote, jump, wave });
+                expect(unpackState(state)).toEqual({ direction, pose, moving, vent, jump, wave });
               }
             }
           }
@@ -151,7 +168,7 @@ describe('state byte', () => {
     }
   });
 
-  it('叫唤占 bit6、跳占 bit7、打招呼占 bit4：一次只置一位，互不吃掉', () => {
+  it('发泄占 bit6、跳占 bit7、打招呼占 bit4：一次只置一位，互不吃掉', () => {
     expect(packState(DIRECTION.Down, POSE.Idle, false, true, false)).toBe(0b01000000);
     expect(packState(DIRECTION.Down, POSE.Idle, false, false, true)).toBe(0b10000000);
     // 打招呼复用 pose 字段的高位：姿态只有 2 bit，bit4 恒为 0
@@ -161,7 +178,7 @@ describe('state byte', () => {
       direction: DIRECTION.Up,
       pose: POSE.Sit,
       moving: true,
-      emote: true,
+      vent: true,
       jump: true,
       wave: true,
     });
@@ -326,6 +343,25 @@ describe('咀嚼事件包', () => {
 
   it('拒绝错误 opcode', () => {
     expect(() => decodeGraze(encodeDespawn(1))).toThrow(/graze packet/);
+  });
+});
+
+describe('发泄结算包', () => {
+  it('9 字节定长，round-trip 出招者 / 受害者 / 权威坐标', () => {
+    const packet = encodeVent(513, 258, 1234, 5678);
+    expect(packet.byteLength).toBe(VENT_PACKET_BYTES);
+    expect(packet.byteLength).toBe(9);
+    expect(packet[0]).toBe(OpCode.S2C_VENT);
+    expect(decodeVent(packet)).toEqual({ attackerId: 513, targetId: 258, x: 1234, y: 5678 });
+  });
+
+  it('空放：targetId = 0，坐标仍然可解（调用方不看）', () => {
+    expect(decodeVent(encodeVent(7, 0, 0, 0))).toEqual({ attackerId: 7, targetId: 0, x: 0, y: 0 });
+  });
+
+  it('拒绝错误 opcode 与错误长度', () => {
+    expect(() => decodeVent(encodeGraze(1))).toThrow(/must be 9 bytes/);
+    expect(() => decodeVent(encodeVent(1, 1, 1, 1).subarray(0, 8))).toThrow(/must be 9 bytes/);
   });
 });
 

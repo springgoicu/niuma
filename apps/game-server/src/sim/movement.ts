@@ -40,7 +40,7 @@ const RELEASED: SeatStateEntry[] = [];
 const MOTION: MotionTarget = { x: 0, y: 0 };
 
 function sanitizePose(pose: number): Pose {
-  // 姿态只有四态；越界值（含已废弃的 Emote=4）一律按待机处理
+  // 姿态只有四态；越界值（含 bit4 被旧客户端读进 pose 得到的 4）一律按待机处理
   if (pose > POSE.Lie) return POSE.Idle;
   return pose as Pose;
 }
@@ -93,6 +93,19 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
     player.lastClientMoveSequence = packet.clientSequence;
   }
 
+  /**
+   * 倒地硬直（ADR-0051）：被创飞的 1.5 秒内不采信客户端的姿态与位移。
+   *
+   * 只拦上报、不改 `lastMoveAt`：硬直结束时时间窗会被 MAX_WINDOW_MS 封顶，
+   * 一次最多放行 55px，正好容得下那 32px 的击退落点，不会把人拽回去。
+   * 姿态每个包都重打包成同一个 state，`markIfChanged` 在第一次之后就不再置 dirty。
+   */
+  if (now < player.stunUntil) {
+    player.applyState(player.direction, POSE.Lie, false);
+    markIfChanged(player);
+    return RESULT;
+  }
+
   const state = unpackState(packet.state);
   const pose = sanitizePose(state.pose);
 
@@ -103,9 +116,9 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
     if (pose !== expected) {
       if (seats) seats.stand(player, RELEASED);
     } else {
-      // 座位上位置不动，只接受原地的叫唤 / 挥手；跳跃需要先起身，这里不接
+      // 座位上位置不动，只接受原地的发泄 / 挥手；跳跃需要先起身，这里不接
       const stationary = !state.moving;
-      player.applyState(player.direction, expected, false, stationary && state.emote, false, stationary && state.wave);
+      player.applyState(player.direction, expected, false, stationary && state.vent, false, stationary && state.wave);
       markIfChanged(player);
       return RESULT;
     }
@@ -130,14 +143,16 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
   player.y = MOTION.y;
   player.lastMoveAt = now;
 
-  // 行走中不接叫唤与打招呼：图集没有行走张嘴帧，也没有行走挥手帧，套上去就是脚在滑。
-  // 跳跃是位移动作，行走中必须放行；到期由客户端按各自窗口清位，服务端不另设计时器（ADR-0018 / 0019）。
+  // 行走中不接打招呼：图集没有行走挥手帧，套上去就是脚在滑。
+  // 发泄与跳跃都放行——发泄是「打断移动直接出招」，客户端会在出招窗口内停止位移并落回站姿，
+  // 这里再按 stationary 拦一道，反而会把「边走边按 E」的第一包吃掉（ADR-0051）。
+  // 到期由客户端按各自窗口清位，服务端不另设计时器（ADR-0019 / 0051）。
   const stationary = pose !== POSE.Walk && !state.moving;
   player.applyState(
     state.direction,
     pose,
     state.moving,
-    stationary && state.emote,
+    state.vent,
     state.jump,
     stationary && state.wave,
   );

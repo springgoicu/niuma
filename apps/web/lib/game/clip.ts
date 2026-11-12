@@ -74,7 +74,7 @@ export function buildClipTracks(
   return tracks;
 }
 
-/** 一次性动作（叫唤 / 跳 / 打招呼）播完要停下的时长，调用方用它决定何时回落到原姿态 */
+/** 一次性动作（发泄 / 跳 / 打招呼）播完要停下的时长，调用方用它决定何时回落到原姿态 */
 export function clipDuration(track: ClipTrack | undefined): number {
   return track ? track.durationMs : 0;
 }
@@ -83,27 +83,27 @@ export function clipDuration(track: ClipTrack | undefined): number {
 export const OVERLAY_MS = 440;
 
 export interface OverlayTracks {
-  /** 按 wire 姿态索引（Idle/Walk/Sit/Lie）：行走没有叫唤帧，恒为 null */
-  readonly emoteByPose: ReadonlyArray<ClipTrack | null>;
+  /** 按 wire 姿态索引（Idle/Walk/Sit/Lie）：行走没有发泄帧，恒为 null */
+  readonly ventByPose: ReadonlyArray<ClipTrack | null>;
   /** 打招呼同样按姿态分三条；行走没有挥手帧，Idle 位之外的 Walk 恒为 null */
   readonly waveByPose: ReadonlyArray<ClipTrack | null>;
   readonly jump: ClipTrack | null;
   /** 播放窗口：取窗口常量与图集实际长度的较大值，避免末帧停顿或硬切 */
-  readonly emoteMs: number;
+  readonly ventMs: number;
   readonly waveMs: number;
   readonly jumpMs: number;
 }
 
 /**
  * 叠加动作的轨表：一次编译、帧循环里只做数组下标。
- * 叫唤与打招呼各按姿态分三条（站/坐/躺），跳只有一条（坐/躺时客户端先起身）。
+ * 发泄与打招呼各按姿态分三条（站/坐/躺），跳只有一条（坐/躺时客户端先起身）。
  */
 export function buildOverlayTracks(tracks: ClipTracks): OverlayTracks {
-  const emoteByPose: Array<ClipTrack | null> = [
-    tracks.emote ?? null,
+  const ventByPose: Array<ClipTrack | null> = [
+    tracks.vent ?? null,
     null,
-    tracks.sitEmote ?? null,
-    tracks.lieEmote ?? null,
+    tracks.sitVent ?? null,
+    tracks.lieVent ?? null,
   ];
   const waveByPose: Array<ClipTrack | null> = [
     tracks.wave ?? null,
@@ -113,10 +113,10 @@ export function buildOverlayTracks(tracks: ClipTracks): OverlayTracks {
   ];
   const jump = tracks.jump ?? null;
   return {
-    emoteByPose,
+    ventByPose,
     waveByPose,
     jump,
-    emoteMs: Math.max(OVERLAY_MS, ...emoteByPose.map((track) => clipDuration(track ?? undefined))),
+    ventMs: Math.max(OVERLAY_MS, ...ventByPose.map((track) => clipDuration(track ?? undefined))),
     // 挥手是三拍 660ms：窗口必须跟着图集走，否则末拍「收回」会被硬切
     waveMs: Math.max(OVERLAY_MS, ...waveByPose.map((track) => clipDuration(track ?? undefined))),
     jumpMs: Math.max(OVERLAY_MS, clipDuration(jump ?? undefined)),
@@ -124,25 +124,26 @@ export function buildOverlayTracks(tracks: ClipTracks): OverlayTracks {
 }
 
 /**
- * 当前该用哪条叠加轨：跳 > 打招呼 > 叫唤。
+ * 当前该用哪条叠加轨：跳 > 打招呼 > 发泄。
  *
- * 跳是位移动作，行走中也播（位移不中断）；打招呼与叫唤在行走中仍回落基础轨——
- * 图集没有行走挥手 / 张嘴帧，套上去就是滑步。
+ * 跳是位移动作，行走中也播（位移不中断）；打招呼与发泄在行走中仍回落基础轨——
+ * 图集没有行走挥手 / 冲撞帧，套上去就是滑步。发泄由客户端在出招窗口内主动
+ * 把姿态落回 Idle 并锁住位移，所以正常不会走到这条兜底。
  * 三者互斥由客户端置位时保证，这里只按优先级兜底。
  * 返回 null 表示「不覆盖姿态」，调用方回落到基础姿态轨。
  */
 export function overlayTrackFor(
   overlays: OverlayTracks,
   pose: Pose,
-  emoting: boolean,
+  venting: boolean,
   jumping: boolean,
   waving: boolean,
 ): ClipTrack | null {
   if (jumping) return overlays.jump;
   if (pose === POSE.Walk) return null;
   if (waving) return overlays.waveByPose[pose] ?? null;
-  if (!emoting) return null;
-  return overlays.emoteByPose[pose] ?? null;
+  if (!venting) return null;
+  return overlays.ventByPose[pose] ?? null;
 }
 
 /**

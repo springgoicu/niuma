@@ -10,6 +10,9 @@ import {
   SIT_RANGE,
   STATE_BITS,
   SYSTEM_NOTICE_KIND,
+  VENT_COOLDOWN_MS,
+  VENT_RANGE_PX,
+  VENT_STUN_MS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   dequantizeCoord,
@@ -25,6 +28,7 @@ import {
   seatById,
   seatPose,
   unpackState,
+  withinVentCone,
   type CharacterAppearance,
   type ChatHistoryPacket,
   type Direction,
@@ -40,6 +44,7 @@ import {
   type Species,
   type SyncFormat,
   type SystemNoticePacket,
+  type VentEventPacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
 import { requestBuildCheck } from '../build-version';
@@ -61,6 +66,8 @@ import {
   nearestInteractivePropInto,
   pickGrazeLine,
   pickLine,
+  pickVentLine,
+  pickVentVictimLine,
   snoreDue,
   type InteractiveTarget,
 } from './interactions';
@@ -169,7 +176,7 @@ export class GameSession {
   private readonly renderer = new GameRenderer();
   private readonly ecs = new Ecs();
   private readonly tracks = buildClipTracks();
-  /** 叠加动作轨表：叫唤按姿态分三条，跳一条；帧循环里只做下标访问 */
+  /** 叠加动作轨表：发泄按姿态分三条，跳一条；帧循环里只做下标访问 */
   private readonly overlays = buildOverlayTracks(this.tracks);
   /** wire 姿态（Idle/Walk/Sit/Lie）→ 基础轨，顺序与 shared-types 的 POSE 一致 */
   private readonly baseTracks: ReadonlyArray<ClipTrack> = [
@@ -223,6 +230,16 @@ export class GameSession {
   /** 咀嚼节流与台词轮转：本地与服务端共用 500ms 口径（ADR-0048） */
   private grazeAt = 0;
   private grazeCount = 0;
+  /**
+   * 发泄节流与出招窗口。
+   *
+   * `ventAt` 与服务端同一把尺子（VENT_COOLDOWN_MS）：本地先挡一道，连点不会白发包。
+   * `ventLockUntil` 是本地位移锁——出招的 440ms 内不许走动，否则角色会「边滑边撞」。
+   */
+  private ventAt = 0;
+  private ventLockUntil = 0;
+  /** 被创飞后的硬直截止时刻：期间位移被冻结，姿态钉在躺姿（ADR-0051） */
+  private stunUntil = 0;
   /** 躺床计时：lieAt 是躺下时刻，snoreAt 是上一次「Zzz…」 */
   private lieAt = 0;
   private snoreAt = 0;
@@ -243,7 +260,7 @@ export class GameSession {
    * 不能读 `start()` 的 profile 闭包——那是入场瞬间的快照，游戏内改过状态就是旧值。
    */
   private status = '';
-  /** 物种决定叫唤音色（牛哞 / 马嘶）：入场时锁定，运行期不变 */
+  /** 本地物种：工牌与换装展示用，入场时锁定、运行期不变 */
   private species: Species = 'cow';
   private elapsed = 0;
   private movementSendTime = 0;
@@ -346,6 +363,7 @@ export class GameSession {
       },
       onSeatState: (entries) => this.handleSeatState(entries),
       onGraze: (id) => this.handleGraze(id),
+      onVent: (packet) => this.handleVent(packet),
       onPing: (rtt) => {
         this.ping = rtt;
         this.jitter.onRtt(rtt);
@@ -433,13 +451,42 @@ export class GameSession {
   }
 
   /**
-   * 点击 / 轻点舞台：命中的远端角色返回工牌，点空白或点到自己返回 null。
+   * 点击 / 轻点舞台。
+   *
+   * 点到**身边够得着**的人直接就出招，并且不再弹工牌——想教训他一下，
+   * 结果弹出一张简历是最煞风景的交互（ADR-0051）。
+   * 够不着的人、点空白、点到自己，仍然返回工牌或 null。
    * 自己的工牌常显在 HUD，不需要再弹一份重复的详情。
    */
-  inspectAt(stageX: number, stageY: number): PlayerBadge | null {
+  pickAt(stageX: number, stageY: number): PlayerBadge | null {
     const id = this.renderer.pickEntityAt(stageX, stageY);
     if (id === null || id === this.localId) return null;
+    if (this.canVentAt(id)) {
+      this.perform('vent');
+      return null;
+    }
     return this.badgeOf(id);
+  }
+
+  /**
+   * 点击目标能否直接出招：距离与朝向都按服务端的判定区算。
+   *
+   * 复用 `withinVentCone` 而不是只比距离——点背后的人不该变成一记空放，
+   * 那种「点了没反应还白挥一下」比不响应更难理解。
+   */
+  private canVentAt(id: number): boolean {
+    const selfEid = this.ecs.get(this.localId);
+    const targetEid = this.ecs.get(id);
+    if (!selfEid || !targetEid) return false;
+    if (this.elapsed < this.stunUntil) return false;
+    return withinVentCone(
+      Position.x[selfEid]!,
+      Position.y[selfEid]!,
+      Motion.direction[selfEid]! as Direction,
+      Position.x[targetEid]!,
+      Position.y[targetEid]!,
+      VENT_RANGE_PX,
+    );
   }
 
   /** 会话口径的已在线秒数：本地从 WELCOME 起算，远端在入场包秒数上叠加本地增量 */
@@ -643,7 +690,7 @@ export class GameSession {
   }
 
   private clearOverlays(eid: number): void {
-    Motion.emote[eid] = 0;
+    Motion.vent[eid] = 0;
     Motion.jump[eid] = 0;
     Motion.wave[eid] = 0;
   }
@@ -812,6 +859,10 @@ export class GameSession {
     this.interactAt = 0;
     this.lieAt = 0;
     this.snoreAt = 0;
+    // 换连接后旧的硬直 / 出招窗口都失去意义：新角色从站立开始
+    this.stunUntil = 0;
+    this.ventLockUntil = 0;
+    this.ventAt = 0;
     this.localId = 0;
     this.localPose = -1;
     this.localSeated = false;
@@ -893,6 +944,8 @@ export class GameSession {
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
+    // 倒地硬直期间不接受任何动作：起身只能等硬直结束（ADR-0051）
+    if (this.elapsed < this.stunUntil) return;
     // 任何动作都先夺回控制权：坐着 / 躺着 / 跳跃 / 互动都不该被自动寻路拽着走
     this.cancelNavigation();
     this.applyIntent(eid, resolveInteraction(action, this.interactionState(eid)));
@@ -956,20 +1009,30 @@ export class GameSession {
         }
         this.startOverlay(eid, 'jump');
         return;
-      case 'emote':
-        // 叫唤始终出声（ADR-0023 §3）：行走中图集没有张嘴帧，只发声不播动画。
-        // 声源是本地玩家坐标；对本人而言 pan 为 0，链路仍走同一套空间衰减（ADR-0048）
+      case 'vent': {
+        // 与服务端同一把尺子：本地先挡一道，连点不会白发包（ADR-0051）
+        if (this.elapsed < this.ventAt) return;
+        this.ventAt = this.elapsed + VENT_COOLDOWN_MS;
+        // 行走中也要能出招：先把姿态从 Walk 落回 Idle，`overlayTrackFor` 才会给叠加轨，
+        // 再用 ventLockUntil 冻结位移——否则就是「一边滑步一边头槌」
+        if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) {
+          this.setLocalPose(eid, POSE.Idle);
+        }
+        Motion.moving[eid] = 0;
+        this.startOverlay(eid, 'vent');
+        this.ventLockUntil = this.elapsed + this.overlays.ventMs;
+        // 先播破空音：命中与否要等服务端结算（半个 RTT 之后），那一声「砰」随后补上
         this.emitAudio({
-          kind: 'emote',
-          species: this.species,
+          kind: 'vent',
           x: Position.x[eid]!,
           y: Position.y[eid]!,
+          hit: false,
           local: true,
         });
-        if (!intent.animated) return;
-        this.startOverlay(eid, 'emote');
-        Motion.moving[eid] = 0;
+        // 台词按 netId 取：旁观者从 state 位的上升沿算出同一句，各窗口画面一致
+        this.renderer.showBubble(this.localId, pickVentLine(this.localId));
         return;
+      }
       case 'wave':
         // 打招呼只在站定时触发：图集没有行走挥手帧，套到脚步上就是滑步
         if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) return;
@@ -1049,6 +1112,55 @@ export class GameSession {
   }
 
   /**
+   * 发泄结算（ADR-0051）：服务端裁定「谁打到了谁、对方落在哪」。
+   *
+   * 这条包不能省，因为本地玩家的姿态是客户端预测的——Tick 里的 state 对自己不生效，
+   * 不在这里强制落地就会出现「别人看我躺着，我自己还站着」。同理，击退只有 32px，
+   * 低于本地和解的 128px 漂移阈值，光等 Tick 回正会先被拉开再被拽回。
+   */
+  private handleVent(packet: VentEventPacket): void {
+    if (packet.targetId === 0) return;
+    const x = dequantizeCoord(packet.x);
+    const y = dequantizeCoord(packet.y);
+    const targetEid = this.ecs.get(packet.targetId);
+    // 钝击音挂在这条包上：谁被打都该听到「砰」，声源取服务端给的落点
+    this.emitAudio({
+      kind: 'vent',
+      x,
+      y,
+      hit: true,
+      local: packet.targetId === this.localId,
+    });
+    this.renderer.showBubble(packet.targetId, pickVentVictimLine(packet.targetId));
+    this.renderer.setStun(packet.targetId, VENT_STUN_MS);
+    if (!targetEid) return;
+
+    if (packet.targetId === this.localId) {
+      // 本人直接采用权威坐标：这一步是「无抖动拉回」的全部秘密
+      Position.x[targetEid] = x;
+      Position.y[targetEid] = y;
+      this.setLocalPose(targetEid, POSE.Lie);
+      Motion.moving[targetEid] = 0;
+      this.clearOverlays(targetEid);
+      // 本地硬直从「收到」开始算：比服务端的起始晚半个 RTT，所以客户端永远不会
+      // 提前把输入发出去被服务端拒掉
+      this.stunUntil = this.elapsed + VENT_STUN_MS;
+      this.ventLockUntil = 0;
+      if (this.localSeat !== 0) {
+        // 被创飞即失去座位：服务端那边已经释放，本地镜像跟上，免得起身后还占着椅子
+        this.localSeat = 0;
+        this.entitySeat.delete(this.localId);
+        this.seatIntent = false;
+      }
+      return;
+    }
+
+    // 旁观者：坐标与躺姿随 Tick 到达，这里只把这一帧的踏步状态收掉，
+    // 免得远端在倒地那一帧还挂着走路循环
+    Motion.moving[targetEid] = 0;
+  }
+
+  /**
    * 发声入口。
    *
    * 听者坐标随事件一起带出去，而不是让平台层自己每帧同步：Worker 里位置每帧
@@ -1068,27 +1180,27 @@ export class GameSession {
   }
 
   /** 三个叠加动作互斥：后按的打断先按的，连按从第 0 帧重播 */
-  private startOverlay(eid: number, kind: 'emote' | 'jump' | 'wave'): void {
-    Motion.emote[eid] = kind === 'emote' ? 1 : 0;
+  private startOverlay(eid: number, kind: 'vent' | 'jump' | 'wave'): void {
+    Motion.vent[eid] = kind === 'vent' ? 1 : 0;
     Motion.jump[eid] = kind === 'jump' ? 1 : 0;
     Motion.wave[eid] = kind === 'wave' ? 1 : 0;
     if (kind === 'jump') Motion.jumpSince[eid] = this.elapsed;
     else if (kind === 'wave') Motion.waveSince[eid] = this.elapsed;
-    else Motion.emoteSince[eid] = this.elapsed;
+    else Motion.ventSince[eid] = this.elapsed;
   }
 
   /**
-   * 当前该画哪一列：叠加动作（跳 > 叫唤）→ 基础姿态 → 时间轴 → 每实体相位偏移。
-   * 姿态从不因叠加动作改写，所以「坐着叫唤完还是坐着」不需要任何回滚逻辑。
+   * 当前该画哪一列：叠加动作（跳 > 发泄）→ 基础姿态 → 时间轴 → 每实体相位偏移。
+   * 姿态从不因叠加动作改写，所以「坐着发泄完还是坐着」不需要任何回滚逻辑。
    */
   private columnFor(netId: number, eid: number): number {
     const pose = Motion.pose[eid]! as Pose;
     const jumping = Motion.jump[eid] === 1;
-    const emoting = Motion.emote[eid] === 1;
+    const venting = Motion.vent[eid] === 1;
     const waving = Motion.wave[eid] === 1;
-    const overlay = overlayTrackFor(this.overlays, pose, emoting, jumping, waving);
+    const overlay = overlayTrackFor(this.overlays, pose, venting, jumping, waving);
     const track = overlay ?? this.baseTracks[pose] ?? this.tracks.idle!;
-    // 起始时刻与 overlayTrackFor 的优先级同序：跳 > 打招呼 > 叫唤（三者互斥，正常只命中一个）
+    // 起始时刻与 overlayTrackFor 的优先级同序：跳 > 打招呼 > 发泄（三者互斥，正常只命中一个）
     const since =
       overlay === null
         ? Motion.since[eid]!
@@ -1096,14 +1208,14 @@ export class GameSession {
           ? Motion.jumpSince[eid]!
           : waving
             ? Motion.waveSince[eid]!
-            : Motion.emoteSince[eid]!;
+            : Motion.ventSince[eid]!;
     return frameAt(track, this.elapsed - since + phaseOffset(netId, track));
   }
 
-  /** 本地叠加动作到期清位：下一包 move 就把位降下去，远端不会残留张嘴 / 抬手帧 */
+  /** 本地叠加动作到期清位：下一包 move 就把位降下去，远端不会残留冲撞 / 抬手帧 */
   private expireLocalOverlays(eid: number): void {
-    if (Motion.emote[eid] === 1 && this.elapsed - Motion.emoteSince[eid]! >= this.overlays.emoteMs) {
-      Motion.emote[eid] = 0;
+    if (Motion.vent[eid] === 1 && this.elapsed - Motion.ventSince[eid]! >= this.overlays.ventMs) {
+      Motion.vent[eid] = 0;
     }
     if (Motion.jump[eid] === 1 && this.elapsed - Motion.jumpSince[eid]! >= this.overlays.jumpMs) {
       Motion.jump[eid] = 0;
@@ -1119,14 +1231,18 @@ export class GameSession {
   private stepLocal(eid: number, dt: number): void {
     this.expireLocalOverlays(eid);
 
+    // 倒地硬直与出招窗口都要冻结位移：前者是「躺在地上动不了」，
+    // 后者是「正在头槌，脚不该还在地上滑」（ADR-0051）
+    const frozen = this.elapsed < this.stunUntil || this.elapsed < this.ventLockUntil;
+
     // 本帧手按方向：tick 里已经解算好，这里只读复用槽位
     const manual = this.manual;
-    let vx = manual.x;
-    let vy = manual.y;
+    let vx = frozen ? 0 : manual.x;
+    let vy = frozen ? 0 : manual.y;
     // 手动输入永远优先：一按方向键 / 摇杆就收回控制权，并停掉自动寻路
-    if (vx !== 0 || vy !== 0) {
+    if (!frozen && (vx !== 0 || vy !== 0)) {
       this.cancelNavigation();
-    } else if (this.navigator.active) {
+    } else if (this.navigator.active && !frozen) {
       if (this.navigator.steer(Position.x[eid]!, Position.y[eid]!, this.navVector) === 'arrived') {
         this.finishNavigation();
       } else {
@@ -1152,9 +1268,10 @@ export class GameSession {
       Motion.direction[eid] = directionFromVector(vx, vy, Motion.direction[eid] as Direction);
       // 顶在围栏上时原地踏步会露馅：没有实际位移就当站定
       if (advanced) {
-        // 走动打断叫唤与打招呼（都没有行走帧）；跳跃是位移动作，不能在这里清位，
-        // 否则「边走边跳」按下即被自己掐掉
-        Motion.emote[eid] = 0;
+        // 走动打断发泄与打招呼（都没有行走帧）；跳跃是位移动作，不能在这里清位，
+        // 否则「边走边跳」按下即被自己掐掉。出招窗口内已被 `frozen` 挡住位移，
+        // 所以这条不会把刚按下的发泄掐掉
+        Motion.vent[eid] = 0;
         Motion.wave[eid] = 0;
         if (Motion.pose[eid] !== POSE.Walk) {
           Motion.pose[eid] = POSE.Walk;
@@ -1207,20 +1324,22 @@ export class GameSession {
         Motion.since[eid] = this.elapsed;
       }
       Motion.moving[eid] = (state & STATE_BITS.moving) !== 0 ? 1 : 0;
-      // 远端叫唤：只在 0→1 的上升沿发声，按其实时位置做声像与衰减（ADR-0048）。
-      // 与动画同源（都来自 state 位），所以「听到哞」与「看到张嘴」不会错位。
-      const wasEmoting = Motion.emote[eid] === 1;
-      this.applyOverlayBit(eid, Motion.emote, Motion.emoteSince, (state & STATE_BITS.emote) !== 0);
+      // 远端发泄：只在 0→1 的上升沿播破空音并冒台词，按其实时位置做声像与衰减（ADR-0048）。
+      // 与动画同源（都来自 state 位），所以「听到挥空」与「看到冲撞」不会错位。
+      const wasVenting = Motion.vent[eid] === 1;
+      this.applyOverlayBit(eid, Motion.vent, Motion.ventSince, (state & STATE_BITS.vent) !== 0);
       this.applyOverlayBit(eid, Motion.jump, Motion.jumpSince, (state & STATE_BITS.jump) !== 0);
       this.applyOverlayBit(eid, Motion.wave, Motion.waveSince, (state & STATE_BITS.wave) !== 0);
-      if (!wasEmoting && Motion.emote[eid] === 1) {
+      if (!wasVenting && Motion.vent[eid] === 1) {
         this.emitAudio({
-          kind: 'emote',
-          species: this.speciesById.get(netId) ?? 'cow',
+          kind: 'vent',
           x: this.sample.x,
           y: this.sample.y,
+          hit: false,
           local: false,
         });
+        // 台词由 netId 决定，全场每个窗口算出的都是同一句
+        this.renderer.showBubble(netId, pickVentLine(netId));
       }
     }
 
@@ -1268,7 +1387,7 @@ export class GameSession {
       Motion.direction[eid]! as Direction,
       Motion.pose[eid]! as Pose,
       Motion.moving[eid] === 1,
-      Motion.emote[eid] === 1,
+      Motion.vent[eid] === 1,
       Motion.jump[eid] === 1,
       Motion.wave[eid] === 1,
     );

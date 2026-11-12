@@ -1,4 +1,4 @@
-import type { CharacterAppearance, Species } from '@niuma/shared-types';
+import type { CharacterAppearance } from '@niuma/shared-types';
 import type { InteractiveKind } from '../interactions';
 import type { ControlBlock, SnapshotPatch, ViewportInfo } from './control-channel';
 
@@ -17,7 +17,11 @@ export interface SessionProfile {
  * 听者坐标一起交给 `applyAudioEvent()`，声像与衰减仍由 `spatial-audio.ts` 算。
  */
 export type AudioEvent =
-  | { kind: 'emote'; species: Species; x: number; y: number; local: boolean }
+  /**
+   * 发泄：`hit = false` 是空放的破空音，`true` 是命中后的钝击音。
+   * 出招者一按就播一次空放，服务端结算回来再补一声命中——两段合起来才是「挥空 + 砰」。
+   */
+  | { kind: 'vent'; x: number; y: number; hit: boolean; local: boolean }
   | { kind: 'interact'; target: InteractiveKind; x: number; y: number }
   | { kind: 'chew'; x: number; y: number; local: boolean };
 

@@ -56,10 +56,13 @@ export function clampWorldY(y: number): number {
 }
 
 /**
- * 位打包：bit0-1 朝向，bit2-3 姿态，bit4 打招呼，bit5 移动标志，bit6 叫唤，bit7 跳。
+ * 位打包：bit0-1 朝向，bit2-3 姿态，bit4 打招呼，bit5 移动标志，bit6 发泄，bit7 跳。
  *
- * 叫唤 / 跳 / 打招呼是一次性叠加动作，与姿态正交：位只在播放窗口内为真，
- * 客户端到期自己清位，服务端只负责回传（ADR-0018 / ADR-0019）。
+ * 发泄 / 跳 / 打招呼是一次性叠加动作，与姿态正交：位只在播放窗口内为真，
+ * 客户端到期自己清位，服务端只负责回传（ADR-0051 / ADR-0019）。
+ *
+ * bit6 承载「发泄」的出招意图：客户端上报的仍是「我在演这个动作」，
+ * 命中与否由服务端裁决，包长与 opcode 都不变。
  *
  * 姿态只有 0-3 四个值，原来的 3 bit 字段高位（bit4）恒为 0，
  * 因此第三个叠加位直接复用这一位，包长与 opcode 都不变。
@@ -69,7 +72,7 @@ export function packState(
   direction: Direction,
   pose: Pose,
   moving: boolean,
-  emote = false,
+  vent = false,
   jump = false,
   wave = false,
 ): number {
@@ -78,7 +81,7 @@ export function packState(
       ((pose & 0b11) << 2) |
       (wave ? 0b10000 : 0) |
       (moving ? 0b100000 : 0) |
-      (emote ? 0b1000000 : 0) |
+      (vent ? 0b1000000 : 0) |
       (jump ? 0b10000000 : 0)) &
     0xff
   );
@@ -96,7 +99,7 @@ export const STATE_BITS = {
   pose: 0b11,
   wave: 0b10000,
   moving: 0b100000,
-  emote: 0b1000000,
+  vent: 0b1000000,
   jump: 0b10000000,
 } as const;
 
@@ -104,7 +107,7 @@ export function unpackState(state: number): {
   direction: Direction;
   pose: Pose;
   moving: boolean;
-  emote: boolean;
+  vent: boolean;
   jump: boolean;
   wave: boolean;
 } {
@@ -114,7 +117,7 @@ export function unpackState(state: number): {
     direction,
     pose,
     moving: (state & 0b100000) !== 0,
-    emote: (state & 0b1000000) !== 0,
+    vent: (state & 0b1000000) !== 0,
     jump: (state & 0b10000000) !== 0,
     wave: (state & 0b10000) !== 0,
   };

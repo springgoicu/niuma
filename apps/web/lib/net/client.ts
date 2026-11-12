@@ -15,6 +15,7 @@ import {
   decodeSpawn,
   decodeStatusBroadcast,
   decodeSystemNotice,
+  decodeVent,
   decodeWelcome,
   encodeChatHistoryRequest,
   encodeChatSend,
@@ -36,6 +37,7 @@ import {
   type SpawnPacket,
   type SyncFormat,
   type SystemNoticePacket,
+  type VentEventPacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
 
@@ -69,6 +71,11 @@ export interface NetHandlers {
   onStatus(id: number, status: string): void;
   /** 附近玩家咀嚼：只带实体 id，音效按该实体当前位置空间化 */
   onGraze(id: number): void;
+  /**
+   * 发泄结算：谁打了谁、打到哪儿。`targetId = 0` 表示空放。
+   * 受害者的新坐标与躺姿走 Tick，这条包只负责「归因」与硬直的起点。
+   */
+  onVent(packet: VentEventPacket): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -246,6 +253,9 @@ export class NetClient {
         break;
       case OpCode.S2C_GRAZE:
         this.handlers.onGraze(decodeGraze(data));
+        break;
+      case OpCode.S2C_VENT:
+        this.handlers.onVent(decodeVent(data));
         break;
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));

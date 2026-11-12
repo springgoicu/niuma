@@ -32,6 +32,13 @@ const LAYOUT_TS = resolve(import.meta.dir, '../../../apps/web/lib/game/sprite-la
 
 const SPECIES: SpeciesName[] = ['cow', 'horse'];
 const EXTRA_COUNT: Record<SpeciesName, number> = { cow: 4, horse: 3 };
+/**
+ * 图集版本：写进 manifest 与 `sprite-layout.generated.ts`，客户端加载时逐字比对。
+ *
+ * v8：16-24 列由「张嘴呼叫」重绘为「后撤蓄力 / 前冲头槌 / 后坐力」，并带 1px 速度线。
+ * 这些列的内容变了，缓存中的旧图集必须失效——版本号与列号是同一份契约。
+ */
+const ATLAS_VERSION = 8;
 
 interface RenderOptions {
   tail: number;
@@ -409,7 +416,7 @@ export interface GeneratedClip {
 
 export const SPRITE_LAYOUT = ${JSON.stringify(
     {
-      version: 7,
+      version: ATLAS_VERSION,
       frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
       origin: ORIGIN,
       directions: DIRECTIONS,
@@ -484,9 +491,8 @@ async function main(): Promise<void> {
   const started = Date.now();
 
   const manifest: Record<string, unknown> = {
-    // v7：新增打招呼 —— 25-33 为站/坐/躺三套抬前蹄挥手；
-    // v6 的图集列数（25）与 v7（34）不兼容
-    version: 7,
+    // v8：16-24 列由张嘴呼叫改为冲撞 / 头槌（列号不变，内容变了，缓存必须失效）
+    version: ATLAS_VERSION,
     frame: { w: FRAME_SIZE, h: FRAME_SIZE, columns: COLUMNS, rows: ROWS },
     directions: DIRECTIONS,
     clips: CLIPS,

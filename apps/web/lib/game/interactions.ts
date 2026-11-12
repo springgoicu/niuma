@@ -91,6 +91,31 @@ export function pickGrazeLine(counter: number): string {
   return GRAZE_LINES[index]!;
 }
 
+/**
+ * 发泄的台词：出招者三句、被创飞者三句。
+ *
+ * 与设施台词的关键区别是**按 netId 取值而不是按次数轮转**：
+ * 这些气泡由每个客户端各自根据广播出来的 state 位渲染，用本地计数器轮转的话，
+ * 双开窗口看到的会是两句不同的话。用实体 id 取模，全场的第 N 号玩家永远是同一句。
+ */
+const VENT_LINES = ['💢 发泄！', '退！退！退！', '吃我一记牛马冲撞！'] as const;
+const VENT_VICTIM_LINES = ['💫 哎哟被创飞了！', '💥 判定为工伤！', '😵 倒地装死中...'] as const;
+
+function lineBySeed(lines: readonly string[], seed: number): string {
+  const index = Number.isFinite(seed) ? Math.abs(Math.trunc(seed)) % lines.length : 0;
+  return lines[index]!;
+}
+
+/** 出招者头顶的台词 */
+export function pickVentLine(seed: number): string {
+  return lineBySeed(VENT_LINES, seed);
+}
+
+/** 被创飞者头顶的台词 */
+export function pickVentVictimLine(seed: number): string {
+  return lineBySeed(VENT_VICTIM_LINES, seed);
+}
+
 /** 躺床打呼：躺下静置 5s 后第一次，之后每 9s 一次 */
 export const SNORE_FIRST_MS = 5000;
 export const SNORE_INTERVAL_MS = 9000;

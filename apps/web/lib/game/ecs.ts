@@ -17,11 +17,11 @@ export const Motion = {
   /** 当前动作的起始时刻（ms）：换动作时重置，动画从第 0 帧起播 */
   since: new Float64Array(CAPACITY),
   /**
-   * 叫唤 / 跳 / 打招呼：与姿态正交的一次性叠加动作。
-   * 开关 + 各自起始时刻；姿态不因它们改变，所以播完天然回到原姿势（ADR-0018 / ADR-0019）。
+   * 发泄 / 跳 / 打招呼：与姿态正交的一次性叠加动作。
+   * 开关 + 各自起始时刻；姿态不因它们改变，所以播完天然回到原姿势（ADR-0051 / ADR-0019）。
    */
-  emote: new Uint8Array(CAPACITY),
-  emoteSince: new Float64Array(CAPACITY),
+  vent: new Uint8Array(CAPACITY),
+  ventSince: new Float64Array(CAPACITY),
   jump: new Uint8Array(CAPACITY),
   jumpSince: new Float64Array(CAPACITY),
   wave: new Uint8Array(CAPACITY),
@@ -29,7 +29,7 @@ export const Motion = {
 };
 export const Local = { flag: new Uint8Array(CAPACITY) };
 
-export const POSE = { Idle: 0, Walk: 1, Sit: 2, Lie: 3, Emote: 4 } as const;
+export const POSE = { Idle: 0, Walk: 1, Sit: 2, Lie: 3 } as const;
 
 export class Ecs {
   readonly world = createWorld();
@@ -52,8 +52,8 @@ export class Ecs {
     Motion.pose[eid] = POSE.Idle;
     Motion.moving[eid] = 0;
     Motion.since[eid] = 0;
-    Motion.emote[eid] = 0;
-    Motion.emoteSince[eid] = 0;
+    Motion.vent[eid] = 0;
+    Motion.ventSince[eid] = 0;
     Motion.jump[eid] = 0;
     Motion.jumpSince[eid] = 0;
     Motion.wave[eid] = 0;

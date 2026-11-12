@@ -108,18 +108,11 @@ describe('跳与叠加动作', () => {
     }
   });
 
-  it('站定叫唤带肢体动画', () => {
-    expect(resolveInteraction('emote', standing)).toEqual({ kind: 'emote', animated: true });
-  });
-
-  it('坐着 / 躺着 / 躺在床上叫唤也有对应动画', () => {
-    expect(resolveInteraction('emote', groundSitting)).toEqual({ kind: 'emote', animated: true });
-    expect(resolveInteraction('emote', lying)).toEqual({ kind: 'emote', animated: true });
-    expect(resolveInteraction('emote', bedLying)).toEqual({ kind: 'emote', animated: true });
-  });
-
-  it('行走中叫唤只出声不动画：图集没有行走张嘴帧', () => {
-    expect(resolveInteraction('emote', walking)).toEqual({ kind: 'emote', animated: false });
+  it('发泄在任何姿态下都出招：姿态只决定播哪一套帧', () => {
+    // 站 / 走 / 坐 / 躺 / 床上躺着都能按 E —— 行走中由客户端先落回站姿再出招
+    for (const state of [standing, walking, groundSitting, seatSitting, lying, bedLying]) {
+      expect(resolveInteraction('vent', state)).toEqual({ kind: 'vent' });
+    }
   });
 
   it('行走中打招呼被拦下并给出提示', () => {
@@ -171,19 +164,20 @@ describe('互动与按钮表现', () => {
     expect(actionPresentation('lie', groundSitting).unavailable).toBe(false);
   });
 
-  it('行走中打招呼按钮显示不可用，叫唤仍然可用', () => {
+  it('行走中打招呼按钮显示不可用，发泄仍然可用', () => {
     expect(actionPresentation('wave', walking).unavailable).toBe(true);
     expect(actionPresentation('wave', standing).unavailable).toBe(false);
-    expect(actionPresentation('emote', walking).unavailable).toBe(false);
+    // 行走中按 E 是「打断移动直接出招」，所以按钮永不降级
+    expect(actionPresentation('vent', walking).unavailable).toBe(false);
   });
 
-  it('叫唤、跳跃与互动是一次性动作，不进入高亮态', () => {
-    expect(actionPresentation('emote', groundSitting).active).toBe(false);
+  it('发泄、跳跃与互动是一次性动作，不进入高亮态', () => {
+    expect(actionPresentation('vent', groundSitting).active).toBe(false);
     expect(actionPresentation('jump', standing).active).toBe(false);
     expect(actionPresentation('interact', standing)).toEqual({ active: false, unavailable: false });
   });
 
-  it('坐上座位后依然可以在座位上叫唤', () => {
-    expect(actionPresentation('emote', seatSittingNearSeat).unavailable).toBe(false);
+  it('坐上座位后依然可以在座位上发泄', () => {
+    expect(actionPresentation('vent', seatSittingNearSeat).unavailable).toBe(false);
   });
 });

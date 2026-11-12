@@ -1,6 +1,6 @@
 'use client';
 
-import { Armchair, Coffee, Hand, Keyboard, MessageSquare, Music4, Rabbit, Sandwich, Wheat } from 'lucide-react';
+import { Armchair, Coffee, Flame, Hand, Keyboard, MessageSquare, Rabbit, Sandwich, Wheat } from 'lucide-react';
 import { POSE } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { actionPresentation } from '@/lib/game/actions';
@@ -14,8 +14,9 @@ interface ActionBarProps {
 const ACTIONS: Array<{ key: string; label: string; hint: string; Icon: typeof Armchair; action?: ActionKey }> = [
   { key: 'sit', label: '坐下', hint: 'Z', Icon: Armchair, action: 'sit' },
   { key: 'lie', label: '躺平', hint: 'X', Icon: Sandwich, action: 'lie' },
-  { key: 'emote', label: '叫唤', hint: 'E', Icon: Music4, action: 'emote' },
-  // 吃草紧挨叫唤：E / G 在键盘上相邻，两个都是「发声」动作（ADR-0048）
+  // 发泄：一记牛马式冲撞，打到人对方会被创飞倒地（ADR-0051）
+  { key: 'vent', label: '发泄', hint: 'E', Icon: Flame, action: 'vent' },
+  // 吃草紧挨发泄：E / G 在键盘上相邻，两个都是一次性动作（ADR-0048）
   { key: 'graze', label: '吃草', hint: 'G', Icon: Wheat, action: 'graze' },
   { key: 'wave', label: '打招呼', hint: 'C', Icon: Hand, action: 'wave' },
   { key: 'jump', label: '跳一下', hint: 'Space', Icon: Rabbit, action: 'jump' },

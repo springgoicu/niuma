@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { Armchair, Coffee, Hand, MessageSquare, Music4, Rabbit, Sandwich, Wheat } from 'lucide-react';
+import { Armchair, Coffee, Flame, Hand, MessageSquare, Rabbit, Sandwich, Wheat } from 'lucide-react';
 import { POSE } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { actionPresentation } from '@/lib/game/actions';
@@ -177,8 +177,8 @@ export function Joystick({ onMove, onEngage, onTap, portrait = false }: Joystick
 const ACTION_BUTTONS: Array<{ label: string; action: ActionKey; Icon: typeof Armchair }> = [
   { label: '跳', action: 'jump', Icon: Rabbit },
   { label: '招手', action: 'wave', Icon: Hand },
-  { label: '叫唤', action: 'emote', Icon: Music4 },
-  // 与桌面动作条同序：叫唤旁边是吃草，键盘 E / G 相邻（ADR-0048）
+  { label: '发泄', action: 'vent', Icon: Flame },
+  // 与桌面动作条同序：发泄旁边是吃草，键盘 E / G 相邻（ADR-0048）
   { label: '吃草', action: 'graze', Icon: Wheat },
   { label: '坐下', action: 'sit', Icon: Armchair },
   { label: '躺平', action: 'lie', Icon: Sandwich },
@@ -200,7 +200,7 @@ function haptic(): void {
 /**
  * 右下动作盘 + 独立的打字键。
  *
- * 七个动作（叫唤与吃草相邻）在横屏排 3 列 × 3 行（60px）、总高 196，
+ * 七个动作（发泄与吃草相邻）在横屏排 3 列 × 3 行（60px）、总高 196，
  * 打字键 68px 仍在右手主位；竖屏换成 2 列 × 4 行（56px），横向保持 196，
  * 给左下摇杆留出拇指区。两种朝向都保留 56px 以上的命中区，图标与标签一起显示。
  */

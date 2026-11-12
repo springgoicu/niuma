@@ -196,7 +196,8 @@ export class MainThreadGameClient implements GameClient {
   }
 
   pick(stageX: number, stageY: number): void {
-    const badge = this.session?.inspectAt(stageX, stageY) ?? null;
+    // 点到身边够得着的人会在会话里直接出招并返回 null：这一下不弹工牌
+    const badge = this.session?.pickAt(stageX, stageY) ?? null;
     this.options.onPick(badge?.id ?? null);
   }
 

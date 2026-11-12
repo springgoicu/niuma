@@ -11,9 +11,10 @@ import { applyMove } from './movement';
 import { Player } from './world';
 
 /**
- * 服务端对叠加位的唯一职责是「保存与回传」（ADR-0018）。
- * 这里守的是那条防御线的形状：行走中只丢叫唤，跳跃必须放行——
- * 否则「边走边跳」在客户端看着正常，别人屏幕上却永远只有一个在滑步的人。
+ * 服务端对叠加位的职责是「保存与回传 + 一处准入」（ADR-0051）。
+ * 这里守的是那条防御线的形状：行走中只丢打招呼，发泄与跳必须放行——
+ * 否则「边走边跳」在客户端看着正常，别人屏幕上却永远只有一个在滑步的人；
+ * 发泄被吃掉则会出现「按了 E 只出声、不出招」的死键。
  */
 function packet(state: number, x = 0, y = 0): MovePacket {
   return { id: 1, x: quantizeCoord(x), y: quantizeCoord(y), state };
@@ -77,7 +78,7 @@ describe('空闲去脏', () => {
     expect(player.dirty).toBe(true);
   });
 
-  it('叫唤结束时必须置 dirty，否则远端会一直播下去', () => {
+  it('发泄结束时必须置 dirty，否则远端会一直播下去', () => {
     const player = playerAt(4096, 4096);
     applyMove(player, packet(packState(DIRECTION.Down, POSE.Idle, false, true), 4096, 4096), 1000);
     synced(player);
@@ -85,7 +86,7 @@ describe('空闲去脏', () => {
     // 播放窗口结束，客户端把 bit6 降下来 —— 这是唯一一次能让远端停下的机会
     applyMove(player, packet(packState(DIRECTION.Down, POSE.Idle, false, false), 4096, 4096), 1500);
     expect(player.dirty).toBe(true);
-    expect(unpackState(player.state).emote).toBe(false);
+    expect(unpackState(player.state).vent).toBe(false);
   });
 });
 
@@ -110,35 +111,37 @@ describe('服务端叠加位准入', () => {
     expect(player.pose).toBe(POSE.Walk);
     expect(player.moving).toBe(true);
     expect(player.jump).toBe(true);
-    expect(player.emote).toBe(false);
+    expect(player.vent).toBe(false);
     // 回传字节里也要带着 jump 位，远端才看得到
     expect(unpackState(player.state).jump).toBe(true);
   });
 
-  it('行走中丢弃叫唤：没有行走张嘴帧，套上去就是滑步', () => {
+  it('行走中放行发泄：这一包就是「边走边按 E」的第一包，吃掉就再也打不出招', () => {
     const player = freshPlayer();
     const state = packState(DIRECTION.Right, POSE.Walk, true, true, false);
     applyMove(player, packet(state, 8, 0), 1000);
 
-    expect(player.emote).toBe(false);
-    expect(unpackState(player.state).emote).toBe(false);
+    expect(player.vent).toBe(true);
+    // 位进 set 就置一次边沿标记，Tick 里的结算只认它
+    expect(player.ventPending).toBe(true);
+    expect(unpackState(player.state).vent).toBe(true);
   });
 
-  it('moving 为真但姿态仍是 Idle 时同样按行走处理', () => {
+  it('moving 为真但姿态仍是 Idle 时同样放行发泄', () => {
     const player = freshPlayer();
     const state = packState(DIRECTION.Right, POSE.Idle, true, true, true);
     applyMove(player, packet(state, 8, 0), 1000);
 
-    expect(player.emote).toBe(false);
+    expect(player.vent).toBe(true);
     expect(player.jump).toBe(true);
   });
 
-  it('站定时叫唤与跳跃都放行', () => {
+  it('站定时发泄与跳跃都放行', () => {
     const player = freshPlayer();
     const state = packState(DIRECTION.Down, POSE.Idle, false, true, true);
     applyMove(player, packet(state), 1000);
 
-    expect(player.emote).toBe(true);
+    expect(player.vent).toBe(true);
     expect(player.jump).toBe(true);
   });
 
@@ -163,12 +166,12 @@ describe('服务端叠加位准入', () => {
     }
   });
 
-  it('打招呼与叫唤同时置位时互不影响：服务端只做准入，不做互斥', () => {
+  it('打招呼与发泄同时置位时互不影响：服务端只做准入，不做互斥', () => {
     const player = freshPlayer();
     const state = packState(DIRECTION.Down, POSE.Idle, false, true, false, true);
     applyMove(player, packet(state), 1000);
 
-    expect(player.emote).toBe(true);
+    expect(player.vent).toBe(true);
     expect(player.wave).toBe(true);
   });
 });

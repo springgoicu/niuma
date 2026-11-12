@@ -51,7 +51,7 @@ export const DEFAULT_SNAPSHOT = {
   seatId: 0,
 } as const;
 
-/** 落盘前归一化：行走是瞬态，不能跨会话；Emote 只存在于客户端表现层 */
+/** 落盘前归一化：行走是瞬态，不能跨会话；发泄这类叠加动作只存在于客户端表现层 */
 export function persistablePose(pose: Pose): Pose {
   return pose === POSE.Sit || pose === POSE.Lie ? pose : POSE.Idle;
 }

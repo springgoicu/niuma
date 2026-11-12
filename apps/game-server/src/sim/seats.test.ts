@@ -25,14 +25,14 @@ function movePacket(
   y: number,
   pose: number,
   moving = false,
-  emote = false,
+  vent = false,
   direction: Direction = DIRECTION.Down,
 ): MovePacket {
   return {
     id,
     x: quantizeCoord(x),
     y: quantizeCoord(y),
-    state: packState(direction, pose as never, moving, emote),
+    state: packState(direction, pose as never, moving, vent),
     clientSequence: undefined,
     clientTimestampMs: undefined,
   };
@@ -281,7 +281,7 @@ describe('座位上的移动规则', () => {
     seats.sit(player, 0);
 
     applyMove(player, movePacket(player.id, seat.x, seat.y, POSE.Sit, false, true), 1000, seats);
-    expect(player.emote).toBe(true);
+    expect(player.vent).toBe(true);
     expect(player.seat).toBe(seat.id);
   });
 });

@@ -63,9 +63,9 @@ describe('图集布局契约', () => {
     // 窗口是客户端选帧的硬边界：动画比窗口短会在末帧停顿，比窗口长会被硬切
     const expected: Record<string, number> = {
       jump: 440,
-      emote: 440,
-      sitEmote: 440,
-      lieEmote: 440,
+      vent: 440,
+      sitVent: 440,
+      lieVent: 440,
       // 挥手要多一拍「挥出」：三帧各 220ms，合计 660ms（ADR-0019）
       wave: 660,
       sitWave: 660,

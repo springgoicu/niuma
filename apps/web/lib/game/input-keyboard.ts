@@ -28,7 +28,7 @@ function actionForKey(code: string): ActionKey | null {
     case 'KeyC':
       return 'wave';
     case 'KeyE':
-      return 'emote';
+      return 'vent';
     case 'KeyF':
       return 'interact';
     case 'KeyG':
@@ -77,7 +77,7 @@ export class KeyboardInput {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const bit = keyBit(event.code);
       if (bit !== 0) this.setMask(this.mask | bit);
-      // 重复 keydown 只维护掩码，不重复派发动作：按住 E 不应该无限重播叫唤
+      // 重复 keydown 只维护掩码，不重复派发动作：按住 E 不应该无限重播发泄
       if (event.repeat) return;
       const action = actionForKey(event.code);
       if (action) this.writer.pushAction(ACTION_CODE[action]);

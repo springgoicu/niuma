@@ -159,7 +159,7 @@ export function runWorkerHost(scope: WorkerScope): void {
         session?.cancelNavigation();
         return;
       case 'pick': {
-        const badge = session?.inspectAt(message.x, message.y) ?? null;
+        const badge = session?.pickAt(message.x, message.y) ?? null;
         post({ t: 'picked', id: badge?.id ?? null });
         return;
       }

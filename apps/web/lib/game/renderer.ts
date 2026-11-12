@@ -155,6 +155,8 @@ class EntityView {
   private shown = true;
   /** 昵称文字底边（相对脚底）：换装改变头顶高度后重算 */
   private nameBottom: number;
+  /** 头顶（相对脚底，负值）：眩晕星星绕它转，与配件挂点同源 */
+  private readonly headTop: number;
   /** 上次气泡高度：换装重排时直接复用，不必重新测量文字 */
   private bubbleHeight = 0;
   
@@ -193,7 +195,8 @@ class EntityView {
 
     this.body = new PonyRenderer(atlas, appearance, 1);
     // 昵称底边贴着头顶外侧：头顶高度来自图集锚点，帽檐与犄角再由外观分档让位
-    this.nameBottom = nameBottomY(headTopYOf(atlas.manifest, appearance.species), appearance);
+    this.headTop = headTopYOf(atlas.manifest, appearance.species);
+    this.nameBottom = nameBottomY(this.headTop, appearance);
     // 头顶只放得下 16 显示宽：再长的昵称换省略号，否则会压到邻座的名字与气泡
     this.label = new Text({ text: nameplateText(name), style: NAME_STYLE, resolution: devicePxPerTexel });
     this.label.anchor.set(0.5, 1);
@@ -281,6 +284,11 @@ class EntityView {
 
   get isShown(): boolean {
     return this.shown;
+  }
+
+  /** 头顶的世界坐标 y：眩晕星星与其它「挂头上」的特效都用它 */
+  get headTopY(): number {
+    return this.root.position.y + this.headTop;
   }
 
   /** 换列时顺手判定落脚：跨到接触帧才扬尘，站着不动不会一路冒土 */
@@ -486,6 +494,111 @@ export interface RendererInit {
   gpu?: 'webgpu' | 'webgl';
 }
 
+/** 星星纹理的生成器：只用到 `generateTexture`，不必把整个 Application 传进来 */
+type StarTextureFactory = Application['renderer'];
+
+/** 同屏最多几组眩晕星星：一份 = 2 颗，够覆盖一个屏幕里同时倒地的所有人 */
+const STUN_SLOTS = 6;
+/** 绕头顶一圈的角速度基准（ms）：快一点才读得出「转晕了」 */
+const STUN_SPIN_MS = 260;
+
+/**
+ * 眩晕星星：被创飞的人头顶绕两颗小星。
+ *
+ * 做成一个全局池而不是挂在 `EntityView` 上：200 人同屏时给每人常备两颗 Sprite
+ * 就是 400 个从不显示的对象。这里只有 6 个槽位、12 个 Sprite，
+ * 用完即回收，与脚下尘土池同一个思路。
+ */
+class StunStars {
+  readonly container = new Container();
+  private readonly texture: Texture;
+  private readonly sprites: Sprite[] = [];
+  /** 每个槽位绑定的实体 netId，0 表示空闲 */
+  private readonly ids = new Int32Array(STUN_SLOTS);
+  /** 每个槽位的消失时刻（performance.now 口径） */
+  private readonly until = new Float64Array(STUN_SLOTS);
+  private cursor = 0;
+
+  constructor(renderer: StarTextureFactory) {
+    // 3×3 的十字形硬边星：像素风里再小就只剩一个点，再大就糊成一团
+    const g = new Graphics();
+    g.rect(1, 0, 1, 3).fill(0xffffff);
+    g.rect(0, 1, 3, 1).fill(0xffffff);
+    this.texture = renderer.generateTexture({
+      target: g,
+      resolution: 1,
+      antialias: false,
+      textureSourceOptions: { scaleMode: 'nearest' },
+    });
+    g.destroy();
+
+    for (let i = 0; i < STUN_SLOTS * 2; i += 1) {
+      const sprite = new Sprite(this.texture);
+      sprite.anchor.set(0.5, 0.5);
+      sprite.tint = 0xffe08a;
+      sprite.visible = false;
+      this.container.addChild(sprite);
+      this.sprites.push(sprite);
+    }
+  }
+
+  /** 给某个实体点亮星星；重复命中只续期，不会占掉第二个槽位 */
+  set(id: number, untilMs: number): void {
+    for (let slot = 0; slot < STUN_SLOTS; slot += 1) {
+      if (this.ids[slot] === id) {
+        this.until[slot] = untilMs;
+        return;
+      }
+    }
+    const slot = this.cursor;
+    this.cursor = (this.cursor + 1) % STUN_SLOTS;
+    this.ids[slot] = id;
+    this.until[slot] = untilMs;
+  }
+
+  /** 每帧更新：绕头顶走一条扁椭圆，两个相位差 π，坐标吸附到整纹素 */
+  update(now: number, views: ReadonlyMap<number, EntityView>): void {
+    const angle = now / STUN_SPIN_MS;
+    for (let slot = 0; slot < STUN_SLOTS; slot += 1) {
+      const id = this.ids[slot]!;
+      const first = this.sprites[slot * 2]!;
+      const second = this.sprites[slot * 2 + 1]!;
+      if (id === 0) continue;
+      const view = views.get(id);
+      if (!view || now >= this.until[slot]! || !view.isShown) {
+        first.visible = false;
+        second.visible = false;
+        this.ids[slot] = 0;
+        continue;
+      }
+      const cx = view.root.position.x;
+      const cy = view.headTopY - 4;
+      // 只在整数纹素上落点：亚像素位置会让 3×3 的星糊成一团灰
+      first.position.set(cx + Math.round(Math.cos(angle) * 8), cy + Math.round(Math.sin(angle * 2) * 2));
+      second.position.set(
+        cx + Math.round(Math.cos(angle + Math.PI) * 8),
+        cy + Math.round(Math.sin(angle * 2 + Math.PI) * 2),
+      );
+      first.visible = true;
+      second.visible = true;
+    }
+  }
+
+  /** 星点全部收掉：实体离场或整层销毁时调用 */
+  clear(): void {
+    for (let slot = 0; slot < STUN_SLOTS; slot += 1) {
+      this.ids[slot] = 0;
+      this.sprites[slot * 2]!.visible = false;
+      this.sprites[slot * 2 + 1]!.visible = false;
+    }
+  }
+
+  destroy(): void {
+    this.container.destroy({ children: true });
+    this.texture.destroy(true);
+  }
+}
+
 export class GameRenderer {
   readonly app = new Application();
   private readonly world = new Container();
@@ -501,6 +614,8 @@ export class GameRenderer {
   private props?: PropsView;
   /** 北门迎宾地标：横幅与指路牌，构造期烘焙一次（ADR-0036） */
   private welcome?: WelcomeView;
+  /** 头顶眩晕星星：被发泄命中的角色脚下不倒，头上转圈（ADR-0051） */
+  private stunStars?: StunStars;
   /** 园区小动物与蝴蝶：纯客户端氛围，`?critters=0` 时整层不构造（ADR-0042） */
   private critters?: CritterField;
   /** 河道小鱼：与 critters 共用图集，`?fish=0` 时只关鱼（ADR-0045） */
@@ -698,6 +813,10 @@ export class GameRenderer {
 
     this.world.addChild(this.sortLayer.container);
 
+    // 星星在 y 排序层之后入场景：它绕在头顶，不该被树冠或角色身体挡住
+    this.stunStars = new StunStars(this.app.renderer);
+    this.world.addChild(this.stunStars.container);
+
     // 氛围层：地面小动物进 y 排序层（会被树冠挡住），蝴蝶单独一层浮在景物之上、昵称之下。
     // `?critters=0` 时整层不构造：烘焙与撒点都发生在构造函数里，关掉就是真的零开销。
     if (crittersEnabled && this.critterArt) {
@@ -888,6 +1007,17 @@ export class GameRenderer {
     this.views.get(id)?.showBubble(text, performance.now());
   }
 
+  /**
+   * 点亮头顶的眩晕星星。
+   *
+   * 时长由调用方给（与硬直同一个常量），渲染层不推断「为什么晕」——
+   * 将来若有别的动作也会让人晕，这条通路不用改。
+   */
+  setStun(id: number, durationMs: number): void {
+    if (!this.stunStars || durationMs <= 0) return;
+    this.stunStars.set(id, performance.now() + durationMs);
+  }
+
   tickBubbles(dtMs: number): void {
     const now = performance.now();
 
@@ -920,6 +1050,9 @@ export class GameRenderer {
     }
 
     for (let i = 0; i < count; i += 1) active[i]!.tickBubble(now);
+
+    // 星星与气泡同一个节拍：两者都挂在头顶，同一帧推进不会互相错位
+    this.stunStars?.update(now, this.views);
 
     this.fx?.update(dtMs);
     this.waterFx?.update(dtMs);
@@ -1117,6 +1250,7 @@ export class GameRenderer {
     for (const view of this.views.values()) view.destroy();
     this.views.clear();
     for (const texture of this.shadowTextures) texture.destroy(true);
+    this.stunStars?.destroy();
     this.fx?.destroy();
     this.waterFx?.destroy();
     this.wadingTexture?.destroy(true);

@@ -11,3 +11,4 @@ export * from './world/geometry';
 export * from './world/ribbon';
 export * from './world/layout';
 export * from './world/collision';
+export * from './world/vent';

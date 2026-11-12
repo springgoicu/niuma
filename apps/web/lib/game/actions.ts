@@ -36,14 +36,19 @@ export type InteractionIntent =
   /** 起身：释放座位并回到站立 */
   | { kind: 'stand' }
   | { kind: 'jump' }
-  /** `animated` 为 false 时只出声不播动画（行走中图集没有张嘴帧） */
-  | { kind: 'emote'; animated: boolean }
+  /**
+   * 发泄：出招动作 + 服务端裁决的命中。
+   *
+   * 任何姿态、任何速度下都可用——行走中按 E 是「打断移动直接出招」，
+   * 客户端会自己把姿态落回站姿并锁住位移，不存在「边走边撞」的滑步降级（ADR-0051）。
+   */
+  | { kind: 'vent' }
   | { kind: 'wave' }
   /** 与最近的可互动设施（售货机 / 饮水机 / 咖啡机）互动 */
   | { kind: 'interact' }
   /**
    * 低头咀嚼：图集没有吃草帧，动作只体现为一声空间化的咀嚼音与气泡。
-   * 与叫唤一样在任何姿态下都可用，不做站定限制（ADR-0048）。
+   * 与发泄一样在任何姿态下都可用，不做站定限制（ADR-0048）。
    */
   | { kind: 'graze' }
   /** 当前状态下不可用：提示文案交给 session 走瞬时 hint 通道 */
@@ -95,9 +100,9 @@ export function resolveInteraction(action: ActionKey, state: InteractionState): 
     case 'jump':
       // 跳跃是位移动作：坐 / 躺 / 行走中都能接，由 session 先起身再跳
       return { kind: 'jump' };
-    case 'emote':
-      // 叫唤始终出声；行走中图集没有张嘴帧，只出声不动画
-      return { kind: 'emote', animated: isStationary(state) };
+    case 'vent':
+      // 发泄是服务端权威的互动：这里只表达意图，命中与否交给服务端 Tick
+      return { kind: 'vent' };
     case 'wave':
       if (!isStationary(state)) return { kind: 'blocked', hint: HINT_WAVE_WHILE_WALKING };
       return { kind: 'wave' };
@@ -152,10 +157,10 @@ export function actionPresentation(action: ActionKey, state: PresentationState):
     case 'interact':
       return { active: false, unavailable: false };
     case 'graze':
-      // 与叫唤同属一次性动作：不进高亮态，也不因移动而不可用
+      // 与发泄同属一次性动作：不进高亮态，也不因移动而不可用
       return { active: false, unavailable: false };
-    case 'emote':
-      // 行走中仍然发声，所以不降级
+    case 'vent':
+      // 行走中也能出招（打断移动），所以永不降级
       return { active: false, unavailable: false };
     case 'wave': {
       // 行走中按了也没反应，提前显示不可用

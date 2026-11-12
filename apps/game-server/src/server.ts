@@ -43,6 +43,7 @@ import { applyMove } from './sim/movement';
 import { resolveSpawn } from './sim/resume';
 import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
+import { resolveVents } from './sim/vent';
 import { broadcastDespawn, refreshView, type Transport } from './sim/view';
 import { World } from './sim/world';
 
@@ -262,7 +263,7 @@ export function startGameServer(config: ServerConfig) {
         }
         return;
       }
-      // 只有坐 / 躺 / 起身走这个包：叫唤与跳随 20Hz 的 move 包上行（见 ADR-0018）
+      // 只有坐 / 躺 / 起身走这个包：发泄与跳随 20Hz 的 move 包上行（见 ADR-0051）
       if (action === ACTION.Stand) {
         broadcastSeats(seats.stand(player));
         return;
@@ -489,6 +490,11 @@ export function startGameServer(config: ServerConfig) {
       const socket = sockets.get(wsId);
       if (socket && socket.readyState === 1) socket.send(encodeQueueStatus(status));
     }
+
+    // 发泄结算必须跑在 runTick 之前：受害者被推开的坐标与躺姿要赶在同一 Tick 的
+    // dirty 广播里发出去。放到 runTick 之后会晚 50ms，旁观者先看到站着、再看到倒下。
+    const ventSeats = resolveVents(world, grid, seats, transport, now);
+    if (ventSeats.length > 0) broadcastSeats(ventSeats);
 
     const result = runTick(world, grid, transport, tickCount);
     tickSampler.push(result.duration);
