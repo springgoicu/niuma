@@ -117,7 +117,7 @@ server {
         add_header Cross-Origin-Embedder-Policy "require-corp" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;
         add_header X-Content-Type-Options "nosniff" always;
-        limit_rate 100k;
+        # 清单 gzip 后不到 4KB，限速没有意义，去掉以免与上面的首包策略不一致
         access_log off;
     }
 
