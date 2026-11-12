@@ -162,6 +162,23 @@ fi
 
 log "✔ 部署完成：${REMOTE_REV:0:8}"
 
+# ---- 通知其余游戏服节点各自更新 ----
+# 每台机器是一座独立世界，它跟不上不该让主站发版失败：这里只告警，不退出。
+# 9>&- 必须加：本进程持有 flock 的 fd 9，ssh 子进程继承后锁不会释放，
+# 下一次发版会一直报「已有部署在运行」——这个坑在 pm2 上踩过一次。
+if [ -n "${GAME_NODES:-}" ]; then
+  for node in $GAME_NODES; do
+    log "通知游戏服节点 $node"
+    if ssh -i "$HOME/.ssh/niuma_deploy" \
+           -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
+           "$node" "bash /srv/niuma/update-game.sh" 9>&-; then
+      log "  ✔ $node 已更新"
+    else
+      log "  ⚠ $node 更新失败（主站不受影响，可手工重跑 update-game.sh）"
+    fi
+  done
+fi
+
 # 触发器自己也住在仓库里。webhook.mjs 有更新时同步到运行位置，但不在这里重启服务：
 # 本进程是 webhook 的子进程，重启会把部署自己杀掉。重启留给 install.sh 重跑或人工一次。
 if [ -f /opt/niuma/webhook.mjs ] && ! cmp -s "$SRC_DIR/deploy/production/webhook.mjs" /opt/niuma/webhook.mjs; then
