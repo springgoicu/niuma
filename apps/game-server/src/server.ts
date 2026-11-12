@@ -1,6 +1,8 @@
 import type { ServerWebSocket } from 'bun';
 import {
   ACTION,
+  BOARD_METRIC_ALL,
+  BOARD_METRIC_LIST,
   CAREER_UPDATE_INTERVAL_MS,
   CHAT_HISTORY_FLAG,
   CHAT_HISTORY_REQUEST_INTERVAL_MS,
@@ -12,15 +14,18 @@ import {
   QUEUE_REJECT_REASON,
   TICK_MS,
   decodeAction,
+  decodeBoardRequest,
   decodeCareerReport,
   decodeChatHistoryRequest,
   decodeChatSend,
   decodeHello,
+  decodeLikeRequest,
   decodeMove,
   decodePing,
   decodeSetAppearance,
   decodeSetStatus,
   encodeAppearanceBroadcast,
+  encodeBoard,
   encodeCareerBroadcast,
   encodeChatHistory,
   encodeGraze,
@@ -33,6 +38,7 @@ import {
   quantizeCoord,
   sanitizeCareer,
   SYNC_FORMAT_LEGACY,
+  isAdLikeNickname,
   readOpCode,
   type CareerSummary,
   type SeatStateEntry,
@@ -41,7 +47,9 @@ import { AdmissionController, type HelloPayload } from './admission/controller';
 import type { ServerConfig } from './config';
 import { EgressMeter, RingSampler } from './metrics';
 import { SpatialGrid } from './spatial/grid';
+import { buildBoardSnapshot, canQueryBoard } from './sim/board';
 import { handleChat } from './sim/chat';
+import { handleLike } from './sim/like';
 import { ChatHistory, type ChatPage } from './sim/history';
 import { loadModerationFilter } from './sim/moderation';
 import { announceEnter, announceLeave } from './sim/notice';
@@ -210,9 +218,11 @@ export function startGameServer(config: ServerConfig) {
     const hello = decodeHello(data);
     // 昵称由客户端预检先挡一道，这里只是权威兜底：伪造 HELLO 也进不来违规名字
     const nameVerdict = moderation.inspect(hello.name);
-    if (nameVerdict.verdict !== 'allow') {
+    // 域名/邮箱形态：词库看不到标点（normalize 会剔除），只能按原文判
+    const adLikeName = isAdLikeNickname(hello.name);
+    if (adLikeName || nameVerdict.verdict !== 'allow') {
       console.warn(
-        `[moderation] name ${nameVerdict.verdict} ws=${ws.data.wsId} hits=${nameVerdict.hits}`,
+        `[moderation] name ${adLikeName ? 'ad-shape' : nameVerdict.verdict} ws=${ws.data.wsId} hits=${nameVerdict.hits}`,
       );
     }
     // 状态与昵称同一套审核：政治类清空（不能上屏），脏话用打码结果继续展示
@@ -226,7 +236,7 @@ export function startGameServer(config: ServerConfig) {
     const career = sanitizeIncomingCareer(hello.career, ws.data.wsId);
     career.reportedOnlineSec = 0;
     const payload: HelloPayload = {
-      name: nameVerdict.verdict === 'reject' ? FALLBACK_NICKNAME : nameVerdict.text,
+      name: adLikeName || nameVerdict.verdict === 'reject' ? FALLBACK_NICKNAME : nameVerdict.text,
       appearance: hello.appearance,
       status: statusVerdict && statusVerdict.verdict !== 'reject' ? statusVerdict.text : '',
       // 排队期间跟着 payload 一起等；放行时才由 admit 重新校验
@@ -397,6 +407,28 @@ export function startGameServer(config: ServerConfig) {
         const other = world.get(id);
         if (other) transport.send(other.wsId, packet);
       }
+      return;
+    }
+
+    if (op === OpCode.C2S_BOARD) {
+      // 按需查询：距离门 + 限频都收在 sim/board，dispatch 只负责解码与发送
+      if (!canQueryBoard(player, now)) return;
+      const requested = decodeBoardRequest(data);
+      if (requested === undefined) return;
+      player.lastBoardAt = now;
+      const metrics = requested === BOARD_METRIC_ALL ? BOARD_METRIC_LIST : [requested];
+      for (const metric of metrics) {
+        transport.send(player.wsId, encodeBoard(buildBoardSnapshot(world.players.values(), metric, now, player.id)));
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_LIKE) {
+      // 点赞裁决收在 sim/like：可见性、自赞、重复与限频都不进 Tick
+      const targetId = decodeLikeRequest(data);
+      if (targetId === undefined) return;
+      handleLike(player, targetId, now, world, transport);
+      return;
     }
   }
 

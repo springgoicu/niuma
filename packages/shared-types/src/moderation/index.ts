@@ -9,4 +9,5 @@
 export * from './types';
 export { BUILTIN_LEXICON } from './lexicon';
 export { createModerationFilter, getBuiltinFilter, inspectText, type ModerationFilter } from './matcher';
+export { isAdLikeNickname } from './nickname';
 export { normalizeWithMap, type NormalizedText } from './normalize';

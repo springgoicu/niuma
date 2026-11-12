@@ -3,6 +3,7 @@ import {
   BUILTIN_LEXICON,
   createModerationFilter,
   inspectText,
+  isAdLikeNickname,
   normalizeWithMap,
 } from '..';
 
@@ -120,5 +121,28 @@ describe('内置词库', () => {
   it('统计口径是实际参与匹配的去重词条数', () => {
     const counted = createModerationFilter({ political: ['a', 'a', ''], profanity: ['bb'] });
     expect(counted.counts).toEqual({ political: 1, profanity: 1 });
+  });
+});
+
+/**
+ * 广告形态：这条走原文正则而不是词库，因为 normalize 会剔掉 `.` 与 `@`，
+ * `.com` 在匹配前就只剩 `com`——写进词表会把 `welcome` 一起打码。
+ */
+describe('昵称形态', () => {
+  it('拦下域名、协议头、邮箱与社交号', () => {
+    for (const name of ['www.51cgf15.com', '51cgf15.com', 'https://x.cn', 'a@b.com', 'qq123456']) {
+      expect(isAdLikeNickname(name), name).toBe(true);
+    }
+  });
+
+  it('不误伤正常昵称', () => {
+    for (const name of ['设计狗', 'momo', 'robin', '1', 'very粉', 'version1.0', '26届美工牛博']) {
+      expect(isAdLikeNickname(name), name).toBe(false);
+    }
+  });
+
+  it('内置词库能识别常见低俗词', () => {
+    expect(inspectText('巨乳').verdict).toBe('mask');
+    expect(inspectText('操翻地球').verdict).toBe('mask');
   });
 });

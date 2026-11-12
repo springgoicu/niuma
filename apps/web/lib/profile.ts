@@ -6,6 +6,7 @@ import {
   MAX_NAME_DISPLAY_UNITS,
   displayWidth,
   inspectText,
+  isAdLikeNickname,
   sanitizeAppearance,
   truncateName,
   truncateStatus,
@@ -50,7 +51,14 @@ export function resolveProfileName(raw: string): string {
  * 直接对原始输入判会漏掉「第 17 个字之后才出现敏感词」这种边界。
  */
 export function checkProfileName(raw: string): ModerationResult {
-  return inspectText(truncateName(raw));
+  const text = truncateName(raw);
+  // 域名/邮箱/社交号形态没有任何正当昵称用途，直接拒绝。
+  // 这条必须跑在原文上：normalize 会剔掉 `.` `@`，`.com` 会变成 `com`，
+  // 塞进词表就会把 `welcome` 一起打码。
+  if (isAdLikeNickname(text)) {
+    return { verdict: 'reject', category: null, text, hits: 1 };
+  }
+  return inspectText(text);
 }
 
 /** 工牌名在界面上的完整呈现状态 */
