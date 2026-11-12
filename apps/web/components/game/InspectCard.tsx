@@ -3,16 +3,16 @@
 import { useEffect, useState } from 'react';
 import { Armchair, Cpu, MapPin, MessageSquareText, Timer, X } from 'lucide-react';
 import { formatOnline, poseLabel, seatLabel, type PlayerBadge } from '@/lib/game/badge';
-import type { GameSession } from '@/lib/game/session';
 import { SpeciesTag } from './Hud';
-
-/** 1Hz 轮询：在线时长按秒走，姿态 / 入座 / 所在地也顺带跟上，不必为详情节流 */
-const REFRESH_MS = 1000;
 
 interface InspectCardProps {
   /** 被查看的角色；null 表示不显示 */
   playerId: number | null;
-  getSession: () => GameSession | null;
+  /**
+   * 订阅某人的工牌。渲染线程按 4Hz 推送，收起后停止推送——
+   * 主线程不再每秒去问一次引擎要数据。
+   */
+  subscribeBadge: (id: number | null, onChange: (badge: PlayerBadge | null) => void) => void;
   onClose: () => void;
   compact?: boolean;
 }
@@ -44,10 +44,10 @@ function BadgeRow({
 /**
  * 他人工牌：点击 / 轻点园区里的角色后弹出。
  *
- * 只持有 `playerId`，展示数据每秒从会话重新取一次——这样对方移动、换姿态、
+ * 只持有 `playerId`，展示数据由渲染线程按 4Hz 推送——对方移动、换姿态、
  * 离开视野（despawn 后 badgeOf 返回 null）都会自动反映，不需要把整份模型同步进 store。
  */
-export function InspectCard({ playerId, getSession, onClose, compact = false }: InspectCardProps) {
+export function InspectCard({ playerId, subscribeBadge, onClose, compact = false }: InspectCardProps) {
   const [badge, setBadge] = useState<PlayerBadge | null>(null);
 
   useEffect(() => {
@@ -55,19 +55,17 @@ export function InspectCard({ playerId, getSession, onClose, compact = false }: 
       setBadge(null);
       return;
     }
-    const read = () => {
-      const next = getSession()?.badgeOf(playerId) ?? null;
+    subscribeBadge(playerId, (next) => {
       // 被查看者已离开世界：直接收起，避免留一张写着旧位置与旧时长的卡片
       if (!next) {
         onClose();
         return;
       }
       setBadge(next);
-    };
-    read();
-    const timer = setInterval(read, REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [playerId, getSession, onClose]);
+    });
+    // 收起时必须退订：渲染线程不再为这张卡片产生任何消息
+    return () => subscribeBadge(null, () => {});
+  }, [playerId, subscribeBadge, onClose]);
 
   if (playerId === null || badge === null) return null;
 

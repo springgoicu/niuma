@@ -4,9 +4,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
 import type { NavTargetId } from '@niuma/shared-types';
+import { BadgeCard } from '@/components/BadgeCard';
 import { useGameUi } from '@/lib/game-ui';
+import { startAttendanceClock } from '@/lib/game/attendance';
+import type { PlayerBadge } from '@/lib/game/badge';
+import { createGameClient } from '@/lib/game/client/create-game-client';
+import type { GameClient } from '@/lib/game/client/game-client';
 import type { ActionKey } from '@/lib/game/input';
-import { GameSession } from '@/lib/game/session';
 import { loadSnapshot, resumeForPark } from '@/lib/game/snapshot';
 import type { ParkEntry } from '@/lib/park';
 import {
@@ -19,7 +23,7 @@ import {
 } from '@/lib/profile';
 import { ActionBar } from './ActionBar';
 import { ChatDock } from './ChatDock';
-import { ConnectionBanner, OnlineBadge, PlayerCard, SfxToggle } from './Hud';
+import { ConnectionBanner, OnlineBadge, SfxToggle } from './Hud';
 import { InspectCard } from './InspectCard';
 import { JoinGate } from './JoinGate';
 import { MiniMap } from './MiniMap';
@@ -54,7 +58,19 @@ export function GameViewport({
   initialSpecies,
 }: GameViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const sessionRef = useRef<GameSession | null>(null);
+  const clientRef = useRef<GameClient | null>(null);
+  /** 小地图容器：子组件的 ref 回调先于本组件的 effect 触发，所以先存下来，客户端就绪后再挂载 */
+  const minimapElRef = useRef<HTMLDivElement | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  /**
+   * 启动用的最新工牌。
+   *
+   * 状态编辑会改 `profile`，但那是「同一场会话里改一行字」，不该重建 WebSocket
+   * 与渲染线程——所以启动 effect 只依赖「有没有工牌」，具体内容从 ref 读最新值。
+   */
+  const profileRef = useRef<Profile | null>(profile);
+  profileRef.current = profile;
+  const entering = profile !== null;
   const isTouch = useIsTouch();
   const isPortrait = useIsPortrait();
   // 竖屏只决定触控区与 HUD 的排布；世界倍率由 renderer 按屏幕宽高比自适应
@@ -64,7 +80,6 @@ export function GameViewport({
   // 输入法弹起时 dvh 不变，用可视视口高度把舞台缩到键盘之上
   const viewport = useVisualViewportSize();
   const autoImmersiveRef = useRef(false);
-  const [profile, setProfile] = useState<Profile | null>(null);
   const [checked, setChecked] = useState(false);
   /** 正在查看的角色 netId；null 表示没有打开详情 */
   const [inspectId, setInspectId] = useState<number | null>(null);
@@ -75,11 +90,7 @@ export function GameViewport({
   const [notice, setNotice] = useState<string | null>(
     fallbackFrom ? `${fallbackFrom}暂时不可达，已进入${parkName}` : null,
   );
-  /**
-   * 只有多园区部署时「切换园区」才有意义。
-   * 同一个开关也决定工牌要不要带园区名前缀：单园区时顶着「主园区 · 工作区」
-   * 只是多一段没有信息量的字，不如保持改造前只显示区域名。
-   */
+  /** 只有多园区部署时「切换园区」才有意义 */
   const canSwitchPark = parks.length > 1;
 
   const setStatus = useGameUi((state) => state.setStatus);
@@ -98,7 +109,7 @@ export function GameViewport({
    * 再请求聚焦。聚焦走自增序号——面板已展开但失焦时，把 chatOpen 再设 true 不会触发 effect。
    */
   const openChat = useCallback(() => {
-    sessionRef.current?.clearMovement();
+    clientRef.current?.clearMovement();
     useGameUi.getState().requestChat();
   }, []);
 
@@ -128,6 +139,13 @@ export function GameViewport({
     setChecked(true);
   }, [initialName, initialSpecies]);
 
+  // 进入园区即开始本地考勤：1 秒心跳走内存，离开页面 / 卸载时停表并落盘。
+  // 只依赖「有没有工牌」：改状态不应该把本次在岗计时清零。
+  useEffect(() => {
+    if (!entering) return;
+    return startAttendanceClock();
+  }, [entering]);
+
   // 兜底告知条只播一次：入场几秒后收起，别在游戏画面上常驻一条运维信息
   useEffect(() => {
     if (!notice) return;
@@ -153,75 +171,114 @@ export function GameViewport({
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!profile || !host || sessionRef.current) return;
+    const current = profileRef.current;
+    if (!entering || !current || !host || clientRef.current) return;
+    let cancelled = false;
+    let started: GameClient | null = null;
     // 园区在会话构造期绑定：重连沿用同一个端点，不会在断线恢复时漂到另一座园区
-    const session = new GameSession({
-      onStatus: (status, detail) => setStatus(status, detail),
-      onQueue: (queue) => setQueue(queue),
-      onRejected: (reason) => setRejected(reason),
-      onStats: (stats) => setStats(stats),
-      onChat: (entry) => pushMessage(entry),
-      onChatHistory: (entries, meta) => applyHistory(entries, meta),
+    void createGameClient({
+      wsUrl,
+      parkId,
+      // 灰度开关（?zoom/?flat/?light/?season/?render）原样转给渲染线程：Worker 里没有 location
+      search: window.location.search,
+      callbacks: {
+        onStatus: (status, detail) => setStatus(status, detail),
+        onQueue: (queue) => setQueue(queue),
+        onRejected: (reason) => setRejected(reason),
+        onStats: (stats) => setStats(stats),
+        onChat: (entry) => pushMessage(entry),
+        onChatHistory: (entries, meta) => applyHistory(entries, meta),
+        onHint: (next) => setHint(next),
+        onLocalState: (state) => setLocalState(state),
+        onNav: (nav) => setNavTarget(nav),
+      },
+      // Enter 与点选都发生在主线程：键盘监听不经过渲染线程，命中判定在渲染线程
       onRequestChat: openChat,
-      onHint: (next) => setHint(next),
-      onLocalState: (state) => setLocalState(state),
-      onNav: (nav) => setNavTarget(nav),
-    }, { wsUrl, parkId });
-    sessionRef.current = session;
-    // 上次的落点只作为「入场偏好」交给服务端裁决：座位可能已被占、坐标可能已经不可走。
-    // 换过园区时 resumeForPark 会把它丢掉，角色从新园区门口开始
-    session.start(host, profile, resumeForPark(loadSnapshot(), parkId)).catch((error: unknown) => {
-      console.error('[game] session failed', error);
-      setStatus('error', '渲染器初始化失败');
-    });
+      onPick: (id) => setInspectId(id),
+    })
+      .then((client) => {
+        if (cancelled) {
+          client.stop();
+          return;
+        }
+        started = client;
+        clientRef.current = client;
+        // 小地图可能早于客户端挂载：先补一次移交，之后的挂载走 ref 回调
+        if (minimapElRef.current) client.attachMinimap(minimapElRef.current);
+        // 上次的落点只作为「入场偏好」交给服务端裁决：座位可能已被占、坐标可能已经不可走。
+        // 换过园区时 resumeForPark 会把它丢掉，角色从新园区门口开始
+        return client.start(host, current, resumeForPark(loadSnapshot(), parkId));
+      })
+      .catch((error: unknown) => {
+        console.error('[game] session failed', error);
+        setStatus('error', '渲染器初始化失败');
+      });
     return () => {
-      session.stop();
-      sessionRef.current = null;
+      cancelled = true;
+      started?.stop();
+      clientRef.current = null;
     };
-  }, [profile, wsUrl, parkId, setStatus, setStats, pushMessage, applyHistory, openChat, setHint, setLocalState, setNavTarget]);
+  }, [entering, wsUrl, parkId, setStatus, setStats, pushMessage, applyHistory, openChat, setHint, setLocalState, setNavTarget]);
 
-  const getSession = useCallback(() => sessionRef.current, []);
-  const handleChat = useCallback((text: string) => sessionRef.current?.sendChat(text), []);
+  /** 小地图容器回调：先于 effect 触发，客户端未就绪时由 client.start 之后补挂 */
+  const minimapRef = useCallback((host: HTMLDivElement | null) => {
+    minimapElRef.current = host;
+    if (host) clientRef.current?.attachMinimap(host);
+  }, []);
+
+  /** 追看工牌：只在被查看时让渲染线程按 4Hz 推送，收起后不再产生消息 */
+  const subscribeBadge = useCallback(
+    (id: number | null, onChange: (badge: PlayerBadge | null) => void) => {
+      clientRef.current?.subscribeBadge(id, onChange);
+    },
+    [],
+  );
+
+  const handleChat = useCallback((text: string) => clientRef.current?.sendChat(text), []);
   /**
    * 上翻到顶：先点亮加载态，再发请求。加载态由响应里的 `applyHistory` 清掉，
    * ChatDock 另有超时兜底——离线时请求会石沉大海，不能让「正在加载」永远转着。
    */
   const handleLoadHistory = useCallback((cursor: number) => {
     useGameUi.getState().setHistoryLoading(true);
-    sessionRef.current?.requestHistory(cursor);
+    clientRef.current?.requestHistory(cursor);
     // 离线时请求会石沉大海：超时自己收起加载态，不让「正在加载」永远转着
     window.setTimeout(() => useGameUi.getState().setHistoryLoading(false), 4000);
   }, []);
   const handleAction = useCallback((action: ActionKey) => {
-    sessionRef.current?.perform(action);
+    clientRef.current?.perform(action);
   }, []);
   const handleMove = useCallback((x: number, y: number) => {
-    sessionRef.current?.setMoveVector(x, y);
+    clientRef.current?.setMoveVector(x, y);
   }, []);
   const handleNavigate = useCallback((id: NavTargetId) => {
-    sessionRef.current?.navigateTo(id);
+    clientRef.current?.navigateTo(id);
   }, []);
   const handleCancelNavigation = useCallback(() => {
-    sessionRef.current?.cancelNavigation();
+    clientRef.current?.cancelNavigation();
   }, []);
 
   /**
-   * 点选角色：统一用屏幕坐标减舞台 rect 换算局部坐标，命中远端角色就打开工牌，
-   * 点空白 / 自己则收起。摇杆热区在竖屏只占左下，不能再拿它自己的 offset 当舞台坐标。
+   * 点选角色：统一用屏幕坐标减舞台 rect 换算局部坐标。命中判定在渲染线程
+   * （角色位置只在那里），结果经 `onPick` 回调回来再决定展开 / 收起工牌。
    */
   const handlePick = useCallback((clientX: number, clientY: number) => {
     const host = hostRef.current;
     if (!host) return;
     const rect = host.getBoundingClientRect();
-    const badge = sessionRef.current?.inspectAt(clientX - rect.left, clientY - rect.top) ?? null;
-    setInspectId(badge?.id ?? null);
+    clientRef.current?.pick(clientX - rect.left, clientY - rect.top);
+  }, []);
+
+  /** 打开档案弹窗前先清移动输入：弹窗期间键盘事件被吞，但已按住的键不能留在掩码里 */
+  const handleDetailOpen = useCallback(() => {
+    clientRef.current?.clearMovement();
   }, []);
 
   const handleCloseInspect = useCallback(() => setInspectId(null), []);
   const handleRetry = useCallback(() => {
     useGameUi.getState().setRejected(0);
     useGameUi.getState().setQueue(null);
-    sessionRef.current?.retry();
+    clientRef.current?.retry();
   }, []);
 
   /**
@@ -235,7 +292,7 @@ export function GameViewport({
       const next: Profile = { ...profile, status };
       setProfile(next);
       saveProfile(next);
-      sessionRef.current?.setStatus(status);
+      clientRef.current?.setStatus(status);
     },
     [profile],
   );
@@ -309,13 +366,14 @@ export function GameViewport({
                   portrait ? 'z-30' : ''
                 }`}
               >
-                <PlayerCard
+                <BadgeCard
                   name={profile.name}
                   species={profile.appearance.species}
+                  appearance={profile.appearance}
                   statusText={profile.status}
                   onStatusChange={handleStatusChange}
-                  parkName={canSwitchPark ? parkName : undefined}
                   compact={isTouch}
+                  onDetailOpen={handleDetailOpen}
                 />
                 {/* 聊天浮层挂在工牌下方（top-full）而不是写死偏移：工牌展开时它会自己让位，
                     且不参与 HUD 的纵向 flex，不会把底部操作区顶出屏幕 */}
@@ -380,7 +438,11 @@ export function GameViewport({
                 </div>
                 {/* 他人工牌：桌面贴在右上角控件列下方，宽度与自身工牌接近 */}
                 {!isTouch && (
-                  <InspectCard playerId={inspectId} getSession={getSession} onClose={handleCloseInspect} />
+                  <InspectCard
+                    playerId={inspectId}
+                    subscribeBadge={subscribeBadge}
+                    onClose={handleCloseInspect}
+                  />
                 )}
               </div>
             </div>
@@ -395,20 +457,26 @@ export function GameViewport({
                 <div className="hidden flex-1 justify-center md:flex">
                   <ActionBar onAction={handleAction} onChat={openChat} />
                 </div>
-                <MiniMap getSession={getSession} />
+                <MiniMap hostRef={minimapRef} />
               </div>
             )}
           </div>
 
           {/* 手机端他人工牌浮在动作盘上方居中：不铺遮罩、不与右上角导览卡抢位置。
-              竖屏动作盘是 2 列 × 3 行（184px）+ 安全区，浮层要跟着抬到 232px 之上 */}
+              七个动作让竖屏动作盘变成 2 列 × 4 行（248px）、横屏 3 列 × 3 行（196px），
+              浮层与提示要跟着抬到对应高度之上（ADR-0048） */}
           {isTouch && (
             <div
               className={`pointer-events-none absolute left-1/2 z-30 -translate-x-1/2 ${
-                portrait ? 'bottom-[232px]' : 'bottom-[152px]'
+                portrait ? 'bottom-[296px]' : 'bottom-[220px]'
               }`}
             >
-              <InspectCard playerId={inspectId} getSession={getSession} onClose={handleCloseInspect} compact />
+              <InspectCard
+                playerId={inspectId}
+                subscribeBadge={subscribeBadge}
+                onClose={handleCloseInspect}
+                compact
+              />
             </div>
           )}
 
@@ -426,7 +494,7 @@ export function GameViewport({
             <div
               role="status"
               className={`pointer-events-none absolute left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${
-                portrait ? 'bottom-[232px]' : isTouch ? 'bottom-40' : 'bottom-24'
+                portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-24'
               }`}
             >
               {hint}

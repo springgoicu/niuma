@@ -2,11 +2,12 @@
 
 import { Container, Graphics, Rectangle, Sprite, Text, type Application, type Texture } from 'pixi.js';
 import { WELCOME_LANDMARKS } from '@niuma/shared-types';
+import { navReadings } from './nav';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
 
 /**
- * 中央迎宾地标（ADR-0047）：霓虹拱门 + 园区导览地图立牌 + 打卡签到处。
+ * 中央迎宾地标（ADR-0047 / ADR-0049）：霓虹拱门 + 四向园区导览牌。
  *
  * 与 PropsView 同一条纪律：形体在构造期用 Graphics 烘焙成 1:1 纹理，
  * 中文交给 Pixi `Text`（系统 CJK 字体栈，resolution 跟设备像素走），
@@ -29,6 +30,7 @@ const COLOR = {
   woodEdge: 0x6b4a32,
   paper: 0xfff6e0,
   paperEdge: 0x8a6446,
+  clothLight: 0xfff3c9,
   mint: 0x8fe3c7,
   mintDark: 0x5cc4a0,
   /** 薄荷字的墨色档：奶油底牌上仍保证小字号可读 */
@@ -36,15 +38,10 @@ const COLOR = {
   mintGlow: 0xd9fff2,
   iron: 0x4a4f58,
   ironLight: 0x6f7680,
-  grass: 0x9fc47a,
-  water: 0x63b3c2,
-  dirt: 0xd1ae86,
-  pin: 0xc4827b,
 } as const;
 
 const ARCH = WELCOME_LANDMARKS.arch;
 const DIRECTORY = WELCOME_LANDMARKS.directory;
-const CHECKIN = WELCOME_LANDMARKS.checkin;
 
 /** 一个带 1px 描边的圆角矩形：与 props.ts 的 box 同一种画法 */
 function box(g: Graphics, x: number, y: number, w: number, h: number, fill: number, line: number = COLOR.ink): void {
@@ -100,53 +97,74 @@ function drawArch(g: Graphics, w: number, h: number): void {
   }
 }
 
-/** 园区导览地图立牌：木柱 + 纸面小地图（草块 / 湖 / 路 / 你在这里） */
-function drawDirectory(g: Graphics, w: number, h: number): void {
-  g.ellipse(w / 2, h - 1, 24, 3).fill({ color: COLOR.shadow, alpha: 0.22 });
+/** 八向单位向量（屏幕坐标：y 向下），下标与 NavOctant 一致 */
+const OCTANT_VECTORS: ReadonlyArray<readonly [number, number]> = [
+  [0, -1],
+  [0.7, -0.7],
+  [1, 0],
+  [0.7, 0.7],
+  [0, 1],
+  [-0.7, 0.7],
+  [-1, 0],
+  [-0.7, -0.7],
+];
 
-  // 两根木柱
-  for (const x of [8, w - 12]) {
-    box(g, x, 44, 4, h - 46, COLOR.woodDark, COLOR.woodEdge);
-    box(g, x + 1, 46, 2, h - 50, COLOR.woodLight, COLOR.woodDark);
-  }
-
-  // 纸面
-  box(g, 2, 2, w - 4, 46, COLOR.woodDark, COLOR.woodEdge);
-  box(g, 4, 4, w - 8, 42, COLOR.paper, COLOR.paperEdge);
-  g.rect(4, 16, w - 8, 28).fill(COLOR.grass);
-
-  // 小地图：两片水、两条路、一个打卡点
-  g.ellipse(w * 0.64, 30, 9, 6).fill(COLOR.water);
-  g.ellipse(w * 0.64, 30, 5, 3).fill({ color: COLOR.mintGlow, alpha: 0.5 });
-  g.ellipse(w * 0.24, 38, 5, 4).fill(COLOR.water);
-  g.rect(0, 26, w, 2).fill(COLOR.dirt);
-  g.rect(w * 0.42, 16, 2, 28).fill(COLOR.dirt);
-  g.rect(w * 0.3, 33, 4, 4).fill(COLOR.pin);
-  g.rect(w * 0.3 + 1, 34, 2, 2).fill(COLOR.paper);
-
-  // 顶部标题条 + 底部「你在这里」的深色字条：小字号在草地上仍读得清
-  g.rect(4, 4, w - 8, 12).fill(COLOR.paper);
-  neonLine(g, 6, 14, w - 12, 1);
-  g.rect(8, 38, w - 16, 8).fill(COLOR.inkSoft);
+/**
+ * 12×12 的像素箭头：尾杆 2px + 三角箭头。
+ * 坐标全部取整，烘焙后仍是硬边；八向各画一遍，不靠旋转（旋转会把 1px 描边糊开）。
+ */
+function drawArrow(g: Graphics, cx: number, cy: number, octant: number): void {
+  const [ux, uy] = OCTANT_VECTORS[((octant % 8) + 8) % 8]!;
+  const px = -uy;
+  const py = ux;
+  const tipX = Math.round(cx + ux * 5);
+  const tipY = Math.round(cy + uy * 5);
+  const jointX = Math.round(cx + ux * 1.4);
+  const jointY = Math.round(cy + uy * 1.4);
+  const tailX = Math.round(cx - ux * 5);
+  const tailY = Math.round(cy - uy * 5);
+  g.poly([tailX + px, tailY + py, tailX - px, tailY - py, jointX - px, jointY - py, jointX + px, jointY + py]).fill(
+    COLOR.mintDark,
+  );
+  g.poly([
+    tipX,
+    tipY,
+    Math.round(jointX + px * 3.2),
+    Math.round(jointY + py * 3.2),
+    Math.round(jointX - px * 3.2),
+    Math.round(jointY - py * 3.2),
+  ]).fill(COLOR.mintDark);
 }
 
-/** 打卡签到处：一根像素立柱，顶部纸牌 + 中间小屏 + 薄荷进度条 */
-function drawCheckin(g: Graphics, w: number, h: number): void {
-  g.ellipse(w / 2, h - 1, 12, 3).fill({ color: COLOR.shadow, alpha: 0.22 });
-  box(g, 2, h - 8, w - 4, 8, COLOR.ironLight, COLOR.iron);
-  box(g, 5, 14, w - 10, h - 22, COLOR.woodLight, COLOR.woodDark);
-  box(g, 3, 1, w - 6, 15, COLOR.paper, COLOR.paperEdge);
-  neonLine(g, 5, 14, w - 10, 1);
+/**
+ * 四向指路牌：一根木柱上叠四块纸牌，箭头方向由 NAV_TARGETS 的真实方位决定。
+ * 横坐标全部由传入画布推导，96×92 时与 ADR-0047 之前的像素坐标逐一重合。
+ */
+function drawSignpost(g: Graphics, w: number, h: number, arrows: readonly number[]): void {
+  const plateX = Math.round((w - 72) / 2);
+  const tagX = Math.round((w - 52) / 2);
+  const tagY = h - 12;
 
-  // 小屏：深铁框 + 薄荷底 + 一个像素对勾
-  box(g, 6, 22, w - 12, 16, COLOR.iron, COLOR.ink);
-  g.rect(8, 24, w - 16, 12).fill(COLOR.mintDark);
-  g.rect(10, 28, 2, 2).fill(COLOR.paper);
-  g.rect(12, 30, 2, 2).fill(COLOR.paper);
-  g.rect(14, 28, 4, 2).fill(COLOR.mintGlow);
+  g.ellipse(w / 2, h - 1, 24, 3).fill({ color: COLOR.shadow, alpha: 0.22 });
+  box(g, w / 2 - 4, 4, 8, h - 4, COLOR.woodLight, COLOR.woodDark);
+  g.rect(w / 2 - 2, 8, 1, h - 14).fill(COLOR.clothLight);
 
-  // 底部一条指示灯
-  g.rect(8, h - 14, w - 16, 2).fill({ color: COLOR.mint, alpha: 0.6 });
+  // 顶牌：园区导览
+  box(g, plateX, 0, 72, 14, COLOR.paper, COLOR.paperEdge);
+  g.rect(plateX, 0, 4, 14).fill(COLOR.mintDark);
+  // 标题左侧的菱形记号：读作「导览」，不冒充指北针
+  g.poly([plateX + 12, 3, plateX + 16, 7, plateX + 12, 11, plateX + 8, 7]).fill(COLOR.mintDark);
+
+  // 四块设施牌：自上而下按 NAV_TARGETS 顺序
+  for (let i = 0; i < 4; i += 1) {
+    const top = 16 + i * 16;
+    box(g, 6, top, w - 12, 14, COLOR.paper, COLOR.paperEdge);
+    g.rect(6, top + 13, w - 12, 1).fill(COLOR.clothLight);
+    drawArrow(g, 20, top + 7, arrows[i] ?? 0);
+  }
+
+  // 底牌：反色小标签，给「你在这里」一个视觉落点
+  box(g, tagX, tagY, 52, 10, COLOR.inkSoft, COLOR.woodDark);
 }
 
 interface Landmark {
@@ -161,8 +179,7 @@ export class WelcomeView {
   /** 构造期一次性建成；`devicePxPerTexel` 决定中文位图的分辨率 */
   build(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
     this.buildArch(depth, renderer, devicePxPerTexel);
-    this.buildDirectory(depth, renderer, devicePxPerTexel);
-    this.buildCheckin(depth, renderer, devicePxPerTexel);
+    this.buildSignpost(depth, renderer, devicePxPerTexel);
   }
 
   private addText(
@@ -238,10 +255,13 @@ export class WelcomeView {
     this.landmarks.push({ root, texture });
   }
 
-  private buildDirectory(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
-    const texture = bake(renderer, (g) => drawDirectory(g, DIRECTORY.width, DIRECTORY.height), {
-      frame: new Rectangle(0, 0, DIRECTORY.width, DIRECTORY.height),
-    });
+  private buildSignpost(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
+    const readings = signReadings();
+    const texture = bake(
+      renderer,
+      (g) => drawSignpost(g, DIRECTORY.width, DIRECTORY.height, readings.map((reading) => reading.octant)),
+      { frame: new Rectangle(0, 0, DIRECTORY.width, DIRECTORY.height) },
+    );
     const root = new Container();
     root.position.set(DIRECTORY.x, DIRECTORY.y);
     const sprite = new Sprite(texture);
@@ -252,55 +272,30 @@ export class WelcomeView {
     this.addText(root, devicePxPerTexel, {
       text: '园区导览',
       x: 0,
-      y: base + 9,
-      size: 9,
+      y: base + 7,
+      size: 8,
       weight: '600',
       fill: COLOR.inkSoft,
-      spacing: 1,
     });
+    for (let i = 0; i < readings.length; i += 1) {
+      this.addText(root, devicePxPerTexel, {
+        text: readings[i]!.target.name,
+        x: -DIRECTORY.width / 2 + 30,
+        y: base + 23 + i * 16,
+        size: 9,
+        fill: COLOR.inkSoft,
+        anchorX: 0,
+      });
+    }
     this.addText(root, devicePxPerTexel, {
       text: '你在这里',
       x: 0,
-      y: base + 43,
-      size: 6,
+      y: base + DIRECTORY.height - 7,
+      size: 7,
       fill: COLOR.paper,
-      spacing: 1,
     });
 
     depth.add(DIRECTORY.y, root);
-    this.landmarks.push({ root, texture });
-  }
-
-  private buildCheckin(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
-    const texture = bake(renderer, (g) => drawCheckin(g, CHECKIN.width, CHECKIN.height), {
-      frame: new Rectangle(0, 0, CHECKIN.width, CHECKIN.height),
-    });
-    const root = new Container();
-    root.position.set(CHECKIN.x, CHECKIN.y);
-    const sprite = new Sprite(texture);
-    sprite.anchor.set(0.5, 1);
-    root.addChild(sprite);
-
-    const base = -CHECKIN.height;
-    this.addText(root, devicePxPerTexel, {
-      text: '打卡',
-      x: 0,
-      y: base + 7,
-      size: 7,
-      weight: '600',
-      fill: COLOR.inkSoft,
-      spacing: 1,
-    });
-    this.addText(root, devicePxPerTexel, {
-      text: '签到',
-      x: 0,
-      y: base + 16,
-      size: 6,
-      fill: COLOR.inkSoft,
-      spacing: 1,
-    });
-
-    depth.add(CHECKIN.y, root);
     this.landmarks.push({ root, texture });
   }
 
@@ -319,4 +314,9 @@ export class WelcomeView {
     this.landmarks.length = 0;
     this.texts.length = 0;
   }
+}
+
+/** 指路牌按自己的位置计算八向：移动地标不需要回来改箭头 */
+function signReadings() {
+  return navReadings(DIRECTORY.x, DIRECTORY.y);
 }

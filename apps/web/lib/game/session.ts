@@ -1,10 +1,9 @@
-'use client';
-
 import {
   ACTION,
   CHAT_HISTORY_FLAG,
   CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
+  GRAZE_COOLDOWN_MS,
   MOVE_SPEED,
   NAV_TARGETS,
   QUEUE_REJECT_REASON,
@@ -20,6 +19,7 @@ import {
   packState,
   quantizeCoord,
   readSync,
+  readSyncTick,
   regionAt,
   resolveMotionInto,
   seatById,
@@ -42,19 +42,28 @@ import {
   type SystemNoticePacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
+import { requestBuildCheck } from '../build-version';
 import { NetClient } from '../net/client';
 import type { PlayerBadge } from './badge';
 import { advanceOnDuty } from './duty';
-import { saveSnapshot, toSnapshotPatch } from './snapshot';
+import { toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
 import { seatLift } from './seat-art';
 import { NEVER_SENT, shouldSendMove, type MoveSample } from './move-send';
-import { sfx } from './sfx';
 import { Ecs, Local, Motion, POSE, Position } from './ecs';
-import { INTERP_DELAY_MS, type RemoteSample } from './interp';
-import { InputController, type ActionKey } from './input';
-import { nearestInteractiveProp, pickLine, snoreDue } from './interactions';
+import type { RemoteSample } from './interp';
+import { JitterBuffer } from './jitter';
+import { ACTION_BY_CODE, directionFromMask, type ActionKey } from './input';
+import type { ViewportInfo } from './runtime/control-channel';
+import type { AudioEvent, EngineEnv, SessionProfile } from './runtime/engine-env';
+import {
+  nearestInteractivePropInto,
+  pickGrazeLine,
+  pickLine,
+  snoreDue,
+  type InteractiveTarget,
+} from './interactions';
 import { jumpLiftTexels, jumpShadowFor } from './pony-motion';
 import { Navigator } from './navigator';
 import { findPath } from './pathfinding';
@@ -110,7 +119,6 @@ export interface SessionCallbacks {
   onChat(entry: ChatEntry): void;
   /** 历史聊天页：`replace` 时整表替换（首屏 / 重连），否则整页前插 */
   onChatHistory(entries: ChatEntry[], meta: { replace: boolean; hasMore: boolean }): void;
-  onRequestChat(): void;
   /** 附近可用座位、当前入座或被拦下的动作提示；null 表示不显示 */
   onHint(hint: string | null): void;
   /** 本地姿态、入座状态与座位种类：动作按钮据此显示激活 / 不可用态，只在变化时回调 */
@@ -170,10 +178,18 @@ export class GameSession {
     this.tracks.sit!,
     this.tracks.lie!,
   ];
-  private readonly input = new InputController();
+  /**
+   * 手动输入输出槽：每帧从控制块解算一次，之后 stepLocal 直接读。
+   * 与 `navVector` 分开，寻路方向不会覆盖手按方向。
+   */
+  private readonly manual = { x: 0, y: 0 };
+  /** 摇杆输出槽：控制块读出的定点值，帧循环里复用 */
+  private readonly touch = { x: 0, y: 0 };
+  /** 视口输出槽：每帧从控制块读一次，尺寸没变时 `readViewport` 直接返回 false */
+  private readonly viewport: ViewportInfo = { width: 0, height: 0, dpr: 1 };
   /** 自动寻路：路点推进与卡死判定都在 Navigator 里，会话只负责启停 */
   private readonly navigator = new Navigator();
-  /** 导航方向的复用槽位：与 `input.vector()` 的输出分开，互不覆盖 */
+  /** 导航方向的复用槽位：与手动输入分开，互不覆盖 */
   private readonly navVector = { x: 0, y: 0 };
   private readonly names = new Map<number, string>();
   /** netId → 物种：工牌与点击详情共用，换装广播时同步 */
@@ -202,6 +218,11 @@ export class GameSession {
   /** 互动节流与台词轮转序号：连按同一台机器也要隔一拍 */
   private interactAt = 0;
   private interactCount = 0;
+  /** 设施查询输出槽：F 键在按键栈里调用，不为一次查询造字面量 */
+  private readonly interactTarget: InteractiveTarget = { kind: 'vending', x: 0, y: 0 };
+  /** 咀嚼节流与台词轮转：本地与服务端共用 500ms 口径（ADR-0048） */
+  private grazeAt = 0;
+  private grazeCount = 0;
   /** 躺床计时：lieAt 是躺下时刻，snoreAt 是上一次「Zzz…」 */
   private lieAt = 0;
   private snoreAt = 0;
@@ -239,6 +260,8 @@ export class GameSession {
   private fps = 60;
   private ping = 0;
   private disposed = false;
+  /** 自适应回放延迟：RTT p95 + 传输抖动，替代固定的 INTERP_DELAY_MS */
+  private readonly jitter = new JitterBuffer();
   /** 采样输出槽：帧循环里复用，不产生分配 */
   private readonly sample: RemoteSample = { x: 0, y: 0, state: 0 };
   /** 位移解算输出槽：与服务端共用同一个零分配变体 */
@@ -248,6 +271,7 @@ export class GameSession {
 
   constructor(
     private readonly callbacks: SessionCallbacks,
+    private readonly env: EngineEnv,
     private readonly options: GameSessionOptions = {},
   ) {}
 
@@ -255,20 +279,21 @@ export class GameSession {
     return this.renderer.backend;
   }
 
-  async start(
-    host: HTMLElement,
-    profile: { name: string; appearance: CharacterAppearance; status?: string },
-    resume?: ResumeState,
-  ): Promise<void> {
+  async start(profile: SessionProfile, resume?: ResumeState): Promise<void> {
     this.callbacks.onStatus('connecting');
-    await this.renderer.init(host);
+    // 首帧就用真实视口：宿主在 start 之前已经把尺寸写进控制块
+    this.env.readViewport(this.viewport);
+    await this.renderer.init({
+      canvas: this.env.canvas,
+      width: this.viewport.width,
+      height: this.viewport.height,
+      dpr: this.viewport.dpr,
+      search: this.env.search,
+      fontsReady: () => this.env.fontsReady(),
+    });
     if (this.disposed) return;
     this.renderer.app.ticker.add(this.tick);
     this.statsAt = performance.now();
-
-    // pagehide 比 beforeunload 可靠：移动端与 bfcache 场景只有它会触发
-    window.addEventListener('pagehide', this.persistNow);
-    document.addEventListener('visibilitychange', this.onVisibilityChange);
 
     // 端点由 /play 按园区白名单解析后传进来；没传时才退回 NetClient 的默认推导
     this.net = new NetClient({
@@ -279,6 +304,8 @@ export class GameSession {
       onClose: () => {
         this.persistNow();
         this.callbacks.onStatus('offline', '连接中断，正在重连');
+        // 部署会重启游戏服：断线即查版本，避免带着旧地图重连后撞上空气墙
+        requestBuildCheck();
       },
       onQueue: (status) => {
         this.callbacks.onQueue(status);
@@ -318,25 +345,20 @@ export class GameSession {
         this.renderer.setStatus(id, status);
       },
       onSeatState: (entries) => this.handleSeatState(entries),
+      onGraze: (id) => this.handleGraze(id),
       onPing: (rtt) => {
         this.ping = rtt;
+        this.jitter.onRtt(rtt);
       },
     }, this.options.wsUrl);
 
-    this.input.attach(
-      (action) => this.perform(action),
-      () => this.callbacks.onRequestChat(),
-    );
     this.status = profile.status ?? '';
     this.species = profile.appearance.species;
     this.net.connect(profile.name, profile.appearance, resume, this.status);
     this.callbacks.onStatus('connecting', '握手');
   }
 
-  private handleWelcome(
-    packet: WelcomePacket,
-    profile: { name: string; appearance: CharacterAppearance; status?: string },
-  ): void {
+  private handleWelcome(packet: WelcomePacket, profile: SessionProfile): void {
     this.callbacks.onQueue(null);
     this.callbacks.onRejected(0);
     this.clearWorld();
@@ -348,6 +370,8 @@ export class GameSession {
     this.lastSentMove.state = NEVER_SENT;
     this.clientMoveSequence = 0;
     this.snapshotAt = 0;
+    // 换连接后 tick 基准与接收时钟都变了：只清传输偏移，RTT 样本保留（ADR-0048）
+    this.jitter.reset();
     // 自己的在线时长从入场成功这一刻起算：断线重连会重建世界，计时随 WELCOME 归零
     this.welcomeAt = performance.now();
     this.onDutyCursor = 0;
@@ -463,6 +487,9 @@ export class GameSession {
   private handleSync(data: Uint8Array, format: SyncFormat): void {
     this.syncAt = performance.now();
     readSync(data, this.visitSync, format);
+    // 包解析成功后再采样：坏包不应该污染抖动估计。
+    // tick 是服务端发送序号，静止人群长时间不发包也不会被误判成抖动（ADR-0043 / 0048）。
+    this.jitter.onSync(readSyncTick(data), this.syncAt);
   }
 
   /**
@@ -638,7 +665,7 @@ export class GameSession {
       const bed = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind === 'bed');
       if (seat) hint = seat.kind === 'toilet' ? '按 Z 使用马桶' : '按 Z 坐下';
       else if (bed) hint = '按 X 上床躺平';
-      else if (nearestInteractiveProp(x, y)) hint = '按 F 互动';
+      else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = '按 F 互动';
     }
     if (hint === this.seatHint) return;
     this.seatHint = hint;
@@ -756,16 +783,11 @@ export class GameSession {
       pose: Motion.pose[eid]! as Pose,
       seatId: this.localSeat,
     });
-    // 落点按园区分区：换园区后这份快照会被 resumeForPark 判为不匹配而丢弃。
-    // 没有 parkId 时不写这个字段，避免把已有的 park 从存档里抹成 undefined
-    const park = this.options.parkId;
-    saveSnapshot(park ? { ...patch, park } : patch);
+    // 落盘交给平台层：主线程直接写 localStorage，Worker 写进控制块由主线程落盘。
+    // `park` 的园区分区逻辑留在主线程（Worker 不认识存档格式）
+    this.env.writeSnapshot(patch);
     // 重连时服务端拿到的必须是最后一次落盘的落点，而不是首次入场时的旧快照
     this.net?.setResume({ ...patch });
-  };
-
-  private readonly onVisibilityChange = (): void => {
-    if (document.visibilityState === 'hidden') this.persistNow();
   };
 
   private clearWorld(): void {
@@ -864,17 +886,6 @@ export class GameSession {
     if (name) this.showHint(`已到达${name}`);
   }
 
-  /** 触屏摇杆：把屏幕摇杆方向交给输入层，与键盘共用同一条移动通路 */
-  setMoveVector(x: number, y: number): void {
-    this.input.setTouchVector(x, y);
-  }
-
-  /** 打开聊天前清掉仍按住的移动键：输入框接管键盘后角色不该继续滑行（ADR-0023 §6） */
-  clearMovement(): void {
-    this.cancelNavigation();
-    this.input.clear();
-  }
-
   /**
    * 动作入口：判定统一交给 `resolveInteraction`，这里只执行意图。
    * 坐 / 躺 / 起身 / 被拦 / 互动只有一处规则，桌面动作条与触屏动作盘共用。
@@ -946,8 +957,15 @@ export class GameSession {
         this.startOverlay(eid, 'jump');
         return;
       case 'emote':
-        // 叫唤始终出声（ADR-0023 §3）：行走中图集没有张嘴帧，只发声不播动画
-        sfx.emit(this.species);
+        // 叫唤始终出声（ADR-0023 §3）：行走中图集没有张嘴帧，只发声不播动画。
+        // 声源是本地玩家坐标；对本人而言 pan 为 0，链路仍走同一套空间衰减（ADR-0048）
+        this.emitAudio({
+          kind: 'emote',
+          species: this.species,
+          x: Position.x[eid]!,
+          y: Position.y[eid]!,
+          local: true,
+        });
         if (!intent.animated) return;
         this.startOverlay(eid, 'emote');
         Motion.moving[eid] = 0;
@@ -960,6 +978,9 @@ export class GameSession {
         return;
       case 'interact':
         this.interact(eid);
+        return;
+      case 'graze':
+        this.graze(eid);
         return;
       case 'blocked':
         this.showHint(intent.hint);
@@ -983,19 +1004,60 @@ export class GameSession {
   }
 
   /**
-   * 与最近的售货机 / 饮水机 / 咖啡机互动：只在本地冒一句气泡，不新增协议（ADR-0024）。
+   * 与最近的售货机 / 饮水机 / 咖啡机互动：本地冒一句气泡，并在设施坐标上发声（ADR-0024 / 0048）。
    * 900ms 节流：连按 F 不刷屏，也不至于把台词吞掉。
+   *
+   * 查询写进复用槽位，不在按键栈里造 `{kind,x,y}`；设施在 56px 内，空间音效的
+   * 距离衰减几乎满音量，pan 由它相对玩家的左右偏移决定。
    */
   private interact(eid: number): void {
     if (this.elapsed < this.interactAt) return;
-    const prop = nearestInteractiveProp(Position.x[eid]!, Position.y[eid]!);
-    if (!prop) {
+    const target = this.interactTarget;
+    if (!nearestInteractivePropInto(target, Position.x[eid]!, Position.y[eid]!)) {
       this.showHint('附近没有可互动的设施');
       return;
     }
     this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
-    this.renderer.showBubble(this.localId, pickLine(prop.kind, this.interactCount));
+    this.emitAudio({ kind: 'interact', target: target.kind, x: target.x, y: target.y });
+    this.renderer.showBubble(this.localId, pickLine(target.kind, this.interactCount));
     this.interactCount += 1;
+  }
+
+  /**
+   * 咀嚼（G）：本地立即发声 + 冒气泡，同时把一次性事件发给服务端，
+   * 由服务端按视野广播给附近玩家（ADR-0048）。
+   *
+   * state 字节已满，所以它不进 20Hz 同步包；这也意味着它没有远端姿态，
+   * 其他人只会听到按方位衰减的咀嚼声。旧服务端会忽略未知 action，本地照常发声。
+   */
+  private graze(eid: number): void {
+    if (this.elapsed < this.grazeAt) return;
+    this.grazeAt = this.elapsed + GRAZE_COOLDOWN_MS;
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    this.emitAudio({ kind: 'chew', x, y, local: true });
+    this.renderer.showBubble(this.localId, pickGrazeLine(this.grazeCount));
+    this.grazeCount += 1;
+    this.net?.sendAction(this.localId, ACTION.Graze);
+  }
+
+  /** 附近玩家咀嚼：按该实体当前的插值位置发声，服务端已做 500ms 限频 */
+  private handleGraze(id: number): void {
+    const eid = this.ecs.get(id);
+    if (!eid) return;
+    this.emitAudio({ kind: 'chew', x: Position.x[eid]!, y: Position.y[eid]!, local: false });
+  }
+
+  /**
+   * 发声入口。
+   *
+   * 听者坐标随事件一起带出去，而不是让平台层自己每帧同步：Worker 里位置每帧
+   * 都在变，主线程没有别的同步来源；同时这也把「一次发声」变成一个自足的、
+   * 可序列化的事件，跨线程不需要任何额外状态。
+   */
+  private emitAudio(event: AudioEvent): void {
+    const eid = this.ecs.get(this.localId);
+    this.env.emitAudio(event, eid ? Position.x[eid]! : 0, eid ? Position.y[eid]! : 0);
   }
 
   /** 瞬时提示：1.6s 内不被环境提示覆盖，足够读完一句 */
@@ -1057,7 +1119,8 @@ export class GameSession {
   private stepLocal(eid: number, dt: number): void {
     this.expireLocalOverlays(eid);
 
-    const manual = this.input.vector();
+    // 本帧手按方向：tick 里已经解算好，这里只读复用槽位
+    const manual = this.manual;
     let vx = manual.x;
     let vy = manual.y;
     // 手动输入永远优先：一按方向键 / 摇杆就收回控制权，并停掉自动寻路
@@ -1131,6 +1194,7 @@ export class GameSession {
    * 采样本身不贵，但换纹理与重排深度只在可见时做——那才是真正的开销。
    */
   private stepRemote(eid: number, renderTime: number): void {
+    const netId = this.ecs.netOf[eid]!;
     if (this.ecs.remote.sample(eid, renderTime, this.sample)) {
       const state = this.sample.state;
       Position.x[eid] = this.sample.x;
@@ -1143,12 +1207,23 @@ export class GameSession {
         Motion.since[eid] = this.elapsed;
       }
       Motion.moving[eid] = (state & STATE_BITS.moving) !== 0 ? 1 : 0;
+      // 远端叫唤：只在 0→1 的上升沿发声，按其实时位置做声像与衰减（ADR-0048）。
+      // 与动画同源（都来自 state 位），所以「听到哞」与「看到张嘴」不会错位。
+      const wasEmoting = Motion.emote[eid] === 1;
       this.applyOverlayBit(eid, Motion.emote, Motion.emoteSince, (state & STATE_BITS.emote) !== 0);
       this.applyOverlayBit(eid, Motion.jump, Motion.jumpSince, (state & STATE_BITS.jump) !== 0);
       this.applyOverlayBit(eid, Motion.wave, Motion.waveSince, (state & STATE_BITS.wave) !== 0);
+      if (!wasEmoting && Motion.emote[eid] === 1) {
+        this.emitAudio({
+          kind: 'emote',
+          species: this.speciesById.get(netId) ?? 'cow',
+          x: this.sample.x,
+          y: this.sample.y,
+          local: false,
+        });
+      }
     }
 
-    const netId = this.ecs.netOf[eid]!;
     if (!this.renderer.updateEntity(netId, Position.x[eid]!, Position.y[eid]!)) return;
 
     this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
@@ -1213,13 +1288,30 @@ export class GameSession {
     this.elapsed += dtMs;
     this.frames += 1;
 
+    // 视口：主线程由 ResizeObserver 写进控制块，这里只在真变化时重建倍率与文字位图。
+    // 高刷屏上每帧无脑 resize 会重建 backing store，等于自废帧率。
+    if (this.env.readViewport(this.viewport) && this.viewport.width > 0 && this.viewport.height > 0) {
+      this.renderer.resize(this.viewport.width, this.viewport.height, this.viewport.dpr);
+    }
+
+    // 输入：掩码 + 摇杆解算一次，动作环在本帧内排空（正常 0–1 个，容量 4）
+    const control = this.env.control;
+    control.readTouch(this.touch);
+    directionFromMask(control.readKeys(), this.touch.x, this.touch.y, this.manual);
+    for (let code = control.takeAction(); code !== 0; code = control.takeAction()) {
+      const action = ACTION_BY_CODE[code];
+      if (action) this.perform(action);
+    }
+
     const localEid = this.ecs.get(this.localId);
     if (localEid) {
       this.stepLocal(localEid, dt);
       this.emitLocalState(localEid);
     }
 
-    const renderTime = now - INTERP_DELAY_MS;
+    // 自适应回放：好网 35ms、弱网最多 120ms，由同步包的传输偏移与 RTT p95 共同决定。
+    // 抖动大时延迟抬升吸收突发，稳定后缓慢回落到跟手区间（ADR-0048，修订 ADR-0025）
+    const renderTime = now - this.jitter.delayMs;
 
     // 一趟遍历同时完成：远端采样 → 状态变化检测 → 喂渲染层。
     // 原来这里是四趟（叠加位到期、插值、渲染同步、遮挡），每趟都是全实体扫描。
@@ -1297,14 +1389,27 @@ export class GameSession {
     return { x, y, region: regionAt(x, y), points };
   }
 
+  /**
+   * 切后台 / 回前台。
+   *
+   * 只停渲染循环，不碰 WebSocket：断线重连要重新入场、重放落点，代价远大于
+   * 留一条空闲连接。停止时把计时基准清掉，避免回前台第一帧累计出一个大 delta。
+   */
+  setSuspended(suspended: boolean): void {
+    if (this.disposed) return;
+    const ticker = this.renderer.app.ticker;
+    if (suspended) {
+      ticker.stop();
+      return;
+    }
+    if (!ticker.started) ticker.start();
+  }
+
   stop(): void {
     this.disposed = true;
     this.cancelNavigation();
     // 关页面前的最后一道保险：pagehide 没来得及触发时（路由内跳转）也能落盘
     this.persistNow();
-    window.removeEventListener('pagehide', this.persistNow);
-    document.removeEventListener('visibilitychange', this.onVisibilityChange);
-    this.input.detach();
     this.net?.dispose();
     this.net = null;
     this.renderer.app.ticker.remove(this.tick);

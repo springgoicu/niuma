@@ -56,6 +56,20 @@ export function seatLabel(seatKind: SeatKind | null): string {
   return '马桶';
 }
 
+/**
+ * 固定工号：djb2 对昵称按码点哈希，取后 5 位补零，形如 `#NM-09527`。
+ *
+ * 纯函数、与时间无关：同一个昵称今天与明年都是同一张工牌，
+ * 换名字才会换号——这正是「固定工号」该有的行为。
+ */
+export function employeeNumber(name: string): string {
+  let hash = 5381;
+  for (const char of name) {
+    hash = ((hash << 5) + hash + (char.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return `#NM-${String(hash % 100_000).padStart(5, '0')}`;
+}
+
 /** 点击命中盒：以脚底为原点，覆盖角色本体与头顶昵称，和 `EntityView` 的锚点一致 */
 export const PICK_HALF_WIDTH = 20;
 export const PICK_TOP = -74;

@@ -4,6 +4,7 @@ import {
   CHAT_HISTORY_FLAG,
   CHAT_HISTORY_REQUEST_INTERVAL_MS,
   FALLBACK_NICKNAME,
+  GRAZE_COOLDOWN_MS,
   MAX_PACKET_BYTES,
   OpCode,
   QUEUE_REJECT_REASON,
@@ -18,6 +19,7 @@ import {
   decodeSetStatus,
   encodeAppearanceBroadcast,
   encodeChatHistory,
+  encodeGraze,
   encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
@@ -248,6 +250,18 @@ export function startGameServer(config: ServerConfig) {
 
     if (op === OpCode.C2S_ACTION) {
       const { action } = decodeAction(data);
+      // 咀嚼是一次性事件：state 字节已满，不能挤进同步条目，限频后按视野定向广播（ADR-0048）
+      if (action === ACTION.Graze) {
+        if (now - player.lastGrazeAt < GRAZE_COOLDOWN_MS) return;
+        player.lastGrazeAt = now;
+        const packet = encodeGraze(player.id);
+        // player.known 是「看得见我的人」：不含自己，本地已经即时发声
+        for (const id of player.known) {
+          const other = world.get(id);
+          if (other) transport.send(other.wsId, packet);
+        }
+        return;
+      }
       // 只有坐 / 躺 / 起身走这个包：叫唤与跳随 20Hz 的 move 包上行（见 ADR-0018）
       if (action === ACTION.Stand) {
         broadcastSeats(seats.stand(player));

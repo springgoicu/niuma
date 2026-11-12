@@ -182,13 +182,21 @@ export type Direction = (typeof DIRECTION)[keyof typeof DIRECTION];
 export type Pose = (typeof POSE)[keyof typeof POSE];
 
 /**
- * 动作：坐 / 躺 / 起身。叫唤与跳随 move 包上行（ADR-0018）。
+ * 动作：坐 / 躺 / 起身 / 咀嚼。叫唤与跳随 move 包上行（ADR-0018）；
+ * 咀嚼没有对应 state 位（字节已满），走一次性事件通道（ADR-0048）。
  * Sit 在附近有空闲座位时入座，否则落地坐；Stand 释放座位并回到站立。
  */
 export const ACTION = {
   Sit: 0,
   Lie: 1,
   Stand: 2,
+  Graze: 3,
 } as const;
+
+/**
+ * 咀嚼事件的最小间隔。一次性事件不像 state 位那样被 20Hz 上行节流，
+ * 服务端必须自己防刷；500ms 与客户端本地音效节流同一口径。
+ */
+export const GRAZE_COOLDOWN_MS = 500;
 
 export type ActionId = (typeof ACTION)[keyof typeof ACTION];

@@ -18,7 +18,13 @@ const MIN_DEVICE_PX = 3;
 /** 只是防呆上限：基准 3 / 6 乘上 DPR 3 也只有 18，正常不会触发 */
 const MAX_DEVICE_PX = 24;
 
-function normalizeDpr(dpr: number): number {
+/**
+ * DPR 归一化。
+ *
+ * 渲染线程里没有 `window`，DPR 由主线程通过控制块传进来，所以真正的读取动作
+ * 收敛到 `readDpr()`（只给主线程用），Worker 侧一律调用本函数处理注入值。
+ */
+export function normalizeDpr(dpr: number): number {
   return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
 }
 

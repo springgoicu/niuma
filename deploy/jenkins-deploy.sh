@@ -67,6 +67,19 @@ export GAME_PARK_ID="${GAME_PARK_ID:-main}"
 export GAME_PARK_NAME="${GAME_PARK_NAME:-主园区}"
 echo ">>> 部署角色：$DEPLOY_ROLE（game=$DEPLOY_GAME web=$DEPLOY_WEB）园区：$GAME_PARK_ID / $GAME_PARK_NAME"
 
+# 构建版本号：git sha + Jenkins 构建号。同一 commit 重新部署也要产生新版本，
+# 否则客户端认为「已是最新」，不会强刷到新地图。
+# 不能复用 BUILD_ID=dontKillMe，那是 Jenkins 防止杀进程的变量。
+DEPLOY_VERSION="${GIT_COMMIT:-$(date +%s)}"
+DEPLOY_VERSION="${DEPLOY_VERSION:0:12}"
+if [ -n "${BUILD_NUMBER:-}" ]; then
+  DEPLOY_VERSION="${DEPLOY_VERSION}-${BUILD_NUMBER}"
+else
+  DEPLOY_VERSION="${DEPLOY_VERSION}-$(date +%Y%m%d%H%M%S)"
+fi
+export NEXT_PUBLIC_BUILD_ID="$DEPLOY_VERSION"
+echo ">>> 构建版本：$NEXT_PUBLIC_BUILD_ID"
+
 WS="${WORKSPACE:-$(pwd)}"
 
 log() { printf '\n>>> %s\n' "$*"; }
@@ -100,6 +113,28 @@ wait_http_200() {
     sleep 1
   done
   echo "✖ $url 探活失败（${tries}s 超时，最后状态码 ${code:-none}）"
+  return 1
+}
+
+# 版本探针：线上 /api/version 必须等于本次构建注入的版本号。
+# 不一致说明 next build 命中了旧缓存或静默回滚，客户端永远不会强刷到新地图。
+wait_version() {
+  local url=$1 expected=$2 tries=${3:-30} i body=''
+  if [ -z "$expected" ]; then
+    echo ">>> 未注入 NEXT_PUBLIC_BUILD_ID，跳过版本校验"
+    return 0
+  fi
+  for i in $(seq 1 "$tries"); do
+    body=$(curl -fsS -m 2 "$url" 2>/dev/null || true)
+    case "$body" in
+      *"\"id\":\"$expected\""*)
+        echo "✔ $url 版本一致（$expected）"
+        return 0
+        ;;
+    esac
+    sleep 1
+  done
+  echo "✖ $url 版本校验失败：期望 $expected，实际 ${body:-none}"
   return 1
 }
 
@@ -259,9 +294,10 @@ else
     --max-memory-restart "$((WEB_HEAP_MB + 256))M" --update-env
 fi
 
-# 双重探活：图集（验证 public 拷对了）+ 首页（验证服务真的在跑）
+# 三重探活：图集（验证 public 拷对了）+ 首页（验证服务真的在跑）+ 版本号（验证这次构建真的生效）
 if ! wait_http_200 "http://127.0.0.1:$WEB_PORT/sprites/manifest.json" 30 ||
-   ! wait_http_200 "http://127.0.0.1:$WEB_PORT/" 30; then
+   ! wait_http_200 "http://127.0.0.1:$WEB_PORT/" 30 ||
+   ! wait_version "http://127.0.0.1:$WEB_PORT/api/version" "$NEXT_PUBLIC_BUILD_ID" 30; then
   echo "✖ 前端探活失败，PM2 最近日志："
   pm2 logs niuma-web --nostream --lines 40 2>/dev/null || true
   echo ">>> 回滚 Web 到上一版本"

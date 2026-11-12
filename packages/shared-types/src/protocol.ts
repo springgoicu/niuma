@@ -333,6 +333,21 @@ export function writeSyncEntryCompact(
 }
 
 /**
+ * 读同步包的服务端发送序号（包头偏移 1..4）。
+ *
+ * 抖动估计不能拿「包到达间隔」直接减 Tick：ADR-0043 去脏后静止人群整 Tick 不发包，
+ * 间隔会被误判成几百毫秒抖动。tick 是服务端发送序号，`到达时刻 - tick × TICK_MS`
+ * 只随传输时延变化，静止多久都不影响判断。
+ */
+export function readSyncTick(data: Uint8Array): number {
+  if (data.byteLength < SYNC_HEADER_BYTES) {
+    throw new Error(`sync packet too short: ${data.byteLength}`);
+  }
+  if (data[0] !== OpCode.S2C_SYNC_ENTITIES) throw new Error('not a sync packet');
+  return (data[1]! | (data[2]! << 8) | (data[3]! << 16) | (data[4]! << 24)) >>> 0;
+}
+
+/**
  * 逐条消费同步包，不建数组、不建对象。
  *
  * 客户端每帧都要吃下整包实体，200 人同屏 20Hz 就是每秒 4000 个对象；
@@ -514,6 +529,22 @@ export function decodeDespawn(data: Uint8Array): { id: number; reason: number } 
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_ENTITY_DESPAWN) throw new Error('not a despawn packet');
   return { id: reader.u16(), reason: reader.u8() };
+}
+
+/**
+ * 咀嚼事件：一次性动作，不走 state 位（8 位已被朝向/姿态/四个叠加位占满），
+ * 也不改 48 bit 紧凑条目；只发给看得见发声者的人（ADR-0048）。
+ */
+export function encodeGraze(id: number): Uint8Array {
+  const writer = new ByteWriter(3);
+  writer.u8(OpCode.S2C_GRAZE).u16(id);
+  return writer.finish();
+}
+
+export function decodeGraze(data: Uint8Array): number {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_GRAZE) throw new Error('not a graze packet');
+  return reader.u16();
 }
 
 export function encodeChatBroadcast(packet: ChatPacket): Uint8Array {

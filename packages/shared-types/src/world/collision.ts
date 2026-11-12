@@ -43,17 +43,28 @@ type Blocker =
 
 const blockers: Blocker[] = [];
 
+/**
+ * 脚底锚点 → 圆形碰撞体。
+ *
+ * 树与花箱的精灵都以 (x, y) 为底边中心；碰撞圆若也以此为圆心，
+ * 半径有一半落在地面以下，物体南侧就会出现约 12px 的隐形墙。
+ * 圆心抬到 `y - r + 1`：圆底边贴着脚底，脚底点本身仍在圆内，不会留下可穿的缝。
+ */
+function footCircle(x: number, y: number, r: number): Blocker {
+  return { kind: 'circle', x, y: y - r + 1, r };
+}
+
 // ADR-0028：办公区删除围栏，树篱只做视觉分区（走 props 管线，不产生 blocker）
 for (const grove of WORLD_LAYOUT.groves) {
   for (const tree of grove.trees) {
-    blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS });
+    blockers.push(footCircle(tree.x, tree.y, TREE_TRUNK_RADIUS));
   }
 }
 for (const tree of WORLD_LAYOUT.looseTrees) {
-  blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS });
+  blockers.push(footCircle(tree.x, tree.y, TREE_TRUNK_RADIUS));
 }
 for (const planter of WORLD_LAYOUT.planters) {
-  blockers.push({ kind: 'circle', x: planter.x, y: planter.y, r: PLANTER_RADIUS });
+  blockers.push(footCircle(planter.x, planter.y, PLANTER_RADIUS));
 }
 for (const solid of WORLD_LAYOUT.solids) {
   const { x, y, w, h } = solid;

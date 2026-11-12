@@ -8,6 +8,7 @@ import {
   type SeatInstance,
   type WorldRect,
 } from '@niuma/shared-types';
+import type { LightSpec } from './lighting/light-registry';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
 
@@ -615,6 +616,11 @@ function propsIn(room: Room, kind: PropInstance['kind']): PropInstance[] {
 
 export class InteriorArt {
   private readonly textures: Texture[] = [];
+  /**
+   * 室内灯具的光位：由绘制方法现场收集，和墙面/家具同一坐标。
+   * 光源模块只消费这个数组，不再复制 `x+138 / x+396 / screenX` 这类偏移（ADR-0048）。
+   */
+  readonly lights: LightSpec[] = [];
 
   /**
    * `base` 收墙面与地面陈设（在地板之上、家具精灵之下），
@@ -667,6 +673,15 @@ export class InteriorArt {
     this.place(depth, renderer, 'printer', drawPrinter, PRINTER, x + 272, y + 338);
     this.place(depth, renderer, 'cart', drawCart, CART, x + 318, y + 338);
     this.place(depth, renderer, 'lamp', drawFloorLamp, FLOOR_LAMP, x + 440, y + 40);
+    // 落地灯光位：place 的脚底 y+40，纹理高 36、灯罩中心在顶部下 6px
+    this.lights.push({
+      x: x + 440,
+      y: y + 10,
+      radius: 58,
+      color: 0xffd79a,
+      intensity: 0.65,
+      flicker: 0.08,
+    });
     this.place(depth, renderer, 'board', drawStandBoard, STAND_BOARD, x + 120, y + 332);
   }
 
@@ -752,9 +767,30 @@ export class InteriorArt {
     }
     rect(g, screenX + 2, screenY + screenH - 3, screenW - 4, 1, 0x5aa6c9);
 
+    // 大屏光位 = 屏幕中心，冷蓝微弱泛光；半径覆盖到桌边
+    this.lights.push({
+      x: screenX + screenW / 2,
+      y: screenY + screenH / 2,
+      radius: 140,
+      color: 0x7fd6ff,
+      intensity: 0.6,
+      flicker: 0,
+    });
+
     // 会议桌：从共享 solids 反查，渲染层不重写 200×90 的坐标
     const table = fixtureIn(room, 150);
-    if (table) drawMeetingTable(g, table);
+    if (table) {
+      drawMeetingTable(g, table);
+      // 投影仪从桌面中央往外泛的弱冷光：与长桌同一坐标，不另写一份
+      this.lights.push({
+        x: table.x + table.w / 2,
+        y: table.y + table.h / 2,
+        radius: 78,
+        color: 0x8fc8ee,
+        intensity: 0.28,
+        flicker: 0,
+      });
+    }
   }
 
   private furnishMeeting(depth: DepthSink, renderer: TextureFactory, room: Room): void {
@@ -788,9 +824,21 @@ export class InteriorArt {
     this.radiator(g, x + 232, y + h - t, 36);
 
     // 北墙：门两侧的暖黄壁灯与挂钟，避开门洞与窗
-    this.sconce(g, x + 138, y + t + 2);
+    const sconceY = y + t + 2;
+    this.sconce(g, x + 138, sconceY);
     this.clock(g, x + 170, y + t + 4);
-    this.sconce(g, x + 396, y + t + 2);
+    this.sconce(g, x + 396, sconceY);
+    // 壁灯光位：灯罩下方 11px，光圈落进室内而不是压在墙里
+    for (const offset of [138, 396]) {
+      this.lights.push({
+        x: x + offset + 4,
+        y: sconceY + 11,
+        radius: 62,
+        color: 0xffcf8a,
+        intensity: 0.7,
+        flicker: 0.1,
+      });
+    }
 
     // 南墙软木留言板：离职倒计时 365
     this.corkBoard(g, x + 150, y + 330, 60, 18);

@@ -1,5 +1,3 @@
-'use client';
-
 import {
   Application,
   Container,
@@ -9,11 +7,12 @@ import {
   Text,
   type Texture,
 } from 'pixi.js';
-import { ISLAND, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
-import { AmbientLight } from './ambient-light';
+import { ISLAND, WORLD_LAYOUT, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
 import { isOutdoorGround } from './ground';
 import { InteriorArt } from './interior-art';
+import { LightmapLayer } from './lighting/lightmap';
+import { propLights } from './lighting/scene-lights';
 import { readSeason, type SeasonState } from './season';
 import { SnowField } from './snow-fx';
 import { WinterArt } from './winter-art';
@@ -37,8 +36,8 @@ import { PonyRenderer } from './pony';
 import type { PonyMotion } from './pony-motion';
 import { PropsView } from './props';
 import {
+  normalizeDpr,
   pixelMetrics,
-  readDpr,
   sameMetrics,
   snapCss,
   snapTexel,
@@ -76,9 +75,8 @@ const CSS_PER_TEXEL_MAX = 4;
  * `overridden` 为 true 表示用户显式给了倍率：此时竖屏自适应不再介入，
  * 保证 `?zoom=3` 在任何朝向下都是同一档倍率。
  */
-function readCssPerTexel(): { value: number; overridden: boolean } {
-  if (typeof window === 'undefined') return { value: DEFAULT_CSS_PER_TEXEL, overridden: false };
-  const raw = new URLSearchParams(window.location.search).get('zoom');
+function readCssPerTexel(search: string): { value: number; overridden: boolean } {
+  const raw = new URLSearchParams(search).get('zoom');
   if (raw === null) return { value: DEFAULT_CSS_PER_TEXEL, overridden: false };
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return { value: DEFAULT_CSS_PER_TEXEL, overridden: false };
@@ -468,6 +466,26 @@ class EntityView {
   }
 }
 
+/**
+ * 渲染器初始化输入。
+ *
+ * 画布由宿主准备好：主线程侧新建 `<canvas>` 并挂到 DOM，Worker 侧是
+ * `transferControlToOffscreen()` 移交进来的 `OffscreenCanvas`。渲染器本身
+ * 既不创建也不挂载画布——那是线程宿主的事。
+ */
+export interface RendererInit {
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  width: number;
+  height: number;
+  dpr: number;
+  /** 平台查询串：`?zoom` / `?flat` / `?light` / `?bands` / `?season` / `?snow` 都从这里解析 */
+  search: string;
+  /** 字体就绪后再烘文字纹理：主线程等 `document.fonts`，Worker 等自己注册的 FontFace */
+  fontsReady(): Promise<void>;
+  /** 强制渲染后端：`?gpu=webgl` 用于线上定位 WebGPU 回归 */
+  gpu?: 'webgpu' | 'webgl';
+}
+
 export class GameRenderer {
   readonly app = new Application();
   private readonly world = new Container();
@@ -492,8 +510,10 @@ export class GameRenderer {
   /** 相机焦点：小动物要按「玩家在哪」判定受惊，取同一帧 updateCamera 的结果 */
   private focusX = 0;
   private focusY = 0;
-  /** 屏幕空间的乘算柔光层；`?light=0` 时整层不建 */
-  private light?: AmbientLight;
+  /** 低清 Lightmap 光影层；`?light=0` 时整层不建 */
+  private lightmap?: LightmapLayer;
+  /** Lightmap 分辨率分母：默认 4，`?lm=2` 切 1/2 视口 */
+  private lightmapDivisor = 4;
   /** 冬季雪景（ADR-0046）：非冬季时三个字段都不构造，零开销 */
   private snow?: SnowField;
   private winterArt?: WinterArt;
@@ -513,6 +533,8 @@ export class GameRenderer {
   /** 树冠遮挡的输入缓冲：脚底坐标 (x, y) 成对写入，容量 512 人 */
   private readonly occluders = new Float32Array(1024);
   private lightEnabled = true;
+  /** 当前设备像素比：主线程注入或 `resize()` 更新，不再从 `window` 现取 */
+  private dpr = 1;
   private metrics: PixelMetrics = pixelMetrics(DEFAULT_CSS_PER_TEXEL, 1, MIN_DEVICE_PX_PER_TEXEL);
   /** 本实例实际使用的倍率：默认值或 `?zoom=` 覆盖值 */
   private cssPerTexel = DEFAULT_CSS_PER_TEXEL;
@@ -536,21 +558,29 @@ export class GameRenderer {
   private metricScreenW = -1;
   private metricScreenH = -1;
 
-  async init(host: HTMLElement): Promise<void> {
-    const dpr = readDpr();
-    const zoom = readCssPerTexel();
+  async init(options: RendererInit): Promise<void> {
+    const dpr = normalizeDpr(options.dpr);
+    const params = new URLSearchParams(options.search);
+    const zoom = readCssPerTexel(options.search);
+    // `?gpu=webgl` 强制走 WebGL2：Worker 内 WebGPU 的回归定位开关
+    const preference = params.get('gpu') === 'webgl' ? 'webgl' : options.gpu ?? 'webgpu';
     this.cssPerTexel = zoom.value;
     this.zoomLocked = zoom.overridden;
+    this.dpr = dpr;
+    const width = Math.max(1, Math.round(options.width));
+    const height = Math.max(1, Math.round(options.height));
     // 竖屏首帧就落到目标视野：等第一帧 updateCamera 再缩，入场会先跳一下
     this.metrics = pixelMetrics(
-      this.effectiveCssPerTexel(host.clientWidth, host.clientHeight),
+      this.effectiveCssPerTexel(width, height),
       dpr,
       MIN_DEVICE_PX_PER_TEXEL,
     );
     await this.app.init({
-      preference: 'webgpu',
+      preference,
       background: 0x14100c,
-      resizeTo: host,
+      canvas: options.canvas,
+      width,
+      height,
       antialias: false,
       roundPixels: true,
       autoDensity: true,
@@ -558,15 +588,19 @@ export class GameRenderer {
       resolution: dpr,
     });
     this.backend = this.app.renderer.type === RendererType.WEBGPU ? 'webgpu' : 'webgl';
-    host.appendChild(this.app.canvas);
-    this.app.canvas.style.touchAction = 'none';
-    this.app.canvas.style.display = 'block';
+    // 挂载由宿主负责；Worker 侧的 OffscreenCanvas 没有 style，这里只是把主线程那份
+    // 画布的默认内联样式补齐，避免出现行内基线间隙
+    const canvas = this.app.canvas as HTMLCanvasElement;
+    if (canvas.style) {
+      canvas.style.touchAction = 'none';
+      canvas.style.display = 'block';
+    }
 
     this.atlas = await loadAtlas();
     if (this.destroyed) return;
-    if (document.fonts?.ready) await document.fonts.ready;
+    await options.fontsReady();
     if (this.destroyed) return;
-    this.buildLayers();
+    this.buildLayers(options.search);
     this.app.stage.addChild(this.world);
     // 飘雪在 world 之上、柔光之下：雪被柔光染一层冷色，才和整张图在同一光环境里。
     // `?snow=0` 只关这一层，覆雪地面与冬季道具保留
@@ -575,10 +609,16 @@ export class GameRenderer {
       this.snow.resize(this.app.screen.width, this.app.screen.height);
       this.app.stage.addChild(this.snow.container);
     }
-    // 柔光层压在 world 之上、屏幕空间：整张地图画完才覆盖，不随相机缩放
+    // 光图压在 world 与雪层之上、屏幕空间：主场景画完才合成，不随相机缩放。
+    // 地标光源在构造后一次注册：外景来自共享布局，室内由 InteriorArt 现场收集
     if (this.lightEnabled) {
-      this.light = new AmbientLight(this.season.winter);
-      this.app.stage.addChild(this.light.sprite);
+      this.lightmap = new LightmapLayer(this.app.renderer, {
+        winter: this.season.winter,
+        divisor: this.lightmapDivisor,
+      });
+      this.lightmap.register(propLights(WORLD_LAYOUT.props));
+      this.lightmap.register(this.interior?.lights ?? []);
+      this.app.stage.addChild(this.lightmap.container);
     }
     this.world.scale.set(this.metrics.cssScale);
     this.ready = true;
@@ -588,24 +628,26 @@ export class GameRenderer {
    * 图层顺序：地形地面 → 尘土 → y 排序层（树/围栏/角色）→ 标签气泡。
    * 地形纹理全部在这里一次性生成，帧循环里不会再 generateTexture。
    */
-  private buildLayers(): void {
+  private buildLayers(search: string): void {
     // 灰度开关：?flat=1 退回矩形平铺，?light=0 关掉柔光层，用于线上快速定位观感回归
-    const params = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
-    this.lightEnabled = params?.get('light') !== '0';
+    const params = new URLSearchParams(search);
+    this.lightEnabled = params.get('light') !== '0';
+    // `?lm=2` 用 1/2 视口光图看细节；默认 1/4，把填充率留给 30–50 个光源的合批
+    this.lightmapDivisor = params.get('lm') === '2' ? 2 : 4;
     // 季节只在这里判定一次（`?season=winter` / `?season=off` / `?snow=0`），
     // 之后地形、柔光、飘雪、冬季道具都只消费 `winter` 布尔量（ADR-0046）
-    this.season = readSeason(typeof window === 'undefined' ? '' : window.location.search);
+    this.season = readSeason(search);
 
     // `?bands=0` 退回单容器：与 `?flat=1` / `?light=0` 同一套灰度惯例，
     // 回退走的也是 add/update/remove 这同一条接口，不是一段会腐烂的分支。
     this.sortLayer = new SortLayer({
       originY: ISLAND.bounds.y,
       extentY: ISLAND.bounds.h,
-      single: params?.get('bands') === '0',
+      single: params.get('bands') === '0',
     });
     this.terrain = new TerrainView(this.app.renderer, {
-      flat: params?.get('flat') === '1',
-      edge: params?.get('edge') !== '0',
+      flat: params.get('flat') === '1',
+      edge: params.get('edge') !== '0',
       winter: this.season.winter,
     });
     this.terrain.build(this.sortLayer);
@@ -634,9 +676,9 @@ export class GameRenderer {
     // 氛围图集与小鱼层（ADR-0045）：鱼在水面之上、道具与角色之下，先于 y 排序层入场景。
     // 图集与地面小动物共用，只烘焙一次；`?fish=0` 只关鱼，`?critters=0` 两者都关。
     const seed = Date.now() >>> 0;
-    const crittersEnabled = params?.get('critters') !== '0';
+    const crittersEnabled = params.get('critters') !== '0';
     this.critterArt = crittersEnabled ? bakeCritterArt(this.app.renderer) : undefined;
-    if (this.critterArt && params?.get('fish') !== '0') {
+    if (this.critterArt && params.get('fish') !== '0') {
       this.fish = new FishField(this.critterArt, seed);
       this.world.addChild(this.fish.layer);
     }
@@ -662,7 +704,7 @@ export class GameRenderer {
       const started = performance.now();
       this.critters = new CritterField(this.sortLayer, this.critterArt, seed);
       this.world.addChild(this.critters.butterflyLayer);
-      if (params?.get('critters') === 'debug') {
+      if (params.get('critters') === 'debug') {
         console.info(
           `[critters] ${this.critters.groundCount} 只地面动物 / ${this.critters.butterflyCount} 只蝴蝶 / ` +
             `${this.fish?.fishCount ?? 0} 条小鱼，构造 ${(performance.now() - started).toFixed(1)}ms`,
@@ -889,6 +931,9 @@ export class GameRenderer {
     this.critters?.update(dtMs, this.focusX, this.focusY, this.cameraBounds);
     this.fish?.update(dtMs, this.cameraBounds, this.focusX, this.focusY);
     this.syncOccluders();
+    // 光图必须在 Pixi 渲染 stage 之前落盘：这是同帧唯一一次低清 RT Pass，
+    // 也是唯一一次点光源提交（合成只读这张图，不重复提交光源）
+    this.lightmap?.render(now);
   }
 
   /**
@@ -925,12 +970,29 @@ export class GameRenderer {
     this.terrain.occlude(this.occluders, count);
   }
 
+  /**
+   * 视口同步。
+   *
+   * 主线程由 ResizeObserver 上报，Worker 每帧从控制块读到最新值；
+   * 两者都收敛到这里，且只在尺寸或 DPR 真变了才动 renderer——
+   * 每帧无脑 resize 会重建 backing store，高刷屏上等于自废帧率。
+   */
+  resize(width: number, height: number, dpr: number): void {
+    if (this.destroyed) return;
+    const nextW = Math.max(1, Math.round(width));
+    const nextH = Math.max(1, Math.round(height));
+    const nextDpr = normalizeDpr(dpr);
+    if (nextW === this.app.screen.width && nextH === this.app.screen.height && nextDpr === this.dpr) return;
+    this.dpr = nextDpr;
+    this.app.renderer.resize(nextW, nextH, nextDpr);
+    // 尺寸变了要让光图与雪量立刻跟上，不然会等到下一次 updateCamera 才对齐
+    this.lightmap?.resize(this.app.screen.width, this.app.screen.height);
+    this.snow?.resize(this.app.screen.width, this.app.screen.height);
+  }
+
   updateCamera(x: number, y: number): void {
     const screen = this.app.screen;
     this.syncMetrics(screen.width, screen.height);
-    // 柔光层跟着视口铺满，并在 30s 粒度上换一次时段色
-    this.light?.resize(screen.width, screen.height);
-    this.light?.update(performance.now());
     // 雪按视口面积重排：缩放窗口时雪量跟着变，密度不会突然变稀或变密
     this.snow?.resize(screen.width, screen.height);
     const { dpr, cssScale } = this.metrics;
@@ -960,6 +1022,9 @@ export class GameRenderer {
     this.world.x = snapCss(screen.width / 2, dpr) - camX * cssScale;
     this.world.y = snapCss(screen.height / 2, dpr) - camY * cssScale;
 
+    // 光图恰好覆盖当前相机视口：这里只同步尺寸/相机，RT Pass 在 tickBubbles 末尾
+    this.lightmap?.setView(screen.width, screen.height, cssScale, camX, camY, halfW, halfH);
+
     // 只画看得见的树：余量按帧尺寸给，树冠那一截由地形自己补
     this.props?.cull(
       camX - halfW - CULL_PAD_X,
@@ -988,7 +1053,7 @@ export class GameRenderer {
    * 等于每帧一次无谓的分配。
    */
   private syncMetrics(screenWidth: number, screenHeight: number): void {
-    const dpr = readDpr();
+    const dpr = this.dpr;
     if (dpr === this.metricDpr && screenWidth === this.metricScreenW && screenHeight === this.metricScreenH) {
       return;
     }
@@ -1066,6 +1131,8 @@ export class GameRenderer {
     this.fish?.destroy();
     this.critters?.destroy();
     this.critterArt?.destroy();
+    // 光图与光斑纹理都是手工资源：先释放，再交给 app.destroy 收尾
+    this.lightmap?.destroy();
     this.app.destroy(true, { children: true });
   }
 }

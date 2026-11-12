@@ -14,8 +14,8 @@
  * （见 ADR-0046）。冬季因此是纯表现层，连积雪的雪人都不参与碰撞。
  */
 
-/** 冬季区间：12 月、1 月、2 月（`Date.getMonth()` 的 0 基月份） */
-export const WINTER_MONTHS: readonly number[] = [11, 0, 1];
+/** 冬季区间：11 月、12 月、1 月、2 月（`Date.getMonth()` 的 0 基月份） */
+export const WINTER_MONTHS: readonly number[] = [10, 11, 0, 1];
 
 export type SeasonSource = 'date' | 'url-on' | 'url-off';
 
@@ -33,7 +33,7 @@ export function isWinterMonth(month: number): boolean {
   return Number.isInteger(month) && WINTER_MONTHS.includes(month);
 }
 
-/** 纯函数：按本地日期判断（与 `ambient-light.ts` 一样只读本地时钟） */
+/** 纯函数：按本地日期判断（与 `lighting/tone.ts` 一样只读本地时钟） */
 export function isWinterDate(date: Date): boolean {
   return isWinterMonth(date.getMonth());
 }

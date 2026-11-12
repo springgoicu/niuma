@@ -5,10 +5,10 @@ const JULY = new Date(2026, 6, 15, 12, 0, 0);
 const JANUARY = new Date(2026, 0, 15, 12, 0, 0);
 
 describe('季节判定', () => {
-  it('12 / 1 / 2 月是冬季，其余月份不是', () => {
-    expect(WINTER_MONTHS).toEqual([11, 0, 1]);
-    for (const month of [11, 0, 1]) expect(isWinterMonth(month)).toBe(true);
-    for (const month of [2, 3, 5, 6, 8, 10]) expect(isWinterMonth(month)).toBe(false);
+  it('11 / 12 / 1 / 2 月是冬季，其余月份不是', () => {
+    expect(WINTER_MONTHS).toEqual([10, 11, 0, 1]);
+    for (const month of [10, 11, 0, 1]) expect(isWinterMonth(month)).toBe(true);
+    for (const month of [2, 3, 5, 6, 8, 9]) expect(isWinterMonth(month)).toBe(false);
   });
 
   it('非法月份一律不算冬季：NaN 与小数不会误开', () => {
@@ -17,8 +17,10 @@ describe('季节判定', () => {
   });
 
   it('按本地日期判定，与时刻无关', () => {
+    expect(isWinterDate(new Date(2026, 10, 1, 0, 0, 0))).toBe(true);
     expect(isWinterDate(new Date(2026, 11, 1, 0, 0, 0))).toBe(true);
     expect(isWinterDate(new Date(2026, 1, 28, 23, 59, 59))).toBe(true);
+    expect(isWinterDate(new Date(2026, 9, 31, 23, 59, 59))).toBe(false);
     expect(isWinterDate(new Date(2026, 2, 1, 0, 0, 0))).toBe(false);
   });
 

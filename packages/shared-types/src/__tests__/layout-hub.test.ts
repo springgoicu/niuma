@@ -5,6 +5,7 @@ import {
   AVENUE_TREE_COUNT,
   GROVE_MIN_GAP,
   ISLAND,
+  PLANTER_RADIUS,
   PLAZA_RADIUS,
   SPAWN_CENTER,
   SPAWN_RADIUS,
@@ -99,14 +100,15 @@ describe('中央迎宾广场与出生点', () => {
     expect(regionAt(WORLD_CENTER.x, WORLD_CENTER.y)).toBe('中央迎宾广场');
   });
 
-  it('迎宾拱门、导览牌与打卡柱都在中央迎宾带内，且拱门不堵南向主路', () => {
-    const { arch, directory, checkin } = WELCOME_LANDMARKS;
-    for (const point of [arch, directory, checkin]) {
+  it('拱门与四向导览牌都在中央迎宾带内，导览牌不压路、不压立柱与花箱', () => {
+    const { arch, directory } = WELCOME_LANDMARKS;
+    expect('checkin' in WELCOME_LANDMARKS).toBe(false);
+    for (const point of [arch, directory]) {
       expect(isOnLand(point.x, point.y)).toBe(true);
       expect(regionAt(point.x, point.y)).toBe('中央迎宾广场');
       expect(isWaterAt(point.x, point.y)).toBe(false);
     }
-    // 拱门在石砖圆内，导览牌/打卡柱在圆庭外缘，仍属同一个迎宾带
+    // 拱门在石砖圆内，导览牌在圆庭外缘，仍属同一个迎宾带
     expect(isOnPlaza(arch.x, arch.y)).toBe(true);
     expect(arch.width).toBeGreaterThan(240);
     expect(arch.height).toBeGreaterThan(80);
@@ -115,6 +117,40 @@ describe('中央迎宾广场与出生点', () => {
     expect(arch.x + arch.width / 2).toBeGreaterThan(4152);
     for (let y = 4460; y <= 5000; y += 20) {
       expect(isBlocked(4096, y)).toBe(false);
+    }
+
+    // 导览牌 96×92 的占地：九点采样不进任何路径多边形，路径顶点也不落进牌面
+    expect(directory).toEqual({ x: 4310, y: 4432, width: 96, height: 92 });
+    const board = {
+      x: directory.x - directory.width / 2,
+      y: directory.y - directory.height,
+      w: directory.width,
+      h: directory.height,
+    };
+    const samples: Array<readonly [number, number]> = [];
+    for (const fx of [0, 0.5, 1]) {
+      for (const fy of [0, 0.5, 1]) samples.push([board.x + board.w * fx, board.y + board.h * fy]);
+    }
+    for (const path of WORLD_LAYOUT.paths) {
+      for (const [x, y] of samples) expect(pointInPolygon(x, y, path.polygon)).toBe(false);
+      for (const [x, y] of path.polygon) expect(rectContains(board, x, y)).toBe(false);
+    }
+    // 牌面不能与拱门立柱或其他碰撞盒相交；它自己的碰撞盒坐标与牌面完全一致，跳过
+    for (const solid of WORLD_LAYOUT.solids) {
+      const self = solid.x === board.x && solid.y === board.y && solid.w === board.w && solid.h === board.h;
+      if (self) continue;
+      const overlap =
+        solid.x < board.x + board.w &&
+        solid.x + solid.w > board.x &&
+        solid.y < board.y + board.h &&
+        solid.y + solid.h > board.y;
+      expect(overlap).toBe(false);
+    }
+    // 花箱是圆形碰撞体：最近的 (4372,4372) 与牌面东缘留 2px
+    for (const planter of WORLD_LAYOUT.planters) {
+      const nx = Math.max(board.x, Math.min(planter.x, board.x + board.w));
+      const ny = Math.max(board.y, Math.min(planter.y, board.y + board.h));
+      expect(Math.hypot(planter.x - nx, planter.y - ny)).toBeGreaterThan(PLANTER_RADIUS);
     }
   });
 

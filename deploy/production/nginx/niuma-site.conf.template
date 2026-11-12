@@ -7,6 +7,13 @@
 #   /ws                         升级到游戏服（同源，浏览器不需要知道 3001）
 #   /                           其余全部交给 Next standalone
 
+# 文档与接口缓存策略：页面必须每次回源校验，否则部署后用户会继续跑旧地图。
+# /api/version 是客户端判断「是否需要强刷」的唯一依据，连协商缓存都不能留。
+map $uri $niuma_cache_control {
+    default          "no-cache, must-revalidate";
+    /api/version     "no-store, max-age=0";
+}
+
 # ---------- 80：ACME 验证与强跳 HTTPS ----------
 server {
     listen 80;
@@ -78,15 +85,17 @@ server {
     # ---- 图集清单：版本号与客户端布局必须实时对齐，绝不缓存 ----
     location = /sprites/manifest.json {
         alias @WEB_ROOT@/public/sprites/manifest.json;
-        add_header Cache-Control "no-cache, must-revalidate" always;
+        add_header Cache-Control "no-store, max-age=0" always;
         limit_rate 100k;
         access_log off;
     }
 
-    # ---- 图集 PNG：文件名固定、内容随版本变 ----
+    # ---- 图集 PNG：文件名固定、内容随版本变，靠 ETag 每次校验 ----
+    # 不能沿用旧的 7 天强缓存：新 JS 配旧图集会让地图看起来「没更新」。
+    # 后续若改成内容哈希文件名，可以恢复 immutable 长缓存。
     location ^~ /sprites/ {
         alias @WEB_ROOT@/public/sprites/;
-        add_header Cache-Control "public, max-age=604800, stale-while-revalidate=86400" always;
+        add_header Cache-Control "no-cache, must-revalidate" always;
         limit_rate_after 128k;
         limit_rate 150k;
         access_log off;
@@ -169,5 +178,14 @@ server {
         proxy_buffering on;
         proxy_read_timeout 30s;
         proxy_send_timeout 30s;
+
+        # 文档与接口一律回源校验：部署后刷新必须拿到新 HTML，不能靠浏览器启发式缓存。
+        # 版本接口由 map 单独钉成 no-store；其余动态响应允许 304 协商。
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control $niuma_cache_control always;
+        # location 内一旦出现 add_header，server 级安全头不再继承，必须在这里补回。
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     }
 }

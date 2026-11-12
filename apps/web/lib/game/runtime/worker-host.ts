@@ -1,0 +1,198 @@
+import { GameSession, type ChatEntry } from '../session';
+import { drawMiniMap, prepareMiniMap, type MiniMapContext } from '../minimap-draw';
+import { ControlBlock } from './control-channel';
+import type { EngineEnv } from './engine-env';
+import type { MainToWorker, WorkerToMain } from './worker-protocol';
+
+/** Worker 全局里我们真正用到的那几个成员：`lib: dom` 下没有 DedicatedWorkerGlobalScope 类型 */
+export interface WorkerScope {
+  postMessage(message: WorkerToMain, transfer?: Transferable[]): void;
+  close(): void;
+  addEventListener(type: 'message', listener: (event: MessageEvent<MainToWorker>) => void): void;
+}
+
+/** 小地图与工牌详情的刷新节拍：4Hz，主线程完全不再参与 */
+const SLOW_FRAME_MS = 250;
+
+/**
+ * 渲染线程的宿主。
+ *
+ * 它只做三件事：
+ * 1. 把 `EngineEnv` 的三个平台能力落到「控制块 + 一条消息」上；
+ * 2. 把 `GameSession` 的回调翻成 `WorkerToMain` 消息；
+ * 3. 管住小地图 / 工牌这两个 4Hz 的慢循环与暂停、销毁。
+ *
+ * 引擎本身不知道自己在 Worker 里——回退到主线程时跑的是同一个 `GameSession`。
+ */
+export function runWorkerHost(scope: WorkerScope): void {
+  let session: GameSession | null = null;
+  let control: ControlBlock | null = null;
+  let minimapCtx: MiniMapContext | null = null;
+  let minimapDpr = 1;
+  let inspectId: number | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let paused = false;
+  let disposed = false;
+
+  const post = (message: WorkerToMain): void => scope.postMessage(message);
+
+  const drawMinimap = (): void => {
+    if (!session || !minimapCtx) return;
+    drawMiniMap(minimapCtx, session.worldSnapshot());
+  };
+
+  const slowFrame = (): void => {
+    if (paused || disposed) return;
+    drawMinimap();
+    // 工牌详情只在被查看时推送，收起后不再产生任何消息
+    if (inspectId !== null && session) {
+      post({ t: 'badge', id: inspectId, badge: session.badgeOf(inspectId) });
+    }
+  };
+
+  const attachMinimap = (canvas: OffscreenCanvas): void => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    prepareMiniMap(ctx, minimapDpr);
+    minimapCtx = ctx;
+    drawMinimap();
+  };
+
+  const start = (message: Extract<MainToWorker, { t: 'init' }>): void => {
+    control = new ControlBlock(message.control ?? undefined);
+    // 私有控制块（无跨源隔离）时 init 是视口的唯一来源；共享内存时这里写的是同一块内存，幂等
+    control.writeViewport(message.width, message.height, message.dpr);
+    minimapDpr = message.dpr;
+    // 小地图可能比 init 早到（组件先挂载）：那时 DPR 还是默认值，这里补一次变换
+    if (minimapCtx) prepareMiniMap(minimapCtx, minimapDpr);
+
+    const block = control;
+    const env: EngineEnv = {
+      search: message.search,
+      canvas: message.canvas,
+      control: block,
+      readViewport: (out) => block.readViewport(out),
+      fontsReady: readFontsReady,
+      writeSnapshot: (patch) => {
+        block.writeSnapshot(patch);
+        // 没有共享内存时主线程读不到这块私有内存，另发一条定长消息由它落盘
+        if (!block.isShared) post({ t: 'snapshot', patch });
+      },
+      emitAudio: (event, listenerX, listenerY) => post({ t: 'audio', event, listenerX, listenerY }),
+    };
+
+    session = new GameSession(
+      {
+        onStatus: (status, detail) => post({ t: 'status', status, detail: detail ?? '' }),
+        onQueue: (queue) => post({ t: 'queue', queue }),
+        onRejected: (reason) => post({ t: 'rejected', reason }),
+        onStats: (stats) => post({ t: 'stats', stats }),
+        onChat: (entry: ChatEntry) => post({ t: 'chat', entry }),
+        onChatHistory: (entries, meta) =>
+          post({ t: 'history', entries, replace: meta.replace, hasMore: meta.hasMore }),
+        onHint: (hint) => post({ t: 'hint', hint }),
+        onLocalState: ({ pose, seated, seatKind }) => post({ t: 'localState', pose, seated, seatKind }),
+        onNav: (nav) => post({ t: 'nav', nav }),
+      },
+      env,
+      { wsUrl: message.wsUrl, parkId: message.parkId },
+    );
+
+    void session
+      .start(message.profile, message.resume)
+      .then(() => {
+        if (disposed) return;
+        post({ t: 'ready', backend: session?.backend ?? 'initializing' });
+        drawMinimap();
+      })
+      .catch((error: unknown) => {
+        post({
+          t: 'status',
+          status: 'error',
+          detail: error instanceof Error ? error.message : '渲染线程初始化失败',
+        });
+      });
+
+    timer = setInterval(slowFrame, SLOW_FRAME_MS);
+  };
+
+  const dispose = (): void => {
+    if (disposed) return;
+    disposed = true;
+    if (timer !== null) clearInterval(timer);
+    timer = null;
+    session?.stop();
+    session = null;
+    minimapCtx = null;
+    control = null;
+    scope.close();
+  };
+
+  scope.addEventListener('message', (event) => {
+    const message = event.data;
+    switch (message.t) {
+      case 'init':
+        if (!session) start(message);
+        return;
+      case 'minimap':
+        attachMinimap(message.canvas);
+        return;
+      case 'control':
+        control?.apply(message.message);
+        return;
+      case 'chat':
+        session?.sendChat(message.text);
+        return;
+      case 'history':
+        session?.requestHistory(message.cursor);
+        return;
+      case 'status':
+        session?.setStatus(message.text);
+        return;
+      case 'appearance':
+        session?.setAppearance(message.appearance);
+        return;
+      case 'navigate':
+        session?.navigateTo(message.id);
+        return;
+      case 'cancelNav':
+        session?.cancelNavigation();
+        return;
+      case 'pick': {
+        const badge = session?.inspectAt(message.x, message.y) ?? null;
+        post({ t: 'picked', id: badge?.id ?? null });
+        return;
+      }
+      case 'inspect':
+        inspectId = message.id;
+        return;
+      case 'retry':
+        session?.retry();
+        return;
+      case 'pause':
+        paused = message.paused;
+        session?.setSuspended(message.paused);
+        return;
+      case 'dispose':
+        dispose();
+        return;
+    }
+  });
+}
+
+/**
+ * Worker 侧的字体就绪。
+ *
+ * 字体由 `font-bootstrap.ts` 在宿主启动前注册；这里只等 `fonts.ready`。
+ * 浏览器不给 Worker 暴露 `fonts` 时直接放行，让文字用回退度量——宁可字宽
+ * 略有差异，也不要因为等不到字体而卡住整个入场。
+ */
+async function readFontsReady(): Promise<void> {
+  const fonts = (globalThis as { fonts?: FontFaceSet }).fonts;
+  if (!fonts) return;
+  try {
+    await fonts.ready;
+  } catch {
+    // fonts.ready 只会 reject 在极端情况下，吞掉继续
+  }
+}

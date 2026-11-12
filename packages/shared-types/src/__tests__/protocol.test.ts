@@ -28,6 +28,7 @@ import {
   decodeChatHistoryRequest,
   decodeChatRejected,
   decodeDespawn,
+  decodeGraze,
   decodeHello,
   decodeMove,
   decodeSpawn,
@@ -45,6 +46,7 @@ import {
   encodeChatHistoryRequest,
   encodeChatRejected,
   encodeDespawn,
+  encodeGraze,
   encodeHello,
   encodeMove,
   encodeQueueRejected,
@@ -58,6 +60,7 @@ import {
   encodeWelcome,
   buildSpawnBody,
   readSync,
+  readSyncTick,
   truncateStatus,
   writeSyncEntry,
   writeSyncHeader,
@@ -300,6 +303,29 @@ describe('sync packet', () => {
       { id: 2, x: 30, y: 40, state: 5 },
     ]);
     expect([...scalar]).toEqual([...expected]);
+  });
+
+  it('readSyncTick 与包头 tick 一致；空包也能读', () => {
+    expect(readSyncTick(encodeSync(0x01020304, []))).toBe(0x01020304);
+    expect(readSyncTick(encodeSync(7, [{ id: 1, x: 2, y: 3, state: 4 }]))).toBe(7);
+  });
+
+  it('readSyncTick 拒绝错误 opcode 与截断的包头', () => {
+    expect(() => readSyncTick(encodeDespawn(1))).toThrow(/sync packet/);
+    expect(() => readSyncTick(encodeSync(1, []).subarray(0, 4))).toThrow(/too short/);
+  });
+});
+
+describe('咀嚼事件包', () => {
+  it('3 字节，round-trip entityId', () => {
+    const packet = encodeGraze(513);
+    expect(packet.byteLength).toBe(3);
+    expect([...packet]).toEqual([OpCode.S2C_GRAZE, 1, 2]);
+    expect(decodeGraze(packet)).toBe(513);
+  });
+
+  it('拒绝错误 opcode', () => {
+    expect(() => decodeGraze(encodeDespawn(1))).toThrow(/graze packet/);
   });
 });
 

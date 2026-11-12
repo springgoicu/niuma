@@ -118,9 +118,9 @@ describe('出生点与坐标兜底', () => {
     }
   });
 
-  it('中央拱门、导览牌与打卡柱都立在迎宾带内，且让开出生圈', () => {
-    const { arch, directory, checkin } = WELCOME_LANDMARKS;
-    for (const point of [arch, directory, checkin]) {
+  it('中央拱门与四向导览牌都立在迎宾带内，且让开出生圈', () => {
+    const { arch, directory } = WELCOME_LANDMARKS;
+    for (const point of [arch, directory]) {
       expect(isOnLand(point.x, point.y)).toBe(true);
       expect(isWaterAt(point.x, point.y)).toBe(false);
       expect(regionAt(point.x, point.y)).toBe('中央迎宾广场');
@@ -129,9 +129,7 @@ describe('出生点与坐标兜底', () => {
     // 拱门横跨中轴，立柱让开 112px 的南向主路
     expect(arch.x - arch.width / 2).toBeLessThan(4040);
     expect(arch.x + arch.width / 2).toBeGreaterThan(4152);
-    for (const point of [directory, checkin]) {
-      expect(Math.hypot(point.x - SPAWN_CENTER.x, point.y - SPAWN_CENTER.y)).toBeGreaterThan(SPAWN_RADIUS);
-    }
+    expect(Math.hypot(directory.x - SPAWN_CENTER.x, directory.y - SPAWN_CENTER.y)).toBeGreaterThan(SPAWN_RADIUS);
   });
 
   it('广场花箱挡人', () => {
@@ -218,6 +216,21 @@ describe('地形布局', () => {
       expect(grove.trees.length).toBeGreaterThanOrEqual(2);
       expect(grove.trees.length).toBeLessThanOrEqual(5);
       for (const tree of grove.trees) expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
+    }
+  });
+});
+
+describe('树与花箱的脚底碰撞', () => {
+  it('物体脚底正下方 10px 不再有隐形墙', () => {
+    const trees = [...WORLD_LAYOUT.groves.flatMap((grove) => grove.trees), ...WORLD_LAYOUT.looseTrees];
+    for (const tree of trees) {
+      // 脚底点本身仍应挡住人，避免碰撞圆整体上移后留下一条可穿的缝
+      expect(isBlocked(tree.x, tree.y, 0)).toBe(true);
+      expect(isBlocked(tree.x, tree.y + 10, 0)).toBe(false);
+    }
+    for (const planter of WORLD_LAYOUT.planters) {
+      expect(isBlocked(planter.x, planter.y, 0)).toBe(true);
+      expect(isBlocked(planter.x, planter.y + 10, 0)).toBe(false);
     }
   });
 });

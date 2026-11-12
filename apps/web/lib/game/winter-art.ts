@@ -2,7 +2,7 @@
 
 import { Container, Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
 import { WORLD_LAYOUT } from '@niuma/shared-types';
-import { lightToneAt } from './ambient-light';
+import { lightToneAt } from './lighting/tone';
 import type { DepthSink } from './sort-layer';
 import { WINTER_COLORS as W } from './terrain-palette';
 import { bake } from './terrain-textures';

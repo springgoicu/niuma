@@ -177,12 +177,23 @@ curl -s https://<park-c-domain>/health | jq '{parkId,parkName,online}'
 # 静态资源预压缩（部署脚本已生成 .gz）
 gzip_static on;
 
-# Web 静态资源限速：把 Web 的最坏带宽钉死，剩余全部留给本机游戏服
-location ~ ^/(sprites|_next/static)/ {
-    limit_rate 200k;
-    limit_conn addr 6;
-    expires 1y;
-    add_header Cache-Control "public, immutable";
+# 构建产物带内容哈希：可以永久强缓存，同时限速把 Web 带宽钉死
+location ^~ /_next/static/ {
+    limit_rate_after 128k;
+    limit_rate 80k;
+    limit_conn addr 8;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+}
+
+# 图集 PNG 文件名固定、内容随版本变：必须回源校验，不能沿用旧的 7 天强缓存
+location ^~ /sprites/ {
+    limit_rate_after 128k;
+    limit_rate 150k;
+    add_header Cache-Control "no-cache, must-revalidate" always;
+}
+
+location = /sprites/manifest.json {
+    add_header Cache-Control "no-store, max-age=0" always;
 }
 
 # 本机园区（同源 WebSocket）；只跑 Web 时删掉这一段
@@ -205,9 +216,17 @@ location / {
 }
 ```
 
-`limit_rate 200k` 让首访约 4 秒打开，游戏侧最多被挤 4 秒。不设限速时 Web 会与
+`limit_rate` 把首访带宽压在几十 KB/s 量级，游戏侧最多被挤几秒。不设限速时 Web 会与
 WebSocket 按 TCP 公平竞争，最坏可持续十几秒——而且游戏侧的出口水位计只统计
 游戏进程自己发出的字节，**它看不到 nginx 转发 Web 的流量**，被挤时不会自动关闸。
+
+主站模板 `deploy/production/nginx/niuma-site.conf.template` 里还有一条 `map`：
+页面文档统一 `no-cache, must-revalidate`，`/api/version` 单独 `no-store`。
+`location /` 内一旦使用 `add_header`，server 级的 HSTS / nosniff / Referrer-Policy
+不会自动继承，模板里已重复声明；改模板时不要只改 server 级。
+
+改完模板必须执行 `sudo nginx -t && sudo systemctl reload nginx` 才会生效，
+否则用户仍会按旧缓存头拿到旧 HTML 与旧地图。
 
 ### 4.2 每一台游戏服机器
 

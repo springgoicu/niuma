@@ -7,6 +7,7 @@ import {
   decodeChatHistory,
   decodeChatRejected,
   decodeDespawn,
+  decodeGraze,
   decodePong,
   decodeQueueRejected,
   decodeQueueStatus,
@@ -66,6 +67,8 @@ export interface NetHandlers {
   onAppearance(id: number, appearance: CharacterAppearance): void;
   /** 某个实体的常驻状态变了（自己也会收到一条，用于对齐服务端裁决后的文本） */
   onStatus(id: number, status: string): void;
+  /** 附近玩家咀嚼：只带实体 id，音效按该实体当前位置空间化 */
+  onGraze(id: number): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -83,6 +86,11 @@ function defaultUrl(): string {
 }
 
 const MAX_RETRY_DELAY = 8000;
+/**
+ * Ping 间隔。自适应缓冲要 p95，2s 一次攒满 24 个样本要 48s；
+ * 1s 一次只多 1 个极小的上行包，却能让好网/坏网的判定在 20s 内收敛。
+ */
+const PING_INTERVAL_MS = 1000;
 
 export class NetClient {
   private socket: WebSocket | null = null;
@@ -236,6 +244,9 @@ export class NetClient {
       case OpCode.S2C_SEAT_STATE:
         this.handlers.onSeatState(decodeSeatState(data));
         break;
+      case OpCode.S2C_GRAZE:
+        this.handlers.onGraze(decodeGraze(data));
+        break;
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));
         break;
@@ -263,11 +274,14 @@ export class NetClient {
 
   private startPing(): void {
     this.stopPing();
+    // 立即发一次：首屏不需要等一个完整间隔才拿到第一个 RTT 样本
+    this.sendPing();
+    this.pingTimer = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
+  }
+
+  private sendPing(): void {
     this.lastPingAt = Date.now();
-    this.pingTimer = setInterval(() => {
-      this.lastPingAt = Date.now();
-      this.socket?.send(encodePing(this.lastPingAt & 0xffffffff));
-    }, 2000);
+    this.socket?.send(encodePing(this.lastPingAt & 0xffffffff));
   }
 
   private stopPing(): void {

@@ -31,14 +31,22 @@ const LINES: Record<InteractiveKind, readonly string[]> = {
   coffee: ['美式，苦得像周一', '加两包糖，甜一点', '第三杯了，心还在跳'],
 };
 
-/** 最近的可互动设施：范围外或附近没有时返回 null */
-export function nearestInteractiveProp(
+/** 最近设施的输出槽：按键栈里复用同一个对象，避免每次互动造一份短命字面量 */
+export interface InteractiveTarget {
+  kind: InteractiveKind;
+  x: number;
+  y: number;
+}
+
+/** 写入调用方槽位的版本：返回 false 时槽位内容无意义 */
+export function nearestInteractivePropInto(
+  out: InteractiveTarget,
   x: number,
   y: number,
   range: number = INTERACT_RANGE,
-): { kind: InteractiveKind; x: number; y: number } | null {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return null;
-  let best: { kind: InteractiveKind; x: number; y: number } | null = null;
+): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  let found = false;
   let bestDistance = range * range;
   for (const prop of WORLD_LAYOUT.props) {
     if (!isInteractiveKind(prop.kind)) continue;
@@ -46,10 +54,23 @@ export function nearestInteractiveProp(
     const dy = prop.y - y;
     const distance = dx * dx + dy * dy;
     if (distance > bestDistance) continue;
-    best = { kind: prop.kind, x: prop.x, y: prop.y };
+    out.kind = prop.kind;
+    out.x = prop.x;
+    out.y = prop.y;
     bestDistance = distance;
+    found = true;
   }
-  return best;
+  return found;
+}
+
+/** 最近的可互动设施：范围外或附近没有时返回 null（保留给调用方不需要零分配的场合） */
+export function nearestInteractiveProp(
+  x: number,
+  y: number,
+  range: number = INTERACT_RANGE,
+): { kind: InteractiveKind; x: number; y: number } | null {
+  const out: InteractiveTarget = { kind: 'vending', x: 0, y: 0 };
+  return nearestInteractivePropInto(out, x, y, range) ? out : null;
 }
 
 /** 按互动次数取台词：同一个 counter 永远同一句，便于单测与复现 */
@@ -57,6 +78,17 @@ export function pickLine(kind: InteractiveKind, counter: number): string {
   const lines = LINES[kind];
   const index = Number.isFinite(counter) ? Math.abs(Math.trunc(counter)) % lines.length : 0;
   return lines[index]!;
+}
+
+/**
+ * 咀嚼台词：没有对应动画帧，气泡是唯一的本地视觉反馈。
+ * 与设施台词分表，避免连按 F / G 时互相串词。
+ */
+const GRAZE_LINES = ['嚼嚼…', '这草有点柴', '低头，是为了不被点名'] as const;
+
+export function pickGrazeLine(counter: number): string {
+  const index = Number.isFinite(counter) ? Math.abs(Math.trunc(counter)) % GRAZE_LINES.length : 0;
+  return GRAZE_LINES[index]!;
 }
 
 /** 躺床打呼：躺下静置 5s 后第一次，之后每 9s 一次 */

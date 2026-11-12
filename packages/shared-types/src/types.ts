@@ -110,6 +110,11 @@ export const OpCode = {
   C2S_CHAT_HISTORY: 0x1e,
   /** 历史聊天页：`[op][flags u8][count u8]` + count × entry */
   S2C_CHAT_HISTORY: 0x1f,
+  /**
+   * 咀嚼事件：`[op][entityId u16]`。没有 state 位可用（字节已满），
+   * 只发给看得见发声者的人，旧客户端走 default 静默忽略（ADR-0048）。
+   */
+  S2C_GRAZE: 0x20,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];

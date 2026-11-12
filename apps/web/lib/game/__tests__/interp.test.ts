@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'bun:test';
-import { INTERP_DELAY_MS, RemoteTrack, SNAPSHOT_DEPTH, type RemoteSample } from '../interp';
+import { TICK_MS } from '@niuma/shared-types';
+import { INTERP_DELAY_MAX_MS } from '../jitter';
+import {
+  MAX_EXTRAPOLATION_MS,
+  RemoteTrack,
+  SNAPSHOT_DEPTH,
+  type RemoteSample,
+} from '../interp';
 
 /**
  * 回放缓冲守的是「抖动不能变成停顿」这条承诺。
  * 这里不测 Pixi，也不测会话：只验证给定一串带抖动的到达时间，
- * 采样出来的位置必须是连续的，且永远不越过最新一帧。
+ * 采样出来的位置必须连续，且外推只在半步 Tick 内、低速时才发生。
  */
 function makeSample(): RemoteSample {
   return { x: 0, y: 0, state: 0 };
@@ -106,14 +113,15 @@ describe('远端回放缓冲', () => {
     // 写 10 帧，每帧 +10ms / +10px
     for (let i = 0; i < 10; i += 1) track.push(0, 1000 + i * 10, i * 10, 0, 0);
 
-    // 最新一帧是 1090 / x=90，最旧可回放的一帧是 1060 / x=60
+    // 深度 6：最新一帧是 1090 / x=90，最旧可回放的一帧是 1040 / x=40
     track.sample(0, 1070, out);
     expect(out.x).toBeCloseTo(70, 6);
+    // 1095 越过最新帧 5ms，但上一段速度是 1000px/s，超过外推上限，直接钳位
     track.sample(0, 1095, out);
     expect(out.x).toBe(90);
     // 早于窗口的采样钳在窗口最旧帧，不会读到被覆盖的旧值
     track.sample(0, 1000, out);
-    expect(out.x).toBe(60);
+    expect(out.x).toBe(40);
   });
 
   it('实体之间互不串味，离场后重置', () => {
@@ -134,9 +142,39 @@ describe('远端回放缓冲', () => {
     expect(track.sample(1, 1050, out)).toBe(true);
   });
 
-  it('回放延迟大于两个 Tick，足够覆盖一次晚到的包', () => {
-    // 服务端 20Hz → 50ms；延迟必须留出抖动余量，否则会退化成停顿
-    expect(INTERP_DELAY_MS).toBeGreaterThan(50);
-    expect(SNAPSHOT_DEPTH).toBeGreaterThanOrEqual(3);
+  it('低速时越过最新帧做微外推，超过半步 Tick 立刻钳位', () => {
+    const track = new RemoteTrack(8);
+    const out = makeSample();
+    // 匀速 183px/s：最后一段的斜率就代表当前速度
+    track.push(0, 1000, 0, 0, 1);
+    track.push(0, 1050, 8.25, 4, 7);
+
+    // 越过最新帧 10ms → 按速度补 10ms，位置连续
+    track.sample(0, 1060, out);
+    expect(out.x).toBeCloseTo(8.25 + (8.25 / 50) * 10, 6);
+    expect(out.y).toBeCloseTo(4 + (4 / 50) * 10, 6);
+    expect(out.state).toBe(7);
+
+    // 越过 30ms > 25ms 上限 → 不外推，钳回最新帧
+    track.sample(0, 1080, out);
+    expect(out.x).toBe(8.25);
+    expect(out.y).toBe(4);
+  });
+
+  it('上一段速度异常（座位吸附 / 传送）时不外推，避免冲出去再弹回来', () => {
+    const track = new RemoteTrack(8);
+    const out = makeSample();
+    track.push(0, 1000, 0, 0, 0);
+    track.push(0, 1050, 500, 0, 0);
+
+    track.sample(0, 1060, out);
+    expect(out.x).toBe(500);
+    expect(out.y).toBe(0);
+  });
+
+  it('缓冲深度覆盖 120ms 延迟上限，微外推不超过半个 Tick', () => {
+    expect(MAX_EXTRAPOLATION_MS).toBeLessThanOrEqual(TICK_MS / 2);
+    // 120ms 延迟至少要夹住 3 帧；6 帧给抖动突发留余量
+    expect((SNAPSHOT_DEPTH - 1) * TICK_MS).toBeGreaterThanOrEqual(INTERP_DELAY_MAX_MS);
   });
 });

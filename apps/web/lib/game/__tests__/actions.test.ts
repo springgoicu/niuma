@@ -132,6 +132,19 @@ describe('跳与叠加动作', () => {
   });
 });
 
+describe('咀嚼（G）', () => {
+  it('任何姿态下都能咀嚼：没有姿态帧，也就不需要站定', () => {
+    for (const state of [standing, walking, groundSitting, seatSitting, lying, bedLying]) {
+      expect(resolveInteraction('graze', state)).toEqual({ kind: 'graze' });
+    }
+  });
+
+  it('咀嚼是一次性动作，不进高亮态也不因移动降级', () => {
+    expect(actionPresentation('graze', walking)).toEqual({ active: false, unavailable: false });
+    expect(actionPresentation('graze', bedLying)).toEqual({ active: false, unavailable: false });
+  });
+});
+
 describe('互动与按钮表现', () => {
   it('F 互动在任何姿态下都交给 session 判距离', () => {
     expect(resolveInteraction('interact', standing)).toEqual({ kind: 'interact' });

@@ -216,16 +216,14 @@ export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, re
 }));
 
 /**
- * 中央迎宾地标（ADR-0047）：拱门跨在南向主路两侧，导览牌与打卡柱分列左右。
+ * 中央迎宾地标（ADR-0047 / ADR-0049）：拱门跨在南向主路两侧，东侧立四向园区导览牌。
  * 只描述位置与尺寸；木料、霓虹字与像素画法由 apps/web 的 WelcomeView 决定。
  */
 export const WELCOME_LANDMARKS = {
   /** 迎宾拱门：底边中心落在广场南缘，宽度 320，立柱让开 112px 的南向主路 */
   arch: { x: PLAZA_CENTER.x, y: 4408, width: 320, height: 112 },
-  /** 园区导览地图立牌：拱门东侧、圆庭外缘（避开东南支路） */
-  directory: { x: 4310, y: 4432, width: 72, height: 84 },
-  /** 打卡签到处：拱门西侧、圆庭外缘（避开西南支路） */
-  checkin: { x: 3882, y: 4432, width: 28, height: 64 },
+  /** 四向园区导览牌：拱门东侧、圆庭外缘（避开东南支路）；96×92 与旧画布一致 */
+  directory: { x: 4310, y: 4432, width: 96, height: 92 },
 } as const;
 
 /** 树干碰撞半径：>3 才挡得住人，<14 才能从树缝里穿过去 */
@@ -548,7 +546,7 @@ const REGIONS: RegionSpec[] = [
   { name: '会议室', rect: MEETING_ROOM },
   { name: '宿舍区', rect: LOUNGE },
   { name: '卫生间', rect: RESTROOM },
-  // 圆庭外缘 120px 的迎宾带：拱门、导览牌、打卡柱与四向路口都算广场
+  // 圆庭外缘 120px 的迎宾带：拱门、四向导览牌与四向路口都算广场
   { name: '中央迎宾广场', rect: rectExpanded(PLAZA, 120) },
   { name: '办公区', rect: CAMPUS_RECT },
   { name: '研发园', rect: SOUTH_YARD },
@@ -903,7 +901,7 @@ export function findNearestSeat(
 }
 
 /**
- * 中央地标碰撞：拱门两根立柱、导览牌与打卡柱。
+ * 中央地标碰撞：拱门两根立柱与四向导览牌。
  * 用 `kind: 'prop'` 让 props.ts 的地面层跳过——本体由 welcome.ts 画精灵。
  */
 const HUB_SOLIDS: SolidRect[] = [
@@ -928,13 +926,6 @@ const HUB_SOLIDS: SolidRect[] = [
     y: WELCOME_LANDMARKS.directory.y - WELCOME_LANDMARKS.directory.height,
     w: WELCOME_LANDMARKS.directory.width,
     h: WELCOME_LANDMARKS.directory.height,
-  },
-  {
-    kind: 'prop',
-    x: WELCOME_LANDMARKS.checkin.x - WELCOME_LANDMARKS.checkin.width / 2,
-    y: WELCOME_LANDMARKS.checkin.y - WELCOME_LANDMARKS.checkin.height,
-    w: WELCOME_LANDMARKS.checkin.width,
-    h: WELCOME_LANDMARKS.checkin.height,
   },
 ];
 
