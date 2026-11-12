@@ -195,8 +195,11 @@ server {
         # 先过来源白名单，再谈连接数：被别的站点指使的浏览器连握手都不该完成
         if ($niuma_ws_origin_ok = 0) { return 403; }
 
-        # 单 IP 并发连接与握手频率：正常玩家 1~2 条、重连不过几秒一次
-        limit_conn niuma_ws 8;
+        # 单 IP 并发连接与握手频率：正常玩家 1~2 条、重连不过几秒一次。
+        # 16 是为了容纳「一个宿舍/公司共用一个出口 IP」的常见情况——
+        # 校园网里十来个玩家同 IP 时，8 会误伤后面几个，而 16 条对一个 IP
+        # 的内存开销仍在几十 KB 量级，挡洪水靠的是握手频率与带宽水位。
+        limit_conn niuma_ws 16;
         limit_req  zone=niuma_req burst=10 nodelay;
 
         proxy_pass http://niuma_game;

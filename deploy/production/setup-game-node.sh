@@ -323,8 +323,9 @@ server {
 
     location /ws {
         if (\$niuma_park_${PARK_ID}_origin_ok = 0) { return 403; }
-        # 单 IP 最多 6 条并发 WS；握手超过 15r/s 直接拒（断线重连远低于此）
-        limit_conn niuma_park_${PARK_ID}_ws 6;
+        # 单 IP 最多 12 条并发 WS；握手超过 15r/s 直接拒（断线重连远低于此）。
+        # 12 而不是 6：校园网/公司出口共用一个 IP 时，6 条会误伤同网的其他人。
+        limit_conn niuma_park_${PARK_ID}_ws 12;
         limit_req zone=niuma_park_${PARK_ID}_req burst=10 nodelay;
         proxy_pass http://niuma_park_${PARK_ID};
         proxy_http_version 1.1;
