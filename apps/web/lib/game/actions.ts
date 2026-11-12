@@ -1,6 +1,7 @@
 'use client';
 
 import { POSE, type Pose, type SeatKind } from '@niuma/shared-types';
+import { HINT } from './hint-copy';
 import type { ActionKey } from './input';
 
 /**
@@ -59,12 +60,9 @@ function isStationary(state: Pick<InteractionState, 'pose' | 'moving'>): boolean
   return !state.moving && state.pose !== POSE.Walk;
 }
 
-/** 被拦下的原因只写一份：点击提示与按钮 title 共用同一句文案 */
+/** 被拦下的原因只写一份：点击提示与按钮 title 共用同一句文案；带按键的文案见 hint-copy */
 const HINT_SIT_WHILE_WALKING = '站定后才能坐下';
 const HINT_LIE_WHILE_WALKING = '站定后才能躺平';
-const HINT_LIE_ON_SEAT = '座位上不能躺，先按 Z 起身';
-const HINT_SIT_ON_BED = '床上只能躺，按 X 起身';
-const HINT_BED_ONLY = '床上只能躺，按 X 上床';
 const HINT_WAVE_WHILE_WALKING = '站定后才能打招呼';
 
 /** 按钮表现只需要姿态与座位种类，不必知道座位表 */
@@ -74,11 +72,11 @@ export function resolveInteraction(action: ActionKey, state: InteractionState): 
   switch (action) {
     case 'sit': {
       // 床位上只能躺：按 Z 不改姿态，只给出正确按键
-      if (state.seated && state.seatKind === 'bed') return { kind: 'blocked', hint: HINT_SIT_ON_BED };
+      if (state.seated && state.seatKind === 'bed') return { kind: 'blocked', hint: HINT.sitOnBed };
       // 已经坐着（座位或地面）：再按 Z 就是起身
       if (state.seated || state.pose === POSE.Sit) return { kind: 'stand' };
       // 旁边只有床时不要就地坐下：那会让人以为「坐不上床」是 bug
-      if (!state.seatAvailable && state.bedAvailable) return { kind: 'blocked', hint: HINT_BED_ONLY };
+      if (!state.seatAvailable && state.bedAvailable) return { kind: 'blocked', hint: HINT.bedOnly };
       // 旁边有空位时允许边走边坐：吸附到锚点是瞬时的，不存在滑步
       if (state.seatAvailable) return { kind: 'sit-seat' };
       // 站着走的时候就地坐下会闪一帧坐姿再被走路覆盖
@@ -89,7 +87,7 @@ export function resolveInteraction(action: ActionKey, state: InteractionState): 
       if (state.seated) {
         // 已经躺在床位上：再按 X 起身；坐在凳子 / 椅子上则先起身
         if (state.seatKind === 'bed') return { kind: 'stand' };
-        return { kind: 'blocked', hint: HINT_LIE_ON_SEAT };
+        return { kind: 'blocked', hint: HINT.lieOnSeat };
       }
       if (state.pose === POSE.Lie) return { kind: 'stand' };
       // 空床优先吸附，与「坐着空位」同一条即时吸附路径
@@ -140,7 +138,7 @@ export function actionPresentation(action: ActionKey, state: PresentationState):
         active,
         unavailable,
         label: active ? '起身' : '坐下',
-        reason: unavailable ? HINT_SIT_ON_BED : undefined,
+        reason: unavailable ? HINT.sitOnBed : undefined,
       };
     }
     case 'lie': {
@@ -151,7 +149,7 @@ export function actionPresentation(action: ActionKey, state: PresentationState):
         active,
         unavailable,
         label: active ? '起身' : '躺平',
-        reason: unavailable ? HINT_LIE_ON_SEAT : undefined,
+        reason: unavailable ? HINT.lieOnSeat : undefined,
       };
     }
     case 'interact':

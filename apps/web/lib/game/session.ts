@@ -61,6 +61,7 @@ import { ventOutcome } from './vent-outcome';
 import { advanceOnDuty } from './duty';
 import { toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
+import { HINT } from './hint-copy';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
 import { seatLift } from './seat-art';
 import { NEVER_SENT, shouldSendMove, type MoveSample } from './move-send';
@@ -843,10 +844,10 @@ export class GameSession {
       const isFree = (id: number) => !this.seatOwner.has(id);
       const seat = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind !== 'bed');
       const bed = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind === 'bed');
-      if (seat) hint = seat.kind === 'toilet' ? '按 Z 使用马桶' : '按 Z 坐下';
-      else if (bed) hint = '按 X 上床躺平';
-      else if (isNearRankBoard(x, y)) hint = '按 F 查看牛马榜';
-      else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = '按 F 互动';
+      if (seat) hint = seat.kind === 'toilet' ? HINT.toilet : HINT.seat;
+      else if (bed) hint = HINT.bed;
+      else if (isNearRankBoard(x, y)) hint = HINT.board;
+      else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = HINT.interact;
     }
     if (hint === this.seatHint) return;
     this.seatHint = hint;

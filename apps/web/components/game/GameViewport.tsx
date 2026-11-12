@@ -27,6 +27,7 @@ import {
 import { loadGeo, readCachedGeo } from '@/lib/game/geo';
 import { createGameClient } from '@/lib/game/client/create-game-client';
 import type { GameClient } from '@/lib/game/client/game-client';
+import { touchHint } from '@/lib/game/hint-copy';
 import type { ActionKey } from '@/lib/game/input';
 import { loadSnapshot, resumeForPark } from '@/lib/game/snapshot';
 import type { ParkEntry } from '@/lib/park';
@@ -648,7 +649,8 @@ export function GameViewport({
                 portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-24'
               }`}
             >
-              {hint}
+              {/* 引擎只产出按键说法，触屏在渲染层投影成按钮名（hint-copy 单一事实源） */}
+              {isTouch ? touchHint(hint) : hint}
             </div>
           )}
           <ConnectionBanner />

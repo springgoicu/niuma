@@ -5,6 +5,7 @@ import { Armchair, Coffee, Flame, Hand, MessageSquare, Rabbit, Sandwich, Wheat }
 import { POSE } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { actionPresentation } from '@/lib/game/actions';
+import { touchHint } from '@/lib/game/hint-copy';
 import type { ActionKey } from '@/lib/game/input';
 import { STICK_BASE, STICK_KNOB, STICK_RADIUS, stickKnob, stickVector } from '@/lib/game/joystick';
 
@@ -225,7 +226,7 @@ export function TouchActions({ onAction, onChat, portrait = false }: TouchAction
               aria-label={text}
               aria-pressed={toggles ? view.active : undefined}
               aria-disabled={view.unavailable || undefined}
-              title={view.reason}
+              title={view.reason ? touchHint(view.reason) : undefined}
               onPointerDown={(event) => {
                 event.preventDefault();
                 haptic();
