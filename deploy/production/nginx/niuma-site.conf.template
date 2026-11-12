@@ -100,9 +100,11 @@ server {
         add_header Cross-Origin-Embedder-Policy "require-corp" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;
         add_header X-Content-Type-Options "nosniff" always;
-        # 前 128KB 顶满（极小的 chunk 不受限速影响），之后单流 80KB/s
-        limit_rate_after 128k;
-        limit_rate 80k;
+        # 前 512KB 全速（gzip 后的构建产物几乎全部落在这个窗口内，等于秒开），
+        # 超过部分单流 200KB/s。不去掉限速：高并发时一条连接顶满 5Mbps 会把
+        # WebSocket 的游戏帧挤掉；200KB/s 让大资源仍有 1.6Mbps，留足余量给游戏服。
+        limit_rate_after 512k;
+        limit_rate 200k;
         limit_conn addr 8;
         access_log off;
     }
@@ -129,8 +131,10 @@ server {
         add_header Cross-Origin-Embedder-Policy "require-corp" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;
         add_header X-Content-Type-Options "nosniff" always;
-        limit_rate_after 128k;
-        limit_rate 150k;
+        # 图集是 PNG，gzip 压不动，尺寸随帧数增长会突破 512KB：
+        # 首包 512KB 全速，超出部分 250KB/s（比 JS 略宽，图集是一次性整包加载）
+        limit_rate_after 512k;
+        limit_rate 250k;
         access_log off;
     }
 
