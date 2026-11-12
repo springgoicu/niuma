@@ -14,16 +14,33 @@ const FACES: ReadonlyArray<{ family: string; url: string; weight: string }> = [
   // 工牌与气泡里的中文用系统字体栈；Oswald 只服务 DOM 外壳，Worker 不需要
 ];
 
+/** 单个字体的加载上限：Worker 里 FontFace.load() 在部分环境会永久 pending */
+const FACE_TIMEOUT_MS = 3000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`font load timeout ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error: unknown) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 export async function loadWorkerFonts(): Promise<void> {
   const fonts = (globalThis as { fonts?: FontFaceSet }).fonts;
   if (!fonts || typeof FontFace === 'undefined') return;
   await Promise.all(
     FACES.map(async (face) => {
       try {
-        const loaded = await new FontFace(face.family, `url(${face.url})`, { weight: face.weight }).load();
+        // 超时的 FontFace 不 add 进集合，fonts.ready 就不会被它一直吊住
+        const loaded = await withTimeout(
+          new FontFace(face.family, `url(${face.url})`, { weight: face.weight }).load(),
+          FACE_TIMEOUT_MS,
+        );
         fonts.add(loaded);
       } catch {
-        // 单个字体失败（404 / 解码失败）只影响字宽，不阻塞入场
+        // 单个字体失败（404 / 解码失败 / 超时）只影响字宽，不阻塞入场
       }
     }),
   );
