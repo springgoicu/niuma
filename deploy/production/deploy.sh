@@ -112,4 +112,16 @@ else
 fi
 
 log "✔ 部署完成：${REMOTE_REV:0:8}"
+
+# 触发器自己也住在仓库里。webhook.mjs 有更新时同步到运行位置，但不在这里重启服务：
+# 本进程是 webhook 的子进程，重启会把部署自己杀掉。重启留给 install.sh 重跑或人工一次。
+if [ -f /opt/niuma/webhook.mjs ] && ! cmp -s "$SRC_DIR/deploy/production/webhook.mjs" /opt/niuma/webhook.mjs; then
+  if cp "$SRC_DIR/deploy/production/webhook.mjs" /opt/niuma/webhook.mjs 2>/dev/null; then
+    chmod 755 /opt/niuma/webhook.mjs 2>/dev/null || true
+    log "⚠ webhook.mjs 已更新，需重启触发器后生效：sudo systemctl restart niuma-webhook"
+  else
+    log "⚠ webhook.mjs 有更新但无权写入 /opt/niuma（重跑 install.sh 会自动处理）"
+  fi
+fi
+
 pm2 ls 9>&- || true

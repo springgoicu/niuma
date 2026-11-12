@@ -187,6 +187,8 @@ echo "   congestion=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || e
 step "5. 目录与配置"
 mkdir -p "$APP_BASE" /etc/niuma /var/log/niuma "$ACME_ROOT" /opt/niuma
 chown -R "$AS_USER:$AS_USER" "$APP_BASE" /var/log/niuma
+# /opt/niuma 归部署用户：deploy.sh 才能在发版时同步 webhook.mjs，不必每次 sudo
+chown "$AS_USER:$AS_USER" /opt/niuma
 chown -R www-data:www-data "$ACME_ROOT"
 
 if [ ! -f /etc/niuma/niuma.env ]; then

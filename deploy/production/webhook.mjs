@@ -77,9 +77,14 @@ function runDeploy(reason) {
   const out = createWriteStream(LOG_FILE, { flags: 'a' });
   out.write(`\n[${new Date().toISOString()}] ===== 触发部署：${reason} =====\n`);
 
+  // LOG_FILE 是本进程的日志，不能漏给 deploy.sh：它会读同名变量做自己的 tee，
+  // 结果两份日志串到一起，每行还会出现两遍（tee 一份、父进程 pipe 一份）
+  const childEnv = { ...process.env, FORCE: '0' };
+  delete childEnv.LOG_FILE;
+
   const child = spawn('bash', [DEPLOY_SCRIPT], {
     cwd: dirname(DEPLOY_SCRIPT),
-    env: { ...process.env, FORCE: '0' },
+    env: childEnv,
     detached: false,
   });
   child.stdout.pipe(out, { end: false });
