@@ -1,6 +1,11 @@
 # niuma 全局 nginx 参数（http 上下文）—— /etc/nginx/conf.d/00-niuma-http.conf
 #
 # 只放「必须在 http 上下文」的东西：map、upstream、gzip、文件缓存、SSL 会话。
+#
+# 【重要】Ubuntu 26.04 发行版的 /etc/nginx/nginx.conf 已经声明了
+# sendfile / tcp_nopush / ssl_protocols / server_tokens / gzip。
+# 同一上下文重复声明标量指令会让 nginx -t 报 "duplicate" 并拒绝启动，
+# 所以下面只写增量；那几项保持发行版的取值（sendfile/tcp_nopush 本来就是 on）。
 
 # WebSocket 升级：空 Upgrade 头必须发 close，否则普通请求会被上游当成劫持
 map $http_upgrade $connection_upgrade {
@@ -16,8 +21,14 @@ upstream niuma_web {
 
 upstream niuma_game {
     server 127.0.0.1:3001;
-    keepalive 4;
+    keepalive 8;   # /health 探活与短平快请求也能复用
 }
+
+# ---- 核心网络传输 ----
+# sendfile / tcp_nopush 由发行版 nginx.conf 提供（已为 on），不在此重复声明。
+tcp_nodelay         on;   # 禁 Nagle：WS 的 8 字节小帧立刻离网，不攒包等 MSS
+keepalive_timeout   65s;
+keepalive_requests  1000;
 
 # ---- 压缩 ----
 # 静态资源命中同目录的 .gz（部署时预压缩），动态 HTML 才走运行时 gzip。
@@ -38,8 +49,7 @@ gzip_types
     application/xml
     image/svg+xml;
 
-# 静态资源并发上限要用的共享内存区：单 IP 12 条连接够浏览器用，
-# 又不至于让某个人开几十个下载把 5Mbps 出口吃干
+# 静态资源并发上限用的共享内存区
 limit_conn_zone $binary_remote_addr zone=addr:10m;
 
 # ---- 静态文件元数据缓存 ----
@@ -51,13 +61,24 @@ open_file_cache_errors   on;
 
 # ---- TLS 会话复用 ----
 # 首访是完整握手，第二次起走 session ticket；5Mbps 机器上握手省下的几百毫秒很值钱。
-# ssl_protocols / ssl_prefer_server_ciphers 由发行版 nginx.conf 提供（TLS1.2+1.3），
-# 这里不重复声明：重复会让 nginx -t 报 duplicate 并拒绝启动。
+# ssl_protocols / ssl_prefer_server_ciphers 由发行版 nginx.conf 提供（TLS1.2+1.3）。
 ssl_session_cache   shared:SSL:20m;
 ssl_session_timeout 1d;
 ssl_session_tickets on;
 # 4k：证书链一次发完，减少一个 RTT
 ssl_buffer_size     4k;
 
-# server_tokens 由发行版 nginx.conf 关闭，这里不再声明（重复会 nginx -t 失败）
+# TLS 1.3 0-RTT：会话恢复时首个请求省 1 个 RTT。
+# 代价：early data 可被重放。上游目前不校验 Early-Data 头，
+# 非幂等入口（Webhook POST）靠 token + 触发器单实例锁兜住；
+# 若要彻底关掉重放，把这一行改成 off 即可。
+ssl_early_data      on;
+
+# ---- 反向代理缓冲 ----
+# 让 Next SSR 的响应留在内存里，别落到 /var/lib/nginx 的临时文件
+proxy_buffer_size          16k;
+proxy_buffers              8 32k;
+proxy_busy_buffers_size    64k;
+proxy_temp_file_write_size 64k;
+
 client_max_body_size 4m;
