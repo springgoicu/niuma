@@ -3,6 +3,7 @@
 import {
   OpCode,
   decodeAppearanceBroadcast,
+  decodeCareerBroadcast,
   decodeChatBroadcast,
   decodeChatHistory,
   decodeChatRejected,
@@ -17,6 +18,7 @@ import {
   decodeSystemNotice,
   decodeVent,
   decodeWelcome,
+  encodeCareerReport,
   encodeChatHistoryRequest,
   encodeChatSend,
   encodeHello,
@@ -27,6 +29,7 @@ import {
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
+  type CareerSummary,
   type CharacterAppearance,
   type ChatHistoryPacket,
   type ChatPacket,
@@ -69,6 +72,8 @@ export interface NetHandlers {
   onAppearance(id: number, appearance: CharacterAppearance): void;
   /** 某个实体的常驻状态变了（自己也会收到一条，用于对齐服务端裁决后的文本） */
   onStatus(id: number, status: string): void;
+  /** 某个实体的考勤摘要变了（补报后服务端定向广播） */
+  onCareer(id: number, career: CareerSummary): void;
   /** 附近玩家咀嚼：只带实体 id，音效按该实体当前位置空间化 */
   onGraze(id: number): void;
   /**
@@ -105,6 +110,8 @@ export class NetClient {
   private appearance: CharacterAppearance | null = null;
   /** 常驻状态：重连时随 HELLO 一起带上，否则断线回来状态会凭空消失 */
   private status = '';
+  /** 考勤摘要：重连同样带上，避免回来后他人工牌显示「未上报」 */
+  private career: CareerSummary | undefined;
   /** 上一次会话的落点：每次（重）连都随 HELLO 上报，由服务端重新校验 */
   private resume: ResumeState | undefined;
   private attempts = 0;
@@ -133,11 +140,18 @@ export class NetClient {
     private readonly url = defaultUrl(),
   ) {}
 
-  connect(name: string, appearance: CharacterAppearance, resume?: ResumeState, status = ''): void {
+  connect(
+    name: string,
+    appearance: CharacterAppearance,
+    resume?: ResumeState,
+    status = '',
+    career?: CareerSummary,
+  ): void {
     this.name = name;
     this.appearance = appearance;
     this.resume = resume;
     this.status = status;
+    this.career = career;
     this.disposed = false;
     this.terminal = false;
     this.open();
@@ -181,7 +195,14 @@ export class NetClient {
       if (this.appearance) {
         // 声明支持 6 字节紧凑条目：服务端按能力协商决定用不用，旧服务端会忽略这一段
         socket.send(
-          encodeHello(this.name, this.appearance, this.resume, this.status, SYNC_FORMAT_COMPACT),
+          encodeHello(
+            this.name,
+            this.appearance,
+            this.resume,
+            this.status,
+            SYNC_FORMAT_COMPACT,
+            this.career,
+          ),
         );
       }
       this.handlers.onOpen();
@@ -246,6 +267,11 @@ export class NetClient {
       case OpCode.S2C_STATUS: {
         const packet = decodeStatusBroadcast(data);
         this.handlers.onStatus(packet.entityId, packet.status);
+        break;
+      }
+      case OpCode.S2C_CAREER: {
+        const packet = decodeCareerBroadcast(data);
+        if (packet) this.handlers.onCareer(packet.entityId, packet.career);
         break;
       }
       case OpCode.S2C_SEAT_STATE:
@@ -341,6 +367,13 @@ export class NetClient {
     this.status = status;
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeSetStatus(status));
+  }
+
+  /** 考勤摘要补报：离线时也记下来，重连的 HELLO 会带上 */
+  sendCareer(career: CareerSummary): void {
+    this.career = career;
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeCareerReport(career));
   }
 
   dispose(): void {

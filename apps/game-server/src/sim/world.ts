@@ -1,13 +1,16 @@
 import {
   DEFAULT_APPEARANCE,
   DIRECTION,
+  EMPTY_CAREER,
   MAX_ENTITIES,
   MAX_ENTITY_ID,
   POSE,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
   buildSpawnBody,
+  encodeCareerSegment,
   packState,
+  type CareerSummary,
   type CharacterAppearance,
   type Direction,
   type Pose,
@@ -21,6 +24,12 @@ export class Player {
   appearance: CharacterAppearance = DEFAULT_APPEARANCE.cow;
   /** 常驻状态：空串表示没设置，只活在内存里，不进任何持久层 */
   status = '';
+  /** 本人自报的考勤摘要：只用于工牌展示，不参与任何权威判定，进程重启即清空 */
+  career: CareerSummary = { ...EMPTY_CAREER };
+  /** 上一次考勤补报的时刻：按连接限频，防止伪造包把视野广播当放大器 */
+  lastCareerAt = 0;
+  /** 摘要编码后的尾部段：与 spawnBody 同一套缓存纪律，补报时失效 */
+  private careerSegmentCache: Uint8Array | null = null;
   /**
    * 入场时刻（毫秒）。在线时长按会话口径结算，断线重连会拿到新的 Player，
    * 因此这里不承担跨会话身份；进程重启即清零（ADR-0004）。
@@ -117,12 +126,27 @@ export class Player {
     this.spawnBodyCache = null;
   }
 
+  /** 考勤摘要的尾部段：与 spawnBody 一样只编码一次，补报时显式失效 */
+  get careerSegment(): Uint8Array {
+    if (this.careerSegmentCache === null) {
+      this.careerSegmentCache = encodeCareerSegment(this.career);
+    }
+    return this.careerSegmentCache;
+  }
+
+  markCareerDirty(): void {
+    this.careerSegmentCache = null;
+  }
+
   reset(): void {
     this.id = 0;
     this.wsId = 0;
     this.name = '';
     this.appearance = DEFAULT_APPEARANCE.cow;
     this.status = '';
+    this.career = { ...EMPTY_CAREER };
+    this.careerSegmentCache = null;
+    this.lastCareerAt = 0;
     this.joinedAt = 0;
     this.x = 0;
     this.y = 0;

@@ -61,6 +61,18 @@ export const STATUS_EXTENSION_MAGIC = 0xff;
  */
 export const ONLINE_EXTENSION_MAGIC = 0xfe;
 export const ONLINE_EXTENSION_BYTES = 5;
+/**
+ * HELLO / SPAWN 尾部的「考勤摘要」扩展段：`[0xfc][len u8][payload]`。
+ *
+ * 0xfc 大于 MAX_STATUS_BYTES（48），也不会与 0xfe / 0xfd / 0xff 撞车；
+ * 段永远追加在最后，旧解码器读完已知段就停止，天然忽略。
+ * 补报走独立的 C2S_CAREER / S2C_CAREER，不依赖这条尾部段。
+ */
+export const CAREER_EXTENSION_MAGIC = 0xfc;
+/** 补报间隔：摘要是展示数据，60 秒足够跟上今日/本周工时的变化 */
+export const CAREER_REPORT_INTERVAL_MS = 60_000;
+/** 补报限频：服务端按连接维度收口，防止伪造包把广播当放大器 */
+export const CAREER_UPDATE_INTERVAL_MS = 10_000;
 export const MAX_PACKET_BYTES = 2048;
 /**
  * 与 `MAX_ENTITY_ID` 对齐：紧凑同步条目只给 id 留 10 bit。

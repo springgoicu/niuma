@@ -1,4 +1,19 @@
-import { POSE, type Pose, type SeatKind, type Species } from '@niuma/shared-types';
+import {
+  POSE,
+  type CareerSummary,
+  type CharacterAppearance,
+  type Pose,
+  type SeatKind,
+  type Species,
+} from '@niuma/shared-types';
+
+/** 视野内本周工时榜的一条；`self` 用于高亮自己 */
+export interface BoardEntry {
+  id: number;
+  name: string;
+  weekMinutes: number;
+  self: boolean;
+}
 
 /**
  * 工牌展示模型：自己的工牌与点击他人打开的详情共用同一份结构。
@@ -10,6 +25,8 @@ export interface PlayerBadge {
   id: number;
   name: string;
   species: Species;
+  /** 角色外观：分享卡要画立绘，远端外观在 spawn / 换装广播时留存 */
+  appearance: CharacterAppearance;
   /** 常驻状态；空串表示没设置 */
   status: string;
   /** 园区区域名，来自 `regionAt` */
@@ -20,6 +37,12 @@ export interface PlayerBadge {
   moving: boolean;
   seated: boolean;
   seatKind: SeatKind | null;
+  /** 本人自报的考勤摘要；旧服务端或未上报时为 undefined */
+  career?: CareerSummary;
+  /** 视野内本周工时榜（最多 5 条） */
+  board: BoardEntry[];
+  /** 该玩家在视野榜里的名次；未上报或不在榜内为 null */
+  rank: number | null;
 }
 
 /**
@@ -56,6 +79,15 @@ export function seatLabel(seatKind: SeatKind | null): string {
   return '马桶';
 }
 
+/** 昵称哈希：djb2，按码点推进。工号、部门与班次共用同一把尺子。 */
+export function hashName(name: string): number {
+  let hash = 5381;
+  for (const char of name) {
+    hash = ((hash << 5) + hash + (char.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return hash;
+}
+
 /**
  * 固定工号：djb2 对昵称按码点哈希，取后 5 位补零，形如 `#NM-09527`。
  *
@@ -63,11 +95,45 @@ export function seatLabel(seatKind: SeatKind | null): string {
  * 换名字才会换号——这正是「固定工号」该有的行为。
  */
 export function employeeNumber(name: string): string {
-  let hash = 5381;
-  for (const char of name) {
-    hash = ((hash << 5) + hash + (char.codePointAt(0) ?? 0)) >>> 0;
-  }
-  return `#NM-${String(hash % 100_000).padStart(5, '0')}`;
+  return `#NM-${String(hashName(name) % 100_000).padStart(5, '0')}`;
+}
+
+const DEPARTMENTS = [
+  '研发部',
+  '运营部',
+  '市场部',
+  '后勤部',
+  '财务部',
+  '摸鱼办',
+] as const;
+
+const SHIFTS = ['白班', '夜班', '弹性班', '连班'] as const;
+
+/** 部门：由昵称哈希稳定派生，不占协议字段，也不会因为刷新而换组。 */
+export function departmentOf(name: string): string {
+  return DEPARTMENTS[hashName(name) % DEPARTMENTS.length]!;
+}
+
+/** 班次：取哈希的高位，避免与部门总是同进同退。 */
+export function shiftOf(name: string): string {
+  return SHIFTS[(hashName(name) >>> 8) % SHIFTS.length]!;
+}
+
+/**
+ * 把「上报时的快照」换算成「此刻的工时」。
+ *
+ * 只加上报之后的会话增量：`reportedOnlineSec` 由服务端在入场 / 补报时写入，
+ * 重连与两端时钟差都不会造成重复计时。行为统计是累计值，不做增量。
+ */
+export function withCareerDelta(career: CareerSummary, onlineSec: number): CareerSummary {
+  const deltaMin = Math.floor(Math.max(0, onlineSec - career.reportedOnlineSec) / 60);
+  if (deltaMin <= 0) return career;
+  return {
+    ...career,
+    totalOnlineMinutes: career.totalOnlineMinutes + deltaMin,
+    todayMinutes: career.todayMinutes + deltaMin,
+    weekMinutes: career.weekMinutes + deltaMin,
+  };
 }
 
 /** 点击命中盒：以脚底为原点，覆盖角色本体与头顶昵称，和 `EntityView` 的锚点一致 */

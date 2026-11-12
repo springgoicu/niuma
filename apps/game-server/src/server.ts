@@ -1,8 +1,10 @@
 import type { ServerWebSocket } from 'bun';
 import {
   ACTION,
+  CAREER_UPDATE_INTERVAL_MS,
   CHAT_HISTORY_FLAG,
   CHAT_HISTORY_REQUEST_INTERVAL_MS,
+  EMPTY_CAREER,
   FALLBACK_NICKNAME,
   GRAZE_COOLDOWN_MS,
   MAX_PACKET_BYTES,
@@ -10,6 +12,7 @@ import {
   QUEUE_REJECT_REASON,
   TICK_MS,
   decodeAction,
+  decodeCareerReport,
   decodeChatHistoryRequest,
   decodeChatSend,
   decodeHello,
@@ -18,6 +21,7 @@ import {
   decodeSetAppearance,
   decodeSetStatus,
   encodeAppearanceBroadcast,
+  encodeCareerBroadcast,
   encodeChatHistory,
   encodeGraze,
   encodePong,
@@ -27,8 +31,10 @@ import {
   encodeStatusBroadcast,
   encodeWelcome,
   quantizeCoord,
+  sanitizeCareer,
   SYNC_FORMAT_LEGACY,
   readOpCode,
+  type CareerSummary,
   type SeatStateEntry,
 } from '@niuma/shared-types';
 import { AdmissionController, type HelloPayload } from './admission/controller';
@@ -115,6 +121,21 @@ export function startGameServer(config: ServerConfig) {
     for (const other of world.players.values()) transport.send(other.wsId, packet);
   }
 
+  /**
+   * 摘要只用于展示：先做结构钳制，再对唯一的自由文本（省份）走与昵称/状态同一套审核。
+   * 政治类清空，脏话用打码结果继续展示；日志只打 wsId 与命中数，不打印完整载荷。
+   */
+  function sanitizeIncomingCareer(raw: CareerSummary | undefined, wsId: number): CareerSummary {
+    const safe = sanitizeCareer(raw);
+    if (!safe.province) return safe;
+    const verdict = moderation.inspect(safe.province);
+    if (verdict.verdict === 'reject') {
+      console.warn(`[career] province reject ws=${wsId} hits=${verdict.hits}`);
+      return { ...safe, province: '' };
+    }
+    return { ...safe, province: verdict.text };
+  }
+
   /** 真正入场：建实体、回 WELCOME、结算首帧视野。排队者放行时复用的就是这条路径 */
   function admit(ws: ServerWebSocket<SocketData>, payload: HelloPayload): void {
     if (ws.data.playerId !== 0) return;
@@ -138,6 +159,10 @@ export function startGameServer(config: ServerConfig) {
     ws.data.playerId = player.id;
     // 必须在 refreshView 之前：入场首帧的视野同步就该按协商好的格式编码
     player.syncFormat = payload.syncFormat ?? SYNC_FORMAT_LEGACY;
+    // 摘要同样要在 refreshView 之前落位：先进入视野的人会立刻收到带 career 的入场包
+    player.career = payload.career ?? { ...EMPTY_CAREER };
+    // 放行第一条补报：客户端拿到 geo 后会立刻补一次省份，不能被入场限频吃掉
+    player.lastCareerAt = now - CAREER_UPDATE_INTERVAL_MS;
     // 先落姿态再占座：occupy 会用座位锚点与座位姿态覆盖一次，顺序反了会把地面姿态写丢
     player.applyState(spawn.direction, spawn.pose, false);
     if (spawn.seat) {
@@ -197,6 +222,9 @@ export function startGameServer(config: ServerConfig) {
         `[moderation] status ${statusVerdict.verdict} ws=${ws.data.wsId} hits=${statusVerdict.hits}`,
       );
     }
+    // 新会话的在线增量从 0 起算：客户端上报的 reportedOnlineSec 一律不采信
+    const career = sanitizeIncomingCareer(hello.career, ws.data.wsId);
+    career.reportedOnlineSec = 0;
     const payload: HelloPayload = {
       name: nameVerdict.verdict === 'reject' ? FALLBACK_NICKNAME : nameVerdict.text,
       appearance: hello.appearance,
@@ -205,6 +233,7 @@ export function startGameServer(config: ServerConfig) {
       resume: hello.resume,
       // 能力协商结果同样要跟着排队走：放行时才知道该给这个连接编 6 还是 7 字节
       syncFormat: hello.syncFormat,
+      career,
     };
     const alreadyQueued = admission.isQueued(ws.data.wsId);
     const decision = admission.decide(ws.data.wsId, payload, world.size, Date.now());
@@ -343,6 +372,27 @@ export function startGameServer(config: ServerConfig) {
       // 即便没变化也回给自己：客户端据此把本地乐观值对齐成服务端裁决后的文本
       const packet = encodeStatusBroadcast(player.id, player.status);
       transport.send(player.wsId, packet);
+      for (const id of player.known) {
+        const other = world.get(id);
+        if (other) transport.send(other.wsId, packet);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_CAREER) {
+      // 摘要是展示数据：限频只挡伪造包把视野广播当放大器，正常客户端 60s 才报一次
+      if (now - player.lastCareerAt < CAREER_UPDATE_INTERVAL_MS) return;
+      const incoming = decodeCareerReport(data);
+      if (!incoming) return;
+      player.lastCareerAt = now;
+      const next = sanitizeIncomingCareer(incoming, player.wsId);
+      // 增量基线由服务端写：客户端报告的 reportedOnlineSec 不可信
+      next.reportedOnlineSec =
+        player.joinedAt > 0 ? Math.max(0, Math.floor((now - player.joinedAt) / 1000)) : 0;
+      player.career = next;
+      // 入场包里的摘要段与 spawnBody 同一套缓存：补报后必须失效
+      player.markCareerDirty();
+      const packet = encodeCareerBroadcast({ entityId: player.id, career: next });
       for (const id of player.known) {
         const other = world.get(id);
         if (other) transport.send(other.wsId, packet);

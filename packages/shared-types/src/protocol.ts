@@ -1,6 +1,20 @@
 import { decodeAppearance, encodeAppearance } from './appearance-codec';
 import {
+  CAREER_FIXED_BYTES,
+  CAREER_FIXED_BYTES_LEGACY,
+  CAREER_MAX_BYTES,
+  CAREER_MIN_BYTES,
+  CAREER_SEGMENT_MAX_BYTES,
+  CAREER_VERSION,
+  CAREER_VERSION_LEGACY,
+  dateToEpochDays,
+  epochDaysToDate,
+  sanitizeCareer,
+  type CareerSummary,
+} from './career';
+import {
   APPEARANCE_BYTES,
+  CAREER_EXTENSION_MAGIC,
   CHAT_HISTORY_FLAG,
   CHAT_HISTORY_MAX_PAGE,
   CHAT_HISTORY_PACKET_BUDGET,
@@ -40,6 +54,7 @@ import {
   unpackState,
 } from './quantize';
 import type {
+  CareerBroadcastPacket,
   CharacterAppearance,
   ChatHistoryEntry,
   ChatHistoryPacket,
@@ -443,6 +458,198 @@ export function decodeSync(
   return { tick, entities };
 }
 
+// ---------------------------------------------------------------------------
+// 考勤摘要：HELLO / SPAWN 尾部段与 C2S_CAREER / S2C_CAREER
+// ---------------------------------------------------------------------------
+
+/**
+ * 考勤摘要 payload（`CAREER_FIXED_BYTES` 为 v2 不含省份的定长部分）：
+ *
+ * `[version u8][firstJoinDays u16][totalOnlineMinutes u32][activeDays u16]
+ *  [todayMinutes u16][weekMinutes u16][streakDays u16][steps u32][distanceM u32]
+ *  [slackCount u16][ventedCount u16][knockdownCount u16][overtimeCount u16]
+ *  [reportedOnlineSec u32][provinceLen u8][province nB]`
+ *
+ * 全部小端；日期用距 2000-01-01 的天数，0 表示未上报。
+ * v1 没有 `knockdownCount`，解码时按 0 回退，其余字段偏移不变。
+ */
+export function encodeCareer(career: CareerSummary): Uint8Array {
+  const safe = sanitizeCareer(career);
+  const provinceBytes = textEncoder.encode(safe.province);
+  const out = new Uint8Array(CAREER_FIXED_BYTES + provinceBytes.length);
+  const view = new DataView(out.buffer);
+  let at = 0;
+  out[at++] = CAREER_VERSION;
+  view.setUint16(at, dateToEpochDays(safe.firstJoinDate), true);
+  at += 2;
+  view.setUint32(at, safe.totalOnlineMinutes, true);
+  at += 4;
+  view.setUint16(at, safe.activeDays, true);
+  at += 2;
+  view.setUint16(at, safe.todayMinutes, true);
+  at += 2;
+  view.setUint16(at, safe.weekMinutes, true);
+  at += 2;
+  view.setUint16(at, safe.streakDays, true);
+  at += 2;
+  view.setUint32(at, safe.steps, true);
+  at += 4;
+  view.setUint32(at, safe.distanceM, true);
+  at += 4;
+  view.setUint16(at, safe.slackCount, true);
+  at += 2;
+  view.setUint16(at, safe.ventedCount, true);
+  at += 2;
+  view.setUint16(at, safe.knockdownCount, true);
+  at += 2;
+  view.setUint16(at, safe.overtimeCount, true);
+  at += 2;
+  view.setUint32(at, safe.reportedOnlineSec, true);
+  at += 4;
+  out[at++] = provinceBytes.length;
+  out.set(provinceBytes, at);
+  return out;
+}
+
+/**
+ * 解一条摘要。长度不足、版本不认识、省份长度越界都回退 `undefined`：
+ * 展示层据此显示「未上报」，而不是拿 0 冒充真实工时。
+ */
+export function decodeCareer(
+  data: Uint8Array,
+  offset = 0,
+  length = data.length - offset,
+): CareerSummary | undefined {
+  // 信封层下限用 v1 的 34：v1 包也要能进来做版本分支
+  if (
+    length < CAREER_MIN_BYTES ||
+    length > CAREER_MAX_BYTES ||
+    offset < 0 ||
+    offset + length > data.length
+  ) {
+    return undefined;
+  }
+  const version = data[offset]!;
+  if (version !== CAREER_VERSION && version !== CAREER_VERSION_LEGACY) return undefined;
+  const fixedBytes = version === CAREER_VERSION ? CAREER_FIXED_BYTES : CAREER_FIXED_BYTES_LEGACY;
+  if (length < fixedBytes) return undefined;
+
+  const view = new DataView(data.buffer, data.byteOffset + offset, length);
+  let at = 1;
+  const firstJoinDays = view.getUint16(at, true);
+  at += 2;
+  const totalOnlineMinutes = view.getUint32(at, true);
+  at += 4;
+  const activeDays = view.getUint16(at, true);
+  at += 2;
+  const todayMinutes = view.getUint16(at, true);
+  at += 2;
+  const weekMinutes = view.getUint16(at, true);
+  at += 2;
+  const streakDays = view.getUint16(at, true);
+  at += 2;
+  const steps = view.getUint32(at, true);
+  at += 4;
+  const distanceM = view.getUint32(at, true);
+  at += 4;
+  const slackCount = view.getUint16(at, true);
+  at += 2;
+  const ventedCount = view.getUint16(at, true);
+  at += 2;
+  // v1 没有击倒数：按 0 回退，后续偏移与 v2 不同
+  let knockdownCount = 0;
+  if (version === CAREER_VERSION) {
+    knockdownCount = view.getUint16(at, true);
+    at += 2;
+  }
+  const overtimeCount = view.getUint16(at, true);
+  at += 2;
+  const reportedOnlineSec = view.getUint32(at, true);
+  at += 4;
+  const provinceLength = data[offset + at] ?? 0;
+  const provinceAt = offset + at + 1;
+  const available = Math.max(0, offset + length - provinceAt);
+  const province =
+    provinceLength > 0 && provinceLength <= available
+      ? textDecoder.decode(data.subarray(provinceAt, provinceAt + provinceLength))
+      : '';
+  return sanitizeCareer({
+    firstJoinDate: epochDaysToDate(firstJoinDays),
+    totalOnlineMinutes,
+    activeDays,
+    todayMinutes,
+    weekMinutes,
+    streakDays,
+    steps,
+    distanceM,
+    slackCount,
+    ventedCount,
+    knockdownCount,
+    overtimeCount,
+    province,
+    reportedOnlineSec,
+  });
+}
+
+/** 独立编码一条尾部段：服务端按玩家缓存它，避免 200 人同秒入场时重复编码。 */
+export function encodeCareerSegment(career: CareerSummary): Uint8Array {
+  const payload = encodeCareer(career);
+  const segment = new Uint8Array(2 + payload.length);
+  segment[0] = CAREER_EXTENSION_MAGIC;
+  segment[1] = payload.length;
+  segment.set(payload, 2);
+  return segment;
+}
+
+/** 写 HELLO / SPAWN 尾部的 `[0xfc][len u8][payload]`；没有摘要时一个字节都不写。 */
+export function writeCareerSegment(writer: ByteWriter, career: CareerSummary | undefined): void {
+  if (!career) return;
+  const payload = encodeCareer(career);
+  writer.u8(CAREER_EXTENSION_MAGIC).u8(payload.length).raw(payload);
+}
+
+/** 读尾部段；不是 career 段或长度不合法都返回 undefined，不消费调用方的 offset。 */
+export function readCareerSegment(data: Uint8Array, offset: number): CareerSummary | undefined {
+  if (data.length - offset < 2 || data[offset] !== CAREER_EXTENSION_MAGIC) return undefined;
+  const length = data[offset + 1]!;
+  if (length < CAREER_MIN_BYTES || length > CAREER_MAX_BYTES) return undefined;
+  if (data.length - offset - 2 < length) return undefined;
+  return decodeCareer(data, offset + 2, length);
+}
+
+/** 补报：`[op 0x22][len u8][payload]` */
+export function encodeCareerReport(career: CareerSummary): Uint8Array {
+  const payload = encodeCareer(career);
+  const writer = new ByteWriter(2 + payload.length);
+  writer.u8(OpCode.C2S_CAREER).u8(payload.length).raw(payload);
+  return writer.finish();
+}
+
+/** 补报解码：坏包返回 undefined，服务端静默丢弃。 */
+export function decodeCareerReport(data: Uint8Array): CareerSummary | undefined {
+  if (data.length < 2 || data[0] !== OpCode.C2S_CAREER) return undefined;
+  const length = data[1]!;
+  if (length < CAREER_MIN_BYTES || data.length - 2 < length) return undefined;
+  return decodeCareer(data, 2, length);
+}
+
+/** 广播：`[op 0x23][entityId u16][len u8][payload]` */
+export function encodeCareerBroadcast(packet: CareerBroadcastPacket): Uint8Array {
+  const payload = encodeCareer(packet.career);
+  const writer = new ByteWriter(4 + payload.length);
+  writer.u8(OpCode.S2C_CAREER).u16(packet.entityId).u8(payload.length).raw(payload);
+  return writer.finish();
+}
+
+export function decodeCareerBroadcast(data: Uint8Array): CareerBroadcastPacket | undefined {
+  if (data.length < 4 || data[0] !== OpCode.S2C_CAREER) return undefined;
+  const entityId = (data[1]! | (data[2]! << 8)) & 0xffff;
+  const length = data[3]!;
+  if (length < CAREER_MIN_BYTES || data.length - 4 < length) return undefined;
+  const career = decodeCareer(data, 4, length);
+  return career ? { entityId, career } : undefined;
+}
+
 /**
  * 入场资料的「不变部分」：`[nameLen u8][nameBytes][appearance 32B]`。
  *
@@ -476,16 +683,30 @@ export function encodeSpawnInto(
   state: number,
   body: Uint8Array,
   onlineSec?: number,
+  career?: CareerSummary,
+  /** 调用方已缓存的整段（服务端按玩家缓存）；优先级高于 career */
+  careerSegment?: Uint8Array,
 ): void {
   writer.u8(OpCode.S2C_ENTITY_SPAWN).u16(id).u16(x).u16(y).u8(state).raw(body);
   // 在线秒数每秒变化，不能进 spawnBody 缓存；只有调用方现算时才追加这一段
   if (onlineSec !== undefined) writer.u8(ONLINE_EXTENSION_MAGIC).u32(onlineSec);
+  if (careerSegment) writer.raw(careerSegment);
+  else writeCareerSegment(writer, career);
 }
 
 export function encodeSpawn(packet: SpawnPacket): Uint8Array {
   const body = buildSpawnBody(packet.name, packet.appearance, packet.status);
-  const writer = new ByteWriter(6 + body.length + ONLINE_EXTENSION_BYTES);
-  encodeSpawnInto(writer, packet.id, packet.x, packet.y, packet.state, body, packet.onlineSec);
+  const writer = new ByteWriter(6 + body.length + ONLINE_EXTENSION_BYTES + CAREER_SEGMENT_MAX_BYTES);
+  encodeSpawnInto(
+    writer,
+    packet.id,
+    packet.x,
+    packet.y,
+    packet.state,
+    body,
+    packet.onlineSec,
+    packet.career,
+  );
   return writer.finish();
 }
 
@@ -501,19 +722,29 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
   const appearance = decodeAppearance(data, reader.offset);
   reader.offset += APPEARANCE_BYTES;
   // 旧服务端的入场包没有状态段：剩余 0 字节即「没设置」，不能因此拒收整条 spawn。
-  // 0xfe 是在线秒数段的魔数，不是状态长度，必须先排除再按长度读状态。
+  // 0xfe / 0xfc 是尾部扩展段的魔数，不是状态长度，必须先排除再按长度读状态。
   let status = '';
-  if (reader.remaining >= 1 && data[reader.offset] !== ONLINE_EXTENSION_MAGIC) {
+  if (
+    reader.remaining >= 1 &&
+    data[reader.offset] !== ONLINE_EXTENSION_MAGIC &&
+    data[reader.offset] !== CAREER_EXTENSION_MAGIC
+  ) {
     const statusLength = reader.u8();
     // 长度字段与剩余字节不符说明包被截断或伪造：丢掉状态而不是猜半个字符
     status = statusLength <= reader.remaining ? truncateStatus(reader.utf8(statusLength)) : '';
   }
   // 在线秒数段：旧服务端没有这 5 字节，按 undefined 回退「首次看到起算」
+  let onlineSec: number | undefined;
   if (reader.remaining >= ONLINE_EXTENSION_BYTES && data[reader.offset] === ONLINE_EXTENSION_MAGIC) {
     reader.u8();
-    return { id, x, y, state, name, appearance, status, onlineSec: reader.u32() };
+    onlineSec = reader.u32();
   }
-  return { id, x, y, state, name, appearance, status };
+  // 考勤摘要段：旧服务端没有这一段，按 undefined 显示「未上报」
+  const career = readCareerSegment(data, reader.offset);
+  const packet: SpawnPacket = { id, x, y, state, name, appearance, status };
+  if (onlineSec !== undefined) packet.onlineSec = onlineSec;
+  if (career) packet.career = career;
+  return packet;
 }
 
 /** 写进调用方复用的缓冲：一次视野重算可能连发几十条 despawn，不必每条都新建 */
@@ -608,6 +839,7 @@ export function encodeHello(
   resume?: ResumeState,
   status?: string,
   syncFormat: SyncFormat = SYNC_FORMAT_LEGACY,
+  career?: CareerSummary,
 ): Uint8Array {
   const nameBytes = textEncoder.encode(truncateName(name));
   const statusBytes = textEncoder.encode(truncateStatus(status));
@@ -616,7 +848,13 @@ export function encodeHello(
   // 不声明紧凑格式就不写能力段：旧服务端与旧客户端看到的帧长完全不变
   const capabilitySize = syncFormat === SYNC_FORMAT_COMPACT ? 2 : 0;
   const writer = new ByteWriter(
-    2 + nameBytes.length + APPEARANCE_BYTES + (resume ? RESUME_BYTES : 0) + statusSize + capabilitySize,
+    2 +
+      nameBytes.length +
+      APPEARANCE_BYTES +
+      (resume ? RESUME_BYTES : 0) +
+      statusSize +
+      capabilitySize +
+      (career ? CAREER_SEGMENT_MAX_BYTES : 0),
   );
   writer.u8(OpCode.C2S_HELLO).u8(nameBytes.length).raw(nameBytes).raw(encodeAppearance(appearance));
   if (resume) {
@@ -631,6 +869,8 @@ export function encodeHello(
     writer.u8(STATUS_EXTENSION_MAGIC).u8(statusBytes.length).raw(statusBytes);
   }
   if (capabilitySize > 0) writer.u8(SYNC_CAPABILITY_MAGIC).u8(syncFormat);
+  // 考勤摘要永远追加在最后：旧服务端读完能力段就停止，天然忽略
+  writeCareerSegment(writer, career);
   return writer.finish();
 }
 
@@ -642,6 +882,8 @@ export function decodeHello(data: Uint8Array): {
   status: string;
   /** 对端声明的同步条目格式；没有能力段就是旧格式 */
   syncFormat: SyncFormat;
+  /** 考勤摘要；旧客户端整段缺席时为 undefined */
+  career?: CareerSummary;
 } {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.C2S_HELLO) throw new Error('not a hello packet');
@@ -651,11 +893,12 @@ export function decodeHello(data: Uint8Array): {
   reader.offset += APPEARANCE_BYTES;
 
   let resume: ResumeState | undefined;
-  // 0xff 是状态段、0xfd 是能力段的魔数，都不是 resume 版本号：先排除，免得把尾部读成落点
+  // 状态 / 能力 / 考勤摘要段的魔数都不是 resume 版本号：先排除，免得把尾部读成落点
   if (
     reader.remaining >= RESUME_BYTES &&
     data[reader.offset] !== STATUS_EXTENSION_MAGIC &&
-    data[reader.offset] !== SYNC_CAPABILITY_MAGIC
+    data[reader.offset] !== SYNC_CAPABILITY_MAGIC &&
+    data[reader.offset] !== CAREER_EXTENSION_MAGIC
   ) {
     const version = reader.u8();
     const x = reader.u16();
@@ -688,7 +931,17 @@ export function decodeHello(data: Uint8Array): {
     reader.u8();
     syncFormat = reader.u8() === SYNC_FORMAT_COMPACT ? SYNC_FORMAT_COMPACT : SYNC_FORMAT_LEGACY;
   }
-  return { name, appearance, resume, status, syncFormat };
+  const career = readCareerSegment(data, reader.offset);
+  const hello: {
+    name: string;
+    appearance: CharacterAppearance;
+    resume?: ResumeState;
+    status: string;
+    syncFormat: SyncFormat;
+    career?: CareerSummary;
+  } = { name, appearance, resume, status, syncFormat };
+  if (career) hello.career = career;
+  return hello;
 }
 
 export function encodeWelcome(packet: WelcomePacket): Uint8Array {

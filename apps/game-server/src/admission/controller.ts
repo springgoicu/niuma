@@ -3,6 +3,7 @@ import {
   QUEUE_REJECT_REASON,
   QUEUE_STATUS_INTERVAL_MS,
   TICK_RATE,
+  type CareerSummary,
   type CharacterAppearance,
   type LimitKind,
   type QueueRejectReason,
@@ -24,6 +25,8 @@ export interface HelloPayload {
   resume?: ResumeState;
   /** 客户端声明的同步条目格式；旧客户端与压测机器人缺席，按 7 字节处理 */
   syncFormat?: SyncFormat;
+  /** 本人自报的考勤摘要；服务端只做钳制、审核与转发，不落盘 */
+  career?: CareerSummary;
 }
 
 export interface AdmissionConfig extends GovernorConfig {

@@ -19,6 +19,7 @@ import {
   type CharacterAppearance,
   type Species,
 } from '@niuma/shared-types';
+import { switchSpeciesAppearance, type CreatorSeed } from './creator-seed';
 
 export type Pose = 'idle' | 'walk' | 'sit' | 'lie';
 /** 11 个可独立调色的槽位，与线协议一一对应 */
@@ -43,7 +44,8 @@ interface CreatorState {
   setCosmetic: (kind: CosmeticKind, value: string) => void;
   setActivePart: (part: PartKey | null) => void;
   setPose: (pose: Pose) => void;
-  hydrate: (name: string, appearance: CharacterAppearance) => void;
+  /** 挂载时一次性落库：入口参数、存档与记忆键的优先级已在 creator-seed 里算完 */
+  hydrate: (seed: CreatorSeed) => void;
   markSaved: () => void;
 }
 
@@ -60,16 +62,10 @@ export const useCreatorStore = create<CreatorState>()(
 
     setSpecies: (species) =>
       set((state) => {
-        if (state.appearance.species === species) return state;
-        const defaults = sanitizeAppearance(DEFAULT_APPEARANCE[species]);
-        const keepsColors = state.appearance.colors;
-        return {
-          appearance: sanitizeAppearance({
-            ...defaults,
-            colors: keepsColors,
-          }),
-          dirty: true,
-        };
+        // 与入口直接带 ?species= 共用同一套切法：保色、其余回默认、同物种不动
+        const appearance = switchSpeciesAppearance(state.appearance, species);
+        if (appearance === state.appearance) return state;
+        return { appearance, dirty: true };
       }),
 
     setColor: (slot, hex) =>
@@ -129,7 +125,8 @@ export const useCreatorStore = create<CreatorState>()(
 
     setPose: (pose) => set({ pose }),
 
-    hydrate: (name, appearance) => set({ name, appearance: sanitizeAppearance(appearance), dirty: false }),
+    hydrate: (seed) =>
+      set({ name: seed.name, appearance: sanitizeAppearance(seed.appearance), dirty: seed.dirty }),
 
     markSaved: () => set({ dirty: false }),
   })),

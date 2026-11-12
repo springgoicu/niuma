@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { DEFAULT_APPEARANCE, MAX_ENTITIES, MAX_ENTITY_ID } from '@niuma/shared-types';
+import { DEFAULT_APPEARANCE, EMPTY_CAREER, MAX_ENTITIES, MAX_ENTITY_ID } from '@niuma/shared-types';
 import { World } from './world';
 
 function join(world: World, wsId: number) {
@@ -28,6 +28,23 @@ describe('实体 id 分配', () => {
    * 10 位 id 空间比旧版（u16）小一个数量级，长时间运行后一定会绕回。
    * 绕回时若直接发号，就会把还在线的玩家从 Map 里顶掉——那条连接从此收不到自己的同步。
    */
+  it('对象池复用不会把上一位玩家的考勤摘要带过来', () => {
+    const world = new World();
+    const first = join(world, 1)!;
+    first.career = {
+      ...EMPTY_CAREER,
+      province: '浙江',
+      weekMinutes: 600,
+      reportedOnlineSec: 120,
+    };
+    first.lastCareerAt = 123_456;
+    world.destroy(first.id);
+
+    const second = join(world, 2)!;
+    expect(second.career).toEqual(EMPTY_CAREER);
+    expect(second.lastCareerAt).toBe(0);
+  });
+
   it('回绕后跳过仍在使用的号段', () => {
     const world = new World();
     const players = [];

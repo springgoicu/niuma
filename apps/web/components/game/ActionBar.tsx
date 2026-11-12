@@ -11,11 +11,12 @@ interface ActionBarProps {
   onChat: () => void;
 }
 
-const ACTIONS: Array<{ key: string; label: string; hint: string; Icon: typeof Armchair; action?: ActionKey }> = [
+const ACTIONS: Array<{ key: string; label: string; hint: string; tip?: string; Icon: typeof Armchair; action?: ActionKey }> = [
   { key: 'sit', label: '坐下', hint: 'Z', Icon: Armchair, action: 'sit' },
   { key: 'lie', label: '躺平', hint: 'X', Icon: Sandwich, action: 'lie' },
   // 发泄：一记牛马式冲撞，打到人对方会被创飞倒地（ADR-0051）
-  { key: 'vent', label: '发泄', hint: 'E', Icon: Flame, action: 'vent' },
+  // tip 是悬停教学提示：新玩家常以为原地按 E 就能出招（ADR-0051）
+  { key: 'vent', label: '发泄', hint: 'E', tip: '走到同事面前按 E 即可击倒', Icon: Flame, action: 'vent' },
   // 吃草紧挨发泄：E / G 在键盘上相邻，两个都是一次性动作（ADR-0048）
   { key: 'graze', label: '吃草', hint: 'G', Icon: Wheat, action: 'graze' },
   { key: 'wave', label: '打招呼', hint: 'C', Icon: Hand, action: 'wave' },
@@ -47,7 +48,8 @@ export function ActionBar({ onAction, onChat }: ActionBarProps) {
             aria-pressed={toggles ? active : undefined}
             aria-disabled={unavailable || undefined}
             title={view?.reason}
-            className={`group flex cursor-pointer flex-col items-center gap-1 border-2 px-4 py-2 transition-colors duration-150 ${
+            aria-describedby={item.tip ? `tip-${item.key}` : undefined}
+            className={`group relative flex cursor-pointer flex-col items-center gap-1 border-2 px-4 py-2 transition-colors duration-150 ${
               active
                 ? 'border-mint-400 bg-mint-400/10'
                 : 'border-transparent hover:border-mint-400/60 hover:bg-mint-400/5'
@@ -66,6 +68,16 @@ export function ActionBar({ onAction, onChat }: ActionBarProps) {
               {label}
             </span>
             <span className="font-mono text-[8px] text-mist-500">[{item.hint}]</span>
+            {item.tip && (
+              // 悬停教学气泡：动作条贴屏幕底部，向上弹出；纯 CSS 显隐，不拦指针
+              <span
+                id={`tip-${item.key}`}
+                role="tooltip"
+                className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 whitespace-nowrap border border-mint-400/60 bg-ink-900/95 px-2.5 py-1 font-mono text-[10px] tracking-[0.08em] text-mist-300 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+              >
+                {item.tip}
+              </span>
+            )}
           </button>
         );
       })}

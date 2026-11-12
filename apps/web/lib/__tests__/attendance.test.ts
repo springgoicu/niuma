@@ -4,11 +4,15 @@ import {
   ATTENDANCE_KEY,
   dayKey,
   formatDuration,
+  getActiveDays,
   getCurrentSessionDuration,
   getDailyAverageHours,
   getJobTitle,
   getSeniorityDays,
   getStampTitle,
+  getStreakDays,
+  getWeekMinutes,
+  getWeekMs,
   loadAttendance,
   saveAttendance,
   splitAttendanceInterval,
@@ -83,6 +87,47 @@ describe('日均工时', () => {
   });
 });
 
+describe('本周工时与连续在岗', () => {
+  const hour = 3_600_000;
+  // 2026-04-01 是周三；本周从 3 月 30 日（周一）起算
+  const now = new Date(2026, 3, 1, 12, 0, 0).getTime();
+
+  it('只累加本周一零点之后的记录', () => {
+    const storage = record({
+      dailyRecords: {
+        '2026-03-29': 5 * hour,
+        '2026-03-30': 2 * hour,
+        '2026-03-31': 3 * hour,
+        '2026-04-01': 1 * hour,
+      },
+    });
+    expect(getWeekMs(storage.dailyRecords, now)).toBe(6 * hour);
+    expect(getWeekMinutes(storage, now)).toBe(360);
+  });
+
+  it('跨周只算当前这一周，不把上周日算进来', () => {
+    const monday = new Date(2026, 2, 30, 0, 0, 0).getTime();
+    expect(getWeekMs({ '2026-03-29': 8 * hour }, monday)).toBe(0);
+  });
+
+  it('连续在岗从今天往前数；今天还没工时就从昨天起算', () => {
+    expect(
+      getStreakDays({ '2026-03-30': hour, '2026-03-31': hour, '2026-04-01': hour }, now),
+    ).toBe(3);
+    const nextDay = new Date(2026, 3, 2, 9, 0, 0).getTime();
+    expect(
+      getStreakDays({ '2026-03-30': hour, '2026-03-31': hour, '2026-04-01': hour }, nextDay),
+    ).toBe(3);
+    expect(getStreakDays({}, now)).toBe(0);
+  });
+
+  it('有效日期数只统计大于 0 的日期', () => {
+    expect(
+      getActiveDays({ '2026-03-30': hour, '2026-03-31': 0, '2026-04-01': 1 }),
+    ).toBe(2);
+  });
+});
+
 describe('工龄', () => {
   it('按日期间隔计算，入职当天至少给 1 天', () => {
     expect(getSeniorityDays(dayKey(Date.now()))).toBe(1);
@@ -125,6 +170,14 @@ describe('印章', () => {
     expect(getStampTitle(9, 3)).toBe('全勤特等牲');
     expect(getStampTitle(7, 3)).toBe('模范标兵');
     expect(getStampTitle(3, 3)).toBe('摸鱼练习生');
+  });
+
+  it('附加维度按「榜首 > 万步 > 摸鱼宗师 > 过载 > 连续全勤」的优先级盖章', () => {
+    expect(getStampTitle(9, 40, { rank: 1 })).toBe('卷王之王');
+    expect(getStampTitle(3, 3, { steps: 10_000 })).toBe('万步劳模');
+    expect(getStampTitle(3, 3, { slackCount: 50 })).toBe('摸鱼宗师');
+    expect(getStampTitle(9, 3, { streakDays: 7 })).toBe('全勤特等牲');
+    expect(getStampTitle(3, 3, { streakDays: 7 })).toBe('全勤铁牛');
   });
 });
 

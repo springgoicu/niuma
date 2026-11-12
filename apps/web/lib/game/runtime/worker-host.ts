@@ -31,6 +31,7 @@ export function runWorkerHost(scope: WorkerScope): void {
   let minimapDpr = 1;
   let inspectId: number | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let slowTick = 0;
   let paused = false;
   let disposed = false;
 
@@ -44,6 +45,9 @@ export function runWorkerHost(scope: WorkerScope): void {
   const slowFrame = (): void => {
     if (paused || disposed) return;
     drawMinimap();
+    // 工牌档案字段多，降为 2Hz；小地图仍 4Hz，视觉上不能变卡
+    slowTick = (slowTick + 1) % 2;
+    if (slowTick !== 0) return;
     // 工牌详情只在被查看时推送，收起后不再产生任何消息
     if (inspectId !== null && session) {
       post({ t: 'badge', id: inspectId, badge: session.badgeOf(inspectId) });
@@ -93,6 +97,8 @@ export function runWorkerHost(scope: WorkerScope): void {
         onHint: (hint) => post({ t: 'hint', hint }),
         onLocalState: ({ pose, seated, seatKind }) => post({ t: 'localState', pose, seated, seatKind }),
         onNav: (nav) => post({ t: 'nav', nav }),
+        onVentHit: (local) => post({ t: 'ventHit', local }),
+        onVentDealt: () => post({ t: 'ventDealt' }),
       },
       env,
       { wsUrl: message.wsUrl, parkId: message.parkId },
@@ -152,6 +158,9 @@ export function runWorkerHost(scope: WorkerScope): void {
       case 'appearance':
         session?.setAppearance(message.appearance);
         return;
+      case 'career':
+        session?.updateCareer(message.career);
+        return;
       case 'navigate':
         session?.navigateTo(message.id);
         return;
@@ -160,7 +169,8 @@ export function runWorkerHost(scope: WorkerScope): void {
         return;
       case 'pick': {
         const badge = session?.pickAt(message.x, message.y) ?? null;
-        post({ t: 'picked', id: badge?.id ?? null });
+        // 首帧直接带工牌：主线程不用先开一个空弹窗等 250ms 的第一次推送
+        post({ t: 'picked', id: badge?.id ?? null, badge });
         return;
       }
       case 'inspect':

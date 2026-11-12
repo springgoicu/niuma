@@ -140,7 +140,7 @@ export function SpeciesSection() {
               </dl>
 
               <Link
-                href="/create"
+                href={`/create?species=${species.key}`}
                 className="mt-8 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-mint-400 transition-colors hover:text-lime-400"
               >
                 以{species.name}的身份入职

@@ -3,6 +3,7 @@
  * 该文件不依赖任何运行时，可被 Bun / Node / 浏览器直接引用。
  */
 
+import type { CareerSummary } from './career';
 import type { Direction, Pose, SyncFormat } from './constants';
 
 export type Species = 'cow' | 'horse';
@@ -125,6 +126,10 @@ export const OpCode = {
    * 空放（没打到人）也发一条，`targetId = 0`，让附近所有人播放破空音与台词。
    */
   S2C_VENT: 0x21,
+  /** 考勤摘要补报：`[op][len u8][payload]`，服务端只做内存转发 */
+  C2S_CAREER: 0x22,
+  /** 考勤摘要广播：`[op][entityId u16][len u8][payload]` */
+  S2C_CAREER: 0x23,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -159,6 +164,17 @@ export interface SpawnPacket {
    * 旧服务端不带这一段时为 undefined，客户端退化为「首次看到起算」。
    */
   onlineSec?: number;
+  /**
+   * 本人自报的考勤摘要（服务端内存转发）。
+   * 旧服务端不带这一段时为 undefined，工牌显示「未上报」而不是 0。
+   */
+  career?: CareerSummary;
+}
+
+/** 考勤摘要广播：`entityId` 是被围观者，payload 与 HELLO / SPAWN 的尾部段一致。 */
+export interface CareerBroadcastPacket {
+  entityId: number;
+  career: CareerSummary;
 }
 
 export interface WelcomePacket {

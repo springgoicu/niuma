@@ -3,11 +3,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
-import type { NavTargetId } from '@niuma/shared-types';
+import { CAREER_REPORT_INTERVAL_MS, type NavTargetId } from '@niuma/shared-types';
 import { BadgeCard } from '@/components/BadgeCard';
+import { RemoteArchiveDialog } from '@/components/badge/RemoteArchiveDialog';
+import { parseSpeciesParam } from '@/lib/creator-seed';
 import { useGameUi } from '@/lib/game-ui';
-import { startAttendanceClock } from '@/lib/game/attendance';
+import { loadAttendance, startAttendanceClock, useAttendance } from '@/lib/game/attendance';
 import type { PlayerBadge } from '@/lib/game/badge';
+import {
+  EMPTY_CAREER_STATS,
+  buildCareerSummary,
+  loadCareerStats,
+  startCareerClock,
+} from '@/lib/game/career';
+import { loadGeo, readCachedGeo } from '@/lib/game/geo';
 import { createGameClient } from '@/lib/game/client/create-game-client';
 import type { GameClient } from '@/lib/game/client/game-client';
 import type { ActionKey } from '@/lib/game/input';
@@ -24,7 +33,6 @@ import {
 import { ActionBar } from './ActionBar';
 import { ChatDock } from './ChatDock';
 import { ConnectionBanner, OnlineBadge, SfxToggle } from './Hud';
-import { InspectCard } from './InspectCard';
 import { JoinGate } from './JoinGate';
 import { MiniMap } from './MiniMap';
 import { NavCard } from './NavCard';
@@ -83,6 +91,14 @@ export function GameViewport({
   const [checked, setChecked] = useState(false);
   /** 正在查看的角色 netId；null 表示没有打开详情 */
   const [inspectId, setInspectId] = useState<number | null>(null);
+  /** 点选当帧的工牌：档案弹窗首帧直接有内容，不必等 2Hz 推送 */
+  const [inspectSeed, setInspectSeed] = useState<PlayerBadge | null>(null);
+  /** 行为统计门面：距离 / 摸鱼 / 被喷 / 加班都从这里记 */
+  const careerClockRef = useRef<ReturnType<typeof startCareerClock> | null>(null);
+  /** 上一次统计坐标：2Hz 采样差分算里程 */
+  const lastStatsRef = useRef<{ x: number; y: number } | null>(null);
+  /** 上一次入座状态：只在「未坐 → 坐」的边沿记一次摸鱼 */
+  const lastSeatedRef = useRef(false);
   /**
    * 入场兜底的告知条：首选园区探活失败、被顶替到另一座时要让玩家知道
    * 自己去的不是原本那座，而不是安静地换一个世界。几秒后自行消失。
@@ -130,7 +146,7 @@ export function GameViewport({
       const profile: Profile = {
         // 深链同样过钳制与审核：这是唯一一条绕过表单的取名路径
         name: resolveProfileName(initialName),
-        appearance: defaultAppearance(initialSpecies === 'horse' ? 'horse' : 'cow'),
+        appearance: defaultAppearance(parseSpeciesParam(initialSpecies) ?? 'cow'),
         status: '',
       };
       saveProfile(profile);
@@ -145,6 +161,38 @@ export function GameViewport({
     if (!entering) return;
     return startAttendanceClock();
   }, [entering]);
+
+  // 行为统计与考勤同生命周期：进园开始攒，离开时停表落盘
+  useEffect(() => {
+    if (!entering) return;
+    const clock = startCareerClock();
+    careerClockRef.current = clock;
+    lastStatsRef.current = null;
+    lastSeatedRef.current = false;
+    return () => {
+      clock.dispose();
+      careerClockRef.current = null;
+    };
+  }, [entering]);
+
+  /**
+   * 组装当前考勤摘要。优先读内存里的 Tracker（最多领先落盘 30 秒），
+   * 没有 Tracker 时回退到 localStorage；省份取 geo 缓存，未就绪时留空。
+   */
+  const buildCareerReport = useCallback((onlineSec = 0) => {
+    // 优先读 attendance store 的内存值（每秒推进），没有 store 时回退 localStorage
+    const live = useAttendance.getState();
+    const attendance = live.firstJoinDate
+      ? {
+          firstJoinDate: live.firstJoinDate,
+          totalOnlineMs: live.totalOnlineMs,
+          dailyRecords: live.dailyRecords,
+          sessionStartTime: live.sessionStartTime,
+        }
+      : loadAttendance();
+    const stats = careerClockRef.current?.snapshot() ?? loadCareerStats() ?? EMPTY_CAREER_STATS;
+    return buildCareerSummary(attendance, stats, readCachedGeo()?.region ?? '', onlineSec);
+  }, []);
 
   // 兜底告知条只播一次：入场几秒后收起，别在游戏画面上常驻一条运维信息
   useEffect(() => {
@@ -175,6 +223,7 @@ export function GameViewport({
     if (!entering || !current || !host || clientRef.current) return;
     let cancelled = false;
     let started: GameClient | null = null;
+    let reportTimer: number | null = null;
     // 园区在会话构造期绑定：重连沿用同一个端点，不会在断线恢复时漂到另一座园区
     void createGameClient({
       wsUrl,
@@ -185,18 +234,43 @@ export function GameViewport({
         onStatus: (status, detail) => setStatus(status, detail),
         onQueue: (queue) => setQueue(queue),
         onRejected: (reason) => setRejected(reason),
-        onStats: (stats) => setStats(stats),
+        onStats: (stats) => {
+          setStats(stats);
+          // 2Hz 坐标差分算里程；首帧与超过 256px 的跳变由记录器自己忽略
+          const previous = lastStatsRef.current;
+          if (previous) {
+            const dx = stats.x - previous.x;
+            const dy = stats.y - previous.y;
+            careerClockRef.current?.recordDistance(Math.hypot(dx, dy));
+          }
+          lastStatsRef.current = { x: stats.x, y: stats.y };
+          careerClockRef.current?.recordOvertime();
+        },
         onChat: (entry) => pushMessage(entry),
         onChatHistory: (entries, meta) => applyHistory(entries, meta),
         onHint: (next) => setHint(next),
-        onLocalState: (state) => setLocalState(state),
+        onLocalState: (state) => {
+          setLocalState(state);
+          // 只在「未坐 → 坐」的边沿记一次摸鱼；床上躺平不算摸鱼
+          if (!lastSeatedRef.current && state.seated && state.seatKind !== 'bed') {
+            careerClockRef.current?.recordSlack();
+          }
+          lastSeatedRef.current = state.seated;
+        },
         onNav: (nav) => setNavTarget(nav),
+        onVentHit: (local) => {
+          if (local) careerClockRef.current?.recordVented();
+        },
+        onVentDealt: () => careerClockRef.current?.recordKnockdown(),
       },
       // Enter 与点选都发生在主线程：键盘监听不经过渲染线程，命中判定在渲染线程
       onRequestChat: openChat,
-      onPick: (id) => setInspectId(id),
+      onPick: (id, badge) => {
+        setInspectId(id);
+        setInspectSeed(badge ?? null);
+      },
     })
-      .then((client) => {
+      .then(async (client) => {
         if (cancelled) {
           client.stop();
           return;
@@ -207,7 +281,21 @@ export function GameViewport({
         if (minimapElRef.current) client.attachMinimap(minimapElRef.current);
         // 上次的落点只作为「入场偏好」交给服务端裁决：座位可能已被占、坐标可能已经不可走。
         // 换过园区时 resumeForPark 会把它丢掉，角色从新园区门口开始
-        return client.start(host, current, resumeForPark(loadSnapshot(), parkId));
+        await client.start(
+          host,
+          { ...current, career: buildCareerReport(0) },
+          resumeForPark(loadSnapshot(), parkId),
+        );
+        if (cancelled) return;
+        // geo 是异步的：首次进园时 HELLO 可能还没省份，拿到后再补报一次
+        void loadGeo().then(() => {
+          if (!cancelled) client.updateCareer(buildCareerReport(useGameUi.getState().onlineSec));
+        });
+        // 今日 / 本周工时每分钟都在变：60 秒补报一次，服务端转给正在围观的人
+        reportTimer = window.setInterval(() => {
+          if (cancelled) return;
+          client.updateCareer(buildCareerReport(useGameUi.getState().onlineSec));
+        }, CAREER_REPORT_INTERVAL_MS);
       })
       .catch((error: unknown) => {
         console.error('[game] session failed', error);
@@ -215,10 +303,24 @@ export function GameViewport({
       });
     return () => {
       cancelled = true;
+      if (reportTimer !== null) window.clearInterval(reportTimer);
       started?.stop();
       clientRef.current = null;
     };
-  }, [entering, wsUrl, parkId, setStatus, setStats, pushMessage, applyHistory, openChat, setHint, setLocalState, setNavTarget]);
+  }, [
+    entering,
+    wsUrl,
+    parkId,
+    setStatus,
+    setStats,
+    pushMessage,
+    applyHistory,
+    openChat,
+    setHint,
+    setLocalState,
+    setNavTarget,
+    buildCareerReport,
+  ]);
 
   /** 小地图容器回调：先于 effect 触发，客户端未就绪时由 client.start 之后补挂 */
   const minimapRef = useCallback((host: HTMLDivElement | null) => {
@@ -226,7 +328,7 @@ export function GameViewport({
     if (host) clientRef.current?.attachMinimap(host);
   }, []);
 
-  /** 追看工牌：只在被查看时让渲染线程按 4Hz 推送，收起后不再产生消息 */
+  /** 追看工牌：只在被查看时让渲染线程按 2Hz 推送，收起后不再产生消息 */
   const subscribeBadge = useCallback(
     (id: number | null, onChange: (badge: PlayerBadge | null) => void) => {
       clientRef.current?.subscribeBadge(id, onChange);
@@ -274,7 +376,10 @@ export function GameViewport({
     clientRef.current?.clearMovement();
   }, []);
 
-  const handleCloseInspect = useCallback(() => setInspectId(null), []);
+  const handleCloseInspect = useCallback(() => {
+    setInspectId(null);
+    setInspectSeed(null);
+  }, []);
   const handleRetry = useCallback(() => {
     useGameUi.getState().setRejected(0);
     useGameUi.getState().setQueue(null);
@@ -436,14 +541,6 @@ export function GameViewport({
                     {!portrait && '打卡下班'}
                   </Link>
                 </div>
-                {/* 他人工牌：桌面贴在右上角控件列下方，宽度与自身工牌接近 */}
-                {!isTouch && (
-                  <InspectCard
-                    playerId={inspectId}
-                    subscribeBadge={subscribeBadge}
-                    onClose={handleCloseInspect}
-                  />
-                )}
               </div>
             </div>
 
@@ -462,23 +559,13 @@ export function GameViewport({
             )}
           </div>
 
-          {/* 手机端他人工牌浮在动作盘上方居中：不铺遮罩、不与右上角导览卡抢位置。
-              七个动作让竖屏动作盘变成 2 列 × 4 行（248px）、横屏 3 列 × 3 行（196px），
-              浮层与提示要跟着抬到对应高度之上（ADR-0048） */}
-          {isTouch && (
-            <div
-              className={`pointer-events-none absolute left-1/2 z-30 -translate-x-1/2 ${
-                portrait ? 'bottom-[296px]' : 'bottom-[220px]'
-              }`}
-            >
-              <InspectCard
-                playerId={inspectId}
-                subscribeBadge={subscribeBadge}
-                onClose={handleCloseInspect}
-                compact
-              />
-            </div>
-          )}
+          {/* 他人工牌：桌面与手机共用同一个完整档案弹窗，避免两套布局的字段漂移 */}
+          <RemoteArchiveDialog
+            playerId={inspectId}
+            seed={inspectSeed}
+            subscribeBadge={subscribeBadge}
+            onClose={handleCloseInspect}
+          />
 
           {/* 出生点的引导层：实体地标在画面里，这两块负责「说清楚」与随时可查（ADR-0036） */}
           <NavCard

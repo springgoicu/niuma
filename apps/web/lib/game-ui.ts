@@ -3,6 +3,7 @@
 import { POSE, type NavTargetId, type Pose, type QueueStatusPacket, type SeatKind } from '@niuma/shared-types';
 import { create } from 'zustand';
 import { loadChatOpen, saveChatOpen } from './chat-prefs';
+import type { BoardEntry } from './game/badge';
 import type { ChatEntry, SessionStats } from './game/session';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'queued' | 'online' | 'offline' | 'error';
@@ -20,6 +21,10 @@ interface GameUiState {
   /** 本地会话已在线秒数：断线时工牌显示 --:-- */
   onlineSec: number;
   nearby: number;
+  /** 视野内本周工时榜（最多 5 条），本人档案与排行条共用 */
+  board: BoardEntry[];
+  /** 本地玩家在视野榜里的名次；未上榜为 null */
+  rank: number | null;
   /** 排队中的位次快照；入场或被拒后清空 */
   queue: QueueStatusPacket | null;
   /** 被拒原因（1 队列满 / 2 等待超时），0 表示未被拒 */
@@ -112,6 +117,8 @@ const INITIAL = {
   region: '',
   onlineSec: 0,
   nearby: 0,
+  board: [] as BoardEntry[],
+  rank: null as number | null,
   queue: null,
   rejected: 0,
   messages: [] as ChatEntry[],
@@ -148,6 +155,8 @@ export const useGameUi = create<GameUiState>((set) => ({
       region: stats.region,
       onlineSec: stats.onlineSec,
       nearby: stats.nearby,
+      board: stats.board,
+      rank: stats.rank,
       backend: stats.backend,
     }),
 

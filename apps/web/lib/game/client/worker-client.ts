@@ -1,4 +1,4 @@
-import type { CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
@@ -326,6 +326,11 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'appearance', appearance });
   }
 
+  updateCareer(career: CareerSummary): void {
+    if (this.delegate) return this.delegate.updateCareer(career);
+    this.post({ t: 'career', career });
+  }
+
   navigateTo(id: NavTargetId): void {
     if (this.delegate) return this.delegate.navigateTo(id);
     this.post({ t: 'navigate', id });
@@ -423,10 +428,16 @@ export class WorkerGameClient implements GameClient {
         callbacks.onNav(message.nav);
         return;
       case 'picked':
-        this.options.onPick(message.id);
+        this.options.onPick(message.id, message.badge ?? null);
         return;
       case 'badge':
         if (message.id === this.badgeId) this.badgeCb?.(message.badge);
+        return;
+      case 'ventHit':
+        callbacks.onVentHit?.(message.local);
+        return;
+      case 'ventDealt':
+        callbacks.onVentDealt?.();
         return;
       case 'audio':
         applyAudioEvent(message.event, message.listenerX, message.listenerY);

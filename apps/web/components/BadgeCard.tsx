@@ -7,7 +7,7 @@ import { useGameUi } from '@/lib/game-ui';
 import { getCurrentSessionDuration, useAttendance } from '@/lib/game/attendance';
 import { GEO_FALLBACK, loadGeo, readCachedGeo, type GeoInfo } from '@/lib/game/geo';
 import { StatusEditor } from './game/StatusEditor';
-import { BadgeDetailModal } from './BadgeDetailModal';
+import { SelfArchiveDialog } from './badge/SelfArchiveDialog';
 
 export interface BadgeCardProps {
   name: string;
@@ -176,9 +176,11 @@ export function BadgeCard({
 
       {detailOpen && typeof document !== 'undefined'
         ? createPortal(
-            <BadgeDetailModal
+            <SelfArchiveDialog
               name={name}
+              species={species}
               appearance={appearance}
+              status={statusText}
               geo={geo}
               onClose={closeDetail}
             />,

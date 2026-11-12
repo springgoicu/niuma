@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'bun:test';
-import { POSE } from '@niuma/shared-types';
+import { EMPTY_CAREER, POSE } from '@niuma/shared-types';
 import {
   PICK_HALF_WIDTH,
   PICK_TOP,
+  departmentOf,
   formatOnline,
   pickCharacter,
   poseLabel,
   seatLabel,
+  shiftOf,
+  withCareerDelta,
 } from '../badge';
 
 describe('online duration formatting', () => {
@@ -47,6 +50,46 @@ describe('badge labels', () => {
     expect(seatLabel('sofa')).toBe('沙发');
     expect(seatLabel('bed')).toBe('床位');
     expect(seatLabel('toilet')).toBe('马桶');
+  });
+});
+
+describe('department and shift', () => {
+  it('derive stably from the same nickname hash', () => {
+    expect(departmentOf('夜班实习生')).toBe(departmentOf('夜班实习生'));
+    expect(shiftOf('夜班实习生')).toBe(shiftOf('夜班实习生'));
+    expect(['研发部', '运营部', '市场部', '后勤部', '财务部', '摸鱼办']).toContain(
+      departmentOf('夜班实习生'),
+    );
+    expect(['白班', '夜班', '弹性班', '连班']).toContain(shiftOf('夜班实习生'));
+  });
+
+  it('can change when the nickname changes', () => {
+    const first = `${departmentOf('夜班实习生')}${shiftOf('夜班实习生')}`;
+    const second = `${departmentOf('摸鱼老黄牛')}${shiftOf('摸鱼老黄牛')}`;
+    // 不保证一定不同，但同一套派生必须可重复；这里只验证不抛错且非空
+    expect(first.length).toBeGreaterThan(0);
+    expect(second.length).toBeGreaterThan(0);
+  });
+});
+
+describe('career delta', () => {
+  it('adds only the session minutes after the reported snapshot', () => {
+    const career = {
+      ...EMPTY_CAREER,
+      totalOnlineMinutes: 100,
+      todayMinutes: 20,
+      weekMinutes: 40,
+      reportedOnlineSec: 60,
+    };
+    const next = withCareerDelta(career, 180);
+    expect(next.totalOnlineMinutes).toBe(102);
+    expect(next.todayMinutes).toBe(22);
+    expect(next.weekMinutes).toBe(42);
+  });
+
+  it('never subtracts when the clock or snapshot is stale', () => {
+    const career = { ...EMPTY_CAREER, weekMinutes: 40, reportedOnlineSec: 120 };
+    expect(withCareerDelta(career, 60)).toBe(career);
   });
 });
 

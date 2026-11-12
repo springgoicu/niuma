@@ -19,6 +19,13 @@ import { browserStorage, readJson, removeKey, writeJson, type StorageLike } from
 export const PROFILE_KEY = 'niuma:profile:v2';
 /** 旧版按标签页存的草稿：首次读取时提升到 localStorage 并删除 */
 export const LEGACY_PROFILE_KEY = 'niuma:profile:v1';
+/**
+ * 上次在捏人页显式选过的物种。
+ *
+ * 只记物种，不替用户自动保存整份草稿（「草稿未保存 / 已同步到本地」的语义不变），
+ * 但没存档的人再次进入时不该被无条件重置成牛。
+ */
+export const CREATOR_SPECIES_KEY = 'niuma:creator-species:v1';
 
 export interface Profile {
   name: string;
@@ -140,6 +147,25 @@ export function loadProfile(
 export function clearProfile(): void {
   removeKey(browserStorage('local'), PROFILE_KEY);
   removeKey(browserStorage('session'), LEGACY_PROFILE_KEY);
+}
+
+/** 记忆键的唯一一把尺子：只认 cow / horse，其它值当没有 */
+const parseSpecies = (raw: unknown): Species | null =>
+  raw === 'cow' || raw === 'horse' ? raw : null;
+
+/** 上次显式选过的物种：坏数据 / 隐私模式一律当没有，交给牛兜底 */
+export function loadCreatorSpecies(
+  storage: StorageLike | null = browserStorage('local'),
+): Species | null {
+  return readJson(storage, CREATOR_SPECIES_KEY, parseSpecies);
+}
+
+/** 写物种：存储写失败不影响捏人流程，顶多下次回到存档或牛 */
+export function saveCreatorSpecies(
+  species: Species,
+  storage: StorageLike | null = browserStorage('local'),
+): void {
+  writeJson(storage, CREATOR_SPECIES_KEY, species);
 }
 
 export function defaultAppearance(species: Species = 'cow'): CharacterAppearance {

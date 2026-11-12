@@ -1,4 +1,4 @@
-import type { CharacterAppearance } from '@niuma/shared-types';
+import type { CareerSummary, CharacterAppearance } from '@niuma/shared-types';
 import type { InteractiveKind } from '../interactions';
 import type { ControlBlock, SnapshotPatch, ViewportInfo } from './control-channel';
 
@@ -7,6 +7,8 @@ export interface SessionProfile {
   name: string;
   appearance: CharacterAppearance;
   status?: string;
+  /** 本人自报的考勤摘要：随 HELLO 上报，后续由 updateCareer 补报 */
+  career?: CareerSummary;
 }
 
 /**

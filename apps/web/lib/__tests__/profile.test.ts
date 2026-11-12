@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'bun:test';
 import { DEFAULT_APPEARANCE } from '@niuma/shared-types';
 import {
+  CREATOR_SPECIES_KEY,
   LEGACY_PROFILE_KEY,
   PROFILE_KEY,
   defaultAppearance,
   describeProfileName,
+  loadCreatorSpecies,
   loadProfile,
+  saveCreatorSpecies,
   saveProfile,
 } from '../profile';
 import type { StorageLike } from '../storage';
@@ -123,5 +126,28 @@ describe('profile storage', () => {
     );
 
     expect(loadProfile(local, memoryStorage())?.appearance.cosmetics.headwear).toBe('none');
+  });
+});
+
+describe('物种记忆', () => {
+  it('只记物种本身，读回来就是它', () => {
+    const local = memoryStorage();
+    saveCreatorSpecies('horse', local);
+
+    expect(local.getItem(CREATOR_SPECIES_KEY)).toBe('"horse"');
+    expect(loadCreatorSpecies(local)).toBe('horse');
+  });
+
+  it('坏数据当没有，并顺手清掉键', () => {
+    const local = memoryStorage();
+    local.setItem(CREATOR_SPECIES_KEY, '"dragon"');
+
+    expect(loadCreatorSpecies(local)).toBeNull();
+    expect(local.getItem(CREATOR_SPECIES_KEY)).toBeNull();
+  });
+
+  it('存储不可用时不抛错', () => {
+    expect(loadCreatorSpecies(null)).toBeNull();
+    expect(() => saveCreatorSpecies('cow', null)).not.toThrow();
   });
 });

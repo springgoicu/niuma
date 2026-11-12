@@ -3,6 +3,8 @@ import {
   CHAT_HISTORY_FLAG,
   CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
+  DEFAULT_APPEARANCE,
+  EMPTY_CAREER,
   GRAZE_COOLDOWN_MS,
   MOVE_SPEED,
   NAV_TARGETS,
@@ -11,7 +13,6 @@ import {
   STATE_BITS,
   SYSTEM_NOTICE_KIND,
   VENT_COOLDOWN_MS,
-  VENT_RANGE_PX,
   VENT_STUN_MS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -28,7 +29,7 @@ import {
   seatById,
   seatPose,
   unpackState,
-  withinVentCone,
+  type CareerSummary,
   type CharacterAppearance,
   type ChatHistoryPacket,
   type Direction,
@@ -49,7 +50,8 @@ import {
 } from '@niuma/shared-types';
 import { requestBuildCheck } from '../build-version';
 import { NetClient } from '../net/client';
-import type { PlayerBadge } from './badge';
+import { withCareerDelta, type BoardEntry, type PlayerBadge } from './badge';
+import { ventOutcome } from './vent-outcome';
 import { advanceOnDuty } from './duty';
 import { toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
@@ -107,6 +109,10 @@ export interface SessionStats {
   region: string;
   /** 本地会话已在线秒数；未入场为 0，断线时 UI 显示 --:-- */
   onlineSec: number;
+  /** 视野内本周工时榜（最多 5 条） */
+  board: BoardEntry[];
+  /** 本地玩家在视野榜里的名次；未上榜为 null */
+  rank: number | null;
 }
 
 export interface WorldSnapshot {
@@ -132,6 +138,10 @@ export interface SessionCallbacks {
   onLocalState(state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }): void;
   /** 自动寻路目标：`null` 表示没有在导航（到达、取消、被打断都会回调） */
   onNav(nav: { id: NavTargetId; name: string } | null): void;
+  /** 本地被创飞：行为统计用；旁观他人挨打不算自己的抗压记录 */
+  onVentHit?(local: boolean): void;
+  /** 本地成功击倒他人：空放不回调，旁观互殴也不回调 */
+  onVentDealt?(): void;
 }
 
 /** 一次会话绑定的园区：构造后不再变化，重连与落盘都以它为准 */
@@ -262,6 +272,19 @@ export class GameSession {
   private status = '';
   /** 本地物种：工牌与换装展示用，入场时锁定、运行期不变 */
   private species: Species = 'cow';
+  /** 本地外观：分享卡要画立绘；换装广播时同步 */
+  private localAppearance: CharacterAppearance | null = null;
+  /** 本地考勤摘要：由宿主组装，随 HELLO / 补报上行 */
+  private localCareer: CareerSummary | null = null;
+  /** netId → 远端外观：分享卡与档案徽标共用，despawn 时清理 */
+  private readonly appearanceById = new Map<number, CharacterAppearance>();
+  /** netId → 远端考勤摘要；旧服务端或未上报时没有条目 */
+  private readonly careerById = new Map<number, CareerSummary>();
+  /** 视野内本周工时榜与名次：缓存 2 秒，不在 20Hz / 4Hz 推送里重复排序 */
+  private careerBoard: BoardEntry[] = [];
+  private readonly rankById = new Map<number, number>();
+  private boardAt = 0;
+  private boardDirty = true;
   private elapsed = 0;
   private movementSendTime = 0;
   /**
@@ -353,7 +376,11 @@ export class GameSession {
       },
       onAppearance: (id, appearance) => {
         this.speciesById.set(id, appearance.species);
-        if (id === this.localId) this.species = appearance.species;
+        this.appearanceById.set(id, appearance);
+        if (id === this.localId) {
+          this.species = appearance.species;
+          this.localAppearance = appearance;
+        }
         this.renderer.setAppearance(id, appearance);
       },
       onStatus: (id, status) => {
@@ -361,6 +388,7 @@ export class GameSession {
         else this.statusById.set(id, status);
         this.renderer.setStatus(id, status);
       },
+      onCareer: (id, career) => this.handleCareer(id, career),
       onSeatState: (entries) => this.handleSeatState(entries),
       onGraze: (id) => this.handleGraze(id),
       onVent: (packet) => this.handleVent(packet),
@@ -372,7 +400,10 @@ export class GameSession {
 
     this.status = profile.status ?? '';
     this.species = profile.appearance.species;
-    this.net.connect(profile.name, profile.appearance, resume, this.status);
+    this.localAppearance = profile.appearance;
+    this.localCareer = profile.career ?? null;
+    this.boardDirty = true;
+    this.net.connect(profile.name, profile.appearance, resume, this.status, this.localCareer ?? undefined);
     this.callbacks.onStatus('connecting', '握手');
   }
 
@@ -392,6 +423,8 @@ export class GameSession {
     this.jitter.reset();
     // 自己的在线时长从入场成功这一刻起算：断线重连会重建世界，计时随 WELCOME 归零
     this.welcomeAt = performance.now();
+    // 服务端在新会话里把 reportedOnlineSec 归零；本地也归零，视野榜才会把本次会话算进去
+    if (this.localCareer) this.localCareer = { ...this.localCareer, reportedOnlineSec: 0 };
     this.onDutyCursor = 0;
     this.names.set(packet.entityId, profile.name);
     this.speciesById.set(packet.entityId, profile.appearance.species);
@@ -428,7 +461,10 @@ export class GameSession {
     if (this.names.has(id)) return;
     this.names.set(id, name);
     this.speciesById.set(id, appearance.species);
+    this.appearanceById.set(id, appearance);
     this.statusById.set(id, status ?? '');
+    if (packet.career) this.careerById.set(id, packet.career);
+    this.boardDirty = true;
     // 旧服务端不带在线秒数：从 0 起算，退化为「首次看到」，不显示假的长时长
     this.onlineById.set(id, { sec: packet.onlineSec ?? 0, at: performance.now() });
     const x = dequantizeCoord(packet.x);
@@ -443,50 +479,68 @@ export class GameSession {
   private handleDespawn(id: number): void {
     this.names.delete(id);
     this.speciesById.delete(id);
+    this.appearanceById.delete(id);
+    this.careerById.delete(id);
     this.statusById.delete(id);
     this.onlineById.delete(id);
     this.entitySeat.delete(id);
+    this.boardDirty = true;
     this.ecs.despawn(id);
     this.renderer.removeEntity(id);
+  }
+
+  /** 补报后的摘要广播：只更新远端缓存，自己的档案仍以本地 store 为准。 */
+  private handleCareer(id: number, career: CareerSummary): void {
+    if (id === this.localId) return;
+    this.careerById.set(id, career);
+    this.boardDirty = true;
+  }
+
+  /**
+   * 更新并上报本地考勤摘要。
+   *
+   * 宿主在入场后、geo 就绪后与每 60 秒调用一次；服务端会把它转给正在围观的人。
+   */
+  updateCareer(career: CareerSummary): void {
+    this.localCareer = career;
+    this.boardDirty = true;
+    this.net?.sendCareer(career);
+  }
+
+  /**
+   * 视野内本周工时榜。零持久化下只能统计当前在线且已上报的人；
+   * 缓存 2 秒，避免 2Hz 的工牌推送每次都重新排序。
+   */
+  private ensureBoard(now = performance.now()): void {
+    if (!this.boardDirty && now - this.boardAt < 2_000) return;
+    this.boardDirty = false;
+    this.boardAt = now;
+    const entries: BoardEntry[] = [];
+    for (const [id, name] of this.names) {
+      const career = id === this.localId ? this.localCareer : this.careerById.get(id);
+      if (!career) continue;
+      const effective = withCareerDelta(career, this.onlineSecOf(id));
+      entries.push({ id, name, weekMinutes: effective.weekMinutes, self: id === this.localId });
+    }
+    entries.sort((a, b) => b.weekMinutes - a.weekMinutes || a.id - b.id);
+    this.rankById.clear();
+    for (let index = 0; index < entries.length; index += 1) {
+      this.rankById.set(entries[index]!.id, index + 1);
+    }
+    this.careerBoard = entries.slice(0, 5);
   }
 
   /**
    * 点击 / 轻点舞台。
    *
-   * 点到**身边够得着**的人直接就出招，并且不再弹工牌——想教训他一下，
-   * 结果弹出一张简历是最煞风景的交互（ADR-0051）。
-   * 够不着的人、点空白、点到自己，仍然返回工牌或 null。
-   * 自己的工牌常显在 HUD，不需要再弹一份重复的详情。
+   * 点人只弹工牌，不触发出招：出招只认按键与动作栏按钮，
+   * 点选用来查看对方，两种意图不该撞在同一个手势上。
+   * 点空白与点到自己返回 null；自己的工牌常显在 HUD，不需要再弹一份重复的详情。
    */
   pickAt(stageX: number, stageY: number): PlayerBadge | null {
     const id = this.renderer.pickEntityAt(stageX, stageY);
     if (id === null || id === this.localId) return null;
-    if (this.canVentAt(id)) {
-      this.perform('vent');
-      return null;
-    }
     return this.badgeOf(id);
-  }
-
-  /**
-   * 点击目标能否直接出招：距离与朝向都按服务端的判定区算。
-   *
-   * 复用 `withinVentCone` 而不是只比距离——点背后的人不该变成一记空放，
-   * 那种「点了没反应还白挥一下」比不响应更难理解。
-   */
-  private canVentAt(id: number): boolean {
-    const selfEid = this.ecs.get(this.localId);
-    const targetEid = this.ecs.get(id);
-    if (!selfEid || !targetEid) return false;
-    if (this.elapsed < this.stunUntil) return false;
-    return withinVentCone(
-      Position.x[selfEid]!,
-      Position.y[selfEid]!,
-      Motion.direction[selfEid]! as Direction,
-      Position.x[targetEid]!,
-      Position.y[targetEid]!,
-      VENT_RANGE_PX,
-    );
   }
 
   /** 会话口径的已在线秒数：本地从 WELCOME 起算，远端在入场包秒数上叠加本地增量 */
@@ -512,10 +566,15 @@ export class GameSession {
     const y = Position.y[eid]!;
     const seatId = this.entitySeat.get(id) ?? (local && this.localSeat !== 0 ? this.localSeat : undefined);
     const seat = seatId ? seatById(seatId) : undefined;
-    return {
+    const species = local ? this.species : this.speciesById.get(id) ?? 'cow';
+    const appearance = (local ? this.localAppearance : this.appearanceById.get(id)) ?? DEFAULT_APPEARANCE[species];
+    const career = local ? this.localCareer : this.careerById.get(id);
+    this.ensureBoard();
+    const badge: PlayerBadge = {
       id,
       name: this.names.get(id) ?? '匿名牛马',
-      species: local ? this.species : this.speciesById.get(id) ?? 'cow',
+      species,
+      appearance,
       status: local ? this.status : this.statusById.get(id) ?? '',
       region: regionAt(x, y),
       onlineSec: this.onlineSecOf(id),
@@ -523,7 +582,11 @@ export class GameSession {
       moving: Motion.moving[eid] === 1,
       seated: seat !== undefined,
       seatKind: seat?.kind ?? null,
+      board: this.careerBoard,
+      rank: this.rankById.get(id) ?? null,
     };
+    if (career) badge.career = career;
+    return badge;
   }
 
   /**
@@ -846,8 +909,13 @@ export class GameSession {
     }
     this.names.clear();
     this.speciesById.clear();
+    this.appearanceById.clear();
+    this.careerById.clear();
     this.statusById.clear();
     this.onlineById.clear();
+    this.rankById.clear();
+    this.careerBoard = [];
+    this.boardDirty = true;
     this.welcomeAt = 0;
     for (const seatId of this.seatOwner.keys()) this.renderer.setSeatOccupied(seatId, false);
     this.seatOwner.clear();
@@ -888,6 +956,7 @@ export class GameSession {
   }
 
   setAppearance(appearance: CharacterAppearance): void {
+    this.localAppearance = appearance;
     this.net?.sendAppearance(appearance);
     if (this.localId) this.renderer.setAppearance(this.localId, appearance);
   }
@@ -1122,6 +1191,10 @@ export class GameSession {
     if (packet.targetId === 0) return;
     const x = dequantizeCoord(packet.x);
     const y = dequantizeCoord(packet.y);
+    // 行为统计只认服务端归因：被击倒记「被喷」，成功击倒他人记「击倒」
+    const outcome = ventOutcome(packet, this.localId);
+    if (outcome === 'hit') this.callbacks.onVentHit?.(true);
+    if (outcome === 'dealt') this.callbacks.onVentDealt?.();
     const targetEid = this.ecs.get(packet.targetId);
     // 钝击音挂在这条包上：谁被打都该听到「砰」，声源取服务端给的落点
     this.emitAudio({
@@ -1470,6 +1543,7 @@ export class GameSession {
       this.frames = 0;
       this.statsAt = now;
       const onlineSec = this.onlineSecOf(this.localId);
+      this.ensureBoard(now);
       this.callbacks.onStats({
         fps: this.fps,
         ping: this.ping,
@@ -1479,6 +1553,8 @@ export class GameSession {
         backend: this.renderer.backend,
         region: localEid ? regionAt(Position.x[localEid]!, Position.y[localEid]!) : '',
         onlineSec,
+        board: this.careerBoard,
+        rank: this.rankById.get(this.localId) ?? null,
       });
       // 在岗提醒跟着统计节拍走：500ms 一次足够准，也不必为它单开一个计时器
       this.checkOnDuty(onlineSec);

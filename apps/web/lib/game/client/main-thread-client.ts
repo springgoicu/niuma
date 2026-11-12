@@ -1,4 +1,4 @@
-import type { CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
@@ -47,6 +47,7 @@ export class MainThreadGameClient implements GameClient {
   private minimapDpr = 1;
   private badgeId: number | null = null;
   private badgeCb: ((badge: PlayerBadge | null) => void) | null = null;
+  private slowTick = 0;
   private stopped = false;
 
   constructor(private readonly options: GameClientOptions) {}
@@ -118,7 +119,11 @@ export class MainThreadGameClient implements GameClient {
     this.slowTimer = window.setInterval(() => {
       if (this.stopped) return;
       if (this.minimapCtx) drawMiniMap(this.minimapCtx, session.worldSnapshot());
-      if (this.badgeId !== null) this.badgeCb?.(session.badgeOf(this.badgeId));
+      // 与 Worker 模式一致：小地图 4Hz，工牌 2Hz
+      this.slowTick = (this.slowTick + 1) % 2;
+      if (this.slowTick === 0 && this.badgeId !== null) {
+        this.badgeCb?.(session.badgeOf(this.badgeId));
+      }
     }, SLOW_FRAME_MS);
   }
 
@@ -187,6 +192,10 @@ export class MainThreadGameClient implements GameClient {
     this.session?.setAppearance(appearance);
   }
 
+  updateCareer(career: CareerSummary): void {
+    this.session?.updateCareer(career);
+  }
+
   navigateTo(id: NavTargetId): void {
     this.session?.navigateTo(id);
   }
@@ -196,9 +205,9 @@ export class MainThreadGameClient implements GameClient {
   }
 
   pick(stageX: number, stageY: number): void {
-    // 点到身边够得着的人会在会话里直接出招并返回 null：这一下不弹工牌
+    // 点人只取工牌，出招交给按键与动作栏按钮
     const badge = this.session?.pickAt(stageX, stageY) ?? null;
-    this.options.onPick(badge?.id ?? null);
+    this.options.onPick(badge?.id ?? null, badge);
   }
 
   subscribeBadge(id: number | null, onChange: (badge: PlayerBadge | null) => void): void {

@@ -1,28 +1,18 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import type { CharacterAppearance } from '@niuma/shared-types';
-import { employeeNumber } from '@/lib/game/badge';
-import {
-  dayKey,
-  formatDuration,
-  getCurrentSessionDuration,
-  getDailyAverageHours,
-  getJobTitle,
-  getSeniorityDays,
-  getStampTitle,
-  useAttendance,
-} from '@/lib/game/attendance';
-import type { GeoInfo } from '@/lib/game/geo';
+import { toShareCardData, type BadgeArchive } from '@/lib/game/archive';
 import {
   downloadShareCard,
   renderShareCard,
   shareOrDownload,
-  type ShareCardData,
 } from '@/lib/game/share-card';
+import { ActivityGrid, ArchiveFields, BoardList } from './ArchiveFields';
+import { Barcode, Chip, FakeQr } from './BadgeArt';
 
-const TOAST_TEXT = '工牌已就绪，快去向老板/社交平台证明你的工时！';
+const SELF_TOAST = '工牌已就绪，快去向老板/社交平台证明你的工时！';
+const OTHER_TOAST = 'TA 的工卡已生成，代打存档请谨慎传播';
 const FAILURE_TEXT = '工卡打印失败，稍后再试一次';
 
 /** 弹窗打开期间要吞掉的游戏键：不清掉的话角色会顶着弹窗继续走 */
@@ -44,158 +34,23 @@ const GAME_KEYS = new Set([
   'KeyG',
 ]);
 
-interface BadgeDetailModalProps {
-  name: string;
-  appearance: CharacterAppearance;
-  geo: GeoInfo;
+interface BadgeArchiveDialogProps {
+  archive: BadgeArchive;
   onClose: () => void;
 }
 
-function hashString(input: string): number {
-  let hash = 5381;
-  for (const char of input) {
-    hash = ((hash << 5) + hash + (char.codePointAt(0) ?? 0)) >>> 0;
-  }
-  return hash;
-}
-
-/** 伪条码：宽度由工号派生，同一张工牌每次都长一样 */
-function barcodeBars(value: string): Array<{ x: number; width: number }> {
-  let hash = hashString(value) || 1;
-  const bars: Array<{ x: number; width: number }> = [];
-  let cursor = 0;
-  let index = 0;
-  while (cursor < 118) {
-    hash = (hash * 1664525 + 1013904223) >>> 0;
-    const width = 1 + (hash & 1);
-    if (index % 2 === 0) bars.push({ x: cursor, width });
-    cursor += width + 1 + ((hash >>> 9) & 1);
-    index += 1;
-  }
-  return bars;
-}
-
-/** 伪二维码：三个定位角 + 由工号派生的模块，纯装饰但稳定可复现 */
-function qrCells(value: string): Array<[number, number]> {
-  let hash = hashString(value) || 1;
-  const cells: Array<[number, number]> = [];
-  for (let y = 0; y < 21; y += 1) {
-    for (let x = 0; x < 21; x += 1) {
-      const inFinder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
-      if (inFinder) {
-        const lx = x > 13 ? x - 14 : x;
-        const ly = y > 13 ? y - 14 : y;
-        const edge = lx === 0 || lx === 6 || ly === 0 || ly === 6;
-        const core = lx >= 2 && lx <= 4 && ly >= 2 && ly <= 4;
-        if (edge || core) cells.push([x, y]);
-        continue;
-      }
-      hash = (hash * 1103515245 + 12345 + x * 17 + y * 13) >>> 0;
-      if ((hash >>> 11) & 1) cells.push([x, y]);
-    }
-  }
-  return cells;
-}
-
-function Barcode({ value }: { value: string }) {
-  const bars = useMemo(() => barcodeBars(value), [value]);
-  return (
-    <svg
-      viewBox="0 0 120 26"
-      preserveAspectRatio="none"
-      className="block h-8 w-full border border-neutral-600 bg-[#e9e1cf]"
-      role="img"
-      aria-label={`工号条码 ${value}`}
-    >
-      {bars.map((bar, index) => (
-        <rect key={index} x={bar.x} y={3} width={bar.width} height={20} fill="#14100c" />
-      ))}
-    </svg>
-  );
-}
-
-function FakeQr({ value }: { value: string }) {
-  const cells = useMemo(() => qrCells(value), [value]);
-  return (
-    <svg
-      viewBox="0 0 21 21"
-      className="h-11 w-11 shrink-0 border border-neutral-600 bg-[#e9e1cf] p-0.5"
-      aria-hidden="true"
-    >
-      {cells.map(([x, y]) => (
-        <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="#14100c" />
-      ))}
-    </svg>
-  );
-}
-
-function Chip() {
-  return (
-    <div
-      className="relative h-6 w-9 shrink-0 overflow-hidden border border-amber-300/80 bg-amber-400"
-      aria-hidden="true"
-    >
-      <span className="absolute inset-x-0 top-1.5 h-px bg-amber-800/60" />
-      <span className="absolute inset-x-0 bottom-1.5 h-px bg-amber-800/60" />
-      <span className="absolute inset-y-0 left-2 w-px bg-amber-800/60" />
-      <span className="absolute inset-y-0 right-2 w-px bg-amber-800/60" />
-    </div>
-  );
-}
-
-function FieldRow({
-  label,
-  value,
-  accent = false,
-}: {
-  label: string;
-  value: string;
-  accent?: boolean;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-dotted border-neutral-700/80 pb-2 last:border-0 last:pb-0">
-      <dt className="shrink-0 text-mist-500">{label}</dt>
-      <dd className={`min-w-0 truncate text-right ${accent ? 'text-mint-400' : 'text-mist-100'}`}>
-        {value}
-      </dd>
-    </div>
-  );
-}
-
 /**
- * 牛马考勤档案：像素工牌套 + 实体印章。
+ * 统一的牛马考勤档案。
  *
- * 打开时先 blur 当前焦点（输入框/画布），再把键盘焦点交给关闭按钮；
- * 关闭时把焦点交还 Pixi 画布，WASD 立刻恢复，不需要用户再点一次画面。
+ * 本人与他人的差异只在取数壳：这里只认 `BadgeArchive`，
+ * 印章、条码、分享、焦点与按键处理都只有一份。
  */
-export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetailModalProps) {
-  const now = useAttendance((state) => state.now);
-  const firstJoinDate = useAttendance((state) => state.firstJoinDate);
-  const totalOnlineMs = useAttendance((state) => state.totalOnlineMs);
-  const dailyRecords = useAttendance((state) => state.dailyRecords);
-  const sessionStartTime = useAttendance((state) => state.sessionStartTime);
-
+export function BadgeArchiveDialog({ archive, onClose }: BadgeArchiveDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const toastTimer = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-
-  const clock = now || Date.now();
-  const storage = useMemo(
-    () => ({ firstJoinDate, totalOnlineMs, dailyRecords, sessionStartTime }),
-    [firstJoinDate, totalOnlineMs, dailyRecords, sessionStartTime],
-  );
-  const averageHours = getDailyAverageHours(storage);
-  const seniorityDays = getSeniorityDays(firstJoinDate, clock);
-  const job = getJobTitle(averageHours);
-  const stamp = getStampTitle(averageHours, seniorityDays);
-  const stampRed = averageHours > 8;
-  const employeeNo = employeeNumber(name);
-  const sessionDuration = getCurrentSessionDuration(sessionStartTime, clock);
-  const todayMs = dailyRecords[dayKey(clock)] ?? 0;
-  const totalHours = (totalOnlineMs / 3_600_000).toFixed(1);
-  const location = `中国 · ${geo.region} · ${geo.city}`;
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -205,21 +60,6 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
       toastTimer.current = null;
     }, 3_200);
   }, []);
-
-  const buildShareData = useCallback(
-    (): ShareCardData => ({
-      name,
-      employeeNo,
-      jobTitle: job.title,
-      species: appearance.species,
-      appearance,
-      location,
-      todayDuration: formatDuration(todayMs),
-      dailyAverageHours: averageHours,
-      stamp,
-    }),
-    [name, employeeNo, job.title, appearance, location, todayMs, averageHours, stamp],
-  );
 
   // 打开：先把当前焦点（可能是聊天输入框）摘掉，再让焦点落到关闭按钮
   useEffect(() => {
@@ -239,7 +79,7 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
     };
   }, []);
 
-  // 捕获阶段吞键：Escape 关闭，WASD / 方向键 / 空格 / 动作键不再穿透到 window 上的游戏输入
+  // 捕获阶段吞键：Escape 关闭，WASD / 方向键 / 空格 / 动作键不再穿透到游戏输入
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -248,12 +88,7 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
         onClose();
         return;
       }
-      if (
-        GAME_KEYS.has(event.code) &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey
-      ) {
+      if (GAME_KEYS.has(event.code) && !event.ctrlKey && !event.metaKey && !event.altKey) {
         // 焦点在按钮上时不要 preventDefault：空格仍应能触发按钮的默认点击
         const target = event.target;
         const interactive =
@@ -279,29 +114,43 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
     setBusy(true);
     try {
       // 在点击调用栈里同步启动渲染：Safari 的 ClipboardItem 需要这段 Promise
-      const canvasPromise = renderShareCard(buildShareData());
-      await shareOrDownload(canvasPromise, employeeNo);
-      notify(TOAST_TEXT);
+      const canvasPromise = renderShareCard(toShareCardData(archive));
+      await shareOrDownload(canvasPromise, archive.employeeNo);
+      notify(archive.isSelf ? SELF_TOAST : OTHER_TOAST);
     } catch {
       notify(FAILURE_TEXT);
     } finally {
       setBusy(false);
     }
-  }, [busy, buildShareData, employeeNo, notify]);
+  }, [busy, archive, notify]);
 
   const handleDownload = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     try {
-      const canvas = await renderShareCard(buildShareData());
-      downloadShareCard(canvas, employeeNo);
-      notify(TOAST_TEXT);
+      const canvas = await renderShareCard(toShareCardData(archive));
+      downloadShareCard(canvas, archive.employeeNo);
+      notify(archive.isSelf ? SELF_TOAST : OTHER_TOAST);
     } catch {
       notify(FAILURE_TEXT);
     } finally {
       setBusy(false);
     }
-  }, [busy, buildShareData, employeeNo, notify]);
+  }, [busy, archive, notify]);
+
+  const handleTimesheet = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const canvas = await renderShareCard(toShareCardData(archive), 'timesheet');
+      downloadShareCard(canvas, archive.employeeNo);
+      notify(archive.isSelf ? '考勤小票已出票，拿去贴工位' : 'TA 的考勤小票已出票');
+    } catch {
+      notify(FAILURE_TEXT);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, archive, notify]);
 
   const trapFocus = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Tab') return;
@@ -337,7 +186,7 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="badge-detail-title"
+        aria-labelledby="badge-archive-title"
         onKeyDown={trapFocus}
         data-no-immersive
         className="relative z-10 max-h-[92dvh] w-[min(430px,94vw)] overflow-y-auto overscroll-contain border-2 border-neutral-500 bg-neutral-800 p-[3px] shadow-[0_28px_70px_-30px_rgba(0,0,0,0.95)]"
@@ -358,7 +207,7 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
           <div className="flex items-start justify-between gap-3 border-b border-neutral-700 px-4 py-3">
             <div className="min-w-0">
               <p
-                id="badge-detail-title"
+                id="badge-archive-title"
                 className="font-display text-base font-semibold tracking-wide text-mist-100"
               >
                 牛马考勤档案
@@ -379,30 +228,38 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
             </button>
           </div>
 
-          <dl className="grid gap-2 px-4 py-3.5 font-mono text-[10px] sm:text-[11px]">
-            <FieldRow label="固定工号" value={employeeNo} accent />
-            <div className="flex items-baseline justify-between gap-3 border-b border-dotted border-neutral-700/80 pb-2">
-              <dt className="shrink-0 text-mist-500">职级称谓</dt>
-              <dd className="min-w-0 text-right">
-                <span className={`block truncate font-semibold ${job.color}`}>{job.title}</span>
-                {job.warning && (
-                  <span
-                    role="status"
-                    className="mt-0.5 block animate-blink font-mono text-[10px] text-rose-400"
-                  >
-                    {job.warning}
-                  </span>
-                )}
-              </dd>
-            </div>
-            <FieldRow label="本次在岗" value={sessionDuration} accent />
-            <FieldRow label="日均在线" value={`${averageHours.toFixed(1)} 小时 / 天`} />
-            <FieldRow
-              label="累计工龄"
-              value={`已入职 ${seniorityDays} 天 · 累计在岗 ${totalHours} 小时`}
+          <div className="flex items-center gap-3 border-b border-neutral-700 px-4 py-3">
+            <img
+              src={`/sprites/preview-${archive.species}.png`}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pixelated h-12 w-12 shrink-0 border border-neutral-600 bg-neutral-950 p-1"
             />
-            <FieldRow label="出勤地点" value={location} />
-          </dl>
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-display text-lg font-semibold tracking-wide text-mist-100">
+                {archive.name}
+              </p>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[9px] text-mist-500">
+                <span className="border border-neutral-600 px-1 py-0.5 uppercase tracking-[0.08em]">
+                  {archive.species}
+                </span>
+                <span className="truncate">
+                  {archive.department} · {archive.shift}
+                </span>
+                <span className="border border-mint-400/40 px-1 py-0.5 uppercase tracking-[0.08em] text-mint-400">
+                  {archive.isSelf ? '本人' : '代打存档'}
+                </span>
+              </div>
+              {archive.status && (
+                <p className="mt-1 truncate font-mono text-[10px] text-mint-400">{archive.status}</p>
+              )}
+            </div>
+          </div>
+
+          <ArchiveFields archive={archive} />
+          <ActivityGrid archive={archive} />
+          <BoardList archive={archive} />
 
           {/* 盖章区：给印章留一块独立纸面，不压住任何一条考勤字段 */}
           <div className="relative h-[88px] border-t-2 border-dashed border-neutral-700 px-4">
@@ -410,27 +267,29 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
               APPROVAL
             </p>
             <p className="mt-1.5 max-w-[168px] font-sans text-[9px] leading-relaxed text-mist-500">
-              本卡由园区工位系统自动签发，无需主管签字。
+              {archive.isSelf
+                ? '本卡由园区工位系统自动签发，无需主管签字。'
+                : '本卡为代打存档，工龄与行为数据由本人客户端自报。'}
             </p>
             <div
               className={`pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 rotate-[15deg] border-[3px] px-1.5 py-1 ${
-                stampRed ? 'border-rose-500/85' : 'border-amber-400/85'
+                archive.stampRed ? 'border-rose-500/85' : 'border-amber-400/85'
               }`}
             >
               <div
                 className={`border px-2.5 py-1.5 text-center ${
-                  stampRed ? 'border-rose-500/70' : 'border-amber-400/70'
+                  archive.stampRed ? 'border-rose-500/70' : 'border-amber-400/70'
                 }`}
               >
                 <p
                   className="font-mono text-[12px] font-bold tracking-[0.16em] text-transparent"
-                  style={{ WebkitTextStroke: `1px ${stampRed ? '#fb7185' : '#f2c879'}` }}
+                  style={{ WebkitTextStroke: `1px ${archive.stampRed ? '#fb7185' : '#f2c879'}` }}
                 >
-                  {stamp}
+                  {archive.stamp}
                 </p>
                 <p
                   className={`mt-0.5 font-mono text-[7px] tracking-[0.18em] ${
-                    stampRed ? 'text-rose-400/80' : 'text-amber-400/80'
+                    archive.stampRed ? 'text-rose-400/80' : 'text-amber-400/80'
                   }`}
                 >
                   NIOMA HR · VERIFIED
@@ -442,12 +301,12 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
           {/* 卡底校验区：伪条码 / 伪二维码 / 安全芯片 */}
           <div className="flex items-end gap-3 border-t-2 border-neutral-700 px-4 py-3">
             <div className="min-w-0 flex-1">
-              <Barcode value={employeeNo} />
+              <Barcode value={archive.employeeNo} />
               <p className="mt-1 font-mono text-[9px] tracking-[0.18em] text-mist-500">
-                {employeeNo} · 仅供自嘲
+                {archive.employeeNo} · 仅供自嘲
               </p>
             </div>
-            <FakeQr value={employeeNo} />
+            <FakeQr value={archive.employeeNo} />
             <Chip />
           </div>
 
@@ -458,7 +317,7 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
               disabled={busy}
               className="flex min-h-10 cursor-pointer items-center justify-center gap-1.5 border-2 border-mint-400/80 bg-mint-400/10 px-2 font-mono text-[10px] tracking-[0.08em] text-mint-400 transition-colors hover:bg-mint-400 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400 disabled:cursor-wait disabled:opacity-60"
             >
-              {busy ? '冲洗中…' : '📸 复制工卡图片'}
+              {busy ? '冲洗中…' : archive.isSelf ? '📸 复制工卡图片' : '📸 复制 TA 的工卡'}
             </button>
             <button
               type="button"
@@ -466,9 +325,21 @@ export function BadgeDetailModal({ name, appearance, geo, onClose }: BadgeDetail
               disabled={busy}
               className="flex min-h-10 cursor-pointer items-center justify-center gap-1.5 border-2 border-neutral-600 px-2 font-mono text-[10px] tracking-[0.08em] text-mist-300 transition-colors hover:border-mint-400/70 hover:text-mint-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400 disabled:cursor-wait disabled:opacity-60"
             >
-              💾 下载工卡
+              {archive.isSelf ? '💾 下载工卡' : '💾 下载 TA 的工卡'}
+            </button>
+            <button
+              type="button"
+              onClick={handleTimesheet}
+              disabled={busy}
+              className="col-span-2 flex min-h-9 cursor-pointer items-center justify-center gap-1.5 border-2 border-dashed border-neutral-600 px-2 font-mono text-[10px] tracking-[0.08em] text-mist-400 transition-colors hover:border-amber-400/70 hover:text-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400 disabled:cursor-wait disabled:opacity-60"
+            >
+              🧾 复印考勤小票
             </button>
           </div>
+
+          <p className="border-t border-neutral-800 px-4 py-1.5 text-center font-mono text-[8px] uppercase tracking-[0.16em] text-mist-500">
+            点击空白处或按 Esc 关闭
+          </p>
         </div>
       </div>
 

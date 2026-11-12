@@ -4,8 +4,17 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
+import type { Species } from '@niuma/shared-types';
+import { resolveCreatorSeed } from '@/lib/creator-seed';
 import { useCreatorStore } from '@/lib/creator-store';
-import { describeProfileName, loadProfile, resolveProfileName, saveProfile } from '@/lib/profile';
+import {
+  describeProfileName,
+  loadCreatorSpecies,
+  loadProfile,
+  resolveProfileName,
+  saveCreatorSpecies,
+  saveProfile,
+} from '@/lib/profile';
 import { ColorConsole } from './ColorConsole';
 import { CreatorTabs, type CreatorTab } from './CreatorTabs';
 import { NamePlate } from './NamePlate';
@@ -29,7 +38,7 @@ function SaveState({ dirty }: { dirty: boolean }) {
   );
 }
 
-export function CreatorShell() {
+export function CreatorShell({ initialSpecies }: { initialSpecies: Species | null }) {
   const router = useRouter();
   const hydrate = useCreatorStore((state) => state.hydrate);
   const dirty = useCreatorStore((state) => state.dirty);
@@ -45,15 +54,22 @@ export function CreatorShell() {
   const [focusSignal, setFocusSignal] = useState(0);
   /** 状态在游戏内编辑，捏人页只负责原样带回存档 */
   const statusRef = useRef('');
+  /** 入口参数在挂载时冻结：同页内 searchParams 变化不该冲掉用户正在编辑的草稿 */
+  const [requestedSpecies] = useState<Species | null>(initialSpecies);
 
   useEffect(() => {
-    const profile = loadProfile();
-    if (profile) {
-      hydrate(profile.name, profile.appearance);
-      statusRef.current = profile.status;
-    }
+    // 优先级只在 creator-seed 里实现一次：入口参数 > 存档物种 > 上次显式选择 > 牛
+    const seed = resolveCreatorSeed(loadProfile(), requestedSpecies, loadCreatorSpecies());
+    hydrate(seed);
+    statusRef.current = seed.status;
     setHydrated(true);
-  }, [hydrate]);
+    // 记忆键跟着本次结论走：`?species=horse` 打开过一次，下次裸进 /create 也不该回到牛
+    saveCreatorSpecies(seed.appearance.species);
+    return useCreatorStore.subscribe(
+      (state) => state.appearance.species,
+      (species) => saveCreatorSpecies(species),
+    );
+  }, [hydrate, requestedSpecies]);
 
   const status = describeProfileName(name);
 

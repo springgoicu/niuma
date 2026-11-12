@@ -82,6 +82,71 @@ export function getDailyAverageHours(storage: AttendanceStorage): number {
   return Math.round((total / values.length / 3_600_000) * 10) / 10;
 }
 
+/** 有工时的日期数：日均的分母，也用于判断「有没有可展示的考勤」。 */
+export function getActiveDays(dailyRecords: Readonly<Record<string, number>>): number {
+  let days = 0;
+  for (const ms of Object.values(dailyRecords)) {
+    if (Number.isFinite(ms) && ms > 0) days += 1;
+  }
+  return days;
+}
+
+/** 本地周一零点。周日按「上一周的周一」算，避免周榜在周日跳到下一周。 */
+function startOfWeek(now: number): number {
+  const date = new Date(now);
+  const offset = (date.getDay() + 6) % 7;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() - offset).getTime();
+}
+
+/**
+ * 本周累计在岗毫秒（本地周一零点起算）。
+ *
+ * 按日期键逐天累加而不是做时间差：跨零点的记录已经被 `splitAttendanceInterval`
+ * 切好，按天取整不会把昨天 23:59 算进今天。
+ */
+export function getWeekMs(
+  dailyRecords: Readonly<Record<string, number>>,
+  now: number = Date.now(),
+): number {
+  const start = startOfWeek(now);
+  let total = 0;
+  for (let cursor = start; cursor <= now; cursor += 86_400_000) {
+    const ms = dailyRecords[dayKey(cursor)];
+    if (Number.isFinite(ms) && ms > 0) total += ms;
+  }
+  return total;
+}
+
+/** 本周累计在岗分钟，供工牌显示与榜单排序。 */
+export function getWeekMinutes(
+  storage: AttendanceStorage,
+  now: number = Date.now(),
+): number {
+  return Math.floor(getWeekMs(storage.dailyRecords, now) / 60_000);
+}
+
+/**
+ * 连续在岗天数：从今天往前数，今天还没工时就从昨天起算。
+ * 这样早上刚打开页面不会把昨天之前攒的连续记录判成 0。
+ */
+export function getStreakDays(
+  dailyRecords: Readonly<Record<string, number>>,
+  now: number = Date.now(),
+): number {
+  const today = new Date(now);
+  let cursor = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  if (!((dailyRecords[dayKey(cursor)] ?? 0) > 0)) cursor -= 86_400_000;
+  let days = 0;
+  // 上限只防坏存档把循环拖长；正常连续记录远小于 10 年
+  for (let guard = 0; guard < 3_650; guard += 1) {
+    const ms = dailyRecords[dayKey(cursor)];
+    if (!(typeof ms === 'number' && Number.isFinite(ms) && ms > 0)) break;
+    days += 1;
+    cursor -= 86_400_000;
+  }
+  return days;
+}
+
 /** 工龄：本地零点日期差，至少 1 天（入职当天就算第 1 天）。 */
 export function getSeniorityDays(firstJoinDate: string, now: number = Date.now()): number {
   const match = DAY_PARTS_PATTERN.exec(firstJoinDate);
@@ -113,10 +178,31 @@ export function getJobTitle(avgDailyHours: number): JobTitle {
   };
 }
 
+/**
+ * 印章的附加维度。全部可选：旧调用不传时输出与改造前逐字一致。
+ *
+ * 优先级从「稀缺称号」到「常规工时」：榜首 > 万步 > 摸鱼宗师 > 过载 > 连续全勤 > 模范。
+ * 一张卡只盖一个章，不能让「摸鱼宗师」和「终身免下班」互相打架。
+ */
+export interface StampContext {
+  streakDays?: number;
+  steps?: number;
+  slackCount?: number;
+  rank?: number | null;
+}
+
 /** 档案上的实体印章文案：工时越狠，章越离谱。 */
-export function getStampTitle(avgDailyHours: number, seniorityDays: number): string {
+export function getStampTitle(
+  avgDailyHours: number,
+  seniorityDays: number,
+  context?: StampContext,
+): string {
   const avg = Number.isFinite(avgDailyHours) ? avgDailyHours : 0;
+  if (context?.rank === 1) return '卷王之王';
+  if ((context?.steps ?? 0) >= 10_000) return '万步劳模';
+  if ((context?.slackCount ?? 0) >= 50) return '摸鱼宗师';
   if (avg > 8) return seniorityDays >= 30 ? '终身免下班' : '全勤特等牲';
+  if ((context?.streakDays ?? 0) >= 7) return '全勤铁牛';
   if (avg >= 6) return '模范标兵';
   return '摸鱼练习生';
 }

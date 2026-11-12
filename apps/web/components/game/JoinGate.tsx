@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Dices, ShieldOff } from 'lucide-react';
 import {
@@ -9,12 +9,26 @@ import {
   displayWidth,
   type Species,
 } from '@niuma/shared-types';
-import { checkProfileName, defaultAppearance, randomNickname, resolveProfileName, saveProfile, type Profile } from '@/lib/profile';
+import {
+  checkProfileName,
+  defaultAppearance,
+  loadCreatorSpecies,
+  randomNickname,
+  resolveProfileName,
+  saveProfile,
+  type Profile,
+} from '@/lib/profile';
 
 
 export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
   const [name, setName] = useState(randomNickname());
   const [species, setSpecies] = useState<Species>('cow');
+
+  // 上次在捏人页显式选过的物种：没存档的人再次进来时不该又被默认成牛
+  useEffect(() => {
+    const remembered = loadCreatorSpecies();
+    if (remembered) setSpecies(remembered);
+  }, []);
 
   // 字符数够用不代表宽度够用：16 个汉字是 32 宽，头顶只放得下 16
   const nameWidth = displayWidth(name.trim());
@@ -139,7 +153,7 @@ export function JoinGate({ onEnter }: { onEnter: (profile: Profile) => void }) {
             关闭页面即清空
           </span>
           <Link
-            href="/create"
+            href={`/create?species=${species}`}
             className="font-mono text-[10px] uppercase tracking-[0.16em] text-mint-400 transition-colors hover:text-lime-400"
           >
             先去捏人 →

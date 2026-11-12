@@ -1,4 +1,4 @@
-import type { CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
 import type { SessionCallbacks } from '../session';
 import type { SessionProfile } from '../runtime/engine-env';
@@ -30,6 +30,8 @@ export interface GameClient {
   requestHistory(beforeMsgId: number): void;
   setStatus(status: string): void;
   setAppearance(appearance: CharacterAppearance): void;
+  /** 补报考勤摘要：入场后、geo 就绪后与 60 秒心跳各调用一次 */
+  updateCareer(career: CareerSummary): void;
   navigateTo(id: NavTargetId): void;
   cancelNavigation(): void;
   /** 舞台局部坐标 → 命中角色的 netId（经 `options.onPick` 回调） */
@@ -49,6 +51,6 @@ export interface GameClientOptions {
   callbacks: SessionCallbacks;
   /** Enter 打开聊天：键盘监听留在主线程，这条路径不经过渲染线程 */
   onRequestChat(): void;
-  /** 点选结果：null 表示点空或点到自己 */
-  onPick(id: number | null): void;
+  /** 点选结果：null 表示点空或点到自己；`badge` 是首帧工牌，避免弹窗先空白 */
+  onPick(id: number | null, badge?: PlayerBadge | null): void;
 }

@@ -24,19 +24,45 @@ const EYE_LIGHT_MIX = 0.7;
 const FONT_SANS = '"PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
 const FONT_MONO = '"JetBrains Mono", ui-monospace, monospace';
 
+/** 分享工牌底部宣传条文案：品牌 + 域名，与 docs/promo.md 的对外口径一致 */
+export const SHARE_CARD_SITE_BRAND = '牛马 NIOMA';
+export const SHARE_CARD_SITE_DOMAIN = 'bangying.top';
+
 export interface ShareCardData {
   name: string;
   employeeNo: string;
   jobTitle: string;
   species: Species;
   appearance: CharacterAppearance;
-  /** 形如「中国 · 浙江 · 杭州」 */
+  /** 形如「中国 · 浙江 · 杭州」；他人工卡只到省 */
   location: string;
   /** 今日累计在岗，HH:MM:SS */
   todayDuration: string;
   dailyAverageHours: number;
   /** 倾斜盖章文案，如「终身免下班」 */
   stamp: string;
+  /** 本周工时（小时），考勤小票模板使用 */
+  weekHours?: number;
+  /** 连续在岗天数 */
+  streakDays?: number;
+  /** 部门 / 班次 */
+  department?: string;
+  shift?: string;
+  /** 行为统计 */
+  activity?: {
+    steps: number;
+    distanceM: number;
+    slackCount: number;
+    ventedCount: number;
+    knockdownCount: number;
+    overtimeCount: number;
+  };
+  /** 视野内本周工时名次 */
+  rank?: number | null;
+  /** false 表示「为 TA 打印」，卡面要标代打语义 */
+  isSelf?: boolean;
+  /** false 表示对方未上报考勤：卡面显示「未上报」，不用 0 冒充 */
+  hasCareer?: boolean;
   /** 不传则从金句池随机抽一条 */
   quote?: string;
 }
@@ -379,7 +405,7 @@ function drawLanyard(ctx: CanvasRenderingContext2D): void {
   ctx.fillRect(204, 26, 72, 6);
 }
 
-function drawHeader(ctx: CanvasRenderingContext2D): void {
+function drawHeader(ctx: CanvasRenderingContext2D, isSelf: boolean): void {
   drawLanyard(ctx);
 
   ctx.textAlign = 'center';
@@ -390,7 +416,13 @@ function drawHeader(ctx: CanvasRenderingContext2D): void {
 
   ctx.fillStyle = '#6b5c44';
   ctx.font = `11px ${FONT_SANS}`;
-  ctx.fillText('牛马园区考勤凭证 · EMPLOYEE ATTENDANCE RECORD', 240, 78);
+  ctx.fillText(
+    isSelf
+      ? '牛马园区考勤凭证 · EMPLOYEE ATTENDANCE RECORD'
+      : '代打存档 · DATA SELF-REPORTED BY EMPLOYEE',
+    240,
+    78,
+  );
 
   ctx.strokeStyle = '#3a3128';
   ctx.lineWidth = 2;
@@ -472,6 +504,20 @@ function drawIdentity(ctx: CanvasRenderingContext2D, data: ShareCardData): void 
   ctx.fillStyle = '#7a684c';
   ctx.font = `11px ${FONT_MONO}`;
   ctx.fillText(data.employeeNo, 28, 448);
+
+  // 部门 / 班次 / 连续在岗：原来这一行是空白，正好塞下三枚轻量身份标签
+  const extras = [
+    data.department,
+    data.shift,
+    data.hasCareer === false ? null : `连续在岗 ${data.streakDays ?? 0} 天`,
+  ]
+    .filter((item): item is string => Boolean(item))
+    .join(' · ');
+  if (extras) {
+    ctx.fillStyle = '#8c7a5c';
+    ctx.font = `10px ${FONT_SANS}`;
+    ctx.fillText(fitText(ctx, extras, 424), 28, 464);
+  }
 }
 
 interface DetailRow {
@@ -482,7 +528,7 @@ interface DetailRow {
 function drawDetails(ctx: CanvasRenderingContext2D, rows: DetailRow[]): void {
   const labelX = 28;
   const valueX = 452;
-  let baseline = 474;
+  let baseline = 486;
   ctx.textBaseline = 'alphabetic';
 
   for (const row of rows) {
@@ -513,7 +559,7 @@ function drawDetails(ctx: CanvasRenderingContext2D, rows: DetailRow[]): void {
       ctx.stroke();
       ctx.restore();
     }
-    baseline += 24;
+    baseline += 21;
   }
 }
 
@@ -631,6 +677,28 @@ function drawStamp(
   ctx.restore();
 }
 
+/** 底部宣传条：墨色条带上印品牌与域名，分享到站外时自带网站导流信息 */
+function drawPromoBand(ctx: CanvasRenderingContext2D, isSelf: boolean): void {
+  ctx.fillStyle = '#2b241d';
+  ctx.fillRect(10, 688, 460, 24);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#f6f1e4';
+  ctx.font = `700 13px ${FONT_MONO}`;
+  ctx.fillText(`${SHARE_CARD_SITE_BRAND} · ${SHARE_CARD_SITE_DOMAIN}`, 240, 700);
+
+  ctx.fillStyle = 'rgba(246, 241, 228, 0.62)';
+  ctx.font = `7px ${FONT_SANS}`;
+  ctx.fillText(
+    isSelf
+      ? '零服务器持久化 · 数据仅存于本机浏览器 · 仅供自嘲'
+      : '代打存档 · 数据由本人客户端自报 · 园区仅做即时转发',
+    240,
+    708,
+  );
+}
+
 function drawFallbackCharacter(
   ctx: CanvasRenderingContext2D,
   species: Species,
@@ -655,11 +723,177 @@ async function waitForFonts(): Promise<void> {
   ]);
 }
 
+/** 考勤小票：不发立绘，只把本周结算与行为统计排成一张可贴工位的小票。 */
+function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void {
+  drawPaper(ctx, data.employeeNo);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#2b241d';
+  ctx.font = `600 18px ${FONT_MONO}`;
+  ctx.fillText('NIOMA · 考勤小票', 240, 48);
+  ctx.fillStyle = '#6b5c44';
+  ctx.font = `10px ${FONT_SANS}`;
+  ctx.fillText(
+    data.isSelf ? '本周考勤结算 · WEEKLY TIMESHEET' : '代打存档 · DATA SELF-REPORTED',
+    240,
+    68,
+  );
+
+  ctx.save();
+  ctx.strokeStyle = '#3a3128';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(28, 84);
+  ctx.lineTo(452, 84);
+  ctx.stroke();
+  ctx.restore();
+
+  // 身份区
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#2b241d';
+  ctx.font = `600 24px ${FONT_SANS}`;
+  ctx.fillText(fitText(ctx, data.name, 280), 28, 126);
+  ctx.fillStyle = '#7a684c';
+  ctx.font = `11px ${FONT_MONO}`;
+  ctx.fillText(data.employeeNo, 28, 148);
+  ctx.fillStyle = '#8c7a5c';
+  ctx.font = `10px ${FONT_SANS}`;
+  ctx.fillText(
+    [data.department, data.shift].filter(Boolean).join(' · ') || '未上报部门',
+    28,
+    166,
+  );
+
+  ctx.font = `600 12px ${FONT_SANS}`;
+  const titleWidth = Math.ceil(ctx.measureText(data.jobTitle).width) + 18;
+  const chipX = 452 - titleWidth;
+  ctx.fillStyle = '#2b241d';
+  ctx.fillRect(chipX, 108, titleWidth, 25);
+  ctx.fillStyle = '#e9e1cf';
+  ctx.textAlign = 'center';
+  ctx.fillText(data.jobTitle, chipX + titleWidth / 2, 125);
+
+  if (!data.isSelf) {
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(28, 178, 74, 18);
+    ctx.fillStyle = '#f6f1e4';
+    ctx.font = `600 9px ${FONT_MONO}`;
+    ctx.fillText('代打存档', 65, 191);
+  }
+
+  // 2×2 大数字
+  const reported = data.hasCareer !== false;
+  const stats: Array<[string, string, string]> = [
+    ['本周工时', reported ? (data.weekHours ?? 0).toFixed(1) : '未上报', reported ? '小时' : ''],
+    ['今日累计', data.todayDuration, ''],
+    ['日均在线', reported ? data.dailyAverageHours.toFixed(1) : '未上报', reported ? '小时 / 天' : ''],
+    ['连续在岗', reported ? String(data.streakDays ?? 0) : '未上报', reported ? '天' : ''],
+  ];
+  stats.forEach(([label, value, unit], index) => {
+    const x = 28 + (index % 2) * 220;
+    const y = 210 + Math.floor(index / 2) * 74;
+    ctx.fillStyle = '#f2ead8';
+    ctx.fillRect(x, y, 204, 62);
+    ctx.strokeStyle = '#3a3128';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, 204, 62);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#6b5c44';
+    ctx.font = `9px ${FONT_MONO}`;
+    ctx.fillText(label, x + 12, y + 18);
+    ctx.fillStyle = '#2b241d';
+    ctx.font = `600 22px ${FONT_MONO}`;
+    const shown = fitText(ctx, value, 120);
+    ctx.fillText(shown, x + 12, y + 47);
+    if (unit) {
+      const valueWidth = ctx.measureText(shown).width;
+      ctx.fillStyle = '#8c7a5c';
+      ctx.font = `9px ${FONT_SANS}`;
+      ctx.fillText(unit, x + 16 + valueWidth, y + 47);
+    }
+  });
+
+  // 行为统计
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#6b5c44';
+  ctx.font = `9px ${FONT_MONO}`;
+  ctx.fillText('ACTIVITY / 累计行为', 28, 380);
+  const activity = data.activity;
+  const rows: Array<[string, string]> = !reported
+    ? [['行为统计', '未上报']]
+    : activity
+      ? [
+          ['行走步数', `${activity.steps.toLocaleString('zh-CN')} 步`],
+          ['搬砖里程', `${activity.distanceM.toLocaleString('zh-CN')} 米`],
+          ['摸鱼次数', `${activity.slackCount} 次`],
+          ['击倒次数', `${activity.knockdownCount} 次`],
+          ['被喷次数', `${activity.ventedCount} 次`],
+          ['加班次数', `${activity.overtimeCount} 次`],
+        ]
+      : [['行为统计', '未上报']];
+  let baseline = 404;
+  for (const [label, value] of rows) {
+    ctx.font = `11px ${FONT_SANS}`;
+    ctx.fillStyle = '#6b5c44';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, 28, baseline);
+    const labelWidth = ctx.measureText(label).width;
+    ctx.font = `600 12px ${FONT_MONO}`;
+    ctx.fillStyle = '#2b241d';
+    ctx.textAlign = 'right';
+    ctx.fillText(value, 452, baseline);
+    const valueWidth = ctx.measureText(value).width;
+    const from = 28 + labelWidth + 8;
+    const to = 452 - valueWidth - 8;
+    if (to > from) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(107, 92, 68, 0.55)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(from, baseline - 3);
+      ctx.lineTo(to, baseline - 3);
+      ctx.stroke();
+      ctx.restore();
+    }
+    baseline += 22;
+  }
+
+  // 名次 + 金句
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#7a684c';
+  ctx.font = `10px ${FONT_MONO}`;
+  ctx.fillText(
+    data.rank ? `同屏劳模榜 · 本周第 ${data.rank} 名（视野内）` : '同屏劳模榜 · 未上榜',
+    28,
+    536,
+  );
+  drawQuote(ctx, data.quote ?? pickWorkplaceQuote());
+
+  ctx.strokeStyle = '#3a3128';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(28, 624);
+  ctx.lineTo(452, 624);
+  ctx.stroke();
+
+  drawBarcode(ctx, data.employeeNo, 28, 632, 252, 42);
+  drawStamp(ctx, data.stamp, 382, 662, '#c0392b');
+  drawPromoBand(ctx, data.isSelf ?? true);
+}
+
+export type ShareCardVariant = 'badge' | 'timesheet';
+
 /**
  * 渲染整张工卡。返回离屏 canvas，调用方负责 toBlob / toDataURL。
  * 失败只可能是「连 2d context 都拿不到」，素材问题都会逐层降级。
  */
-export async function renderShareCard(data: ShareCardData): Promise<HTMLCanvasElement> {
+export async function renderShareCard(
+  data: ShareCardData,
+  variant: ShareCardVariant = 'badge',
+): Promise<HTMLCanvasElement> {
   const canvas = document.createElement('canvas');
   canvas.width = SHARE_CARD_WIDTH * SHARE_CARD_SCALE;
   canvas.height = SHARE_CARD_HEIGHT * SHARE_CARD_SCALE;
@@ -670,8 +904,13 @@ export async function renderShareCard(data: ShareCardData): Promise<HTMLCanvasEl
   ctx.imageSmoothingEnabled = false;
   await waitForFonts();
 
+  if (variant === 'timesheet') {
+    drawTimesheet(ctx, data);
+    return canvas;
+  }
+
   drawPaper(ctx, data.employeeNo);
-  drawHeader(ctx);
+  drawHeader(ctx, data.isSelf ?? true);
   drawPortraitPanel(ctx, data.employeeNo);
 
   let characterDrawn = false;
@@ -686,10 +925,17 @@ export async function renderShareCard(data: ShareCardData): Promise<HTMLCanvasEl
 
   drawDetails(ctx, [
     { label: '工号', value: data.employeeNo },
-    { label: '职级', value: data.jobTitle },
     { label: '出勤地点', value: data.location },
     { label: '今日在岗', value: data.todayDuration },
-    { label: '日均工时', value: `${data.dailyAverageHours.toFixed(1)} 小时 / 天` },
+    {
+      label: '本周工时',
+      value: data.hasCareer === false ? '未上报' : `${(data.weekHours ?? 0).toFixed(1)} 小时`,
+    },
+    {
+      label: '日均工时',
+      value:
+        data.hasCareer === false ? '未上报' : `${data.dailyAverageHours.toFixed(1)} 小时 / 天`,
+    },
   ]);
 
   drawQuote(ctx, data.quote ?? pickWorkplaceQuote());
@@ -703,12 +949,7 @@ export async function renderShareCard(data: ShareCardData): Promise<HTMLCanvasEl
 
   drawBarcode(ctx, data.employeeNo, 28, 632, 252, 42);
   drawStamp(ctx, data.stamp, 382, 662, '#c0392b');
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#8a7a60';
-  ctx.font = `8px ${FONT_SANS}`;
-  ctx.fillText('零服务器持久化 · 数据仅存于本机浏览器 · 仅供自嘲', 240, 708);
+  drawPromoBand(ctx, data.isSelf ?? true);
 
   return canvas;
 }

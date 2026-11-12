@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   APPEARANCE_BYTES,
   APPEARANCE_COLOR_KEYS,
+  CAREER_EXTENSION_MAGIC,
+  CAREER_FIXED_BYTES,
+  CAREER_MAX_BYTES,
   CHAT_HISTORY_FLAG,
   CHAT_HISTORY_MAX_PAGE,
   CHAT_HISTORY_PACKET_BUDGET,
@@ -24,6 +27,9 @@ import {
   DEFAULT_APPEARANCE,
   decodeAppearance,
   decodeAppearanceBroadcast,
+  decodeCareer,
+  decodeCareerBroadcast,
+  decodeCareerReport,
   decodeChatBroadcast,
   decodeChatHistory,
   decodeChatHistoryRequest,
@@ -46,6 +52,10 @@ import {
   encodeChatBroadcast,
   encodeChatHistory,
   encodeChatHistoryRequest,
+  encodeCareer,
+  encodeCareerBroadcast,
+  encodeCareerReport,
+  encodeCareerSegment,
   encodeChatRejected,
   encodeDespawn,
   encodeGraze,
@@ -599,6 +609,158 @@ describe('spawn / despawn / chat / hello', () => {
     }).slice();
     const decoded = decodeSpawn(packet.subarray(0, packet.byteLength - 2));
     expect(decoded.onlineSec).toBeUndefined();
+  });
+
+  const CAREER = {
+    firstJoinDate: '2026-03-04',
+    totalOnlineMinutes: 12_345,
+    activeDays: 42,
+    todayMinutes: 361,
+    weekMinutes: 1_234,
+    streakDays: 9,
+    steps: 123_456,
+    distanceM: 8_765,
+    slackCount: 88,
+    ventedCount: 13,
+    knockdownCount: 21,
+    overtimeCount: 7,
+    province: '浙江',
+    reportedOnlineSec: 61,
+  };
+
+  it('round-trips career in HELLO after status and capability segments', () => {
+    const decoded = decodeHello(
+      encodeHello('牛', DEFAULT_APPEARANCE.cow, undefined, '摸鱼中', SYNC_FORMAT_COMPACT, CAREER),
+    );
+    expect(decoded.name).toBe('牛');
+    expect(decoded.status).toBe('摸鱼中');
+    expect(decoded.syncFormat).toBe(SYNC_FORMAT_COMPACT);
+    expect(decoded.career).toEqual(CAREER);
+  });
+
+  it('omits career for an old client HELLO', () => {
+    const decoded = decodeHello(encodeHello('牛', DEFAULT_APPEARANCE.cow));
+    expect(decoded.career).toBeUndefined();
+  });
+
+  it('reads career together with status and online seconds from SPAWN', () => {
+    const decoded = decodeSpawn(
+      encodeSpawn({
+        id: 2,
+        x: 0,
+        y: 0,
+        state: 0,
+        name: '牛',
+        appearance: DEFAULT_APPEARANCE.cow,
+        status: '摸鱼中',
+        onlineSec: 90,
+        career: CAREER,
+      }),
+    );
+    expect(decoded.status).toBe('摸鱼中');
+    expect(decoded.onlineSec).toBe(90);
+    expect(decoded.career).toEqual(CAREER);
+  });
+
+  it('reads career when online seconds segment is absent', () => {
+    const decoded = decodeSpawn(
+      encodeSpawn({
+        id: 2,
+        x: 0,
+        y: 0,
+        state: 0,
+        name: '牛',
+        appearance: DEFAULT_APPEARANCE.cow,
+        career: CAREER,
+      }),
+    );
+    expect(decoded.onlineSec).toBeUndefined();
+    expect(decoded.status).toBe('');
+    expect(decoded.career).toEqual(CAREER);
+  });
+
+  it('ignores a truncated career segment instead of reading past the buffer', () => {
+    const packet = encodeSpawn({
+      id: 4,
+      x: 0,
+      y: 0,
+      state: 0,
+      name: '牛',
+      appearance: DEFAULT_APPEARANCE.cow,
+      onlineSec: 7,
+      career: CAREER,
+    }).slice();
+    const decoded = decodeSpawn(packet.subarray(0, packet.byteLength - 3));
+    expect(decoded.onlineSec).toBe(7);
+    expect(decoded.career).toBeUndefined();
+  });
+
+  it('cached body + online seconds + career matches whole-packet encoding', () => {
+    const name = '夜班实习生';
+    const body = buildSpawnBody(name, DEFAULT_APPEARANCE.horse);
+    const writer = new ByteWriter(256);
+    encodeSpawnInto(writer, 9, 100, 200, 7, body, 61, CAREER);
+    const direct = encodeSpawn({
+      id: 9,
+      x: 100,
+      y: 200,
+      state: 7,
+      name,
+      appearance: DEFAULT_APPEARANCE.horse,
+      onlineSec: 61,
+      career: CAREER,
+    });
+    expect([...writer.finish()]).toEqual([...direct]);
+  });
+
+  it('cached career segment matches whole-packet encoding', () => {
+    const name = '夜班实习生';
+    const body = buildSpawnBody(name, DEFAULT_APPEARANCE.horse);
+    const segment = encodeCareerSegment(CAREER);
+    expect(segment[0]).toBe(CAREER_EXTENSION_MAGIC);
+    expect(segment[1]).toBe(segment.byteLength - 2);
+    const writer = new ByteWriter(256);
+    encodeSpawnInto(writer, 9, 100, 200, 7, body, 61, undefined, segment);
+    const direct = encodeSpawn({
+      id: 9,
+      x: 100,
+      y: 200,
+      state: 7,
+      name,
+      appearance: DEFAULT_APPEARANCE.horse,
+      onlineSec: 61,
+      career: CAREER,
+    });
+    expect([...writer.finish()]).toEqual([...direct]);
+  });
+
+  it('round-trips C2S career report and S2C career broadcast', () => {
+    expect(decodeCareerReport(encodeCareerReport(CAREER))).toEqual(CAREER);
+    expect(decodeCareerBroadcast(encodeCareerBroadcast({ entityId: 17, career: CAREER }))).toEqual({
+      entityId: 17,
+      career: CAREER,
+    });
+  });
+
+  it('rejects malformed career payloads without throwing', () => {
+    const payload = encodeCareer(CAREER);
+    expect(decodeCareer(payload.subarray(0, CAREER_FIXED_BYTES - 1))).toBeUndefined();
+    const wrongVersion = payload.slice();
+    wrongVersion[0] = 99;
+    expect(decodeCareer(wrongVersion)).toBeUndefined();
+    expect(decodeCareer(new Uint8Array(CAREER_MAX_BYTES + 1))).toBeUndefined();
+    expect(payload.byteLength).toBeLessThanOrEqual(CAREER_MAX_BYTES);
+    expect(payload[0]).toBe(2);
+    expect(encodeSpawn({
+      id: 1,
+      x: 0,
+      y: 0,
+      state: 0,
+      name: '牛',
+      appearance: DEFAULT_APPEARANCE.cow,
+      career: CAREER,
+    }).byteLength).toBeGreaterThan(CAREER_FIXED_BYTES);
+    expect(CAREER_EXTENSION_MAGIC).toBe(0xfc);
   });
 
   it('round-trips despawn reason', () => {

@@ -207,9 +207,12 @@ export function ParkPicker({ parks, fromPlay }: { parks: ParkEntry[]; fromPlay: 
   const healthById = new Map(probes.map((probe) => [probe.park.id, probe.health]));
   const allDown = !loading && probes.length > 0 && probes.every((probe) => probe.health === null);
 
-  // 「返回园区」要回到刚才那一座：不带 park 参数会掉到配置里的第一座
+  // 「返回园区」要回到刚才那一座：不带 park 参数会掉到配置里的第一座。
+  // 回捏人页时把存档物种一并带上，URL 与存档不打架
   const backHref = !fromPlay
-    ? '/create'
+    ? profile
+      ? `/create?species=${profile.appearance.species}`
+      : '/create'
     : previousId
       ? `/play?park=${encodeURIComponent(previousId)}`
       : '/play';

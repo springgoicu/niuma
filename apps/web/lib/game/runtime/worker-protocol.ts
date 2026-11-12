@@ -1,4 +1,5 @@
 import type {
+  CareerSummary,
   CharacterAppearance,
   NavTargetId,
   Pose,
@@ -44,6 +45,8 @@ export type MainToWorker =
   | { t: 'history'; cursor: number }
   | { t: 'status'; text: string }
   | { t: 'appearance'; appearance: CharacterAppearance }
+  /** 考勤摘要补报：geo 就绪后与 60 秒心跳各发一次 */
+  | { t: 'career'; career: CareerSummary }
   | { t: 'navigate'; id: NavTargetId }
   | { t: 'cancelNav' }
   | { t: 'pick'; x: number; y: number }
@@ -66,8 +69,12 @@ export type WorkerToMain =
   | { t: 'hint'; hint: string | null }
   | { t: 'localState'; pose: Pose; seated: boolean; seatKind: SeatKind | null }
   | { t: 'nav'; nav: { id: NavTargetId; name: string } | null }
-  | { t: 'picked'; id: number | null }
+  | { t: 'picked'; id: number | null; badge?: PlayerBadge | null }
   | { t: 'badge'; id: number; badge: PlayerBadge | null }
+  /** 本地被创飞：行为统计只需一个布尔量 */
+  | { t: 'ventHit'; local: boolean }
+  /** 本地成功击倒他人：击倒数 +1 */
+  | { t: 'ventDealt' }
   /** 发声请求：`AudioContext` 只能在主线程，所以连听者坐标一起带回来 */
   | { t: 'audio'; event: AudioEvent; listenerX: number; listenerY: number }
   /** 仅在无共享内存时使用：主线程据此落盘 */
