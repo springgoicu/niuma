@@ -78,4 +78,6 @@ export type WorkerToMain =
   /** 发声请求：`AudioContext` 只能在主线程，所以连听者坐标一起带回来 */
   | { t: 'audio'; event: AudioEvent; listenerX: number; listenerY: number }
   /** 仅在无共享内存时使用：主线程据此落盘 */
-  | { t: 'snapshot'; patch: SnapshotPatch };
+  | { t: 'snapshot'; patch: SnapshotPatch }
+  /** Worker 遇到断线等情况，请求主线程做一次构建版本检查 */
+  | { t: 'build-check' };

@@ -29,8 +29,10 @@ export function normalizeDpr(dpr: number): number {
 }
 
 export function readDpr(): number {
-  if (typeof window === 'undefined') return 1;
-  return normalizeDpr(window.devicePixelRatio);
+  // 同 build-version 的坑：`typeof window === 'undefined'` 会被 SWC 在 client bundle 里
+  // 折叠掉，Worker 调用时直接 ReferenceError。按能力判断才靠得住。
+  const scope = globalThis as { devicePixelRatio?: number };
+  return normalizeDpr(scope.devicePixelRatio ?? 1);
 }
 
 /**

@@ -48,7 +48,6 @@ import {
   type VentEventPacket,
   type WelcomePacket,
 } from '@niuma/shared-types';
-import { requestBuildCheck } from '../build-version';
 import { NetClient } from '../net/client';
 import { withCareerDelta, type BoardEntry, type PlayerBadge } from './badge';
 import { ventOutcome } from './vent-outcome';
@@ -344,8 +343,9 @@ export class GameSession {
       onClose: () => {
         this.persistNow();
         this.callbacks.onStatus('offline', '连接中断，正在重连');
-        // 部署会重启游戏服：断线即查版本，避免带着旧地图重连后撞上空气墙
-        requestBuildCheck();
+        // 部署会重启游戏服：断线即查版本，避免带着旧地图重连后撞上空气墙。
+        // 走 env 而不是直接调：Worker 模式下版本检查得回到主线程做。
+        this.env.requestBuildCheck();
       },
       onQueue: (status) => {
         this.callbacks.onQueue(status);

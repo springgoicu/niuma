@@ -52,4 +52,11 @@ export interface EngineEnv {
   writeSnapshot(patch: SnapshotPatch): void;
   /** 发声请求：主线程直接合成，Worker 转成一条消息 */
   emitAudio(event: AudioEvent, listenerX: number, listenerY: number): void;
+  /**
+   * 请求一次构建版本检查（断线重连时用）。
+   *
+   * 版本比对要读 URL、写 localStorage、必要时 reload，全是主线程才能做的事；
+   * Worker 侧只发一条消息让宿主派发，绝不能在渲染线程里摸 window。
+   */
+  requestBuildCheck(): void;
 }

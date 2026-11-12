@@ -1,4 +1,5 @@
 import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import { requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
@@ -87,6 +88,8 @@ export class MainThreadGameClient implements GameClient {
         });
       },
       emitAudio: (event, listenerX, listenerY) => applyAudioEvent(event, listenerX, listenerY),
+      // 主线程本来就能直接派发事件
+      requestBuildCheck: () => requestBuildCheck(),
     };
 
     const session = new GameSession(this.options.callbacks, env, {

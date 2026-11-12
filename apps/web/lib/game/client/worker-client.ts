@@ -1,4 +1,5 @@
 import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import { requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
@@ -445,6 +446,10 @@ export class WorkerGameClient implements GameClient {
       case 'snapshot':
         this.lastSnapshot = message.patch;
         this.snapshotDirty = true;
+        return;
+      case 'build-check':
+        // 渲染线程碰不到 window，版本检查交回主线程派发
+        requestBuildCheck();
         return;
     }
   }

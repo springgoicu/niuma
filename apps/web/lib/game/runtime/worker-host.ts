@@ -83,6 +83,7 @@ export function runWorkerHost(scope: WorkerScope): void {
         if (!block.isShared) post({ t: 'snapshot', patch });
       },
       emitAudio: (event, listenerX, listenerY) => post({ t: 'audio', event, listenerX, listenerY }),
+      requestBuildCheck: () => post({ t: 'build-check' }),
     };
 
     session = new GameSession(

@@ -62,6 +62,12 @@ export function allowReloadForVersion(
 
 /** 从游戏服断线等非 UI 入口请求一次检查；后台标签页由 BuildWatcher 延后处理 */
 export function requestBuildCheck(): void {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new Event(BUILD_CHECK_EVENT));
+  // 这里不能写 `typeof window === 'undefined'`：Next 的 SWC 认定 client bundle 一定
+  // 跑在浏览器里，会把这个判断当常量折叠掉，函数体只剩 `window.dispatchEvent(...)`。
+  // 而 GameSession 同时跑在渲染 Worker 里（断线回调就在这里），Worker 没有 window，
+  // 一次部署重启游戏服就会把所有在线玩家的 Worker 打成 ReferenceError 并回退主线程。
+  // 改成检测能力本身：Worker 有 globalThis，但没有 dispatchEvent。
+  const scope = globalThis as { dispatchEvent?: (event: Event) => boolean };
+  if (typeof scope.dispatchEvent !== 'function') return;
+  scope.dispatchEvent(new Event(BUILD_CHECK_EVENT));
 }
