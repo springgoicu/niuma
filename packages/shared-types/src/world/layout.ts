@@ -15,7 +15,7 @@
  *   按本轮确认，水域保持可涉水（ADR-0030 继续有效），湖面不注册碰撞体。
  */
 
-import { WORLD_HEIGHT, WORLD_WIDTH } from '../constants';
+import { DIRECTION, WORLD_HEIGHT, WORLD_WIDTH } from '../constants';
 import {
   distanceSqToPolygon,
   pointInPolygon,
@@ -232,6 +232,280 @@ export const WELCOME_LANDMARKS = {
    */
   rankBoard: { x: 3960, y: 3832, width: 128, height: 96 },
 } as const;
+
+/**
+ * 牛马放假告示板（ADR-0059）：中央广场北缘东侧，与西侧牛马榜公告栏左右对称。
+ *
+ * 底边 y = 3832 与 rankBoard 同高，牌面 80×48 完全落在广场圆内；
+ * 牌面横坐标 4192–4272 在 112px 北向主路（4040–4152）东侧 40px 外，
+ * 出生点 (4096,4096) 向北抬头就能同时看见两块牌子，通道不被占用。
+ *
+ * 坐标与碰撞只在这里定义一次：渲染（props.ts / bulletin.ts）、交互（interactions.ts）
+ * 与布局测试全部从这一份常量派生，不允许出现第二份手写坐标。
+ */
+export const BULLETIN_BOARD = { x: 4232, y: 3832, width: 80, height: 48 } as const;
+
+/** 贴地碰撞：只挡下方 80×20 的底座，牌面在头顶，玩家可从左、右、上方贴近 */
+export const BULLETIN_BOARD_SOLID: WorldRect = {
+  x: BULLETIN_BOARD.x - BULLETIN_BOARD.width / 2,
+  y: BULLETIN_BOARD.y - 20,
+  w: BULLETIN_BOARD.width,
+  h: 20,
+};
+
+/* ------------------------------------------------------------------ *
+ * 国风园林与职场玄学地标（ADR-0061）
+ *
+ * 坐标只在这里写一次：亭子、供案、茶台、竹林、太湖石的渲染、碰撞、交互与
+ * 布局测试全部从下面这几组常量派生，不允许出现第二份手写坐标。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 摸鱼亭（八角重檐凉亭）：摸鱼湖东北岸的凸角，亭心正对湖面。
+ * 与 `WELCOME_LANDMARKS` 同一种写法——`x` 是横向中心，`y` 是底座南沿（脚底 y），
+ * 宽高是含飞檐外挑的整体包围盒。
+ */
+export const MOPING_PAVILION = { x: 5790, y: 5210, width: 200, height: 180 } as const;
+
+/** 亭心：汉白玉石桌落在这里，四张石鼓凳绕它一圈 */
+export const PAVILION_CENTER = {
+  x: MOPING_PAVILION.x,
+  y: MOPING_PAVILION.y - MOPING_PAVILION.height / 2,
+} as const;
+
+/**
+ * 八根朱红廊柱相对亭心的偏移：45° 一圈的整数化坐标，半径约 88。
+ * 手写而不是 Math.cos/sin —— 两端浮点结果可能差 1px，地图会各画各的。
+ */
+export const PAVILION_COLUMN_OFFSETS: ReadonlyArray<Point> = [
+  [82, 34],
+  [34, 82],
+  [-34, 82],
+  [-82, 34],
+  [-82, -34],
+  [-34, -82],
+  [34, -82],
+  [82, -34],
+];
+
+/** 亭柱碰撞：八根 12×10 的柱子；亭心留空，人能走进去坐下 */
+export const MOPING_PAVILION_SOLIDS: ReadonlyArray<SolidRect> = PAVILION_COLUMN_OFFSETS.map(([dx, dy]) => ({
+  kind: 'prop',
+  x: PAVILION_CENTER.x + dx - 6,
+  y: PAVILION_CENTER.y + dy - 5,
+  w: 12,
+  h: 10,
+}));
+
+/**
+ * 石鼓凳相对亭心的偏移（四个方向各一张，间距 80）。
+ * 全部面朝南——湖在亭子南侧，「坐下即观湖沉思」靠朝向而不是另设姿态。
+ */
+const PAVILION_SEAT_RING = 40;
+
+const PAVILION_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
+  { x: PAVILION_CENTER.x - PAVILION_SEAT_RING, y: PAVILION_CENTER.y, facing: DIRECTION.Down, kind: 'drum' },
+  { x: PAVILION_CENTER.x, y: PAVILION_CENTER.y - PAVILION_SEAT_RING, facing: DIRECTION.Down, kind: 'drum' },
+  { x: PAVILION_CENTER.x + PAVILION_SEAT_RING, y: PAVILION_CENTER.y, facing: DIRECTION.Down, kind: 'drum' },
+  { x: PAVILION_CENTER.x, y: PAVILION_CENTER.y + PAVILION_SEAT_RING, facing: DIRECTION.Down, kind: 'drum' },
+];
+
+/** 亭内汉白玉石桌：亭心一张，本体由 `pavilion.ts` 绘制，碰撞在下面单独登记 */
+export const PAVILION_TABLE = { x: PAVILION_CENTER.x, y: PAVILION_CENTER.y, radius: 22 } as const;
+
+/**
+ * 赛博财神供案：工作区入口内侧偏西一列，正对开放区的东南入口。
+ * 底边 y = 3800 压在南排工位桌之后（桌脚 3742），不挡椅子也不挡进门那条支路。
+ */
+export const SHRINE_ALTAR = { x: 3740, y: 3800, width: 56, height: 44 } as const;
+
+/** 供案贴地碰撞：只挡下方 56×18 的案面+案腿，财神像与香炉在头顶 */
+export const SHRINE_ALTAR_SOLID: WorldRect = {
+  x: SHRINE_ALTAR.x - SHRINE_ALTAR.width / 2,
+  y: SHRINE_ALTAR.y - 18,
+  w: SHRINE_ALTAR.width,
+  h: 18,
+};
+
+/**
+ * 老干部紫砂茶台：工作区饮水机（cooler，x = WORKROOM.x + 164）东侧紧邻一格。
+ *
+ * 横向偏移卡在 +198 是被动线逼出来的：`NAV_ARRIVALS.workroom` 的 x = +230，
+ * 导览测试要求从南侧空地沿这条竖线直走进屋不被挡；茶台再往东两格就会挡在门口。
+ * 底边 y 与饮水机齐平（+330），站过去就能续杯。
+ */
+export const TEA_STATION = { x: WORKROOM.x + 198, y: WORKROOM.y + 334, width: 46, height: 40 } as const;
+
+/** 茶台贴地碰撞：只挡下方 44×16 的桌面 */
+export const TEA_STATION_SOLID: WorldRect = {
+  x: TEA_STATION.x - 22,
+  y: TEA_STATION.y - 16,
+  w: 44,
+  h: 16,
+};
+
+/**
+ * 翠竹林：两片，落在西北工作区与中庭交界的外侧草地。
+ * `isPlantable` 会排除这两片 —— 「替换部分普通树木」就是这一个排除，
+ * 不需要另写一份「删掉哪几棵树」的清单。
+ */
+export const BAMBOO_ZONES: ReadonlyArray<WorldRect> = [
+  // 工作区北缘：北湾南侧的开阔草带
+  { x: 3440, y: 3296, w: 224, h: 100 },
+  // 工作区西缘：西主路以北的长条
+  { x: 3136, y: 3592, w: 126, h: 228 },
+];
+
+/**
+ * 竹丛实例：按 56px 网格错列，奇偶行偏移 28 让竹竿不排成方阵。
+ * 固定步长而不是随机撒点 —— 本文件禁止 Math.random，两端布局必须逐像素一致。
+ */
+function bambooProps(): PropInstance[] {
+  const out: PropInstance[] = [];
+  BAMBOO_ZONES.forEach((zone, zoneIndex) => {
+    const rows = Math.max(1, Math.floor(zone.h / 56));
+    const cols = Math.max(1, Math.floor(zone.w / 56));
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const x = zone.x + 28 + col * 56 + (row % 2) * 28;
+        const y = zone.y + 40 + row * 56;
+        if (x > zone.x + zone.w - 16) continue;
+        out.push({ kind: 'bamboo', x, y, variant: (zoneIndex * 2 + row + col) % 4 });
+      }
+    }
+  });
+  return out;
+}
+
+const BAMBOO_PROPS: PropInstance[] = bambooProps();
+
+/** 竹林专属地面贴花撒点区：竹笋只长在竹林里，不全岛乱冒 */
+export const BAMBOO_SHOOT_ZONES: ReadonlyArray<WorldRect> = BAMBOO_ZONES;
+
+/**
+ * 太湖石盆景：迎宾广场东北、西北两处对角拐角（东南角留给拱门与导览牌的引道）。
+ * 坐标以广场中心左右对称（±438），并且同时避开花箱（四角 3820/4372）、
+ * 八盏复古路灯（≥59）与四条支路的 48px 半宽——三条都是布局测试钉死的。
+ */
+export const TAIHU_ROCKS: ReadonlyArray<{ x: number; y: number; variant: number }> = [
+  { x: PLAZA_CENTER.x + 438, y: 3960, variant: 0 },
+  { x: PLAZA_CENTER.x - 438, y: 3960, variant: 1 },
+];
+
+const TAIHU_PROPS: PropInstance[] = TAIHU_ROCKS.map((rock) => ({
+  kind: 'taihu',
+  x: rock.x,
+  y: rock.y,
+  variant: rock.variant,
+}));
+
+/* ------------------------------------------------------------------ *
+ * 红色宫灯挂点（ADR-0061）
+ *
+ * 迎宾拱门横梁两端 2 盏 + 四角院落门柱 4 盏，共 6 盏。
+ * 摸鱼亭四角那 4 盏跟着亭子走，由 `pavilion.ts` 自己算，不进这张表。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 一处挂灯位置。
+ * - `x` 是灯心横坐标；
+ * - `hangTop` 是提绳顶端的 y（灯身从它往下长 22px）；
+ * - `depthY` 是进 y 排序层的脚底 y，同时也是夜间光池的落地面。
+ */
+export interface LanternPost {
+  readonly x: number;
+  readonly hangTop: number;
+  readonly depthY: number;
+}
+
+/** 迎宾拱门横梁两端：贴在立柱外侧，正好夹住中间那块招牌横幅 */
+export const ARCH_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
+  {
+    x: WELCOME_LANDMARKS.arch.x - WELCOME_LANDMARKS.arch.width / 2 + 6,
+    hangTop: WELCOME_LANDMARKS.arch.y - WELCOME_LANDMARKS.arch.height + 24,
+    depthY: WELCOME_LANDMARKS.arch.y,
+  },
+  {
+    x: WELCOME_LANDMARKS.arch.x + WELCOME_LANDMARKS.arch.width / 2 - 6,
+    hangTop: WELCOME_LANDMARKS.arch.y - WELCOME_LANDMARKS.arch.height + 24,
+    depthY: WELCOME_LANDMARKS.arch.y,
+  },
+];
+
+/**
+ * 工作区自建门头的中心 x：与 `NAV_ARRIVALS.workroom` 同一条竖线。
+ * 匾额、对联与宫灯全部挂在这条线上，玩家从南侧直走进屋时正好从灯下穿过。
+ */
+const WORKROOM_GATE_X = WORKROOM.x + 230;
+
+/** 工作区门头（开放区没有门框，只能自建两根立柱 + 一道横枋来挂匾） */
+export const WORKROOM_GATE = {
+  x: WORKROOM_GATE_X,
+  y: WORKROOM.y + ROOM_H,
+  width: 132,
+  height: 66,
+} as const;
+
+/**
+ * 四角院落门柱各一盏，挂在**门柱**上而不是门洞正中：
+ * 门洞正中那盏正好垂在玩家脸上，且会挡住从门里走出来的人。
+ *
+ * 门洞中点是 campus.ts 里的私有常量，这里按同一套偏移重算一次（会议室朝南 +330..+390，
+ * 宿舍与卫生间朝北 +200..+260），取东侧柱位。
+ */
+export const DOOR_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
+  {
+    x: WORKROOM_GATE_X + 59,
+    hangTop: WORKROOM.y + ROOM_H - 58,
+    depthY: WORKROOM.y + ROOM_H,
+  },
+  { x: MEETING_ROOM.x + 390, hangTop: MEETING_ROOM.y + ROOM_H - 58, depthY: MEETING_ROOM.y + ROOM_H },
+  { x: LOUNGE.x + 260, hangTop: LOUNGE.y - 58, depthY: LOUNGE.y },
+  { x: RESTROOM.x + 260, hangTop: RESTROOM.y - 58, depthY: RESTROOM.y },
+];
+
+/**
+ * 门头牌匾（ADR-0061）：三处门头各自起一座牌坊（两柱 + 横枋 + 匾），
+ * 匾额挂在横枋之上。
+ *
+ * 为什么不自建门头的就不做：仓库的墙体是**平铺 10px 色带**（`props.ts` 的
+ * `fillSolidFlat`），没有立面可以挂牌匾；只有在门前立一座牌坊，匾额才有地方挂。
+ */
+export interface DoorPlaque {
+  readonly text: string;
+  /** 门头中心 x（牌坊对称轴） */
+  readonly x: number;
+  /** 进 y 排序层的脚底 y（= 门所在的那条线） */
+  readonly depthY: number;
+  /** 黑底金字（工作区）/ 木底墨字（会议室、宿舍区） */
+  readonly inkGold: boolean;
+  /** 竖排对联：左 / 右；null 表示这座门头不做对联 */
+  readonly couplets: readonly [string, string] | null;
+}
+
+export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
+  {
+    text: '难 得 糊 涂',
+    x: WORKROOM_GATE_X,
+    depthY: WORKROOM.y + ROOM_H,
+    inkGold: true,
+    couplets: ['有 事 烧 香', '无 事 摸 鱼'],
+  },
+  {
+    text: '画 饼 充 饥',
+    x: MEETING_ROOM.x + 360,
+    depthY: MEETING_ROOM.y + ROOM_H,
+    inkGold: false,
+    couplets: null,
+  },
+  {
+    text: '安 乐 窝',
+    x: LOUNGE.x + 230,
+    depthY: LOUNGE.y,
+    inkGold: false,
+    couplets: null,
+  },
+];
 
 /** 树干碰撞半径：>3 才挡得住人，<14 才能从树缝里穿过去 */
 export const TREE_TRUNK_RADIUS = 12;
@@ -541,6 +815,16 @@ export function isWadingAt(x: number, y: number): boolean {
 }
 
 const REGIONS: RegionSpec[] = [
+  // 摸鱼亭（ADR-0061）：必须排在「摸鱼湖」之前，否则站在亭西沿会显示成湖名
+  {
+    name: '摸鱼亭',
+    rect: {
+      x: MOPING_PAVILION.x - MOPING_PAVILION.width / 2 - 20,
+      y: MOPING_PAVILION.y - MOPING_PAVILION.height - 30,
+      w: MOPING_PAVILION.width + 40,
+      h: MOPING_PAVILION.height + 60,
+    },
+  },
   // 三处景观湖：区域名只影响状态栏文案，不影响碰撞
   ...LAKES.map((lake, index) => ({
     name: LAKE_NAMES[index]!,
@@ -638,6 +922,8 @@ function isPlantable(x: number, y: number): boolean {
   const plazaDy = y - PLAZA_CENTER.y;
   if (plazaDx * plazaDx + plazaDy * plazaDy < (PLAZA_RADIUS + 60) * (PLAZA_RADIUS + 60)) return false;
   if (rectContains(rectExpanded(CAMPUS_RECT, 70), x, y)) return false;
+  // 竹林留白：这两片交给竹子，普通树不再混长进来（ADR-0061 的「替换部分普通树木」）
+  for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
   if (rectContains(rectExpanded(SOUTH_YARD, 40), x, y)) return false;
   for (const paving of DOOR_PAVING) if (rectContains(rectExpanded(paving, 40), x, y)) return false;
   for (const path of PATHS) {
@@ -801,6 +1087,8 @@ const HUB_PROPS: PropInstance[] = [
   { kind: 'lamp', x: 3714, y: 4212 },
   { kind: 'lamp', x: 4478, y: 3980 },
   { kind: 'lamp', x: 4478, y: 4212 },
+  // 放假告示板（ADR-0059）：木牌本体走道具管线，底座碰撞在 HUB_SOLIDS 里单独登记
+  { kind: 'bulletin', x: BULLETIN_BOARD.x, y: BULLETIN_BOARD.y },
 ];
 
 /**
@@ -867,6 +1155,8 @@ const SEAT_DRAFTS: Array<Omit<SeatInstance, 'id'>> = [
   ...WORKSTATIONS.map((station, index) => ({ ...station.seat, kind: 'chair' as const, desk: index })),
   ...CAMPUS_SEATS.map((seat) => ({ ...seat, desk: -1 })),
   ...LOUNGE_SEATS.map((seat) => ({ ...seat, desk: -1 })),
+  // 摸鱼亭四张石鼓凳（ADR-0061）：`drum` 与 `stool` 一样走坐姿，只是外观换成石鼓
+  ...PAVILION_SEATS.map((seat) => ({ ...seat, desk: -1 })),
 ];
 
 const SEATS: SeatInstance[] = SEAT_DRAFTS.map((seat, index) => ({ id: index + 1, ...seat }));
@@ -908,8 +1198,8 @@ export function findNearestSeat(
 }
 
 /**
- * 中央地标碰撞：拱门两根立柱、四向导览牌与牛马榜公告栏。
- * 用 `kind: 'prop'` 让 props.ts 的地面层跳过——本体由 welcome.ts 画精灵。
+ * 中央地标碰撞：拱门两根立柱、四向导览牌、牛马榜公告栏与放假告示板。
+ * 用 `kind: 'prop'` 让 props.ts 的地面层跳过——本体由各自的视图画精灵。
  */
 const HUB_SOLIDS: SolidRect[] = [
   {
@@ -941,6 +1231,14 @@ const HUB_SOLIDS: SolidRect[] = [
     y: WELCOME_LANDMARKS.rankBoard.y - 18,
     w: 120,
     h: 18,
+  },
+  {
+    // 放假告示板（ADR-0059）：80×20 贴地底座，坐标由 BULLETIN_BOARD 派生
+    kind: 'prop',
+    x: BULLETIN_BOARD_SOLID.x,
+    y: BULLETIN_BOARD_SOLID.y,
+    w: BULLETIN_BOARD_SOLID.w,
+    h: BULLETIN_BOARD_SOLID.h,
   },
 ];
 
@@ -979,6 +1277,8 @@ const PROPS: PropInstance[] = [
   ...WORK_PROPS,
   ...LOUNGE_PROPS,
   ...AREA_LOGOS,
+  ...BAMBOO_PROPS,
+  ...TAIHU_PROPS,
   ...southYardHedges(),
 ];
 
@@ -1012,7 +1312,16 @@ export const WORLD_LAYOUT: WorldLayout = {
   desks: DESKS,
   seats: SEATS,
   props: PROPS,
-  solids: [...DESK_SOLIDS, ...PROP_SOLIDS, ...HUB_SOLIDS, ...CAMPUS_SOLIDS],
+  solids: [
+    ...DESK_SOLIDS,
+    ...PROP_SOLIDS,
+    ...HUB_SOLIDS,
+    ...CAMPUS_SOLIDS,
+    // 国风地标（ADR-0061）：亭柱、供案底座、茶台底座
+    ...MOPING_PAVILION_SOLIDS,
+    { kind: 'prop', ...SHRINE_ALTAR_SOLID },
+    { kind: 'prop', ...TEA_STATION_SOLID },
+  ],
   buildings: CAMPUS_BUILDINGS,
   paved: [SOUTH_YARD_PAVING, ...DOOR_PAVING],
 };

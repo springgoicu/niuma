@@ -7,6 +7,8 @@
  * - 日期编码为「距 2000-01-01 的天数」，0 表示未上报。
  */
 
+import { SESSION_CARRY_MAX_SEC } from './constants';
+
 /**
  * 摘要版本：解码器遇到不认识的版本整段丢弃，回退「未上报」。
  *
@@ -24,6 +26,19 @@ export function careerSessionDeltaMinutes(career: CareerSummary, onlineSec: numb
   if (!Number.isFinite(onlineSec)) return 0;
   const reported = Math.max(0, career.reportedOnlineSec);
   return Math.floor(Math.max(0, onlineSec - reported) / 60);
+}
+
+/**
+ * 上次会话秒数的采信上限（ADR-0060）。
+ *
+ * 客户端在 HELLO 里带上「断线前已经在线多少秒」，服务端据此把 `joinedAt` 往前挪，
+ * 让在岗时长跨重连接着算。这是不可信输入：只影响展示型榜单，但虚报一整天也能霸榜，
+ * 所以三方取最小 —— 上报值、一天、进程已运行秒数（进程重启后旧值自然失效）。
+ */
+export function clampSessionCarry(carrySec: number, processUptimeSec: number): number {
+  if (!Number.isFinite(carrySec) || carrySec <= 0) return 0;
+  const uptime = Number.isFinite(processUptimeSec) ? Math.max(0, processUptimeSec) : 0;
+  return Math.min(Math.floor(carrySec), SESSION_CARRY_MAX_SEC, Math.floor(uptime));
 }
 
 export const CAREER_VERSION = 2;

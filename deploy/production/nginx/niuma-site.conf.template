@@ -44,6 +44,32 @@ map $http_origin $niuma_ws_origin_ok {
     "https://@WWW@"             1;
 }
 
+# ---------- 兜底：未授权 Host 与 IP 直连 ----------
+# 全网扫描器先扫 1.2.3.4:80/443，拿到证书或页面才开始测绘域名。
+# 默认 server 把这条路堵死：80 端口直接断连（444 不产生任何响应字节），
+# 443 端口在 TLS 握手上就拒绝（ssl_reject_handshake），连证书都不出示，
+# 扫描器拿不到 SNI 提示、拿不到证书 CN/SAN，也就拼不出我们有哪些域名。
+#
+# 注意 ssl_reject_handshake 需要 nginx ≥ 1.19.4（Ubuntu 22.04 起自带）。
+# 它比「自签证书 + return 444」干净：自签证书本身就是一条指纹，等于告诉对方
+# 「这里有人，且懒得配证书」。
+server {
+    listen      80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    access_log  off;
+    return 444;
+}
+
+server {
+    listen      443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2       on;
+    server_name _;
+    ssl_reject_handshake on;
+    access_log  off;
+}
+
 # ---------- 80：ACME 验证与强跳 HTTPS ----------
 server {
     listen 80;
@@ -92,6 +118,15 @@ server {
     add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # 点击劫持：任何站点都不能把主站嵌进 iframe 做钓鱼页
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    # 页面不需要定位/麦克风/摄像头，直接按 origin 关掉，连权限提示都不会弹
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    # X-XSS-Protection 已被 Chrome 78+ / Edge / Firefox 移除，现在的浏览器读到它
+    # 什么也不做。保留只是为了过安全扫描的基线要求；真正挡 XSS 的是 CSP，
+    # 而本站昵称/聊天走 Canvas 文本渲染、不进 DOM，CSP 收益低且 Next 需要
+    # unsafe-inline/unsafe-eval，配错就是白屏，所以没有启用。
+    add_header X-XSS-Protection "1; mode=block" always;
 
     charset utf-8;
     etag on;
@@ -104,6 +139,11 @@ server {
     # 直接 alias 到磁盘：2 vCPU 上每一个走 Node 的静态请求都在和游戏 Tick 抢时间
     # 静态响应的跨源隔离头：与 Next 上游的 /:path* 策略保持一致。
     # webpack 的 Worker chunk 也落在这个 location，缺 COEP 会被浏览器直接拦掉。
+    #
+    # 【alias 目录穿越】location 与 alias 的末尾斜杠必须同时有或同时无：
+    # 写成 `location ^~ /_next/static` + `alias .../static/;` 时，请求
+    # `/_next/static../etc/passwd` 会被拼成 `.../static/../etc/passwd` —— 穿越到上一级。
+    # 两边都带尾斜杠时，URI 的 `..` 已在 nginx 归一化阶段被吃掉，拼不出越界路径。
     location ^~ /_next/static/ {
         alias @WEB_ROOT@/.next/static/;
         add_header Cache-Control $niuma_static_cache_control always;
@@ -179,6 +219,12 @@ server {
         proxy_hide_header Access-Control-Allow-Origin;
         add_header Access-Control-Allow-Origin "*" always;
         add_header Cache-Control "no-store, no-cache" always;
+        # 这一层自己写了 add_header，就吃不到 server 级的安全头了。
+        # 只补对 JSON 响应真正有意义的两条：HSTS（浏览器缓存域名策略）与
+        # nosniff（防止探活响应被某些客户端当 HTML 嗅探）。X-Frame / Permissions
+        # 对一段 JSON 没有任何作用，加上只是白占字节。
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
         proxy_pass http://niuma_game;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -232,10 +278,40 @@ server {
         access_log /var/log/nginx/niuma-hook.log;
     }
 
-    # ---- 扫描器常探的路径：直接断连 ----
-    # 返回 444 是 nginx 直接关连接，不生成响应也不占上游；不进 Node、不写日志。
-    # 正则 location 优先级高于普通前缀 location，但低于 ^~，不会误伤 /_next/ 与 /sprites/。
-    location ~* ^/(\.env|\.git|\.git/|\.aws|\.DS_Store|wp-admin|wp-login\.php|xmlrpc\.php|phpmyadmin|vendor/|backup|config\.json|\.well-known/security\.txt) {
+    # ---- 扫描器常探的路径：不产生任何响应字节，也不写日志 ----
+    # 用 444 而不是 404：444 连状态行都不发，扫描器分不清「路径不存在」和
+    # 「被拦了」，只能记成连接被重置；404 反而会明确告诉它「这台是 nginx，
+    # 且这个路径确实没有」。同时 444 不占上游、不写一行日志 —— 扫描流量
+    # 每天几千条，写进 access.log 就是在替攻击者填磁盘。
+    # 正则 location 优先级低于 ^~，所以 /_next/static/ 与 /sprites/ 不受影响。
+
+    # 隐藏文件与隐藏目录：.env 是数据库口令，.git 是整个历史（含未来代码）
+    location ~* ^/\.(env|git|svn|hg|aws|ssh|npmrc|htaccess|htpasswd|DS_Store|idea|vscode)([/.]|$) {
+        access_log off;
+        return 444;
+    }
+
+    # 源码清单与锁文件：package.json 暴露依赖版本与构建脚本，
+    # tsconfig 暴露路径别名，Dockerfile 暴露运行时布局
+    location ~* ^/(package(-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig\.json|jsconfig\.json|composer\.(json|lock)|next\.config\.[a-z]+|Dockerfile|docker-compose\.[a-z]+)$ {
+        access_log off;
+        return 444;
+    }
+
+    # 备份、导出、数据库转储：本站没有任何路由以这些后缀结尾
+    location ~* \.(bak|backup|old|orig|save|swp|swo|sql|sqlite|dump|tar|tgz|7z|rar|config)$ {
+        access_log off;
+        return 444;
+    }
+
+    # CMS 与工具入口：本站没有 wordpress / phpmyadmin，出现即扫描
+    location ~* ^/(wp-(admin|login|content|includes|json)|xmlrpc\.php|phpmyadmin|pma|adminer|cgi-bin/|vendor/|\.well-known/security\.txt) {
+        access_log off;
+        return 444;
+    }
+
+    # 脚本语言后缀：本站是 Node，不存在任何 php/asp/jsp/cgi 入口
+    location ~* \.(php|php[3-8]|phtml|asp|aspx|jsp|jspx|cgi|pl|py|rb|sh)$ {
         access_log off;
         return 444;
     }
@@ -269,5 +345,6 @@ server {
         # 页面不需要被任何站点 iframe 嵌入（防点击劫持），也不需要用定位/麦克风/摄像头
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        add_header X-XSS-Protection "1; mode=block" always;
     }
 }

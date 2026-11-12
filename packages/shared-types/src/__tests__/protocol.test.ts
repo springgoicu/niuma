@@ -42,7 +42,9 @@ import {
   decodeGraze,
   decodeHello,
   decodeMove,
+  decodeNameBroadcast,
   decodeSpawn,
+  decodeSetName,
   decodeSetStatus,
   decodeStatusBroadcast,
   decodeSystemNotice,
@@ -66,10 +68,12 @@ import {
   encodeGraze,
   encodeHello,
   encodeMove,
+  encodeNameBroadcast,
   encodeQueueRejected,
   encodeQueueStatus,
   encodeSpawn,
   encodeSpawnInto,
+  encodeSetName,
   encodeSetStatus,
   encodeStatusBroadcast,
   encodeSync,
@@ -79,6 +83,7 @@ import {
   buildSpawnBody,
   readSync,
   readSyncTick,
+  truncateName,
   truncateStatus,
   writeSyncEntry,
   writeSyncHeader,
@@ -1209,5 +1214,110 @@ describe('status label', () => {
   it('清除状态就是发空串，服务端收到的是空状态而不是兜底文案', () => {
     expect(decodeSetStatus(encodeSetStatus(''))).toBe('');
     expect(decodeStatusBroadcast(encodeStatusBroadcast(1, '')).status).toBe('');
+  });
+
+  it('改工牌名与广播包都能往返，超长名字按协议上限截断', () => {
+    const name = '夜班实习生';
+    expect(decodeSetName(encodeSetName(name))).toBe(name);
+
+    const broadcast = encodeNameBroadcast(88, name);
+    expect(decodeNameBroadcast(broadcast)).toEqual({ entityId: 88, name });
+
+    // 与入场同一把尺子：16 字符封顶，多出来的部分不进包
+    const long = '夜班加班实习生的老黄牛啊啊';
+    expect(decodeSetName(encodeSetName(long))).toBe(truncateName(long));
+    expect(decodeNameBroadcast(encodeNameBroadcast(1, long)).name).toBe(truncateName(long));
+
+    // 空名不能变成兜底名：那等于「改名成默认工牌名」，服务端要靠空串识别「本次不改」
+    expect(decodeSetName(encodeSetName(''))).toBe('');
+    expect(decodeSetName(encodeSetName('   '))).toBe('');
+    expect(decodeNameBroadcast(encodeNameBroadcast(1, '')).name).toBe('');
+  });
+
+  it('改名声明的长度超出负载时回退空串，不读包外字节', () => {
+    // 伪造长度 255：与剩余字节不符，按「没改名」处理，既不抛错也不越界
+    const forged = encodeSetName('牛马').slice();
+    forged[1] = 0xff;
+    forged[2] = 0x00;
+    expect(decodeSetName(forged)).toBe('');
+
+    const forgedBroadcast = encodeNameBroadcast(88, '牛马').slice();
+    forgedBroadcast[3] = 0xff;
+    forgedBroadcast[4] = 0xff;
+    expect(decodeNameBroadcast(forgedBroadcast)).toEqual({ entityId: 88, name: '' });
+
+    // 长度字段还在、内容少一字节：同样回退空串
+    const truncated = encodeSetName('牛马').subarray(0, 4);
+    expect(decodeSetName(truncated)).toBe('');
+  });
+});
+
+describe('会话续算段（ADR-0060）', () => {
+  const CAREER = {
+    firstJoinDate: '2026-01-01',
+    totalOnlineMinutes: 600,
+    activeDays: 3,
+    todayMinutes: 60,
+    weekMinutes: 600,
+    streakDays: 2,
+    steps: 100,
+    distanceM: 10,
+    slackCount: 1,
+    ventedCount: 0,
+    knockdownCount: 0,
+    overtimeCount: 0,
+    province: '',
+    reportedOnlineSec: 0,
+  };
+
+  it('HELLO 带上次会话秒数时追加 [0xfa][u32]，正好 5 字节', () => {
+    const legacy = encodeHello('牛', DEFAULT_APPEARANCE.cow);
+    const carried = encodeHello('牛', DEFAULT_APPEARANCE.cow, undefined, '', SYNC_FORMAT_LEGACY, undefined, 3_600);
+    expect(carried.byteLength).toBe(legacy.byteLength + 5);
+    expect(decodeHello(carried).sessionSec).toBe(3_600);
+    // 旧客户端 / 新的一次进园：一个字节都不多
+    expect(decodeHello(legacy).sessionSec).toBe(0);
+  });
+
+  it('落点、状态、能力、考勤与会话五段互不串位', () => {
+    const resume = { x: 100, y: 200, direction: DIRECTION.Left, pose: POSE.Sit, seatId: 7 };
+    const decoded = decodeHello(
+      encodeHello('牛', DEFAULT_APPEARANCE.cow, resume, '摸鱼中', SYNC_FORMAT_COMPACT, CAREER, 86_400),
+    );
+    expect(decoded.resume).toEqual(resume);
+    expect(decoded.status).toBe('摸鱼中');
+    expect(decoded.syncFormat).toBe(SYNC_FORMAT_COMPACT);
+    expect(decoded.career).toEqual(CAREER);
+    expect(decoded.sessionSec).toBe(86_400);
+  });
+
+  it('会话段被截断时回落到 0，不读包外字节', () => {
+    const packet = encodeHello('牛', DEFAULT_APPEARANCE.cow, undefined, '', SYNC_FORMAT_LEGACY, undefined, 60);
+    expect(decodeHello(packet.subarray(0, packet.byteLength - 2)).sessionSec).toBe(0);
+  });
+
+  it('WELCOME 回显采信的会话秒数，且排在格式字节之后', () => {
+    const packet = encodeWelcome({
+      entityId: 7,
+      tick: 99,
+      x: 1,
+      y: 2,
+      state: 5,
+      syncFormat: SYNC_FORMAT_COMPACT,
+      sessionSec: 120,
+    });
+    expect(decodeWelcome(packet)).toMatchObject({
+      syncFormat: SYNC_FORMAT_COMPACT,
+      sessionSec: 120,
+    });
+    // 旧客户端只读到 state + 格式字节（13B）就停：格式仍然是 1，不会错位
+    expect(decodeWelcome(packet.subarray(0, 13)).syncFormat).toBe(SYNC_FORMAT_COMPACT);
+    expect(decodeWelcome(packet.subarray(0, 13)).sessionSec).toBeUndefined();
+  });
+
+  it('没有会话段时 WELCOME 与旧包逐字节相同', () => {
+    const plain = encodeWelcome({ entityId: 7, tick: 99, x: 1, y: 2, state: 0 });
+    expect(plain.byteLength).toBe(12);
+    expect(decodeWelcome(plain).sessionSec).toBeUndefined();
   });
 });

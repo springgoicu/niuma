@@ -107,9 +107,27 @@ export function ChatDock({
 
   const unreadLabel = unread > 99 ? '99+' : `${unread}`;
 
+  /**
+   * 两档尺寸：默认档（桌面）按「一眼看清」重排，窄版保持原来的紧凑值。
+   *
+   * 反馈是「左下角的发送框太马赛克」——9~11px 的小字在 1x 屏上本身就发虚，
+   * 65% 的玻璃底又把像素风的噪点叠到字后面。桌面档把字整体上调一档、底压实到
+   * 88%，模糊降到 4px；窄版不动，小屏没有这个余量（ADR-0058）。
+   */
+  const shellSkin = compact
+    ? 'w-[250px] bg-ink-900/65 backdrop-blur-md'
+    : 'w-[340px] bg-ink-900/88 backdrop-blur-sm lg:w-[380px]';
+  /** 标题栏内边距：桌面放大字号后需要更宽的呼吸区 */
+  const headSkin = compact ? 'gap-2 px-3 py-2' : 'gap-2.5 px-3.5 py-2.5';
+  const titleSkin = compact ? 'text-[10px]' : 'text-[11px]';
+  const metaSkin = compact ? 'text-[9px]' : 'text-[10px]';
+  /** 收起态提示条是中文散文：桌面档不套等宽字 */
+  const hintSkin = compact ? 'font-mono text-[9px]' : 'text-[10px]';
+  const iconSkin = compact ? 'h-3.5 w-3.5' : 'h-4 w-4';
+
   return (
     <div
-      className={`pointer-events-auto max-w-[calc(100vw-2rem)] border-2 border-ink-600 bg-ink-900/65 backdrop-blur-md ${compact ? 'w-[250px]' : 'w-[340px]'}`}
+      className={`pointer-events-auto max-w-[calc(100vw-2rem)] border-2 border-ink-600 ${shellSkin}`}
     >
       {/* 标题栏拆成两个按钮：折叠是主操作，齿轮是设置入口，不能把 button 套进 button */}
       <div className="flex items-center border-b-2 border-ink-700">
@@ -125,31 +143,31 @@ export function ChatDock({
           }}
           aria-expanded={open}
           data-no-immersive
-          className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 px-3 py-2 transition-colors hover:bg-ink-800/60"
+          className={`flex min-w-0 flex-1 cursor-pointer items-center justify-between ${headSkin} transition-colors hover:bg-ink-800/60`}
         >
-          <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mist-300">
-            <MessageSquare className="h-3.5 w-3.5 text-mint-400" />
+          <span className={`flex items-center gap-2 font-mono ${titleSkin} uppercase tracking-[0.2em] text-mist-300`}>
+            <MessageSquare className={`${iconSkin} text-mint-400`} />
             园区频道
             <span className="text-mist-400">/local</span>
           </span>
           <span className="flex items-center gap-2">
             {/* 收起态显示未读而不是总数：200 条这个数字不携带任何信息 */}
             {!open && unread > 0 ? (
-              <span className="border border-mint-400 bg-mint-400 px-1 py-0.5 font-mono text-[9px] font-semibold tabular-nums leading-none text-ink-950">
+              <span className={`border border-mint-400 bg-mint-400 px-1 py-0.5 font-mono ${metaSkin} font-semibold tabular-nums leading-none text-ink-950`}>
                 {unreadLabel}
               </span>
             ) : (
-              <span className="font-mono text-[9px] tabular-nums text-mist-400">{messages.length}</span>
+              <span className={`font-mono ${metaSkin} tabular-nums text-mist-400`}>{messages.length}</span>
             )}
             {/* 未读同时用文案表达，不只靠颜色 */}
             {!open && unread > 0 && <span className="sr-only">{unread} 条未读</span>}
             <ChevronDown
-              className={`h-3.5 w-3.5 text-mist-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+              className={`${iconSkin} text-mist-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
             />
           </span>
         </button>
-        <div className="shrink-0 pr-1.5">
-          <DanmakuHUD prefs={danmakuPrefs} onChange={onDanmakuPrefsChange} />
+        <div className={`shrink-0 ${compact ? 'pr-1.5' : 'pr-2'}`}>
+          <DanmakuHUD prefs={danmakuPrefs} onChange={onDanmakuPrefsChange} compact={compact} />
         </div>
       </div>
 
@@ -179,6 +197,7 @@ export function ChatDock({
             onNoticeClear={() => setNotice(null)}
             inputRef={inputRef}
             blurOnSend={compact}
+            compact={compact}
             onEscape={() => setOpen(false)}
           />
         </>
@@ -188,7 +207,7 @@ export function ChatDock({
       {!open && notice && (
         <p
           role="status"
-          className="border-t-2 border-ink-700 px-3 py-1.5 font-mono text-[9px] leading-relaxed text-amber-400"
+          className={`border-t-2 border-ink-700 ${compact ? 'px-3 py-1.5' : 'px-3.5 py-2'} ${hintSkin} leading-relaxed text-amber-400`}
         >
           {notice}
         </p>

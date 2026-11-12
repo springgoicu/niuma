@@ -5,6 +5,7 @@ import { Dices } from 'lucide-react';
 import { MAX_NAME_CHARS, MAX_NAME_DISPLAY_UNITS } from '@niuma/shared-types';
 import { useCreatorStore } from '@/lib/creator-store';
 import { describeProfileName, randomNickname } from '@/lib/profile';
+import { AtelierStar } from './Atelier';
 
 export interface NamePlateProps {
   /** Enter 与底部上岗按钮走同一条保存链路，空名拦截由 CreatorShell 统一处理 */
@@ -63,7 +64,7 @@ export function NamePlate({ onSubmit, focusSignal, hydrated }: NamePlateProps) {
   return (
     <section
       aria-labelledby="nameplate-heading"
-      className="panel p-4 [@media(max-height:500px)]:p-3 sm:p-5"
+      className="panel panel-atelier p-4 [@media(max-height:500px)]:p-3 sm:p-5"
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-6 [@media(max-height:500px)]:gap-2">
         <div className="shrink-0 sm:w-[212px]">
@@ -76,6 +77,7 @@ export function NamePlate({ onSubmit, focusSignal, hydrated }: NamePlateProps) {
               <label htmlFor="niuma-name">工牌名</label>
             </h2>
             <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-mist-400">nameplate</span>
+            <AtelierStar className="h-1.5 w-1.5 self-center bg-blush-300/70" />
             {showRequired ? (
               <span className="tag border-amber-400/40 px-1.5 py-0 text-[9px] text-amber-400">必填</span>
             ) : null}

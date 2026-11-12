@@ -16,6 +16,12 @@ export const metadata: Metadata = {
     // iOS 主屏：180 的余量用底板色补齐，透明区域不会在系统里变成纯黑
     apple: [{ url: '/brand/logo-180.png', sizes: '180x180', type: 'image/png' }],
   },
+  // 从主屏图标打开时按独立应用运行：全屏、无地址栏，状态栏用底板深墨色
+  appleWebApp: {
+    capable: true,
+    title: '牛马',
+    statusBarStyle: 'black-translucent',
+  },
 };
 
 export const viewport: Viewport = {

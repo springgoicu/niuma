@@ -26,7 +26,11 @@ export type AudioEvent =
    */
   | { kind: 'vent'; x: number; y: number; hit: boolean; local: boolean }
   | { kind: 'interact'; target: InteractiveKind; x: number; y: number }
-  | { kind: 'chew'; x: number; y: number; local: boolean };
+  | { kind: 'chew'; x: number; y: number; local: boolean }
+  /** 上香：寺庙磬音（ADR-0061） */
+  | { kind: 'incense'; x: number; y: number }
+  /** 续杯：喝茶的咕嘟声（ADR-0061） */
+  | { kind: 'tea'; x: number; y: number };
 
 /**
  * 引擎对"平台"的全部依赖，注入而不是直接摸全局。
@@ -54,6 +58,17 @@ export interface EngineEnv {
    * 主线程回退实现直接读同一份存储。
    */
   readonly danmakuPrefs: DanmakuPrefs;
+  /**
+   * 当日「首次上香」的本地日期键（`YYYY-MM-DD`，空串表示从未上过）。
+   *
+   * 零服务端持久化下这是唯一能跨刷新记住的载体：localStorage 只能在主线程读，
+   * Worker 侧由 init 消息带进来（与 `danmakuPrefs` 同一条通路）。
+   */
+  readonly incenseDay: string;
+  /**
+   * 上香后写回主线程落盘。只记日期不记次数——「功德 +1」是当次提示，不做累计。
+   */
+  writeIncenseDay(day: string): void;
   /** 落点快照：主线程直接写 localStorage，Worker 写进控制块由主线程落盘 */
   writeSnapshot(patch: SnapshotPatch): void;
   /** 发声请求：主线程直接合成，Worker 转成一条消息 */

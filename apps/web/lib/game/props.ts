@@ -2,6 +2,7 @@
 
 import { Container, Graphics, Rectangle, Sprite, Texture, type Application } from 'pixi.js';
 import {
+  BULLETIN_BOARD,
   DIRECTION,
   WORLD_LAYOUT,
   deskDepthOffset,
@@ -109,6 +110,34 @@ const COLOR = {
   vendingBase: 0x3b4a66,
   potBody: 0xffb59e,
   potRim: 0xe8856d,
+  // 放假告示板（ADR-0059）：软木、红布横幅与黄铜钉
+  cork: 0xc08a55,
+  corkLight: 0xd9a76f,
+  corkDark: 0x9a6a3f,
+  banner: 0xd94f4f,
+  bannerDark: 0xa83a3a,
+  bannerLight: 0xef7a6a,
+  brass: 0xd8a33f,
+  brassLight: 0xf2c879,
+  paperAged: 0xf4e6c8,
+  // 国风园林（ADR-0061）：竹、太湖石、青石景
+  bambooStalk: 0x7fbf6a,
+  bambooStalkDark: 0x4a8a46,
+  bambooNode: 0xa9dc8c,
+  bambooLeaf: 0x63b364,
+  bambooLeafLight: 0x9ad98b,
+  taihuBody: 0xb8c4d0,
+  taihuBodyDark: 0x7c8896,
+  taihuBodyLight: 0xdfe8f0,
+  taihuMoss: 0x6fbf8a,
+  qingshi: 0x8d9aa6,
+  qingshiDark: 0x5f6b78,
+  qingshiLight: 0xb9c6d2,
+  stoneBase: 0xa9b1a6,
+  // 石鼓凳：汉白玉鼓身，比木凳更冷更亮
+  drumStone: 0xe9e3d6,
+  drumStoneDark: 0xb0a794,
+  drumStoneLight: 0xfcf8ee,
 } as const;
 
 /**
@@ -138,10 +167,18 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   ladder: { w: 14, h: 34 },
   /** 区域 logo 立牌：一块小板 + 木柱，variant 决定图标 */
   logo: { w: 28, h: 38 },
+  /** 牛马放假告示板（ADR-0059）：尺寸直接取布局常量，避免第二份 80×48 */
+  bulletin: { w: BULLETIN_BOARD.width, h: BULLETIN_BOARD.height },
+  /** 翠竹（ADR-0061）：104 高 ≈ 2.2 个角色，压出「竹林」的纵向感 */
+  bamboo: { w: 46, h: 104 },
+  /** 太湖石叠石盆景（ADR-0061）：石身略高于角色半个身位 */
+  taihu: { w: 30, h: 34 },
 };
 
 const TOILET_SPRITE = { w: 22, h: 28 };
 const STOOL_SPRITE = { w: 18, h: 22 };
+/** 石鼓凳（ADR-0061）：鼓身矮胖、两端鼓钉各一圈，座面比木凳低 5 纹素 */
+const DRUM_SPRITE = { w: 20, h: 22 };
 const SOFA_SPRITE = { w: 58, h: 30 };
 /**
  * 床：横向 64×42，躺下的角色正好横卧在床垫上。
@@ -363,6 +400,154 @@ function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
           return;
       }
     }
+    case 'bulletin': {
+      /**
+       * 牛马放假告示板（ADR-0059）：双立柱 + 软木板 + 铜钉 + 红布横幅。
+       *
+       * 80×48 里只画「形」：横幅上的中文与顶部的薄荷绿跑马灯要逐帧变，
+       * 由 `bulletin.ts` 用 Pixi Text 叠在同一个深度层上（烘焙纹理不能装动态文本）。
+       * 所有坐标手写取整，保证 1px 描边不被半像素糊开（ADR-0005）。
+       */
+      // 两根立柱：先画，中段被软木板压住
+      for (const x of [4, w - 10]) {
+        box(g, x, 13, 6, h - 13, COLOR.woodDark, COLOR.outline);
+        box(g, x + 1, 14, 4, h - 15, COLOR.woodLight, COLOR.woodDark);
+        // 斜切木纹：立柱上两小段 1px 斜线
+        for (const y of [24, 34]) {
+          g.poly([x + 1, y, x + 2, y, x + 5, y + 3, x + 4, y + 3]).fill(COLOR.woodDark);
+        }
+      }
+
+      // 红布横幅：挂在顶梁上，底部两个燕尾缺口
+      box(g, 16, 0, 48, 10, COLOR.banner, COLOR.bannerDark);
+      g.poly([16, 10, 22, 10, 19, 13]).fill(COLOR.bannerDark);
+      g.poly([64, 10, 58, 10, 61, 13]).fill(COLOR.bannerDark);
+      rect(g, 17, 1, 46, 1, COLOR.bannerLight);
+
+      // 顶梁 + 四道斜切木纹
+      box(g, 2, 9, w - 4, 8, COLOR.woodDark, COLOR.outline);
+      box(g, 3, 10, w - 6, 6, COLOR.woodLight, COLOR.woodDark);
+      for (const x of [12, 26, 54, 68]) rect(g, x, 12, 5, 1, COLOR.woodDark);
+
+      // 软木面：外框、内芯、颗粒与四角铜钉
+      box(g, 8, 16, w - 16, 26, COLOR.cork, COLOR.corkDark);
+      rect(g, 9, 17, w - 18, 24, COLOR.corkLight);
+      // 颗粒坐标手写：布局纪律不允许 Math.random 进渲染，双端截图才对得上
+      for (const [x, y] of [
+        [13, 21],
+        [21, 25],
+        [30, 19],
+        [38, 27],
+        [47, 22],
+        [54, 29],
+        [62, 20],
+        [66, 34],
+        [18, 34],
+        [41, 35],
+        [58, 24],
+        [26, 31],
+      ] as const) {
+        rect(g, x, y, 1, 1, COLOR.corkDark);
+      }
+
+      // 三张钉住的便签：奶油纸、泛黄纸与一张日历撕页
+      const notes: ReadonlyArray<readonly [number, number, number, number, number, number]> = [
+        [12, 20, 18, 9, COLOR.signPaper, COLOR.banner],
+        [34, 19, 22, 11, COLOR.paperAged, COLOR.mintDark],
+        [45, 32, 18, 7, COLOR.ceramic, COLOR.brass],
+      ];
+      for (const [x, y, noteW, noteH, paper, pin] of notes) {
+        box(g, x, y, noteW, noteH, paper, COLOR.signEdge);
+        // 便签上的两行「手写」
+        rect(g, x + 3, y + 3, Math.max(4, noteW - 7), 1, COLOR.woodDark);
+        rect(g, x + 3, y + 5, Math.max(4, noteW - 12), 1, COLOR.woodDark);
+        // 大头图钉：3×3 钉身 + 1px 高光
+        rect(g, x + Math.round(noteW / 2) - 1, y - 2, 3, 3, COLOR.signEdge);
+        rect(g, x + Math.round(noteW / 2), y - 1, 1, 1, pin);
+      }
+      // 日历撕页的红色页眉
+      rect(g, 46, 32, 16, 2, COLOR.banner);
+
+      for (const [x, y] of [
+        [10, 18],
+        [w - 12, 18],
+        [10, 38],
+        [w - 12, 38],
+      ] as const) {
+        rect(g, x, y, 2, 2, COLOR.brass);
+        rect(g, x, y, 1, 1, COLOR.brassLight);
+      }
+
+      // 底梁：按 F 的提示文字由 bulletin.ts 叠在中间
+      box(g, 6, 41, w - 12, 6, COLOR.woodDark, COLOR.outline);
+      box(g, 7, 42, w - 14, 4, COLOR.woodLight, COLOR.woodDark);
+      return;
+    }
+    case 'bamboo': {
+      // 翠竹（ADR-0061）：四根高矮错落的竹竿，每 14px 一道竹节环，竿顶挑两片叶。
+      // 竿宽 3px（暗-亮-暗）在 20px 粒度下是唯一读得出「圆柱」的宽度；
+      // 节环错开半格，四根竿才不会连成一条横线。
+      const stalks: ReadonlyArray<{ x: number; top: number; sway: number }> = [
+        { x: 7, top: 34, sway: 0 },
+        { x: 17, top: 16, sway: 1 },
+        { x: 26, top: 26, sway: 0 },
+        { x: 35, top: 40, sway: 1 },
+      ];
+      // 根部土堆与贴地草
+      box(g, 4, h - 7, 38, 6, COLOR.stoneBase, COLOR.outline);
+      rect(g, 6, h - 8, 34, 1, COLOR.bambooLeaf);
+      for (const stalk of stalks) {
+        const top = stalk.top - variant * 2;
+        rect(g, stalk.x, top, 3, h - top - 6, COLOR.bambooStalkDark);
+        rect(g, stalk.x + 1, top, 1, h - top - 7, COLOR.bambooStalk);
+        for (let y = top + 8 + stalk.sway * 4; y < h - 10; y += 14) {
+          rect(g, stalk.x, y, 3, 1, COLOR.bambooNode);
+        }
+        // 顶端叶簇：左挑一片、右压一片，加 1px 高光
+        rect(g, stalk.x - 3, top + 2, 4, 1, COLOR.bambooLeaf);
+        rect(g, stalk.x + 3, top + 5, 4, 1, COLOR.bambooLeaf);
+        rect(g, stalk.x - 2, top + 1, 2, 1, COLOR.bambooLeafLight);
+        rect(g, stalk.x + 4, top + 4, 2, 1, COLOR.bambooLeafLight);
+      }
+      return;
+    }
+    case 'taihu': {
+      // 太湖石盆景（ADR-0061）：石座 + 被水蚀出孔洞的瘦皱石头。
+      // 孔洞用「暗色填 + 1px 更暗的角」表达：真正的透明洞在这个尺度会漏出草地色，读成脏点。
+      box(g, 4, h - 6, 22, 5, COLOR.stoneBase, COLOR.outline);
+      if (variant === 0) {
+        box(g, 9, 7, 13, 22, COLOR.taihuBody, COLOR.outline);
+        box(g, 7, 15, 4, 11, COLOR.taihuBody, COLOR.outline);
+        box(g, 20, 12, 4, 12, COLOR.taihuBody, COLOR.outline);
+        rect(g, 10, 8, 4, 1, COLOR.taihuBodyLight);
+        rect(g, 10, 9, 1, 7, COLOR.taihuBodyLight);
+        // 三处透光孔
+        for (const [x, y, hw, hh] of [
+          [12, 12, 3, 3],
+          [17, 18, 3, 4],
+          [13, 23, 3, 3],
+        ] as const) {
+          rect(g, x, y, hw, hh, COLOR.taihuBodyDark);
+          rect(g, x, y, 1, 1, COLOR.outline);
+        }
+        // 石根青苔
+        rect(g, 8, 27, 4, 2, COLOR.taihuMoss);
+        rect(g, 19, 25, 3, 2, COLOR.taihuMoss);
+        return;
+      }
+      // 青石叠景：三块横石由下往上收，石缝里塞青苔
+      box(g, 3, 22, 24, 7, COLOR.qingshi, COLOR.outline);
+      box(g, 6, 15, 18, 8, COLOR.qingshi, COLOR.outline);
+      box(g, 10, 8, 11, 8, COLOR.qingshi, COLOR.outline);
+      rect(g, 4, 23, 22, 1, COLOR.qingshiLight);
+      rect(g, 7, 16, 16, 1, COLOR.qingshiLight);
+      rect(g, 11, 9, 9, 1, COLOR.qingshiLight);
+      rect(g, 8, 20, 5, 2, COLOR.qingshiDark);
+      rect(g, 16, 13, 4, 2, COLOR.qingshiDark);
+      rect(g, 5, 27, 4, 2, COLOR.taihuMoss);
+      rect(g, 18, 21, 3, 1, COLOR.taihuMoss);
+      return;
+    }
   }
 }
 
@@ -507,6 +692,29 @@ function drawStool(g: Graphics): void {
   rect(g, 4, 8, 10, 1, COLOR.ceramic);
   box(g, 3, 13, 2, 8, COLOR.woodDark);
   box(g, 13, 13, 2, 8, COLOR.woodDark);
+}
+
+/**
+ * 石鼓凳（ADR-0061）：鼓腹 + 两道弦纹 + 四枚鼓钉，汉白玉本色。
+ * 与木凳的区别必须靠三处同时成立——冷白配色、鼓起的腰线、贴地的鼓足，
+ * 少一处就会读成「刷白了的木凳子」。
+ */
+function drawDrumStool(g: Graphics): void {
+  const { w, h } = DRUM_SPRITE;
+  shadow(g, w / 2, h - 1, 8, 2);
+  // 鼓腹：上下收、中间鼓，靠两条弦纹把鼓面分割出来
+  box(g, 2, 4, 16, 13, COLOR.drumStone, COLOR.outline);
+  rect(g, 3, 5, 14, 1, COLOR.drumStoneLight);
+  rect(g, 3, 8, 14, 1, COLOR.drumStoneDark);
+  rect(g, 3, 11, 14, 1, COLOR.drumStoneDark);
+  // 鼓钉：上下各两枚
+  for (const x of [5, 12]) {
+    rect(g, x, 6, 1, 1, COLOR.drumStoneDark);
+    rect(g, x, 13, 1, 1, COLOR.drumStoneDark);
+  }
+  // 鼓足：贴地一圈深色，坐下时不至于「浮」在草地上
+  rect(g, 4, 17, 12, 2, COLOR.drumStoneDark);
+  rect(g, 5, 19, 10, 2, COLOR.drumStone);
 }
 
 /** 沙发：靠背在上、两个座垫在下，两侧各一只扶手 */
@@ -700,6 +908,7 @@ export class PropsView {
     const seatTextures: Record<Exclude<SeatKind, 'chair'>, Texture> = {
       toilet: bake(renderer, drawToilet, { frame: frame(TOILET_SPRITE.w, TOILET_SPRITE.h) }),
       stool: bake(renderer, drawStool, { frame: frame(STOOL_SPRITE.w, STOOL_SPRITE.h) }),
+      drum: bake(renderer, drawDrumStool, { frame: frame(DRUM_SPRITE.w, DRUM_SPRITE.h) }),
       sofa: bake(renderer, drawSofa, { frame: frame(SOFA_SPRITE.w, SOFA_SPRITE.h) }),
       bed: bake(renderer, drawBed, { frame: frame(BED_SPRITE.w, BED_SPRITE.h) }),
     };

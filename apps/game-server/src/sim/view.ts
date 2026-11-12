@@ -90,9 +90,10 @@ export function refreshView(player: Player, world: World, grid: SpatialGrid, tra
   }
   for (const id of removals) {
     player.known.delete(id);
-    sendDespawn(transport, player.wsId, id, DESPAWN_OUT_OF_VIEW);
+    // NPC 没有连接（wsId=0）：只维护 known，不构造下行包
+    if (player.wsId !== 0) sendDespawn(transport, player.wsId, id, DESPAWN_OUT_OF_VIEW);
     const other = world.get(id);
-    if (other && other.known.delete(player.id)) {
+    if (other && other.known.delete(player.id) && other.wsId !== 0) {
       sendDespawn(transport, other.wsId, player.id, DESPAWN_OUT_OF_VIEW);
     }
   }
@@ -105,11 +106,14 @@ export function refreshView(player: Player, world: World, grid: SpatialGrid, tra
     const other = world.get(id);
     if (!other) continue;
     player.known.add(id);
-    transport.send(player.wsId, spawnPacketOf(other));
+    if (player.wsId !== 0) transport.send(player.wsId, spawnPacketOf(other));
     if (!other.known.has(player.id)) {
       other.known.add(player.id);
-      selfPacket ??= spawnPacketOf(player);
-      transport.send(other.wsId, selfPacket);
+      // 对方的 known 也要补齐，但它没有连接时不必为它编码入场包
+      if (other.wsId !== 0) {
+        selfPacket ??= spawnPacketOf(player);
+        transport.send(other.wsId, selfPacket);
+      }
     }
   }
 }

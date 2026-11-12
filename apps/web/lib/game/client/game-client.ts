@@ -40,6 +40,8 @@ export interface GameClient {
   setDanmakuPrefs(prefs: DanmakuPrefs): void;
   requestHistory(beforeMsgId: number): void;
   setStatus(status: string): void;
+  /** 改工牌名：本机乐观上屏，服务端回执再对齐 */
+  setName(name: string): void;
   setAppearance(appearance: CharacterAppearance): void;
   /** 补报考勤摘要：入场后、geo 就绪后与 60 秒心跳各调用一次 */
   updateCareer(career: CareerSummary): void;

@@ -4,9 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CharacterAppearance, Species } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
-import { getCurrentSessionDuration, useAttendance } from '@/lib/game/attendance';
+import { formatOnline } from '@/lib/game/badge';
 import { GEO_FALLBACK, loadGeo, readCachedGeo, type GeoInfo } from '@/lib/game/geo';
-import { StatusEditor } from './game/StatusEditor';
+import { BadgeEditor, type BadgeSavePayload } from './game/BadgeEditor';
 import { SelfArchiveDialog } from './badge/SelfArchiveDialog';
 
 export interface BadgeCardProps {
@@ -14,7 +14,8 @@ export interface BadgeCardProps {
   species: Species;
   appearance: CharacterAppearance;
   statusText: string;
-  onStatusChange: (status: string) => void;
+  /** 一次提交名字与状态：改名与改状态共用同一条保存路径 */
+  onSave: (payload: BadgeSavePayload) => void;
   compact?: boolean;
   /** 打开档案时通知外壳清掉移动输入（WASD 掩码 / 自动寻路） */
   onDetailOpen?: () => void;
@@ -22,19 +23,21 @@ export interface BadgeCardProps {
 
 /**
  * 走秒单独订阅：整张工牌不必每秒重渲染，只有这一行数字在跳。
- * store 未启动时 now 为 0，函数会安全退化成 00:00:00。
+ *
+ * 口径只有一个 —— 服务端会话秒数（ADR-0060）：与牛马榜「在岗」、档案弹窗同源，
+ * 断线时明确显示 `--:--`，不拿浏览器时钟继续走出一段没人看见的在岗。
  */
 function SessionClock({ className }: { className?: string }) {
-  const start = useAttendance((state) => state.sessionStartTime);
-  const now = useAttendance((state) => state.now);
-  return <span className={className}>{getCurrentSessionDuration(start, now)}</span>;
+  const onlineSec = useGameUi((state) => state.onlineSec);
+  const status = useGameUi((state) => state.status);
+  return <span className={className}>{status === 'online' ? formatOnline(onlineSec) : '--:--'}</span>;
 }
 
 /**
  * 左上角常驻工牌。
  *
  * 布局与旧 PlayerCard 同一个槽位（HUD 顶栏左侧），但只保留三行信息：
- * 物种 + 昵称 + 状态 / 出勤地 / 在岗走秒。整卡点击仍是改状态，
+ * 物种 + 昵称 + 状态 / 出勤地 / 在岗走秒。整卡点击展开工牌编辑（名字 + 状态），
  * 右侧独立竖条才是档案入口——两个交互不嵌套，键盘与读屏都不会打架。
  */
 export function BadgeCard({
@@ -42,7 +45,7 @@ export function BadgeCard({
   species,
   appearance,
   statusText,
-  onStatusChange,
+  onSave,
   compact = false,
   onDetailOpen,
 }: BadgeCardProps) {
@@ -89,9 +92,9 @@ export function BadgeCard({
           type="button"
           onClick={toggleStatus}
           aria-expanded={statusOpen}
-          aria-controls="status-editor"
-          aria-label={`${name} 的工牌，点击设置状态`}
-          title={statusText ? '修改状态' : '设置状态'}
+          aria-controls="badge-editor"
+          aria-label={`${name} 的工牌，点击修改名字与状态`}
+          title="修改名字与状态"
           className={`block w-full cursor-pointer pr-11 text-left transition-colors hover:bg-neutral-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400 ${
             compact ? 'px-2 py-2' : 'px-3 py-2.5'
           }`}
@@ -164,10 +167,11 @@ export function BadgeCard({
       </div>
 
       {statusOpen && (
-        <StatusEditor
-          value={statusText}
+        <BadgeEditor
+          name={name}
+          status={statusText}
           compact={compact}
-          onSave={onStatusChange}
+          onSave={onSave}
           onClose={() => setStatusOpen(false)}
         />
       )}

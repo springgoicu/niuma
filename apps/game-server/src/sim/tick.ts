@@ -64,25 +64,29 @@ export function runTick(world: World, grid: SpatialGrid, transport: Transport, t
     const state = player.state;
     const id = player.id;
 
-    pushSync(player, id, x, y, state, tick);
+    // NPC 没有连接：不把自身条目写进自己的发送缓冲，但照样推给观察者
+    if (player.wsId !== 0) pushSync(player, id, x, y, state, tick);
 
     // 只写标量：这一圈在 200 人全同屏时是每 Tick 4 万次，
     // 任何一次对象构造都会变成每秒 80 万个短命对象。
     for (const viewerId of player.known) {
       const viewer = world.get(viewerId);
-      if (!viewer) continue;
+      // NPC 没有连接：不把邻居的条目写进它的发送缓冲，省掉一次编码与空发送
+      if (!viewer || viewer.wsId === 0) continue;
       pushSync(viewer, id, x, y, state, tick);
     }
+
+    // 去脏基准在本 Tick 处理完就回写：发给观察者的正是这一份三元组。
+    // NPC 也必须收敛，否则静止的同事会在每个 Tick 重新变脏（它没有自己的发包路径）。
+    player.lastBroadcastQx = x;
+    player.lastBroadcastQy = y;
+    player.lastBroadcastState = state;
   }
 
   for (const player of world.players.values()) {
     if (player.syncCount === 0) continue;
     player.syncWriter.patchU16(5, player.syncCount);
     transport.send(player.wsId, player.syncWriter.finish());
-    // 回写广播基准：本 Tick 内位置不会再变，重算一次量化值就是刚发出去的那一份
-    player.lastBroadcastQx = quantizeCoord(player.x);
-    player.lastBroadcastQy = quantizeCoord(player.y);
-    player.lastBroadcastState = player.state;
     packets += 1;
     entries += player.syncCount;
   }

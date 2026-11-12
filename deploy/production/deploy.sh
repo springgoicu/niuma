@@ -93,6 +93,8 @@ bash deploy/jenkins-deploy.sh 9>&-
 sync_nginx_site() {
   local tpl="$SRC_DIR/deploy/production/nginx/niuma-site.conf.template"
   local live="/etc/nginx/sites-available/niuma"
+  local http_tpl="$SRC_DIR/deploy/production/nginx/00-niuma-http.conf.template"
+  local http_live="/etc/nginx/conf.d/00-niuma-http.conf"
   local app_base="${APP_BASE:-/srv/niuma/app}"
   local web_root hook_path www staged backup out
 
@@ -119,19 +121,52 @@ sync_nginx_site() {
   if cmp -s "$staged" "$live"; then
     rm -f "$staged" "$backup"
     log "nginx 站点配置无变化"
-    return 0
+  else
+    sudo -n cp "$live" "$backup"
+    if ! sudo -n cp "$staged" "$live" || ! out="$(sudo -n nginx -t 2>&1)"; then
+      printf '%s\n' "${out:-}" | sed 's/^/    /'
+      sudo -n cp "$backup" "$live"
+      rm -f "$staged" "$backup"
+      echo "✖ nginx 渲染后校验失败，已还原旧配置" >&2
+      return 1
+    fi
+    rm -f "$staged" "$backup"
+    log "nginx 站点配置已更新（WEB_ROOT=$web_root）"
   fi
 
-  sudo -n cp "$live" "$backup"
-  if ! sudo -n cp "$staged" "$live" || ! out="$(sudo -n nginx -t 2>&1)"; then
-    printf '%s\n' "${out:-}" | sed 's/^/    /'
-    sudo -n cp "$backup" "$live"
+  # 全局参数（00-niuma-http.conf）也要跟着走：上游指纹、限流 zone、缓冲这些
+  # 改动同样只在 install.sh 里做过一次，不加这一段就会「仓库改了、线上没变」。
+  [ -f "$http_tpl" ] && [ -f "$http_live" ] || return 0
+  staged="$(mktemp)"
+  backup="$(mktemp)"
+  # 这份模板目前只有 @APP_BASE@ 与 @SERVER_HEADER_FILTER@，但保留与 install.sh
+  # 完全一致的替换：两边渲染命令必须一致，否则 cmp 永远不等，每次部署都白 reload。
+  local header_filter='# 未安装 libnginx-mod-http-headers-more-filter，Server 头保留为 nginx'
+  if [ -f /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so ]; then
+    header_filter='more_clear_headers Server;'
+  fi
+  sed -e "s#@APP_BASE@#$app_base#g" \
+      -e "s#@SERVER_HEADER_FILTER@#$header_filter#g" \
+      -e "s#@DOMAIN@#$PUBLIC_HOST#g" \
+      -e "s#@WWW@#$www#g" \
+      -e "s#@WEB_ROOT@#$web_root#g" \
+      -e "s#@HOOK_PATH@#$hook_path#g" \
+      "$http_tpl" > "$staged"
+  if cmp -s "$staged" "$http_live"; then
     rm -f "$staged" "$backup"
-    echo "✖ nginx 渲染后校验失败，已还原旧配置" >&2
+    log "nginx 全局配置无变化"
+    return 0
+  fi
+  sudo -n cp "$http_live" "$backup"
+  if ! sudo -n cp "$staged" "$http_live" || ! out="$(sudo -n nginx -t 2>&1)"; then
+    printf '%s\n' "${out:-}" | sed 's/^/    /'
+    sudo -n cp "$backup" "$http_live"
+    rm -f "$staged" "$backup"
+    echo "✖ nginx 全局配置校验失败，已还原旧配置" >&2
     return 1
   fi
   rm -f "$staged" "$backup"
-  log "nginx 站点配置已更新（WEB_ROOT=$web_root）"
+  log "nginx 全局配置已更新"
 }
 
 sync_nginx_site

@@ -97,6 +97,8 @@ export function buildBoardSnapshot(
   const ranked: RankedRow[] = [];
 
   for (const player of players) {
+    // NPC 不进榜：在岗榜、人气榜与其余四榜都只排真人，避免 10 个常驻实体挤占名次
+    if (player.isNpc) continue;
     online += 1;
     if (player.pose === POSE.Sit || player.pose === POSE.Lie) slacking += 1;
     if (metric !== BOARD_METRIC.Duty && metric !== BOARD_METRIC.Likes && !hasCareerReport(player)) continue;

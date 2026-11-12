@@ -12,6 +12,7 @@ import {
   decodeDespawn,
   decodeGraze,
   decodeLike,
+  decodeNameBroadcast,
   decodePong,
   decodeQueueRejected,
   decodeQueueStatus,
@@ -30,6 +31,7 @@ import {
   encodeMoveInto,
   encodePing,
   encodeSetAppearance,
+  encodeSetName,
   encodeSetStatus,
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
@@ -81,6 +83,8 @@ export interface NetHandlers {
   onAppearance(id: number, appearance: CharacterAppearance): void;
   /** 某个实体的常驻状态变了（自己也会收到一条，用于对齐服务端裁决后的文本） */
   onStatus(id: number, status: string): void;
+  /** 某个实体改了工牌名（自己也会收到一条，用于对齐打码后的名字） */
+  onName(id: number, name: string): void;
   /** 某个实体的考勤摘要变了（补报后服务端定向广播） */
   onCareer(id: number, career: CareerSummary): void;
   /** 工牌点赞变化：目标、当前计数与「是不是你点的」flag（ADR-0057） */
@@ -127,6 +131,11 @@ export class NetClient {
   private career: CareerSummary | undefined;
   /** 上一次会话的落点：每次（重）连都随 HELLO 上报，由服务端重新校验 */
   private resume: ResumeState | undefined;
+  /**
+   * 断线前已在线秒数（ADR-0060）：重连时随 HELLO 上报，服务端据此续算在岗时长。
+   * 每次新的一轮进园都从 0 起，只有连接断开的那一刻才写入。
+   */
+  private sessionSec = 0;
   private attempts = 0;
   private disposed = false;
   /** 被服务端拒绝后进入终止态：不自动重连，否则队列满时会自造重连风暴 */
@@ -175,6 +184,14 @@ export class NetClient {
     this.resume = resume;
   }
 
+  /**
+   * 断线时记下已在线秒数，下次 HELLO 带上（ADR-0060）。
+   * 只在连接断开的那一刻写：在线期间不需要、也不该反复覆盖。
+   */
+  setSessionSec(sessionSec: number): void {
+    this.sessionSec = Number.isFinite(sessionSec) ? Math.max(0, Math.floor(sessionSec)) : 0;
+  }
+
   /** 用户点「重新排队」：清掉终止态并立刻重连，不等指数退避 */
   retry(): void {
     if (this.disposed) return;
@@ -215,6 +232,8 @@ export class NetClient {
             this.status,
             SYNC_FORMAT_COMPACT,
             this.career,
+            // 断线续算：旧服务端读完前面的段就停，看不到这 5 字节
+            this.sessionSec,
           ),
         );
       }
@@ -280,6 +299,12 @@ export class NetClient {
       case OpCode.S2C_STATUS: {
         const packet = decodeStatusBroadcast(data);
         this.handlers.onStatus(packet.entityId, packet.status);
+        break;
+      }
+      case OpCode.S2C_NAME: {
+        const packet = decodeNameBroadcast(data);
+        // 空名字对客户端没有意义：保留旧名而不是把头顶清空
+        if (packet.name.length > 0) this.handlers.onName(packet.entityId, packet.name);
         break;
       }
       case OpCode.S2C_CAREER: {
@@ -391,6 +416,13 @@ export class NetClient {
     this.status = status;
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeSetStatus(status));
+  }
+
+  /** 改工牌名：离线时也记下来，重连的 HELLO 会带上新名字 */
+  sendName(name: string): void {
+    this.name = name;
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeSetName(name));
   }
 
   /** 考勤摘要补报：离线时也记下来，重连的 HELLO 会带上 */

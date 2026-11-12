@@ -42,6 +42,8 @@ import {
   QUEUE_STATUS_BYTES,
   RESUME_BYTES,
   RESUME_VERSION,
+  SESSION_EXTENSION_BYTES,
+  SESSION_EXTENSION_MAGIC,
   STATUS_EXTENSION_MAGIC,
   SYNC_CAPABILITY_MAGIC,
   SYNC_ENTRY_BYTES,
@@ -50,6 +52,8 @@ import {
   SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
   VENT_PACKET_BYTES,
+  WELCOME_SESSION_BYTES,
+  WELCOME_SESSION_MAGIC,
   type SyncFormat,
 } from './constants';
 import { displayWidth } from './name';
@@ -620,9 +624,9 @@ export function writeCareerSegment(writer: ByteWriter, career: CareerSummary | u
 
 /**
  * career 段在包里的总字节数（魔数 + 长度字节 + payload）。
- * 段不合法返回 0；`readCareerSegment` 与后续点赞段的定位共用这一份校验。
+ * 段不合法返回 0；`readCareerSegment`、后续点赞段与会话段的定位共用这一份校验。
  */
-function careerSegmentLengthAt(data: Uint8Array, offset: number): number {
+export function careerSegmentSizeAt(data: Uint8Array, offset: number): number {
   if (data.length - offset < 2 || data[offset] !== CAREER_EXTENSION_MAGIC) return 0;
   const length = data[offset + 1]!;
   if (length < CAREER_MIN_BYTES || length > CAREER_MAX_BYTES) return 0;
@@ -632,7 +636,7 @@ function careerSegmentLengthAt(data: Uint8Array, offset: number): number {
 
 /** 读尾部段；不是 career 段或长度不合法都返回 undefined，不消费调用方的 offset。 */
 export function readCareerSegment(data: Uint8Array, offset: number): CareerSummary | undefined {
-  const total = careerSegmentLengthAt(data, offset);
+  const total = careerSegmentSizeAt(data, offset);
   if (total === 0) return undefined;
   return decodeCareer(data, offset + 2, total - 2);
 }
@@ -771,7 +775,7 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
   const career = readCareerSegment(data, reader.offset);
   // 点赞段：只有 likes > 0 才写；旧服务端没有这一段时按 0 展示。
   // `readCareerSegment` 不消费 offset，这里显式跳过 career 段再定位 0xfb。
-  const likes = readLikeSegment(data, reader.offset + careerSegmentLengthAt(data, reader.offset));
+  const likes = readLikeSegment(data, reader.offset + careerSegmentSizeAt(data, reader.offset));
   const packet: SpawnPacket = { id, x, y, state, name, appearance, status };
   if (onlineSec !== undefined) packet.onlineSec = onlineSec;
   if (career) packet.career = career;
@@ -942,6 +946,14 @@ export function decodeChatSend(data: Uint8Array): ChatSendPacket {
   return { colorIndex, danmakuMode, text: reader.utf8(length) };
 }
 
+/**
+ * 会话续算段是否要写：0 表示「新的一次进园」，一个字节都不写。
+ * 旧客户端永远不写这一段，旧服务端也不会读到它（段追加在最后）。
+ */
+function hasSessionCarry(sessionSec: number | undefined): sessionSec is number {
+  return typeof sessionSec === 'number' && Number.isFinite(sessionSec) && sessionSec >= 1;
+}
+
 export function encodeHello(
   name: string,
   appearance: CharacterAppearance,
@@ -949,6 +961,7 @@ export function encodeHello(
   status?: string,
   syncFormat: SyncFormat = SYNC_FORMAT_LEGACY,
   career?: CareerSummary,
+  sessionSec?: number,
 ): Uint8Array {
   const nameBytes = textEncoder.encode(truncateName(name));
   const statusBytes = textEncoder.encode(truncateStatus(status));
@@ -956,6 +969,7 @@ export function encodeHello(
   const statusSize = statusBytes.length > 0 ? 2 + statusBytes.length : 0;
   // 不声明紧凑格式就不写能力段：旧服务端与旧客户端看到的帧长完全不变
   const capabilitySize = syncFormat === SYNC_FORMAT_COMPACT ? 2 : 0;
+  const carry = hasSessionCarry(sessionSec);
   const writer = new ByteWriter(
     2 +
       nameBytes.length +
@@ -963,7 +977,8 @@ export function encodeHello(
       (resume ? RESUME_BYTES : 0) +
       statusSize +
       capabilitySize +
-      (career ? CAREER_SEGMENT_MAX_BYTES : 0),
+      (career ? CAREER_SEGMENT_MAX_BYTES : 0) +
+      (carry ? SESSION_EXTENSION_BYTES : 0),
   );
   writer.u8(OpCode.C2S_HELLO).u8(nameBytes.length).raw(nameBytes).raw(encodeAppearance(appearance));
   if (resume) {
@@ -980,6 +995,8 @@ export function encodeHello(
   if (capabilitySize > 0) writer.u8(SYNC_CAPABILITY_MAGIC).u8(syncFormat);
   // 考勤摘要永远追加在最后：旧服务端读完能力段就停止，天然忽略
   writeCareerSegment(writer, career);
+  // 会话续算段排在最后（ADR-0060）：旧服务端读完 career 段就停，看不到这 5 字节
+  if (carry) writer.u8(SESSION_EXTENSION_MAGIC).u32(Math.floor(sessionSec));
   return writer.finish();
 }
 
@@ -993,6 +1010,8 @@ export function decodeHello(data: Uint8Array): {
   syncFormat: SyncFormat;
   /** 考勤摘要；旧客户端整段缺席时为 undefined */
   career?: CareerSummary;
+  /** 断线前已在线秒数；旧客户端整段缺席时为 0（按新一次进园处理） */
+  sessionSec: number;
 } {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.C2S_HELLO) throw new Error('not a hello packet');
@@ -1007,7 +1026,8 @@ export function decodeHello(data: Uint8Array): {
     reader.remaining >= RESUME_BYTES &&
     data[reader.offset] !== STATUS_EXTENSION_MAGIC &&
     data[reader.offset] !== SYNC_CAPABILITY_MAGIC &&
-    data[reader.offset] !== CAREER_EXTENSION_MAGIC
+    data[reader.offset] !== CAREER_EXTENSION_MAGIC &&
+    data[reader.offset] !== SESSION_EXTENSION_MAGIC
   ) {
     const version = reader.u8();
     const x = reader.u16();
@@ -1040,7 +1060,11 @@ export function decodeHello(data: Uint8Array): {
     reader.u8();
     syncFormat = reader.u8() === SYNC_FORMAT_COMPACT ? SYNC_FORMAT_COMPACT : SYNC_FORMAT_LEGACY;
   }
-  const career = readCareerSegment(data, reader.offset);
+  const careerAt = reader.offset;
+  const career = readCareerSegment(data, careerAt);
+  // 会话续算段排在 career 段之后（ADR-0060）：先跳过 career 段再窥视魔数，
+  // 段不合法 / 缺席都回落到 0，旧客户端的行为逐字节不变。
+  const sessionSec = readSessionSegment(data, careerAt + careerSegmentSizeAt(data, careerAt));
   const hello: {
     name: string;
     appearance: CharacterAppearance;
@@ -1048,9 +1072,21 @@ export function decodeHello(data: Uint8Array): {
     status: string;
     syncFormat: SyncFormat;
     career?: CareerSummary;
-  } = { name, appearance, resume, status, syncFormat };
+    sessionSec: number;
+  } = { name, appearance, resume, status, syncFormat, sessionSec };
   if (career) hello.career = career;
   return hello;
+}
+
+/** HELLO 尾段：`[0xfa][sec u32]`；缺席或截断一律回落到 0，不读包外字节。 */
+function readSessionSegment(data: Uint8Array, offset: number): number {
+  if (data.length - offset < SESSION_EXTENSION_BYTES || data[offset] !== SESSION_EXTENSION_MAGIC) {
+    return 0;
+  }
+  return (
+    (data[offset + 1]! | (data[offset + 2]! << 8) | (data[offset + 3]! << 16) | (data[offset + 4]! << 24)) >>>
+    0
+  );
 }
 
 export function encodeWelcome(packet: WelcomePacket): Uint8Array {
@@ -1066,6 +1102,12 @@ export function encodeWelcome(packet: WelcomePacket): Uint8Array {
   if (packet.syncFormat !== undefined && packet.syncFormat !== SYNC_FORMAT_LEGACY) {
     writer.u8(packet.syncFormat);
   }
+  // 会话续算回显排在格式字节之后（ADR-0060）：旧客户端先读到格式字节，
+  // 既不会把会话段当成格式，也不会因为多出 5 字节而错位。
+  const sessionSec = packet.sessionSec;
+  if (typeof sessionSec === 'number' && Number.isFinite(sessionSec) && sessionSec >= 1) {
+    writer.u8(WELCOME_SESSION_MAGIC).u32(Math.floor(sessionSec));
+  }
   return writer.finish();
 }
 
@@ -1079,9 +1121,16 @@ export function decodeWelcome(data: Uint8Array): WelcomePacket {
   // 旧服务端的 11 字节包没有 state：按 Idle + Down 处理，不让入场流程直接失败
   const state = reader.remaining >= 1 ? reader.u8() : 0;
   const packet: WelcomePacket = { entityId, tick, x, y, state };
-  // 旧格式不写这一段：包体与旧服务端逐字节相同，消费方的对象形状也不变
-  if (reader.remaining >= 1 && reader.u8() === SYNC_FORMAT_COMPACT) {
+  // 旧格式不写这一段：包体与旧服务端逐字节相同，消费方的对象形状也不变。
+  // 必须先窥视再消费：会话段（0xf9）就排在它后面，旧写法 `u8()` 会把魔数吃掉。
+  if (reader.remaining >= 1 && data[reader.offset] === SYNC_FORMAT_COMPACT) {
+    reader.u8();
     packet.syncFormat = SYNC_FORMAT_COMPACT;
+  }
+  if (reader.remaining >= WELCOME_SESSION_BYTES && data[reader.offset] === WELCOME_SESSION_MAGIC) {
+    reader.u8();
+    const sessionSec = reader.u32();
+    if (sessionSec > 0) packet.sessionSec = sessionSec;
   }
   return packet;
 }
@@ -1190,6 +1239,50 @@ export function decodeStatusBroadcast(data: Uint8Array): { entityId: number; sta
   const entityId = reader.u16();
   const length = reader.u16();
   return { entityId, status: length <= reader.remaining ? truncateStatus(reader.utf8(length)) : '' };
+}
+
+/**
+ * 改工牌名：`[op][len u16][utf8]`，与状态包同构。
+ *
+ * 空名是合法输入（表单会拦，但伪造包可能发来），服务端据此保留原名而不是改名成空。
+ * 上限与入场同一把尺子（16 字符 / 48 字节），超长部分直接丢。
+ */
+export function encodeSetName(name: string): Uint8Array {
+  // 空名不进包：`truncateName('')` 会换成兜底工牌名，那等于「改名成默认名」，
+  // 服务端收到的空串才表示「这次不改名」。
+  const bytes = textEncoder.encode(name.trim().length > 0 ? truncateName(name) : '');
+  const writer = new ByteWriter(3 + bytes.length);
+  writer.u8(OpCode.C2S_SET_NAME).u16(bytes.length).raw(bytes);
+  return writer.finish();
+}
+
+export function decodeSetName(data: Uint8Array): string {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_SET_NAME) throw new Error('not a set name packet');
+  const length = reader.u16();
+  // 空名与越界长度都按「不改名」处理：绝不能交给 `truncateName`，
+  // 它会把空串换成兜底工牌名，等于替玩家改成了默认名。
+  if (length === 0 || length > reader.remaining) return '';
+  return truncateName(reader.utf8(length));
+}
+
+export function encodeNameBroadcast(entityId: number, name: string): Uint8Array {
+  // 与 `encodeSetName` 同理：空名必须编码成零长度，不能借 `truncateName` 变成兜底名
+  const bytes = textEncoder.encode(name.trim().length > 0 ? truncateName(name) : '');
+  const writer = new ByteWriter(5 + bytes.length);
+  writer.u8(OpCode.S2C_NAME).u16(entityId).u16(bytes.length).raw(bytes);
+  return writer.finish();
+}
+
+export function decodeNameBroadcast(data: Uint8Array): { entityId: number; name: string } {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_NAME) throw new Error('not a name broadcast');
+  const entityId = reader.u16();
+  const length = reader.u16();
+  // 空名对客户端没有意义：返回空串让调用方保留旧名字。
+  // 不能走 `truncateName`——它会把空串换成兜底名，于是整片园区都叫「无名牛马」。
+  if (length === 0 || length > reader.remaining) return { entityId, name: '' };
+  return { entityId, name: truncateName(reader.utf8(length)) };
 }
 
 /**

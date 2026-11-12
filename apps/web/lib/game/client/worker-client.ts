@@ -9,6 +9,7 @@ import type {
 import { requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
+import { readIncenseDay, writeIncenseDay } from '../incense-day';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
 import { MINIMAP_SIZE } from '../minimap-draw';
@@ -159,6 +160,7 @@ export class WorkerGameClient implements GameClient {
           height: size.height,
           dpr: size.dpr,
           danmaku: this.options.danmakuPrefs,
+          incenseDay: readIncenseDay(),
         } satisfies MainToWorker,
         [offscreen],
       );
@@ -336,6 +338,11 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'status', text: status });
   }
 
+  setName(name: string): void {
+    if (this.delegate) return this.delegate.setName(name);
+    this.post({ t: 'name', text: name });
+  }
+
   setAppearance(appearance: CharacterAppearance): void {
     if (this.delegate) return this.delegate.setAppearance(appearance);
     this.post({ t: 'appearance', appearance });
@@ -467,6 +474,9 @@ export class WorkerGameClient implements GameClient {
       case 'boardOpen':
         callbacks.onBoardOpen?.();
         return;
+      case 'bulletinOpen':
+        callbacks.onBulletinOpen?.();
+        return;
       case 'board':
         callbacks.onBoard?.(message.packet);
         return;
@@ -479,6 +489,10 @@ export class WorkerGameClient implements GameClient {
       case 'snapshot':
         this.lastSnapshot = message.patch;
         this.snapshotDirty = true;
+        return;
+      case 'incenseDay':
+        // 上香后 Worker 写不了存储：回落盘这条路，一个自然日只写一次
+        writeIncenseDay(message.day);
         return;
       case 'build-check':
         // 渲染线程碰不到 window，版本检查交回主线程派发

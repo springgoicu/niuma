@@ -12,7 +12,6 @@ import {
   dayKey,
   formatDuration,
   getActiveDays,
-  getCurrentSessionDuration,
   getDailyAverageHours,
   getJobTitle,
   getSeniorityDays,
@@ -83,6 +82,11 @@ export interface BadgeArchive {
   rank: number | null;
   stamp: string;
   stampRed: boolean;
+  /**
+   * 已解锁的成就戳印（ADR-0060）：目前只有赛博木鱼的「急急急放假人」。
+   * 与主戳印分开：主章只盖一枚，成就是可以累积的小章。
+   */
+  achievements: string[];
   /** false 时工时/履历字段显示「未上报」，不拿 0 冒充真实数据 */
   hasCareer: boolean;
 }
@@ -101,9 +105,12 @@ export interface SelfArchiveInput {
   seatKind: SeatKind | null;
   board: BoardEntry[];
   rank: number | null;
-  onlineSec: number;
+  /** 服务端会话秒数（ADR-0060）；`null` 表示当前不在线，档案显示 `--:--` */
+  onlineSec: number | null;
   /** 服务端当前记录的收到赞数；缺省 0（旧服务端 / 刚入场） */
   likes?: number;
+  /** 本地解锁的成就戳印；缺省空数组 */
+  achievements?: string[];
   now?: number;
 }
 
@@ -146,7 +153,8 @@ export function buildSelfArchive(input: SelfArchiveInput): BadgeArchive {
     location: `中国 · ${input.geo.region} · ${input.geo.city}`,
     pose: poseLabel(input.pose, false, input.seated),
     seat: seatLabel(input.seatKind),
-    sessionDuration: getCurrentSessionDuration(input.attendance.sessionStartTime, now),
+    // 与牛马榜「在岗」、左上角工牌同源：服务端会话秒数（ADR-0060）
+    sessionDuration: input.onlineSec === null ? '--:--' : formatOnline(input.onlineSec),
     todayDuration: formatDuration(todayMs),
     weekHours: hoursOf(weekMinutes),
     dailyAverageHours: averageHours,
@@ -166,6 +174,7 @@ export function buildSelfArchive(input: SelfArchiveInput): BadgeArchive {
     rank: input.rank,
     stamp,
     stampRed: averageHours > 8,
+    achievements: input.achievements ?? [],
     hasCareer: true,
   };
 }
@@ -228,6 +237,8 @@ export function buildRemoteArchive(badge: PlayerBadge, now = Date.now()): BadgeA
     rank: badge.rank,
     stamp,
     stampRed: hasCareer && averageHours > 8,
+    // 成就只写在本机：别人的档案不展示我这边解锁了什么，避免把本地状态冒充他人事实
+    achievements: [],
     hasCareer,
   };
 }

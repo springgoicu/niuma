@@ -213,7 +213,8 @@ upstream niuma_park_${PARK_ID} {
     keepalive 32;
 }
 
-# 只认主站来源：game-server 自己不校验 Origin，这层是唯一限制
+# 只认主站来源。nginx 与 game-server 是两层独立校验：
+# 这一层挡在握手之前（不占进程资源），进程内那层挡的是「nginx 被改坏或被绕过」。
 map \$http_origin \$niuma_park_${PARK_ID}_origin_ok {
     default                            0;
     "https://${MAIN_DOMAIN}"           1;
@@ -250,7 +251,8 @@ upstream niuma_park_${PARK_ID} {
 limit_conn_zone \$binary_remote_addr zone=niuma_park_${PARK_ID}_ws:10m;
 limit_req_zone  \$binary_remote_addr zone=niuma_park_${PARK_ID}_req:10m rate=15r/s;
 
-# 只认主站来源：game-server 自己不校验 Origin，这层是唯一限制
+# 只认主站来源。nginx 与 game-server 是两层独立校验：
+# 这一层挡在握手之前（不占进程资源），进程内那层挡的是「nginx 被改坏或被绕过」。
 map \$http_origin \$niuma_park_${PARK_ID}_origin_ok {
     default                            0;
     "https://${MAIN_DOMAIN}"           1;
@@ -282,6 +284,9 @@ server {
         proxy_set_header Host \$host;
         add_header Access-Control-Allow-Origin \$niuma_park_${PARK_ID}_cors always;
         add_header Cache-Control "no-store" always;
+        # 这一层自己写了 add_header 就吃不到 server 级的安全头，补两条对 JSON 有意义的
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
         access_log off;
     }
 
@@ -302,6 +307,15 @@ server {
     # 主站在另一台机器，这里不需要 COOP/COEP：本机没有页面，
     # 只有 WS 与健康检查，跨源隔离头加在这里毫无作用。
     add_header X-Content-Type-Options "nosniff" always;
+    # 这台机器不返回任何页面，下面几条只是为了让「同一套安全基线」
+    # 在两台机器上一致（有些等保/扫描器要求全部站点都带齐）。
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    # 掐掉上游指纹：Bun 会带自己的 Server 头
+    proxy_hide_header X-Powered-By;
+    proxy_hide_header Server;
     # slowloris：正常的 WS 握手与探活在毫秒级完成，60s 的默认值只会被用来占连接
     client_header_timeout 10s;
     client_body_timeout   10s;
@@ -342,7 +356,13 @@ server {
         access_log off;
     }
 
-    location / { return 404; }
+    # 其余路径一律 404：这台机器只提供 /ws 与 /health，没有页面、没有静态资源，
+    # 任何「看起来像站点」的探测都不该拿到有效响应。
+    # 关闭 access_log：扫描流量每天几千条，写进日志只是替攻击者填磁盘。
+    location / {
+        access_log off;
+        return 404;
+    }
 }
 EOF
 }

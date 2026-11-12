@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { browserStorage, readJson, writeJson, type StorageLike } from '../storage';
+import { localDateKey } from './local-date';
 
 /**
  * 本地考勤引擎：服务端零持久化，所有在岗数据只活在这个浏览器里。
@@ -48,13 +49,11 @@ const EMPTY_VIEW: AttendanceView = {
 /**
  * 本地日期键。刻意不用 `toISOString()`：那是 UTC 口径，
  * 在东八区会把 00:00–08:00 的打卡记到前一天。
+ *
+ * 实现搬到了 `local-date.ts`：Worker 里的节假日引擎也要切日，
+ * 但不能顺着 `attendance.ts` 把 zustand store 拖进渲染线程。这里保留同名导出。
  */
-export function dayKey(timestamp: number = Date.now()): string {
-  const date = new Date(timestamp);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
-}
+export const dayKey = localDateKey;
 
 /** 毫秒 → HH:MM:SS。小时不封顶，挂在园区一整天也不会砍掉位数。 */
 export function formatDuration(ms: number): string {
@@ -319,6 +318,18 @@ export class AttendanceTracker {
     this.flush();
   };
 
+  /**
+   * 另一个标签页刚写了存档：把它的记录并进内存（只增不减）。
+   * 不动 `sessionStartTime` —— 本页的在岗仍从自己进园那一刻算起。
+   */
+  private readonly onStorage = (event: StorageEvent): void => {
+    if (event.key !== ATTENDANCE_KEY || !event.newValue) return;
+    const stored = loadAttendance(this.storage);
+    if (!stored) return;
+    this.mergeFrom(stored);
+    this.publish(Date.now());
+  };
+
   constructor(now: number = Date.now(), storage: StorageLike | null = browserStorage('local')) {
     this.storage = storage;
     const stored = loadAttendance(storage);
@@ -346,6 +357,8 @@ export class AttendanceTracker {
     window.addEventListener('beforeunload', this.onPageHide);
     // iOS Safari 上 beforeunload 不一定触发，pagehide 是切后台/关页的兜底
     window.addEventListener('pagehide', this.onPageHide);
+    // 多标签页：别的页写了存档就跟上，别让两边各记各的
+    window.addEventListener('storage', this.onStorage);
   }
 
   /** 每秒一次：只动内存与 zustand，不碰 localStorage */
@@ -388,10 +401,35 @@ export class AttendanceTracker {
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     window.removeEventListener('beforeunload', this.onPageHide);
     window.removeEventListener('pagehide', this.onPageHide);
+    window.removeEventListener('storage', this.onStorage);
   }
 
+  /**
+   * 落盘前先跟存储对一次账。
+   *
+   * 同一浏览器开两个标签页时，两边各有一份内存与各自的 30 秒批处理，
+   * 直接覆盖会让工时忽多忽少。这里按天取 max、总额取 max 再写，
+   * 保证「不会倒退、不会少记」；代价是极端并发下可能少记一小段。
+   */
   private persist(): void {
+    const stored = loadAttendance(this.storage);
+    if (stored) this.mergeFrom(stored);
     saveAttendance(this.state, this.storage);
+  }
+
+  /** 把外部记录并进内存：只增不减，首日取更早的那一天 */
+  private mergeFrom(other: AttendanceStorage): void {
+    this.state.totalOnlineMs = Math.max(this.state.totalOnlineMs, other.totalOnlineMs);
+    if (
+      other.firstJoinDate &&
+      (!this.state.firstJoinDate || other.firstJoinDate < this.state.firstJoinDate)
+    ) {
+      this.state.firstJoinDate = other.firstJoinDate;
+    }
+    for (const [key, ms] of Object.entries(other.dailyRecords)) {
+      const mine = this.state.dailyRecords[key] ?? 0;
+      if (ms > mine) this.state.dailyRecords[key] = ms;
+    }
   }
 
   private publish(now: number): void {

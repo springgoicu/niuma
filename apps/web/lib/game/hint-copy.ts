@@ -12,7 +12,13 @@ export const HINT = {
   toilet: '按 Z 使用马桶',
   bed: '按 X 上床躺平',
   board: '按 F 查看牛马榜',
+  /** 放假告示板（ADR-0059）：感应区 64px，面朝板面时才出现；文案用键帽写法照抄需求 */
+  bulletin: '[F] 查解放假倒计时',
   interact: '按 F 互动',
+  /** 赛博财神供案（ADR-0061） */
+  shrine: '[F] 上香祈福',
+  /** 老干部紫砂茶台（ADR-0061） */
+  tea: '[F] 续杯养生茶',
   lieOnSeat: '座位上不能躺，先按 Z 起身',
   sitOnBed: '床上只能躺，按 X 起身',
   bedOnly: '床上只能躺，按 X 上床',
@@ -30,7 +36,10 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.toilet]: '点「坐下」使用马桶',
   [HINT.bed]: '点「躺平」',
   [HINT.board]: '点「互动」查看牛马榜',
+  [HINT.bulletin]: '点「互动」查解放假倒计时',
   [HINT.interact]: '点「互动」',
+  [HINT.shrine]: '点「互动」上香祈福',
+  [HINT.tea]: '点「互动」续杯养生茶',
   [HINT.lieOnSeat]: '座位上不能躺，先点「起身」',
   [HINT.sitOnBed]: '床上只能躺，点「起身」',
   [HINT.bedOnly]: '床上只能躺，点「躺平」',

@@ -34,6 +34,8 @@ const CHAIR_SINK = 6;
 const OTHER_SEATS: Record<Exclude<SeatKind, 'chair'>, { w: number; h: number; sink: number }> = {
   toilet: { w: 22, h: 28, sink: 6 },
   stool: { w: 18, h: 22, sink: 4 },
+  // 石鼓凳（ADR-0061）：鼓身比木凳矮胖一圈，座面下沉 5 纹素
+  drum: { w: 20, h: 22, sink: 5 },
   sofa: { w: 58, h: 30, sink: 8 },
   bed: { w: 64, h: 42, sink: 16 },
 };

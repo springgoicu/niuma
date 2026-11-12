@@ -1,17 +1,22 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { encodePng } from '../src/png';
-import { LOGO_SIZE, LOGO_TILE_HEX, drawLogo, logoRgba } from '../src/logo';
+import { LOGO_SIZE, LOGO_TILE_HEX, drawLogo, logoRgba, type LogoFrame } from '../src/logo';
 
 /** 产物落在 public/brand：与 public/sprites 同级，不会被 generate.ts 的 rm -rf sprites 波及 */
 const OUT_DIR = resolve(import.meta.dir, '../../../apps/web/public/brand');
 /** 校对图不进 public、不打进包，只给人眼验收用 */
 const PROOF_DIR = resolve(import.meta.dir, '../.proof');
 
-/** 标签页三级图标 + 导航 48（含眨眼帧）+ iOS 主屏 */
+/** 标签页三级图标 + 导航 48（含眨眼帧）+ iOS 主屏 + PWA 安装图标 */
 const ICON_SIZES = [16, 32, 48] as const;
 const APPLE_SIZE = 180;
 const NAV_SIZE = 48;
+/** PWA 安装图标：192 与 512 是 Chromium 的可安装判据下限，512 另出一张 maskable */
+const PWA_ICON_SIZES = [192, 512] as const;
+const MASKABLE_SIZE = 512;
+/** maskable 的安全区是中心 80% 圆：16 × 20 = 320，四周留 96px 底板边，牛角不会被裁 */
+const MASKABLE_SCALE = 20;
 
 function hex(color: number): [number, number, number] {
   return [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff];
@@ -57,13 +62,19 @@ function blit(
   }
 }
 
-/** 180 = 16 × 11 居中，四周 2px 底板色；不做 11.25 倍的非整数块 */
-function appleIcon(): Uint8Array {
-  const inner = LOGO_SIZE * 11;
-  const offset = Math.floor((APPLE_SIZE - inner) / 2);
-  const out = new Uint8Array(APPLE_SIZE * APPLE_SIZE * 4);
-  fill(out, APPLE_SIZE, APPLE_SIZE, LOGO_TILE_HEX);
-  blit(out, APPLE_SIZE, APPLE_SIZE, logoRgba(drawLogo('open'), 11), inner, inner, offset, offset);
+/**
+ * 不透明方形图标：按整数倍居中贴图，四周用底板色补齐。
+ *
+ * 16 的整数倍尺寸（192 / 512）offset 为 0，就是一整块满幅图；
+ * iOS 主屏的 180 = 16 × 11 + 2px 边，maskable 的 512 用 20 倍留出安全区。
+ * 不做非整数缩放——硬缩会得到忽宽忽窄的像素块（ADR-0005）。
+ */
+function paddedIcon(size: number, scale: number, frame: LogoFrame = 'open'): Uint8Array {
+  const inner = LOGO_SIZE * scale;
+  const offset = Math.floor((size - inner) / 2);
+  const out = new Uint8Array(size * size * 4);
+  fill(out, size, size, LOGO_TILE_HEX);
+  blit(out, size, size, logoRgba(drawLogo(frame), scale), inner, inner, offset, offset);
   return out;
 }
 
@@ -110,7 +121,11 @@ export async function writeBrandAssets(): Promise<void> {
     await writeIcon(`logo-${size}.png`, size, logoRgba(open, size / LOGO_SIZE));
   }
   await writeIcon(`logo-${NAV_SIZE}-blink.png`, NAV_SIZE, logoRgba(drawLogo('blink'), NAV_SIZE / LOGO_SIZE));
-  await writeIcon(`logo-${APPLE_SIZE}.png`, APPLE_SIZE, appleIcon());
+  await writeIcon(`logo-${APPLE_SIZE}.png`, APPLE_SIZE, paddedIcon(APPLE_SIZE, 11));
+  for (const size of PWA_ICON_SIZES) {
+    await writeIcon(`logo-${size}.png`, size, paddedIcon(size, size / LOGO_SIZE));
+  }
+  await writeIcon(`logo-${MASKABLE_SIZE}-maskable.png`, MASKABLE_SIZE, paddedIcon(MASKABLE_SIZE, MASKABLE_SCALE));
 
   const proof = proofSheet();
   await writeFile(resolve(PROOF_DIR, 'logo.png'), encodePng(proof.width, proof.height, proof.rgba));

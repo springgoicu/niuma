@@ -19,10 +19,25 @@ export const TAIL_IDS = ['tuft', 'long'] as const;
  * ADR-0011：原本挂在身后的背包（laptop / briefcase）在大头比例下完全被躯干挡住，
  * 槽位改画发型；字节编号仍是 [30]，旧档的 1/2 会落到寸头 / 齐刘海。
  */
-export const HEADWEAR_IDS = ['none', 'grad', 'cap', 'beret', 'helmet', 'top'] as const;
+/**
+ * ADR-0061：国风件全部追加在末尾。
+ * 头饰 6→9、颈饰 3→5、发型 5→7；字节编号仍是 `[27..30]` 各一字节，
+ * 32 字节外观编码不需要改协议，旧档的字节值语义保持原样。
+ */
+export const HEADWEAR_IDS = [
+  'none',
+  'grad',
+  'cap',
+  'beret',
+  'helmet',
+  'top',
+  'god_of_wealth',
+  'bamboo_hat',
+  'curse_hoop',
+] as const;
 export const EYEWEAR_IDS = ['none', 'round', 'sun', 'monocle'] as const;
-export const NECKWEAR_IDS = ['none', 'scarf', 'collar', 'phones'] as const;
-export const HAIR_IDS = ['none', 'buzz', 'bangs', 'ponytail', 'afro', 'slick'] as const;
+export const NECKWEAR_IDS = ['none', 'scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant'] as const;
+export const HAIR_IDS = ['none', 'buzz', 'bangs', 'ponytail', 'afro', 'slick', 'topknot', 'braid'] as const;
 
 export type PatternId = (typeof PATTERN_IDS)[number];
 export type SnoutId = (typeof SNOUT_IDS)[number];

@@ -1,6 +1,18 @@
 'use client';
 
-import { POSE, WELCOME_LANDMARKS, WORLD_LAYOUT, type Pose, type PropKind, type SeatKind } from '@niuma/shared-types';
+import {
+  BULLETIN_BOARD,
+  DIRECTION,
+  POSE,
+  SHRINE_ALTAR,
+  TEA_STATION,
+  WELCOME_LANDMARKS,
+  WORLD_LAYOUT,
+  type Direction,
+  type Pose,
+  type PropKind,
+  type SeatKind,
+} from '@niuma/shared-types';
 
 /**
  * 轻互动：售货机、饮水机、咖啡机的一次性反馈，与躺床打呼。
@@ -28,6 +40,89 @@ export function isNearRankBoard(x: number, y: number, range: number = BOARD_INTE
   const dx = x - board.x;
   const dy = y - board.y;
   return dx * dx + dy * dy <= range * range;
+}
+
+/**
+ * 牛马放假告示板（ADR-0059）。
+ *
+ * 感应区只有 64px：比牛马榜的 96px 更贴身，玩家得真的「走过去抬头看」。
+ * 提示要求「在范围内且面朝板面」，但按键与点击只判距离——站在板侧读字的人
+ * 不该因为朝向差一格就按不出面板。
+ */
+export const BULLETIN_INTERACT_RANGE = 64;
+
+/** 是否站在放假告示板周围：坐标取地标底边中心，与碰撞盒同一份真相 */
+export function isNearBulletin(x: number, y: number, range: number = BULLETIN_INTERACT_RANGE): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  const dx = x - BULLETIN_BOARD.x;
+  const dy = y - BULLETIN_BOARD.y;
+  return dx * dx + dy * dy <= range * range;
+}
+
+/**
+ * 赛博财神供案（ADR-0061）。
+ *
+ * 感应区 72px：供案有案面与香炉，人不该贴着香炉站；比设施 56px 宽一档，
+ * 又比牛马榜 96px 窄，保证「走到案前」而不是「路过就能拜」。
+ */
+export const SHRINE_INTERACT_RANGE = 72;
+
+/** 是否站在供案前：坐标取案面底边中心，与碰撞盒同一份真相 */
+export function isNearShrine(x: number, y: number, range: number = SHRINE_INTERACT_RANGE): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  const dx = x - SHRINE_ALTAR.x;
+  const dy = y - SHRINE_ALTAR.y;
+  return dx * dx + dy * dy <= range * range;
+}
+
+/**
+ * 老干部紫砂茶台（ADR-0061）：矮家具，48px 够得着杯沿。
+ *
+ * 这个数字同时承担「别抢饮水机」的职责：茶台离 cooler 只有 34px，
+ * 感应区再大一圈，站在饮水机前按 F 也会被茶台截走。
+ */
+export const TEA_INTERACT_RANGE = 48;
+
+/** 是否站在茶台旁：坐标取桌面底边中心 */
+export function isNearTeaStation(x: number, y: number, range: number = TEA_INTERACT_RANGE): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  const dx = x - TEA_STATION.x;
+  const dy = y - TEA_STATION.y;
+  return dx * dx + dy * dy <= range * range;
+}
+
+/** 四向朝向向量（屏幕坐标：+x 向右、+y 向下），下标与 DIRECTION 一致 */
+const FACING_VECTOR: Readonly<Record<Direction, { x: number; y: number }>> = {
+  [DIRECTION.Down]: { x: 0, y: 1 },
+  [DIRECTION.Left]: { x: -1, y: 0 },
+  [DIRECTION.Right]: { x: 1, y: 0 },
+  [DIRECTION.Up]: { x: 0, y: -1 },
+};
+
+/** 面朝阈值：点积 / 距离 > 0.35，约 ±69°，四向朝向下一格斜角也算「对着」 */
+const FACING_DOT = 0.35;
+
+/**
+ * 玩家是否面朝公告板：拿朝向向量与「指向牌面中心」的单位向量做点积。
+ * 牌面中心取板面几何中心（不是底座），站得高一点低一点都不会误判。
+ */
+export function facesBulletin(x: number, y: number, direction: Direction): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const dx = BULLETIN_BOARD.x - x;
+  const dy = BULLETIN_BOARD.y - BULLETIN_BOARD.height / 2 - y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 1) return true;
+  const facing = FACING_VECTOR[direction];
+  if (!facing) return false;
+  return (facing.x * dx + facing.y * dy) / distance > FACING_DOT;
+}
+
+/** 点击命中：牌面 80×48 的整块矩形，不含底座以外的空白 */
+export function isBulletinHit(x: number, y: number): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const left = BULLETIN_BOARD.x - BULLETIN_BOARD.width / 2;
+  const top = BULLETIN_BOARD.y - BULLETIN_BOARD.height;
+  return x >= left && x <= left + BULLETIN_BOARD.width && y >= top && y <= BULLETIN_BOARD.y;
 }
 
 const INTERACTIVE_KINDS = ['vending', 'cooler', 'coffee'] as const;

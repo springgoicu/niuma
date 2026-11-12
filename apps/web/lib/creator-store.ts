@@ -14,6 +14,7 @@ import {
   SNOUT_IDS,
   TAIL_IDS,
   clampNameLength,
+  normalizeColor,
   sanitizeAppearance,
   type AppearanceColorKey,
   type CharacterAppearance,
@@ -37,6 +38,8 @@ interface CreatorState {
   setName: (name: string) => void;
   setSpecies: (species: Species) => void;
   setColor: (slot: ColorSlot, hex: number) => void;
+  /** 整套配色一次落库：逐槽调 4 次 setColor 会重渲染 4 次，预览就闪 4 下 */
+  applyPalette: (colors: Partial<Record<ColorSlot, number>>) => void;
   setPattern: (id: number) => void;
   setSnout: (id: number) => void;
   setExtra: (id: number) => void;
@@ -73,6 +76,15 @@ export const useCreatorStore = create<CreatorState>()(
         appearance: sanitizeAppearance({
           ...state.appearance,
           colors: { ...state.appearance.colors, [slot]: hex },
+        }),
+        dirty: true,
+      })),
+
+    applyPalette: (colors) =>
+      set((state) => ({
+        appearance: sanitizeAppearance({
+          ...state.appearance,
+          colors: { ...state.appearance.colors, ...colors },
         }),
         dirty: true,
       })),
@@ -159,7 +171,17 @@ export const PART_META: Record<
     slot: 'headwear',
     label: '头饰',
     hint: 'HEAD',
-    labels: { none: '不戴', grad: '学士帽', cap: '鸭舌帽', beret: '贝雷帽', helmet: '安全帽', top: '礼帽' },
+    labels: {
+      none: '不戴',
+      grad: '学士帽',
+      cap: '鸭舌帽',
+      beret: '贝雷帽',
+      helmet: '安全帽',
+      top: '礼帽',
+      god_of_wealth: '财神官帽',
+      bamboo_hat: '江湖斗笠',
+      curse_hoop: '赛博紧箍',
+    },
   },
   eyewear: {
     slot: 'eyewear',
@@ -171,13 +193,29 @@ export const PART_META: Record<
     slot: 'neckwear',
     label: '颈饰',
     hint: 'NECK',
-    labels: { none: '不戴', scarf: '围巾', collar: '项圈', phones: '挂脖耳机' },
+    labels: {
+      none: '不戴',
+      scarf: '围巾',
+      collar: '项圈',
+      phones: '挂脖耳机',
+      chinese_knot: '吉祥中国结',
+      jade_pendant: '翡翠平安扣',
+    },
   },
   hairstyle: {
     slot: 'hairstyle',
     label: '发型',
     hint: 'HAIR',
-    labels: { none: '不剪', buzz: '寸头', bangs: '齐刘海', ponytail: '马尾', afro: '爆炸头', slick: '大背头' },
+    labels: {
+      none: '不剪',
+      buzz: '寸头',
+      bangs: '齐刘海',
+      ponytail: '马尾',
+      afro: '爆炸头',
+      slick: '大背头',
+      topknot: '发髻',
+      braid: '长辫',
+    },
   },
 };
 
@@ -247,4 +285,101 @@ export const GLOBAL_COLOR_ROWS: Array<{ slot: ColorSlot; label: string; hint: st
 export const PRESET_SWATCHES = [
   0xf3efe4, 0xd8cdb4, 0x2a2622, 0x6b4a32, 0xa96c3c, 0xc94f3a,
   0x4fe3c1, 0xa8ff6b, 0xffc53d, 0xff6b3d, 0x5ac8fa, 0x8a3f6b,
+];
+
+/**
+ * 整妆配色：一整套跨槽位的协调色，点一次就把整只角色换好。
+ *
+ * 只给「会被看见」的槽：主体、斑纹、蹄铁、眼睛、角鬃、口鼻、尾巴，外加四件配饰。
+ * 写成部分映射，没列到的槽保持用户原值——套用整妆不该顺手抹掉他刚调好的围巾色。
+ */
+export interface LookPalette {
+  id: string;
+  /** 中文名，放在卡片主行 */
+  name: string;
+  /** 拉丁小字，卡片副行 */
+  hint: string;
+  colors: Partial<Record<ColorSlot, number>>;
+}
+
+/** 三色迷你条取主体 / 斑纹 / 角鬃，一眼能读出这套妆的冷暖 */
+export function lookSwatches(palette: LookPalette): number[] {
+  return [palette.colors.body, palette.colors.pattern, palette.colors.extra].map((hex) =>
+    normalizeColor(hex ?? 0x000000),
+  );
+}
+
+export const LOOK_PALETTES: LookPalette[] = [
+  {
+    id: 'sakura',
+    name: '晨樱',
+    hint: 'sakura',
+    colors: {
+      body: 0xf7dde2,
+      pattern: 0xfffaf9,
+      hoof: 0x8d5a63,
+      eyes: 0x2a1f22,
+      extra: 0xf3c6cf,
+      snout: 0xf7dde2,
+      tail: 0xf7dde2,
+      headwear: 0xc9748a,
+      eyewear: 0xd8b48e,
+      neckwear: 0xb96b83,
+      hairstyle: 0x5a3a41,
+    },
+  },
+  {
+    id: 'peach',
+    name: '蜜桃奶',
+    hint: 'peach',
+    colors: {
+      body: 0xf7e2cf,
+      pattern: 0xfff6ea,
+      hoof: 0x9a6446,
+      eyes: 0x2a201a,
+      extra: 0xe7b98f,
+      snout: 0xf7e2cf,
+      tail: 0xf7e2cf,
+      headwear: 0xd08060,
+      eyewear: 0xc9a37a,
+      neckwear: 0xb8593a,
+      hairstyle: 0x6b3f28,
+    },
+  },
+  {
+    id: 'dusk',
+    name: '暮玫',
+    hint: 'dusk',
+    colors: {
+      body: 0x6d4a55,
+      pattern: 0xe6c9d2,
+      hoof: 0x3b2a30,
+      eyes: 0xf4e3e8,
+      extra: 0xc98ea0,
+      snout: 0x8a5c68,
+      tail: 0x6d4a55,
+      headwear: 0xb96b83,
+      eyewear: 0xd8b48e,
+      neckwear: 0xe6c9d2,
+      hairstyle: 0x3b2a30,
+    },
+  },
+  {
+    id: 'linen',
+    name: '燕麦奶',
+    hint: 'linen',
+    colors: {
+      body: 0xefe6d6,
+      pattern: 0xb89f86,
+      hoof: 0x6b5a48,
+      eyes: 0x3a2f26,
+      extra: 0xd8c4a8,
+      snout: 0xefe6d6,
+      tail: 0xefe6d6,
+      headwear: 0x9a7b62,
+      eyewear: 0x7d8c74,
+      neckwear: 0xb96b83,
+      hairstyle: 0x6b5136,
+    },
+  },
 ];

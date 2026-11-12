@@ -36,6 +36,7 @@ export function NavCard({
   const y = useGameUi((state) => state.y);
   const chatOpen = useGameUi((state) => state.chatOpen);
   const noticeOpen = useGameUi((state) => state.noticeOpen);
+  const installOpen = useGameUi((state) => state.installOpen);
   const navTarget = useGameUi((state) => state.navTarget);
   const [open, setOpen] = useState(true);
   /** 用户手动开合过就不再自动收起，避免和手指抢控制权 */
@@ -73,17 +74,21 @@ export function NavCard({
     else onNavigate(id);
   };
 
-  // 竖屏聊天浮层从左上铺到 250px、公告下拉从右上展开，都与 196px 的导览卡没有并存的余地
-  if (portrait && (chatOpen || noticeOpen)) return null;
+  // 竖屏聊天浮层从左上铺到 250px、右上角的两块下拉（公告 / 桌面入口）都从右上展开，
+  // 与 196px 的导览卡没有并存的余地
+  if (portrait && (chatOpen || noticeOpen || installOpen)) return null;
 
   return (
     <div
       className={`pointer-events-none absolute z-20 ${
         compact ? 'right-3 top-[100px]' : 'bottom-4 right-4 lg:bottom-[248px]'
       }`}
-      // 竖屏右上是「在线徽标 + 2×2 图标格」两行，导览卡压到它下面并让开刘海
+      // 竖屏右上是「在线徽标 + 2 列图标格」：公告 / 存到桌面 / 静音 / 全屏 / 切换园区 /
+      // 下班六个控件排满三行（约 174px），导览卡压到它下面并让开刘海
       style={
-        compact && portrait ? { top: 'calc(max(0.75rem, env(safe-area-inset-top)) + 9rem)' } : undefined
+        compact && portrait
+          ? { top: 'calc(max(0.75rem, env(safe-area-inset-top)) + 11.5rem)' }
+          : undefined
       }
     >
       {open ? (

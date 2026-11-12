@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { employeeNumber } from '../game/badge';
 import {
   ATTENDANCE_KEY,
+  AttendanceTracker,
   dayKey,
   formatDuration,
   getActiveDays,
@@ -230,5 +231,41 @@ describe('本地存档', () => {
 
     storage.setItem(ATTENDANCE_KEY, '{broken');
     expect(loadAttendance(storage)).toBeNull();
+  });
+});
+
+describe('多标签页对账', () => {
+  it('落盘取并集：后写的标签页不会把另一页的工时抹掉', () => {
+    const now = Date.now();
+    const storage = memoryStorage();
+    const today = dayKey(now);
+    // 这一页进来时存档里是 10 分钟
+    saveAttendance(
+      record({
+        firstJoinDate: today,
+        totalOnlineMs: 600_000,
+        dailyRecords: { [today]: 600_000 },
+        sessionStartTime: now,
+      }),
+      storage,
+    );
+    const tracker = new AttendanceTracker(now, storage);
+
+    // 另一个标签页刚写了 20 分钟
+    saveAttendance(
+      record({
+        firstJoinDate: today,
+        totalOnlineMs: 1_200_000,
+        dailyRecords: { [today]: 1_200_000 },
+        sessionStartTime: now,
+      }),
+      storage,
+    );
+    tracker.flush();
+
+    const saved = loadAttendance(storage)!;
+    expect(saved.dailyRecords[today]!).toBeGreaterThanOrEqual(1_200_000);
+    expect(saved.totalOnlineMs).toBeGreaterThanOrEqual(1_200_000);
+    // 没起 start() 就没有定时器，这里也不调 dispose()（它要碰 document）
   });
 });

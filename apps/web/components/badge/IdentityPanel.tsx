@@ -49,6 +49,26 @@ export function IdentityPanel({ archive }: { archive: BadgeArchive }) {
         <Chip />
       </div>
 
+      {/* 成就戳印：与主章分开，告诉玩家这里的小章是可以一枚枚攒的 */}
+      {archive.achievements.length > 0 && (
+        <div className="border-t-2 border-ink-600 px-4 py-3">
+          <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-mist-500">已解锁成就</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {archive.achievements.map((achievement) => (
+              <span
+                key={achievement}
+                className="rotate-[-4deg] border-2 border-amber-400/70 px-2 py-1 font-mono text-[9px] font-semibold tracking-[0.1em] text-amber-400"
+              >
+                {achievement}
+              </span>
+            ))}
+          </div>
+          <p className="mt-1.5 font-mono text-[8px] leading-relaxed text-mist-500">
+            在广场北侧的放假告示板敲满 20 下木鱼即可盖上，记录只存在这台设备。
+          </p>
+        </div>
+      )}
+
       <StampSeal stamp={archive.stamp} stampRed={archive.stampRed} isSelf={archive.isSelf} />
     </div>
   );

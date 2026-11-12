@@ -111,3 +111,20 @@ export function jumpShadowFor(liftTexels: number): 0 | 1 {
 
 /** 暴露给调用方的常量：服务端下发的 pose 字符串直接可用 */
 export const PONY_POSES: readonly PonyPoseName[] = ['idle', 'walk', 'sit', 'lie', 'vent'];
+
+/**
+ * 合十作揖的下俯包络（ADR-0061）：900ms 内 0 → 2 → 0 的三角波。
+ *
+ * 与跳跃同一条纪律——量是整数纹素、方向只向下沉（正值），**不做纵向缩放**：
+ * 非整数缩放会把 1px 描边拉成半像素（ADR-0005）。上下两段不对称（45% 下、55% 回），
+ * 因为「俯身」比「起身」快一点才像在行礼而不是在鞠躬谢幕。
+ */
+export const BOW_DURATION_MS = 900;
+const BOW_DEPTH = 2;
+
+export function bowTexelsAt(elapsedMs: number): number {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs >= BOW_DURATION_MS) return 0;
+  const t = elapsedMs / BOW_DURATION_MS;
+  const envelope = t < 0.45 ? t / 0.45 : (1 - t) / 0.55;
+  return Math.max(0, Math.min(BOW_DEPTH, Math.round(envelope * BOW_DEPTH)));
+}

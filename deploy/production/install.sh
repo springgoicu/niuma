@@ -79,6 +79,7 @@ fi
 apt-get install -y -qq --no-install-recommends \
   ca-certificates curl git jq openssl rsync gzip \
   nginx certbot python3-certbot-nginx \
+  libnginx-mod-http-headers-more-filter \
   >/tmp/niuma-apt.log 2>&1 || die "apt 安装失败，见 /tmp/niuma-apt.log"
 echo "   nginx $(nginx -v 2>&1 | awk -F/ '{print $2}') | certbot $(certbot --version 2>&1 | awk '{print $2}')"
 
@@ -231,8 +232,18 @@ sed -i 's/^[[:space:]]*worker_connections[[:space:]].*;/    worker_connections 1
 sed -i 's/^[[:space:]]*# multi_accept on;/    multi_accept on;/' /etc/nginx/nginx.conf
 sed -i 's/^[[:space:]]*server_tokens[[:space:]].*;/	server_tokens off;/' /etc/nginx/nginx.conf
 
-sed "s#@APP_BASE@#$APP_BASE#g" "$TPL_DIR/nginx/00-niuma-http.conf.template" \
-  > /etc/nginx/conf.d/00-niuma-http.conf
+# nginx 原生没有「删除响应头」的指令：server_tokens off 只去掉版本号，
+# 仍会发 `Server: nginx`。真正删掉要靠 headers-more 模块。
+# 模块没装上就退化成注释，不能让整份配置渲染失败、把站点带崩。
+if [ -f /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so ]; then
+  SERVER_HEADER_FILTER='more_clear_headers Server;'
+else
+  SERVER_HEADER_FILTER='# 未安装 libnginx-mod-http-headers-more-filter，Server 头保留为 nginx'
+fi
+
+sed -e "s#@APP_BASE@#$APP_BASE#g" \
+    -e "s#@SERVER_HEADER_FILTER@#$SERVER_HEADER_FILTER#g" \
+    "$TPL_DIR/nginx/00-niuma-http.conf.template" > /etc/nginx/conf.d/00-niuma-http.conf
 
 # 静态资源实际落点：monorepo 的 standalone 会保留 apps/web 层级，首次安装时先按经验值写
 WEB_ROOT="$APP_BASE/web"

@@ -142,6 +142,10 @@ export const OpCode = {
   C2S_LIKE: 0x26,
   /** 点赞广播：`[op][targetId u16][likes u16][flags u8]`，flags bit0 = 接收者就是点赞者 */
   S2C_LIKE: 0x27,
+  /** 改工牌名：`[op][len u16][utf8]`，与状态包同构；空名与政治敏感由服务端保留原名 */
+  C2S_SET_NAME: 0x28,
+  /** 改名广播：`[op][entityId u16][len u16][utf8]` */
+  S2C_NAME: 0x29,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -207,6 +211,13 @@ export interface WelcomePacket {
    * 旧服务端不带这一段时为 undefined，客户端按 7 字节处理。
    */
   syncFormat?: SyncFormat;
+  /**
+   * 服务端采信并结算后的本次会话已在线秒数（ADR-0060）。
+   *
+   * 客户端拿它当 `welcomeAt` 的基准，断线重连后接着算而不是从 0 开始；
+   * 旧服务端不带这一段时缺席，按 0 处理，行为退化成「重连归零」。
+   */
+  sessionSec?: number;
 }
 
 /**

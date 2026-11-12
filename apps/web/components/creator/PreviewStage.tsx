@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useCreatorStore, type Pose } from '@/lib/creator-store';
 import { CreatorPreview } from '@/lib/game/preview';
+import { AtelierPetals, AtelierStar } from './Atelier';
 
 const POSES: Array<{ id: Pose; label: string; Icon: LucideIcon }> = [
   { id: 'idle', label: '站立', Icon: PersonStanding },
@@ -93,7 +94,9 @@ export function PreviewStage({ className = '' }: { className?: string }) {
   }, [direction]);
 
   return (
-    <section className={`panel relative flex min-h-0 flex-1 flex-col overflow-hidden xl:min-h-[440px] ${className}`}>
+    <section
+      className={`panel panel-atelier relative flex min-h-0 flex-1 flex-col overflow-hidden xl:min-h-[440px] ${className}`}
+    >
       {/* 手机端把 44px 让给画布：标题条隐藏，只留右上角浮动读数 */}
       <header className="hidden shrink-0 items-center justify-between gap-3 border-b border-ink-700/80 px-5 py-3 sm:flex [@media(max-height:500px)]:hidden">
         <div className="flex items-center gap-2.5">
@@ -101,6 +104,7 @@ export function PreviewStage({ className = '' }: { className?: string }) {
           <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-mist-400">
             spotlight / live preview
           </span>
+          <AtelierStar className="h-1.5 w-1.5 bg-blush-300/70" />
         </div>
         <span className="tag border-ink-600 text-[9px]">{ready ? '60 fps' : 'loading'}</span>
       </header>
@@ -111,11 +115,15 @@ export function PreviewStage({ className = '' }: { className?: string }) {
           aria-hidden
           className="pointer-events-none absolute inset-0"
           style={{
-            // 柔光落在角色脚底：自适应居中后脚底约在画布 84% 处
-            background:
-              'radial-gradient(ellipse 44% 34% at 50% 84%, rgba(79,227,193,0.12) 0%, rgba(79,227,193,0.05) 46%, transparent 76%)',
+            // 柔光落在角色脚底：自适应居中后脚底约在画布 84% 处。
+            // 内芯仍是 mint（全站唯一冷色强调），外环一圈极淡的粉，读作化妆镜的暖反射
+            background: [
+              'radial-gradient(ellipse 32% 26% at 50% 84%, rgba(79,227,193,0.14) 0%, rgba(79,227,193,0.05) 52%, transparent 76%)',
+              'radial-gradient(ellipse 52% 40% at 50% 85%, rgba(231,154,173,0.10) 0%, rgba(231,154,173,0.03) 54%, transparent 78%)',
+            ].join(','),
           }}
         />
+        <AtelierPetals className="opacity-[0.85]" />
         <div aria-hidden className="pointer-events-none absolute inset-3 sm:inset-4">
           <span className="absolute left-0 top-0 h-2.5 w-2.5 border-l border-t border-mint-400/25" />
           <span className="absolute right-0 top-0 h-2.5 w-2.5 border-r border-t border-mint-400/25" />

@@ -4,6 +4,7 @@ import {
   CAREER_MAX_BYTES,
   EMPTY_CAREER,
   careerSessionDeltaMinutes,
+  clampSessionCarry,
   dateToEpochDays,
   epochDaysToDate,
   sanitizeCareer,
@@ -94,6 +95,23 @@ describe('career summary', () => {
     // 重连后服务端会话秒数归零：不能倒扣历史工时
     expect(careerSessionDeltaMinutes(career, 0)).toBe(0);
     expect(careerSessionDeltaMinutes(career, Number.NaN)).toBe(0);
+  });
+
+  it('续算秒数取「上报值 / 一天 / 进程运行时长」三者最小', () => {
+    expect(clampSessionCarry(3_600, 7_200)).toBe(3_600);
+    // 进程才跑了 2 小时：上报 24 小时也只能认 2 小时
+    expect(clampSessionCarry(99_999, 7_200)).toBe(7_200);
+    // 一天是硬上限
+    expect(clampSessionCarry(200_000, 200_000)).toBe(86_400);
+    // 进程刚起：一律从 0 开始，重启后旧值自然失效
+    expect(clampSessionCarry(3_600, 0)).toBe(0);
+  });
+
+  it('负数、NaN 与缺失都按新会话处理', () => {
+    expect(clampSessionCarry(0, 7_200)).toBe(0);
+    expect(clampSessionCarry(-5, 7_200)).toBe(0);
+    expect(clampSessionCarry(Number.NaN, 7_200)).toBe(0);
+    expect(clampSessionCarry(100, Number.NaN)).toBe(0);
   });
 
   it('decodes a legacy v1 payload with knockdownCount defaulted to zero', () => {

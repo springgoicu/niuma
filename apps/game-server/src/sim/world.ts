@@ -10,6 +10,7 @@ import {
   buildSpawnBody,
   encodeCareerSegment,
   packState,
+  quantizeCoord,
   type CareerSummary,
   type CharacterAppearance,
   type Direction,
@@ -20,6 +21,13 @@ import {
 export class Player {
   id = 0;
   wsId = 0;
+  /**
+   * 服务端 NPC：没有连接（wsId = 0），也不计入人数容量、榜单与在线统计。
+   *
+   * 其余字段与真人完全同构——NPC 复用同一套 AOI、同步与地形碰撞，
+   * 「是不是 NPC」只影响准入与展示口径，不影响实体行为。
+   */
+  isNpc = false;
   name = '';
   appearance: CharacterAppearance = DEFAULT_APPEARANCE.cow;
   /** 常驻状态：空串表示没设置，只活在内存里，不进任何持久层 */
@@ -87,8 +95,23 @@ export class Player {
   lastClientMoveSequence = -1; // 上次处理的移动包序号（用于防重复）
   chatWindowStart = 0;
   chatCount = 0;
+  /**
+   * 上一次真正发出的聊天时刻。
+   *
+   * 与 5s/3 条窗口是两层不同的东西：窗口管「一段时间能说几句」，
+   * 冷却管「两句之间至少隔多久」。后者挡住的是按住回车连刷——
+   * 那种情况下三条会在 200ms 内全部离网，把频道刷成一片。
+   */
+  lastChatAt = 0;
+  /** 冷却窗口内被拒的次数；短时间内反复撞墙说明是脚本，不是手速快 */
+  chatStrikes = 0;
+  chatStrikeStart = 0;
+  /** 临时禁言截止时刻；0 表示未禁言。禁言只拦上行，不踢线 */
+  chatMutedUntil = 0;
   /** 上一次状态变更的时间戳：广播节流用，防伪造包把它当放大器 */
   lastStatusAt = 0;
+  /** 上一次改名的时间戳：改名同样是视野广播，需要独立的节流窗口 */
+  lastRenameAt = 0;
   /** 上一次拉取历史的时刻：上翻请求的节流窗口，防止滚动抖动刷穿服务端 */
   lastHistoryAt = 0;
   /** 上一次咀嚼广播：一次性事件绕过 state 位，必须由服务端限频防伪造包放大 */
@@ -149,9 +172,27 @@ export class Player {
     this.careerSegmentCache = null;
   }
 
+  /**
+   * 三元组去脏：只有观测者看得出差别时才置 dirty。
+   *
+   * 基准是上一次**真正广播出去**的量化坐标与 state（由 `runTick` 回写）。
+   * 真人客户端 20Hz 上报移动包、NPC 每 Tick 推进位置，都会经过这一道；
+   * 站着不动、朝向未变时一个字节都不发。
+   */
+  markDirtyIfChanged(): void {
+    if (
+      quantizeCoord(this.x) !== this.lastBroadcastQx ||
+      quantizeCoord(this.y) !== this.lastBroadcastQy ||
+      this.state !== this.lastBroadcastState
+    ) {
+      this.dirty = true;
+    }
+  }
+
   reset(): void {
     this.id = 0;
     this.wsId = 0;
+    this.isNpc = false;
     this.name = '';
     this.appearance = DEFAULT_APPEARANCE.cow;
     this.status = '';
@@ -184,7 +225,12 @@ export class Player {
     this.lastClientMoveSequence = -1;
     this.chatWindowStart = 0;
     this.chatCount = 0;
+    this.lastChatAt = 0;
+    this.chatStrikes = 0;
+    this.chatStrikeStart = 0;
+    this.chatMutedUntil = 0;
     this.lastStatusAt = 0;
+    this.lastRenameAt = 0;
     this.lastHistoryAt = 0;
     this.lastGrazeAt = 0;
     this.lastVentAt = 0;
@@ -220,9 +266,21 @@ export class World {
   readonly players = new Map<number, Player>();
   private readonly pool: Player[] = [];
   private nextId = 1;
+  /** 真人数：准入、排队与在线统计的唯一口径，NPC 永不参与 */
+  private humanCount = 0;
+  private npcTotal = 0;
 
+  /** 总实体数（真人 + NPC）：AOI、实体 id 与内存上限的口径 */
   get size(): number {
     return this.players.size;
+  }
+
+  get humans(): number {
+    return this.humanCount;
+  }
+
+  get npcCount(): number {
+    return this.npcTotal;
   }
 
   create(
@@ -257,6 +315,35 @@ export class World {
     player.applyState(DIRECTION.Down, POSE.Idle, false);
     player.needsViewRefresh = true;
     this.players.set(player.id, player);
+    this.humanCount += 1;
+    return player;
+  }
+
+  /**
+   * 创建一个服务端 NPC：wsId = 0，没有连接，不计入真人口径。
+   *
+   * 其余字段与真人完全同构，因此 AOI、去脏广播、地形碰撞、聊天与工牌渲染
+   * 全部走既有路径；`humans` / `npcCount` 只影响准入与展示。
+   */
+  createNpc(
+    name: string,
+    appearance: CharacterAppearance,
+    x: number,
+    y: number,
+    status = '',
+    joinedAt = Date.now(),
+    career?: CareerSummary,
+  ): Player | null {
+    const player = this.create(name, appearance, 0, x, y, status, joinedAt);
+    if (!player) return null;
+    player.isNpc = true;
+    // create 已按真人记账，这里改成 NPC：两边都必须是 O(1)
+    this.humanCount -= 1;
+    this.npcTotal += 1;
+    if (career) {
+      player.career = career;
+      player.markCareerDirty();
+    }
     return player;
   }
 
@@ -264,6 +351,9 @@ export class World {
     const player = this.players.get(id);
     if (!player) return undefined;
     this.players.delete(id);
+    // 必须在 reset 之前判断：reset 会把 isNpc 归零
+    if (player.isNpc) this.npcTotal = Math.max(0, this.npcTotal - 1);
+    else this.humanCount = Math.max(0, this.humanCount - 1);
     // 点赞去重集合只记 liker id：玩家离开后从所有目标里清掉，
     // 避免实体 id 复用后新玩家顶着旧 id 无法点赞（ADR-0057）。
     for (const other of this.players.values()) other.likedBy.delete(id);

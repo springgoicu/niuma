@@ -2,6 +2,7 @@
 
 import { Container, Graphics, Sprite, TilingSprite, type Application, type Texture } from 'pixi.js';
 import {
+  BAMBOO_SHOOT_ZONES,
   ISLAND,
   ISLAND_SAND,
   ISLAND_SHALLOW,
@@ -25,7 +26,14 @@ import {
   traceContour,
   type ContourPoint,
 } from './autotile';
-import { LEAF_KINDS, WILDFLOWER_KINDS, bloomDecalKind, scatterDecals, type DecalPlacement } from './decals';
+import {
+  LEAF_KINDS,
+  SHOOT_KINDS,
+  WILDFLOWER_KINDS,
+  bloomDecalKind,
+  scatterDecals,
+  type DecalPlacement,
+} from './decals';
 import { isOutdoorGround } from './ground';
 import { seeded } from './seeded';
 import type { DepthSink } from './sort-layer';
@@ -89,6 +97,8 @@ const FLOWER_FIELD_CHANCE = 0.4;
 const WILDFLOWER_CHANCE = 0.025;
 /** 树丛下的落叶密度：只铺在树冠范围内，不混进基础草地层 */
 const LEAF_CHANCE = 0.34;
+/** 竹林里的竹笋密度（ADR-0061）：「零星」而不是「一层」 */
+const SHOOT_CHANCE = 0.22;
 /** 角色的包围盒（texel）：遮挡判定用它去和树冠盒求交 */
 const PONY_HALF_W = 13;
 const PONY_HEIGHT = 48;
@@ -717,6 +727,12 @@ export class TerrainView {
       };
       this.addDecalSprites(
         scatterDecals(rect, (x, y) => this.decalAllowed(x, y), 0x7ea5 + grove.x * 31 + grove.y, LEAF_CHANCE, LEAF_KINDS),
+      );
+    }
+    // 竹笋（ADR-0061）：只撒在竹林区，走近竹林才看得见零星青绿笋尖
+    for (const zone of BAMBOO_SHOOT_ZONES) {
+      this.addDecalSprites(
+        scatterDecals(zone, (x, y) => this.decalAllowed(x, y), 0x2b7c + zone.x * 17 + zone.y, SHOOT_CHANCE, SHOOT_KINDS),
       );
     }
   }

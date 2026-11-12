@@ -14,10 +14,10 @@
  * 16 × 1.25 = 20，所以帽子相对头宽的比例和旧版完全一致，不需要重调锚点偏移。
  */
 export const COSMETIC_CATALOG = {
-  head: ['grad', 'cap', 'beret', 'helmet', 'top'],
+  head: ['grad', 'cap', 'beret', 'helmet', 'top', 'god_of_wealth', 'bamboo_hat', 'curse_hoop'],
   eyes: ['round', 'sun', 'monocle'],
-  neck: ['scarf', 'collar', 'phones'],
-  hair: ['buzz', 'bangs', 'ponytail', 'afro', 'slick'],
+  neck: ['scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant'],
+  hair: ['buzz', 'bangs', 'ponytail', 'afro', 'slick', 'topknot', 'braid'],
 } as const;
 
 export type CosmeticKind = keyof typeof COSMETIC_CATALOG;
@@ -183,7 +183,7 @@ function drawHeadwear(id: string, dir: CosmeticDirection): Icon {
     // 背面只露出两侧檐口：帽檐在身后的宽度收一半
     icon.rect(dir === 'up' ? 3 : 2, 7, dir === 'up' ? 14 : 16, 2, BASE);
     icon.rect(3, 9, 14, 1, DEEP);
-  } else {
+  } else if (id === 'top') {
     // 礼帽：高筒 + 帽带 + 宽檐；侧面的檐向前多伸两列。筒与檐之间不能留空，否则檐像飘着
     icon.rect(7, 0, 6, 1, BASE);
     icon.rect(6, 1, 8, 7, BASE);
@@ -191,6 +191,116 @@ function drawHeadwear(id: string, dir: CosmeticDirection): Icon {
     if (dir === 'side') icon.rect(2, 8, 15, 2, BASE);
     else icon.rect(1, 8, 18, 2, BASE);
     icon.rect(2, 9, dir === 'side' ? 15 : 16, 1, SHADE);
+  } else if (id === 'god_of_wealth') {
+    // 财神官帽（ADR-0061）：硬质圆顶 + 金箍带 + 两侧展角飞翅。
+    // 飞翅压在 row 6–7，与帽体同高——翅比檐高才是「乌纱」，比檐低会读成耳罩。
+    if (dir === 'side') {
+      // 侧面：翅向后（左）平伸，檐向前多压一列
+      icon.rect(0, 6, 5, 1, SHADE);
+      icon.rect(0, 7, 5, 1, DEEP);
+      icon.rect(6, 2, 5, 1, BASE);
+      icon.rect(5, 3, 8, 1, BASE);
+      icon.rect(5, 4, 8, 1, TRIM);
+      icon.rect(4, 5, 10, 1, BASE);
+      icon.rect(4, 6, 10, 2, BASE);
+      icon.rect(4, 8, 12, 1, BASE);
+      icon.rect(4, 9, 14, 1, DEEP);
+      icon.rect(6, 10, 12, 1, SHADE);
+      icon.rect(11, 1, 2, 1, TRIM);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      // 背面：后山高起（顶上多一档暗色），展角从两侧水平伸出
+      icon.rect(0, 6, 4, 2, SHADE);
+      icon.rect(16, 6, 4, 2, SHADE);
+      icon.band(1, 2, SHADE);
+      icon.band(2, 3, BASE);
+      icon.band(3, 4, BASE);
+      icon.band(4, 4, BASE);
+      icon.band(5, 4, TRIM);
+      icon.band(6, 5, BASE);
+      icon.band(7, 6, BASE);
+      icon.band(8, 7, BASE);
+      icon.rect(3, 9, 14, 1, DEEP);
+      icon.rect(9, 0, 2, 1, TRIM);
+      return finished(icon);
+    }
+    // 正面：双翅 + 圆顶 + 金箍带 + 宽檐 + 顶珠
+    icon.rect(0, 6, 4, 2, SHADE);
+    icon.rect(16, 6, 4, 2, SHADE);
+    icon.rect(0, 7, 4, 1, DEEP);
+    icon.rect(16, 7, 4, 1, DEEP);
+    icon.band(2, 3, BASE);
+    icon.band(3, 5, BASE);
+    icon.band(4, 5, BASE);
+    icon.band(5, 5, TRIM);
+    icon.band(6, 6, BASE);
+    icon.band(7, 6, BASE);
+    icon.band(8, 7, BASE);
+    icon.rect(2, 9, 16, 1, DEEP);
+    icon.rect(3, 10, 14, 1, SHADE);
+    icon.rect(9, 1, 2, 1, TRIM);
+  } else if (id === 'bamboo_hat') {
+    // 江湖斗笠（ADR-0061）：顶点偏右 2px 制造下压倾斜，帽檐最外圈一档亮色当 1px 编织纹。
+    // 倾斜靠每行左端收一列实现，不用斜线——1px 斜线在这个尺度会碎成噪点。
+    if (dir === 'side') {
+      icon.rect(12, 2, 2, 1, TRIM);
+      icon.rect(10, 3, 4, 1, BASE);
+      icon.rect(8, 4, 6, 1, BASE);
+      icon.rect(6, 5, 8, 1, BASE);
+      icon.rect(5, 6, 10, 1, BASE);
+      icon.rect(3, 7, 15, 1, BASE);
+      icon.rect(2, 8, 17, 1, SHADE);
+      icon.rect(2, 9, 17, 1, TRIM);
+      icon.rect(4, 10, 15, 1, DEEP);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      // 背面：锥顶居中，颈后系带打一个结
+      icon.rect(9, 2, 2, 1, TRIM);
+      icon.rect(8, 3, 4, 1, BASE);
+      icon.rect(6, 4, 8, 1, BASE);
+      icon.rect(5, 5, 10, 1, BASE);
+      icon.rect(4, 6, 12, 1, BASE);
+      icon.rect(2, 7, 16, 1, BASE);
+      icon.rect(1, 8, 18, 1, SHADE);
+      icon.rect(1, 9, 18, 1, TRIM);
+      icon.rect(9, 10, 2, 2, DEEP);
+      return finished(icon);
+    }
+    icon.rect(11, 2, 2, 1, TRIM);
+    icon.rect(9, 3, 4, 1, BASE);
+    icon.rect(7, 4, 6, 1, BASE);
+    icon.rect(5, 5, 9, 1, BASE);
+    icon.rect(4, 6, 12, 1, BASE);
+    icon.rect(2, 7, 16, 1, BASE);
+    icon.rect(1, 8, 18, 1, SHADE);
+    icon.rect(1, 9, 18, 1, TRIM);
+    icon.rect(2, 10, 16, 1, DEEP);
+  } else {
+    // 赛博紧箍咒（ADR-0061）：贴前额的一圈金箍（row 10–12），
+    // 上下各留一档亮边当「自带辉光」，正中 3×3 空心方环读成卷云纹。
+    if (dir === 'side') {
+      icon.rect(3, 9, 14, 1, TRIM);
+      icon.rect(4, 10, 13, 2, BASE);
+      icon.rect(5, 12, 11, 1, SHADE);
+      icon.rect(10, 10, 2, 2, DEEP);
+      return finished(icon);
+    }
+    icon.rect(2, 9, 16, 1, TRIM);
+    icon.rect(2, 10, 16, 2, BASE);
+    icon.rect(3, 12, 14, 1, SHADE);
+    if (dir === 'up') {
+      // 背面看到的是箍的内侧：卷云纹只在额前，背后只留一道暗槽
+      icon.rect(9, 10, 2, 2, DEEP);
+      return finished(icon);
+    }
+    // 正中卷云：3×3 空心方环
+    icon.rect(9, 10, 3, 1, DEEP);
+    icon.rect(10, 11, 1, 1, BASE);
+    icon.rect(9, 11, 1, 1, DEEP);
+    icon.rect(11, 11, 1, 1, DEEP);
+    icon.rect(9, 12, 3, 1, DEEP);
   }
 
   return finished(icon);
@@ -307,6 +417,75 @@ function drawNeckwear(id: string, dir: CosmeticDirection): Icon {
       icon.rect(9, 10, 2, 3, DEEP);
     }
     return icon;
+  }
+
+  if (id === 'chinese_knot') {
+    // 吉祥中国结（ADR-0061）：颈线一条暗带 + 胸口菱形盘长结 + 双流苏穗。
+    // 结心用一档深色方块当「盘长」的孔，别画成实心菱形——实心就读成护身符牌。
+    if (dir === 'side') {
+      icon.rect(6, 8, 8, 1, DEEP);
+      icon.rect(11, 10, 2, 1, BASE);
+      icon.rect(10, 11, 4, 1, BASE);
+      icon.rect(9, 12, 6, 1, BASE);
+      icon.rect(10, 13, 4, 1, BASE);
+      icon.rect(10, 12, 2, 1, DEEP);
+      icon.rect(11, 14, 1, 5, DEEP);
+      icon.rect(11, 19, 3, 1, SHADE);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      // 背面：结打在颈后，只留两条短尾
+      icon.band(8, 5, DEEP);
+      icon.rect(8, 9, 4, 2, SHADE);
+      icon.rect(9, 11, 2, 3, DEEP);
+      return finished(icon);
+    }
+    icon.band(8, 5, DEEP);
+    icon.rect(9, 10, 2, 1, BASE);
+    icon.rect(8, 11, 4, 1, BASE);
+    icon.rect(7, 12, 6, 1, BASE);
+    icon.rect(8, 13, 4, 1, BASE);
+    icon.rect(9, 14, 2, 1, BASE);
+    // 盘长孔：结心压暗
+    icon.rect(9, 12, 2, 1, DEEP);
+    // 双流苏穗
+    icon.rect(8, 15, 1, 4, DEEP);
+    icon.rect(11, 15, 1, 4, DEEP);
+    icon.rect(7, 19, 3, 1, SHADE);
+    icon.rect(10, 19, 3, 1, SHADE);
+    return finished(icon);
+  }
+
+  if (id === 'jade_pendant') {
+    // 翡翠平安扣（ADR-0061）：外圈亮、内圈暗的三行环，中心留 1px 孔。
+    // 孔必须是 OUTLINE 而不是透明：silhouette 只沿形状外沿生长，内部留空会被身体色直接穿透，
+    // 1px 的洞在 20×20 里看不成洞。
+    if (dir === 'side') {
+      icon.rect(9, 8, 6, 1, DEEP);
+      icon.rect(11, 9, 2, 1, DEEP);
+      icon.rect(9, 11, 4, 1, BASE);
+      icon.rect(9, 12, 4, 2, BASE);
+      icon.rect(10, 12, 2, 2, SHADE);
+      icon.set(10, 12, OUTLINE);
+      icon.rect(9, 14, 4, 1, TRIM);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      // 背面：只剩挂绳与颈后的扣
+      icon.band(8, 4, DEEP);
+      icon.rect(9, 9, 2, 4, DEEP);
+      icon.rect(8, 12, 4, 1, SHADE);
+      return finished(icon);
+    }
+    icon.band(8, 4, DEEP);
+    icon.rect(9, 9, 2, 1, DEEP);
+    icon.rect(8, 11, 4, 1, BASE);
+    icon.rect(7, 12, 6, 1, BASE);
+    icon.rect(7, 13, 6, 1, BASE);
+    icon.rect(8, 14, 4, 1, TRIM);
+    icon.rect(9, 12, 2, 2, SHADE);
+    icon.set(9, 12, OUTLINE);
+    return finished(icon);
   }
 
   // 挂脖耳机：带子压在颈线，耳罩落在两侧
@@ -447,6 +626,64 @@ function drawHair(id: string, dir: CosmeticDirection): Icon {
     heap(icon, 3, 10, 3, 4, BASE);
     heap(icon, 17, 10, 3, 4, BASE);
     icon.rect(1, 15, 18, 1, SHADE);
+    return finished(icon);
+  }
+
+  if (id === 'topknot') {
+    // 发髻（ADR-0061）：颅顶照常铺一层，上面再收成一股圆髻，一根发簪横穿。
+    // 髻必须压到 row 8 收口，和 crown 的顶行接上，否则中间留缝就读成「头上顶着个球」。
+    if (dir === 'side') {
+      crown(icon, 11, 12, 6, 3);
+      icon.rect(9, 3, 4, 5, BASE);
+      icon.rect(8, 4, 5, 3, BASE);
+      icon.set(10, 5, DEEP);
+      icon.rect(6, 6, 9, 1, TRIM);
+      icon.rect(15, 9, 2, 3, SHADE);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      crown(icon, 10, 13, 7, 4);
+      icon.rect(8, 3, 4, 5, BASE);
+      icon.rect(7, 4, 6, 3, BASE);
+      icon.set(9, 6, DEEP);
+      icon.rect(5, 6, 10, 1, TRIM);
+      return finished(icon);
+    }
+    crown(icon, 10, 12, 8, 4);
+    icon.rect(8, 3, 4, 5, BASE);
+    icon.rect(7, 4, 6, 3, BASE);
+    icon.set(9, 5, DEEP);
+    icon.set(10, 6, DEEP);
+    icon.rect(5, 6, 10, 1, TRIM);
+    return finished(icon);
+  }
+
+  if (id === 'braid') {
+    // 长辫（ADR-0061）：正面只看得见肩头一截，侧面与背面整条垂到后腰；
+    // 编股靠每两行换一档明度，比画锯齿更省像素也更读得出「辫」。
+    if (dir === 'side') {
+      crown(icon, 11, 12, 6, 3);
+      icon.rect(2, 11, 3, 3, BASE);
+      icon.rect(1, 12, 3, 3, DEEP);
+      icon.rect(1, 15, 3, 3, BASE);
+      icon.rect(2, 18, 2, 1, SHADE);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      crown(icon, 10, 13, 7, 4);
+      icon.rect(9, 13, 3, 2, DEEP);
+      icon.rect(9, 15, 3, 2, BASE);
+      icon.rect(9, 17, 3, 2, DEEP);
+      icon.rect(9, 19, 3, 1, SHADE);
+      return finished(icon);
+    }
+    crown(icon, 10, 12, 8, 4);
+    icon.rect(1, 12, 2, 3, SHADE);
+    icon.rect(17, 12, 2, 3, SHADE);
+    icon.rect(17, 12, 2, 2, BASE);
+    icon.rect(17, 14, 2, 2, DEEP);
+    icon.rect(17, 16, 2, 2, BASE);
+    icon.rect(18, 18, 1, 1, SHADE);
     return finished(icon);
   }
 

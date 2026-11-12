@@ -97,6 +97,10 @@ export const TERRAIN_COLORS = {
   rockLight: 0xc3baa8,
   reed: 0x7fa863,
   reedLight: 0xa8c886,
+  /** 竹笋（ADR-0061）：笋身两档青绿 + 一档笋壳熟褐，与芦苇同族但更嫩 */
+  bambooShoot: 0x9fd07a,
+  bambooShootDark: 0x5d9a52,
+  bambooHusk: 0x8a6a44,
 } as const;
 
 /**

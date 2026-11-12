@@ -30,6 +30,20 @@
   --ease-out-expo: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+@theme {
+  /*
+   * 妆造层（只在捏人页 /create 使用）：玫瑰金与柔粉只做点缀与氛围，
+   * 不承担任何状态语义——选中态、焦点环、主按钮仍然只属于 mint-400。
+   */
+  --color-blush-100: #fbe9ec;
+  --color-blush-300: #f0b6c3;
+  --color-blush-400: #e79aad;
+  --color-rose-500: #b96b83;
+  --color-gilt-400: #d8b48e;
+  /* 拉丁衬线只服务 Atelier 一个词：中文仍走系统栈，避免宋体在 10px 上发虚 */
+  --font-editorial: Georgia, "Times New Roman", "Noto Serif", serif;
+}
+
 /* ============ 自托管字体（拉丁子集，同源加载，无外部依赖） ============ */
 @font-face {
   font-family: "Oswald";
@@ -389,6 +403,26 @@
   .animate-board-in {
     animation: board-in 180ms var(--ease-out-expo);
   }
+
+  /* 放假告示板：软木板从下方 10px 落定，比牛马榜更重一点，像把整块板子搬过来 */
+  .animate-bulletin-in {
+    animation: bulletin-in 200ms var(--ease-out-expo);
+  }
+
+  /* 赛博木鱼：敲击时整只木鱼下沉 2px 再回弹，不做弹跳 */
+  .animate-fish-hit {
+    animation: fish-hit 140ms var(--ease-out-expo);
+  }
+
+  /* 金色飘字：从木鱼口升起 34px，边走边淡出 */
+  .animate-fish-word {
+    animation: fish-word 1.1s var(--ease-out-expo) forwards;
+  }
+
+  /* 成就戳印：盖下来时略微放大再落定 */
+  .animate-stamp-in {
+    animation: stamp-in 260ms var(--ease-out-expo);
+  }
 }
 
 @keyframes marquee {
@@ -493,6 +527,54 @@
   }
 }
 
+@keyframes bulletin-in {
+  from {
+    transform: translateY(10px) scale(0.985);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes fish-hit {
+  0% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(2px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes fish-word {
+  from {
+    transform: translate(-50%, 0) translateX(var(--drift, 0));
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    transform: translate(-50%, -34px) translateX(var(--drift, 0));
+    opacity: 0;
+  }
+}
+
+@keyframes stamp-in {
+  from {
+    transform: rotate(12deg) scale(1.35);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(12deg) scale(1);
+    opacity: 1;
+  }
+}
+
 /* 先闭 117ms 再睁开：起手就是闭眼帧，中间那一格几乎瞬时，读起来是一次眨眼而不是淡入淡出 */
 @keyframes blink-once {
   0%,
@@ -501,6 +583,93 @@
   }
   43%,
   100% {
+    opacity: 0;
+  }
+}
+
+/* ============ 妆造层：捏人页专用装饰（/create） ============ */
+
+@layer components {
+  /*
+   * 镜框：2px ink 外框内侧再收一道 1px 玫瑰金细线，读作化妆镜的镜沿。
+   * 用独立的 ::before（.panel-scan 占用的是 ::after），只描边不上色，
+   * pointer-events: none 保证不挡点击。滚动容器请把滚动交给内层，
+   * 否则伪元素会跟着内容滚走。
+   */
+  .panel-atelier::before {
+    content: "";
+    position: absolute;
+    inset: var(--atelier-inset, 5px);
+    pointer-events: none;
+    border: 1px solid rgb(216 180 142 / 0.16);
+    background: linear-gradient(180deg, rgb(251 233 236 / 0.05), transparent 34%);
+  }
+
+  /* 两端淡出、中点一枚菱形金饰的细线，替代硬 border-b */
+  .atelier-rule {
+    position: relative;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(216 180 142 / 0.34) 18%,
+      rgb(216 180 142 / 0.34) 82%,
+      transparent
+    );
+  }
+
+  .atelier-rule::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 5px;
+    height: 5px;
+    transform: translate(-50%, -50%) rotate(45deg);
+    border: 1px solid rgb(216 180 142 / 0.65);
+    background: var(--color-ink-900);
+  }
+
+  .atelier-rule-plain::after {
+    display: none;
+  }
+
+  /* 四角星芒：clip-path 裁出来，不引图标、不吃 emoji 的字宽 */
+  .atelier-star {
+    clip-path: polygon(50% 0%, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0% 50%, 39% 39%);
+  }
+}
+
+@layer utilities {
+  /*
+   * 花瓣：基态 opacity: 0，reduced-motion 把动画归零后自然不可见，
+   * 不会在屏幕角上留下一排静止的小方块。
+   */
+  .animate-petal {
+    opacity: 0;
+    animation: petal-drift var(--petal-duration, 18s) linear var(--petal-delay, 0s) infinite;
+  }
+}
+
+@media (max-width: 640px) {
+  .panel-atelier {
+    --atelier-inset: 4px;
+  }
+}
+
+@keyframes petal-drift {
+  0% {
+    transform: translate3d(0, 10px, 0) rotate(18deg) scale(0.7);
+    opacity: 0;
+  }
+  18% {
+    opacity: var(--petal-peak, 0.45);
+  }
+  78% {
+    opacity: var(--petal-peak, 0.45);
+  }
+  100% {
+    transform: translate3d(var(--petal-sway, 10px), -118px, 0) rotate(150deg) scale(1);
     opacity: 0;
   }
 }

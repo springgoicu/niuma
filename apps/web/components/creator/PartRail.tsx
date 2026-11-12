@@ -10,6 +10,7 @@ import {
   type CosmeticKind,
   type PartKey,
 } from '@/lib/creator-store';
+import { AtelierRule } from './Atelier';
 import type { CreatorTab } from './CreatorTabs';
 
 /** 选项按钮：中文标签走正文字体，1px 描边，选中只换色相不换体积 */
@@ -46,7 +47,7 @@ function Group({
 }) {
   return (
     <section className="mt-4 xl:mt-5">
-      <div className="flex items-baseline justify-between gap-2 border-b border-ink-700/70 pb-2">
+      <div className="flex items-baseline justify-between gap-2 pb-2">
         <button
           type="button"
           onClick={onFocus}
@@ -66,6 +67,7 @@ function Group({
         </button>
         <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-mist-400">{hint}</span>
       </div>
+      <AtelierRule ornament={false} />
       <div className="mt-2.5 grid grid-cols-2 gap-1.5">{children}</div>
     </section>
   );
@@ -119,7 +121,7 @@ export function PartRail({ mobileTab, className = '' }: { mobileTab?: CreatorTab
     partGroup(kind, catalog, (id) => setCosmetic(kind, id));
 
   return (
-    <aside className={`panel p-5 ${className}`}>
+    <aside className={`panel panel-atelier p-5 ${className}`}>
       <div className={showSpecies ? '' : 'hidden xl:block'}>
         <div className="flex items-baseline justify-between gap-2">
           <h2 className="font-display text-[17px] font-semibold tracking-[0.08em] text-mist-100">工种</h2>

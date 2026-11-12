@@ -77,6 +77,60 @@ describe('配件目录', () => {
   });
 });
 
+describe('国风配件（ADR-0061）', () => {
+  const lumaAt = (data: Uint8Array, x: number, y: number): number => data[(y * COSMETIC_SIZE + x) * 4] ?? 0;
+  const alphaAt = (data: Uint8Array, x: number, y: number): number => data[(y * COSMETIC_SIZE + x) * 4 + 3] ?? 0;
+
+  it('斗笠的檐口是一条连续的亮色编织纹，不是散点', () => {
+    // 「边缘留 1px 浅褐编织纹」在灰度图里就是檐口那一行取最亮档并且整条连着
+    const hat = drawCosmetic('head', 'bamboo_hat', 'down');
+    let run = 0;
+    for (let x = 0; x < COSMETIC_SIZE; x += 1) if (lumaAt(hat, x, 9) > 200) run += 1;
+    expect(run).toBeGreaterThanOrEqual(14);
+  });
+
+  it('平安扣中心 1px 明显暗于四邻，且不是透明洞', () => {
+    // 透气孔只能靠明度表达：silhouette 只沿外沿生长，真留透明会被身体色直接穿透
+    const jade = drawCosmetic('neck', 'jade_pendant', 'down');
+    const center = lumaAt(jade, 9, 12);
+    expect(alphaAt(jade, 9, 12)).toBeGreaterThan(0);
+    expect(center).toBeLessThan(lumaAt(jade, 9, 11));
+    expect(center).toBeLessThan(lumaAt(jade, 7, 12));
+  });
+
+  it('中国结的双流苏垂到画布底部一行', () => {
+    const knot = drawCosmetic('neck', 'chinese_knot', 'down');
+    let lowest = -1;
+    for (let y = 0; y < COSMETIC_SIZE; y += 1) {
+      for (let x = 0; x < COSMETIC_SIZE; x += 1) if (alphaAt(knot, x, y)) lowest = y;
+    }
+    expect(lowest).toBeGreaterThanOrEqual(18);
+  });
+
+  it('紧箍是一道压在前额的横箍，不是飘在头顶的帽子', () => {
+    const hoop = drawCosmetic('head', 'curse_hoop', 'down');
+    let top = -1;
+    for (let y = 0; y < COSMETIC_SIZE && top < 0; y += 1) {
+      for (let x = 0; x < COSMETIC_SIZE; x += 1) {
+        if (alphaAt(hoop, x, y)) {
+          top = y;
+          break;
+        }
+      }
+    }
+    expect(top).toBeGreaterThanOrEqual(8);
+    let band = 0;
+    for (let x = 0; x < COSMETIC_SIZE; x += 1) if (alphaAt(hoop, x, 10)) band += 1;
+    expect(band).toBeGreaterThanOrEqual(14);
+  });
+
+  it('官帽有向两侧平伸的展角：左右两列在帽体之外仍有像素', () => {
+    const hat = drawCosmetic('head', 'god_of_wealth', 'down');
+    expect(alphaAt(hat, 0, 6) + alphaAt(hat, 1, 6)).toBeGreaterThan(0);
+    expect(alphaAt(hat, 18, 6) + alphaAt(hat, 19, 6)).toBeGreaterThan(0);
+  });
+});
+
 describe('配件挂点', () => {
   it('背面没有眼睛，其余朝向都有', () => {
     for (const species of ['cow', 'horse'] as const) {

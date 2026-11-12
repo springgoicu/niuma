@@ -11,7 +11,7 @@ export interface GeneratedClip {
 }
 
 export const SPRITE_LAYOUT = {
-  "version": 8,
+  "version": 9,
   "frame": {
     "w": 64,
     "h": 64,

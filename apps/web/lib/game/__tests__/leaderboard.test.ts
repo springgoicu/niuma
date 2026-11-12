@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { BOARD_METRIC } from '@niuma/shared-types';
-import { BOARD_METRICS, formatBoardValue, metricMeta } from '../leaderboard';
+import {
+  advanceBoardValue,
+  BOARD_METRICS,
+  formatBoardValue,
+  isBackdropCloseAllowed,
+  metricMeta,
+} from '../leaderboard';
 
 describe('牛马榜展示口径', () => {
   it('六个指标各有一条元数据，不重不漏', () => {
@@ -44,5 +50,40 @@ describe('牛马榜展示口径', () => {
     expect(formatBoardValue(BOARD_METRIC.Knockdown, Number.NaN)).toBe('0');
     expect(formatBoardValue(BOARD_METRIC.Likes, 1_024)).toBe('1,024');
     expect(formatBoardValue(BOARD_METRIC.Likes, -1)).toBe('0');
+  });
+
+  it('不足一分钟的工时读作 <1m，不跟「没工时」共用 0m', () => {
+    expect(formatBoardValue(BOARD_METRIC.Week, 0)).toBe('0m');
+    expect(formatBoardValue(BOARD_METRIC.Week, 0.4)).toBe('<1m');
+  });
+});
+
+describe('面板关闭手势', () => {
+  it('打开后 400ms 内的遮罩按压不算关闭意图', () => {
+    const openedAt = 1_000;
+    expect(isBackdropCloseAllowed(openedAt, openedAt)).toBe(false);
+    expect(isBackdropCloseAllowed(openedAt, openedAt + 399)).toBe(false);
+    expect(isBackdropCloseAllowed(openedAt, openedAt + 400)).toBe(true);
+  });
+
+  it('坏时间戳一律当作不可关闭，不误关刚打开的面板', () => {
+    expect(isBackdropCloseAllowed(Number.NaN, 1_500)).toBe(false);
+    expect(isBackdropCloseAllowed(1_000, Number.NaN)).toBe(false);
+  });
+});
+
+describe('快照本地推进', () => {
+  it('在岗按秒推进，工时按整分钟推进', () => {
+    expect(advanceBoardValue(BOARD_METRIC.Duty, 60, 12.9)).toBe(72);
+    expect(advanceBoardValue(BOARD_METRIC.Duty, 60, 0)).toBe(60);
+    expect(advanceBoardValue(BOARD_METRIC.Week, 60, 12.9)).toBe(60);
+    expect(advanceBoardValue(BOARD_METRIC.Week, 60, 61)).toBe(61);
+  });
+
+  it('计数类不随时间推进，坏数值落到 0', () => {
+    expect(advanceBoardValue(BOARD_METRIC.Steps, 30, 90)).toBe(30);
+    expect(advanceBoardValue(BOARD_METRIC.Likes, 3, 90)).toBe(3);
+    expect(advanceBoardValue(BOARD_METRIC.Duty, -5, 10)).toBe(0);
+    expect(advanceBoardValue(BOARD_METRIC.Duty, Number.NaN, 10)).toBe(0);
   });
 });

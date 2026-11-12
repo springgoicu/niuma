@@ -39,12 +39,27 @@ describe('牛马榜面板静态渲染', () => {
     expect(html).toContain('aria-controls="leaderboard-panel"');
     expect(html).toContain('role="tabpanel"');
     for (const label of ['在岗', '工时', '摸鱼', '击倒', '步数', '人气']) expect(html).toContain(label);
-    expect(html).toContain('本次连续在岗 · 服务端计时');
+    expect(html).toContain('本次在岗 · 服务端计时，断线累加');
     expect(html).toContain('夜班实习生');
     expect(html).toContain('TOP 10');
     expect(html).toContain('仅统计本园区当前在岗 · 离线即离榜');
+    expect(html).toContain('工时按本浏览器累计');
     // 自己在第 2 名：领奖台上带「你」小签
     expect(html).toContain('你');
+  });
+
+  it('数值相同的相邻行标「并列」，不让人以为是排序出错', () => {
+    const html = render({
+      [BOARD_METRIC.Duty]: packet({
+        rows: [
+          { id: 1, name: '并排甲', value: 600 },
+          { id: 2, name: '并排乙', value: 600 },
+          { id: 3, name: '第三位', value: 300 },
+        ],
+      }),
+    });
+    expect(html).toContain('并列');
+    expect(html).toContain('00:10:00');
   });
 
   it('空榜给出可执行的下一步，而不是三个空奖台', () => {

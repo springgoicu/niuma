@@ -49,10 +49,12 @@ interface GameUiState {
    * React 的 effect 重跑，回车就会没反应；用序号把这次请求变成一次真实变化。
    */
   chatFocusSeq: number;
-  /** 工牌卡上的状态编辑面板：与常驻聊天互不打扰，点击画布空白处一并关闭 */
+  /** 工牌卡上的编辑面板（名字 + 状态）：与常驻聊天互不打扰，点击画布空白处一并关闭 */
   statusOpen: boolean;
   /** 园区公告栏（微信群二维码）：右上角的下拉小块，点开才展开 */
   noticeOpen: boolean;
+  /** 「存到桌面」的下拉小块：与公告栏同一格，两者互斥 */
+  installOpen: boolean;
   /** 本地角色姿态：动作按钮据此显示激活 / 不可用态 */
   localPose: Pose;
   /** 是否坐在座位锚点上 */
@@ -88,6 +90,7 @@ interface GameUiState {
   restoreChatOpen: () => void;
   setStatusOpen: (open: boolean) => void;
   setNoticeOpen: (open: boolean) => void;
+  setInstallOpen: (open: boolean) => void;
   reset: () => void;
 }
 
@@ -131,6 +134,7 @@ const INITIAL = {
   chatFocusSeq: 0,
   statusOpen: false,
   noticeOpen: false,
+  installOpen: false,
   localPose: POSE.Idle as Pose,
   seated: false,
   seatKind: null as SeatKind | null,
@@ -238,12 +242,17 @@ export const useGameUi = create<GameUiState>((set) => ({
   restoreChatOpen: () =>
     set(() => (loadChatOpen() ? { chatOpen: true, unread: 0 } : {})),
 
-  // 状态编辑面板仍占左上角：桌面端与左下角的聊天不冲突，只让开右上角的公告栏
+  // 工牌编辑面板仍占左上角：桌面端与左下角的聊天不冲突，只让开右上角的下拉块
   setStatusOpen: (statusOpen) =>
-    set(statusOpen ? { statusOpen, noticeOpen: false } : { statusOpen }),
+    set(statusOpen ? { statusOpen, noticeOpen: false, installOpen: false } : { statusOpen }),
 
-  // 公告栏是右上角的下拉小块，不抢焦点，也不替用户关掉正在用的面板
-  setNoticeOpen: (noticeOpen) => set({ noticeOpen }),
+  // 公告栏与「存到桌面」共用右上角同一格：同一时刻只能开一个，否则两块 2px 边框
+  // 会直接叠在一起。两者都不抢焦点，也不替用户关掉正在用的其它面板。
+  setNoticeOpen: (noticeOpen) =>
+    set(noticeOpen ? { noticeOpen, installOpen: false } : { noticeOpen }),
+
+  setInstallOpen: (installOpen) =>
+    set(installOpen ? { installOpen, noticeOpen: false } : { installOpen }),
 
   reset: () => set(INITIAL),
 }));

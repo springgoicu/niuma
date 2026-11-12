@@ -6,6 +6,7 @@ import {
   SPAWN_RADIUS,
 } from '@niuma/shared-types';
 import type { AdmissionConfig } from './admission/controller';
+import { loadNpcConfig, type NpcConfig } from './npc/config';
 
 export interface ModerationConfig {
   /** 外部词库 JSON 路径；空串表示只用内置词库 */
@@ -20,6 +21,27 @@ export interface ChatHistoryConfig {
   ttlMs: number;
   /** 首屏补发与上翻每页条数 */
   pageSize: number;
+}
+
+/**
+ * 反渗透参数。都是「正常客户端碰不到、伪造包立刻撞墙」的阈值，
+ * 因此不需要随人数调整，也不必进准入控制器的水位计算。
+ */
+export interface SecurityConfig {
+  /** WS 握手 Origin 白名单，逗号分隔；不含 localhost（那条恒放行） */
+  allowedOrigins: string;
+  /**
+   * 移动包软上限（每秒）：超过只丢弃，不断线。
+   * 正常客户端 20Hz，留 5 包余量吸收时钟抖动与重连瞬间的补发。
+   */
+  moveSoftLimit: number;
+  /**
+   * 移动包硬上限（每秒）：超过视为外挂注入/发包渗透，直接踢。
+   * 与软上限之间留 10 包的缓冲，避免恰好卡在边界的正常玩家被误杀。
+   */
+  moveHardLimit: number;
+  /** 聊天强制冷却（毫秒）。0 = 关闭，只保留 5s/3 条窗口 */
+  chatCooldownMs: number;
 }
 
 export interface ServerConfig {
@@ -43,6 +65,10 @@ export interface ServerConfig {
   moderation: ModerationConfig;
   /** 频道历史缓冲；条数、时长与页长都可压测时调小 */
   chatHistory: ChatHistoryConfig;
+  /** 园区 NPC：数量、种子、节奏与区域权重；count=0 即完整回滚 */
+  npc: NpcConfig;
+  /** 反渗透：Origin 白名单、移动包频率、聊天冷却 */
+  security: SecurityConfig;
 }
 
 function readInt(value: string | undefined, fallback: number): number {
@@ -62,6 +88,13 @@ function readBool(value: string | undefined, fallback: boolean): boolean {
   if (value === '0' || value === 'false' || value === 'off') return false;
   if (value === '1' || value === 'true' || value === 'on') return true;
   return fallback;
+}
+
+/** 与 readInt 的区别：显式允许 0（聊天冷却设 0 表示关闭这一层） */
+function readIntWithZero(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 /**
@@ -113,6 +146,15 @@ export function loadConfig(): ServerConfig {
       ttlMs: readInt(process.env.GAME_CHAT_HISTORY_TTL_MS, CHAT_HISTORY_TTL_MS),
       // 页长不跟着配置无限放大：单包预算与面板高度都按协议里的上限对齐
       pageSize: Math.min(readInt(process.env.GAME_CHAT_HISTORY_PAGE, CHAT_HISTORY_PAGE_SIZE), CHAT_HISTORY_MAX_PAGE),
+    },
+    // NPC 的降级与钳制全部收在 npc/config：文件坏了也只告警，不阻断开服
+    npc: loadNpcConfig(),
+    security: {
+      // 留空走 guard 里的默认值（主站两个域名），避免配置漏填就变成「谁都能连」
+      allowedOrigins: process.env.GAME_ALLOWED_ORIGINS ?? '',
+      moveSoftLimit: readInt(process.env.GAME_MOVE_MAX_HZ, 25),
+      moveHardLimit: readInt(process.env.GAME_MOVE_HARD_HZ, 35),
+      chatCooldownMs: readIntWithZero(process.env.GAME_CHAT_COOLDOWN_MS, 500),
     },
   };
 }

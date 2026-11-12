@@ -15,6 +15,7 @@ import {
   saveCreatorSpecies,
   saveProfile,
 } from '@/lib/profile';
+import { AtelierEyebrow } from './Atelier';
 import { ColorConsole } from './ColorConsole';
 import { CreatorTabs, type CreatorTab } from './CreatorTabs';
 import { NamePlate } from './NamePlate';
@@ -93,7 +94,16 @@ export function CreatorShell({ initialSpecies }: { initialSpecies: Species | nul
     <div
       // 头部高度是吸顶 / 内容上边距的唯一来源，刘海屏由 env() 撑开
       className="min-h-dvh bg-ink-900 pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:pb-24"
-      style={{ '--creator-top': 'calc(3.5rem + env(safe-area-inset-top))' } as CSSProperties}
+      style={
+        {
+          '--creator-top': 'calc(3.5rem + env(safe-area-inset-top))',
+          // 两处粉雾只做氛围：左上偏亮像镜前灯，右下偏暗压住整页的重心
+          backgroundImage: [
+            'radial-gradient(ellipse 46% 32% at 8% -6%, rgba(231,154,173,0.08) 0%, transparent 62%)',
+            'radial-gradient(ellipse 40% 30% at 98% 102%, rgba(216,180,142,0.05) 0%, transparent 68%)',
+          ].join(','),
+        } as CSSProperties
+      }
     >
       <header className="pt-safe fixed inset-x-0 top-0 z-40 border-b border-ink-700/80 bg-ink-900/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-[1560px] items-center justify-between gap-4 px-4 sm:px-8">
@@ -120,9 +130,16 @@ export function CreatorShell({ initialSpecies }: { initialSpecies: Species | nul
 
       <main className="mx-auto max-w-[1560px] px-4 pt-[calc(var(--creator-top)+1rem)] [@media(max-height:500px)]:pt-[calc(var(--creator-top)+0.5rem)] sm:px-8 sm:pt-[calc(var(--creator-top)+2rem)]">
         <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-2 border-b border-ink-700/70 pb-4 [@media(max-height:500px)]:pb-2 sm:gap-y-4 sm:pb-6">
-          <h1 className="font-display text-[clamp(24px,3.4vw,38px)] leading-[1.12] font-bold tracking-[-0.01em] text-mist-100 [@media(max-height:500px)]:text-[20px]">
-            捏一头能加班的{species === 'cow' ? '牛' : '马'}
-          </h1>
+          <div className="min-w-0">
+            <AtelierEyebrow
+              latin="Atelier"
+              hint="妆造间 · 换身皮再上班"
+              className="mb-2 [@media(max-height:500px)]:hidden"
+            />
+            <h1 className="font-display text-[clamp(24px,3.4vw,38px)] leading-[1.12] font-bold tracking-[-0.01em] text-mist-100 [@media(max-height:500px)]:text-[20px]">
+              捏一头能加班的{species === 'cow' ? '牛' : '马'}
+            </h1>
+          </div>
           {hydrated && status.empty ? (
             <p className="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-amber-400 [@media(max-height:500px)]:hidden sm:text-[11px]">
               <span className="h-1.5 w-1.5 bg-amber-400" aria-hidden />

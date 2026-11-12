@@ -35,7 +35,22 @@ const nextConfig: NextConfig = {
   compress: false,
   /** 不泄漏技术栈 */
   poweredByHeader: false,
+  /**
+   * 生产包不产出 .map：源码映射等于把 TypeScript 原文交给任何打开 DevTools 的人，
+   * 协议字段、状态机分支、限流阈值全部可读。排障用构建日志与版本号，不靠 sourcemap。
+   */
   productionBrowserSourceMaps: false,
+
+  /**
+   * 构建期剥离 console.log / warn / info，只留 console.error。
+   *
+   * 客户端日志会把网络结构、重连时机、渲染降级路径直接打到控制台，
+   * 对逆向的人是免费的说明书。error 保留：真正的异常堆栈是线上排障的唯一线索。
+   * 注意这只影响生产构建（next build 走 webpack）；dev 下仍然全量输出。
+   */
+  compiler: {
+    removeConsole: { exclude: ['error'] },
+  },
 
   /**
    * 跨源隔离：`SharedArrayBuffer` 的启用前提。

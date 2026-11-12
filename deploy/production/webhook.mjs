@@ -134,6 +134,17 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // 只认 push 事件。Gitee 的 WebHook 可以同时勾选 Issue / PR / Tag 等多种事件，
+  // 那些载荷没有 ref/after，走后面的分支判断会「看起来像一次无 ref 的推送」而触发发版。
+  // 头缺失时放行：自建的 curl 冒烟脚本不发这个头，路径 + token 已经是两层密钥。
+  const event = String(req.headers['x-gitee-event'] ?? '');
+  if (event && !/push/i.test(event)) {
+    log(`忽略：事件类型 ${event}`);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ skipped: true, event }));
+    return;
+  }
+
   let payload;
   try {
     payload = JSON.parse(await readBody(req));

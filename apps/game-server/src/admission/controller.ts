@@ -27,6 +27,11 @@ export interface HelloPayload {
   syncFormat?: SyncFormat;
   /** 本人自报的考勤摘要；服务端只做钳制、审核与转发，不落盘 */
   career?: CareerSummary;
+  /**
+   * 断线前已在线秒数（ADR-0060）。已在 HELLO 分支按「一天 / 进程运行时长」钳过，
+   * 放行时用它把入场时刻往前挪；排队时间不计入在岗。
+   */
+  sessionSec?: number;
 }
 
 export interface AdmissionConfig extends GovernorConfig {

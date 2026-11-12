@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { initInstallPrompt } from '@/lib/install-prompt';
 import { toWsUrl, type ParkEntry } from '@/lib/park';
 import { resolveEntryPark } from '@/lib/park-health';
 import { saveParkId } from '@/lib/park-pref';
@@ -47,6 +48,14 @@ interface EntryState {
  */
 export function PlayShell({ parks, parkId, initialName, initialSpecies }: PlayShellProps) {
   const [entry, setEntry] = useState<EntryState | null>(null);
+
+  /**
+   * 只在园区注册直通 SW（爆炸半径不进首页与捏人页）。
+   * 失败静默：装不上不影响任何玩法，只是「存到桌面」退化成手动引导。
+   */
+  useEffect(() => {
+    initInstallPrompt();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

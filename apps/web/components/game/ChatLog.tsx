@@ -199,6 +199,20 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
   // 一条聊天都没有时，「没有更早的消息了」没有意义，别在空频道里故意提醒用户翻不动
   const hasChat = messages.some((message) => message.kind !== 'system');
 
+  /**
+   * 桌面档字号阶梯；窄版保持原值（ADR-0058）。
+   *
+   * 中文散文在桌面档去掉 `font-mono`：JetBrains Mono 没有中文字形，中文会落到
+   * 回退字体，小字号下中英混排最显糊。时间与计数这类数字仍走等宽，对齐不变。
+   */
+  const metaSkin = compact ? 'font-mono text-[9px]' : 'text-[10px]';
+  const timeSkin = compact ? 'font-mono text-[9px]' : 'font-mono text-[10px]';
+  const systemSkin = compact ? 'font-mono text-[10px]' : 'text-[11px]';
+  const bodySkin = compact ? 'text-[12px]' : 'text-[13px]';
+  const nameSkin = compact ? 'font-mono text-[10px]' : 'font-mono text-[11px]';
+  const emptySkin = compact ? 'font-mono text-[11px]' : 'text-[12px]';
+  const emptySubSkin = compact ? 'text-[10px]' : 'text-[11px]';
+
   return (
     <div className="relative">
       <div
@@ -209,27 +223,28 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
         role="log"
         aria-live="polite"
         aria-label="园区频道消息"
-        className={`space-y-2 overflow-y-auto px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-mint-400/60 ${
-          // 桌面端也要跟着视口高度收：矮窗口里 340px 会把工牌与操作行挤出屏幕
-          compact ? 'max-h-[min(38dvh,220px)]' : 'max-h-[min(46dvh,340px)]'
+        className={`overflow-y-auto px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-mint-400/60 ${
+          // 桌面端也要跟着视口高度收：矮窗口里 340px 会把工牌与操作行挤出屏幕。
+          // 字号放大后上限提到 360px，一屏仍能看到四到五轮对话（ADR-0058）
+          compact ? 'max-h-[min(38dvh,220px)] space-y-2' : 'max-h-[min(48dvh,360px)] space-y-2.5'
         }`}
       >
         {history.loading && (
-          <p role="status" className="flex items-center gap-2 font-mono text-[9px] text-mist-400">
+          <p role="status" className={`flex items-center gap-2 ${metaSkin} text-mist-400`}>
             <span className="h-3 w-0.5 animate-pulse bg-mint-400" aria-hidden />
             正在加载更早的消息…
           </p>
         )}
         {!history.loading && hasChat && !history.hasMore && (
-          <p role="status" className="text-center font-mono text-[9px] tracking-[0.14em] text-mist-400">
+          <p role="status" className={`text-center ${metaSkin} tracking-[0.14em] text-mist-400`}>
             没有更早的消息了
           </p>
         )}
 
         {messages.length === 0 && (
-          <div className="space-y-1.5 font-mono text-[11px] leading-relaxed text-mist-400">
+          <div className={`space-y-1.5 ${emptySkin} leading-relaxed text-mist-400`}>
             <p>频道很安静。按 Enter 说点什么，附近 900px 内的牛马都能看到。</p>
-            <p className="text-[10px]">有人进园、离园，或你在岗满 30 分钟，这里会自动播报。</p>
+            <p className={emptySubSkin}>有人进园、离园，或你在岗满 30 分钟，这里会自动播报。</p>
           </div>
         )}
 
@@ -244,9 +259,9 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
             const marker = systemMarker(message.systemKind);
             return (
               <Fragment key={entryKey(message)}>
-                {divider && <HistoryDivider />}
-                <p className="flex items-baseline gap-1.5 font-mono text-[10px] leading-relaxed text-mist-400">
-                  <span className="shrink-0 tabular-nums text-mist-400" title={full}>
+                {divider && <HistoryDivider compact={compact} />}
+                <p className={`flex items-baseline gap-1.5 ${systemSkin} leading-relaxed text-mist-400`}>
+                  <span className="shrink-0 font-mono tabular-nums text-mist-400" title={full}>
                     {time}
                   </span>
                   <span className={`shrink-0 ${marker.tone}`} aria-hidden>
@@ -260,13 +275,13 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
 
           return (
             <Fragment key={entryKey(message)}>
-              {divider && <HistoryDivider />}
-              <p className="text-[12px] leading-relaxed">
-                <span className="mr-1.5 font-mono text-[9px] tabular-nums text-mist-400" title={full}>
+              {divider && <HistoryDivider compact={compact} />}
+              <p className={`${bodySkin} leading-relaxed`}>
+                <span className={`mr-1.5 ${timeSkin} tabular-nums text-mist-400`} title={full}>
                   {time}
                 </span>
                 <span
-                  className={`mr-2 font-mono text-[10px] uppercase tracking-[0.12em] ${
+                  className={`mr-2 ${nameSkin} uppercase tracking-[0.12em] ${
                     message.self ? 'text-lime-400' : 'text-mint-400'
                   }`}
                 >
@@ -284,11 +299,13 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
   );
 }
 
-function HistoryDivider() {
+function HistoryDivider({ compact }: { compact: boolean }) {
   return (
     <p
       role="separator"
-      className="flex items-center gap-2 py-0.5 font-mono text-[9px] tracking-[0.14em] text-mist-400"
+      className={`flex items-center gap-2 py-0.5 tracking-[0.14em] text-mist-400 ${
+        compact ? 'font-mono text-[9px]' : 'text-[10px]'
+      }`}
     >
       <span className="h-px flex-1 bg-ink-600" aria-hidden />
       以上为进入园区前的消息

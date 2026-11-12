@@ -36,9 +36,11 @@ const EXTRA_COUNT: Record<SpeciesName, number> = { cow: 4, horse: 3 };
  * 图集版本：写进 manifest 与 `sprite-layout.generated.ts`，客户端加载时逐字比对。
  *
  * v8：16-24 列由「张嘴呼叫」重绘为「后撤蓄力 / 前冲头槌 / 后坐力」，并带 1px 速度线。
+ * v9（ADR-0061）：配件目录追加 7 件国风件（头饰 3 / 颈饰 2 / 发型 2），列号不变但
+ * `cos/` 下多出 28 张 PNG，旧 manifest 的 cosmeticFiles 缺这些键，必须靠版本号失效。
  * 这些列的内容变了，缓存中的旧图集必须失效——版本号与列号是同一份契约。
  */
-const ATLAS_VERSION = 8;
+const ATLAS_VERSION = 9;
 
 interface RenderOptions {
   tail: number;
@@ -330,11 +332,18 @@ async function writeWornProof(): Promise<void> {
   const items: Array<{ kind: CosmeticKind; id: string; tint: number }> = [
     { kind: 'head', id: 'cap', tint: 0x4fe3c1 },
     { kind: 'head', id: 'top', tint: 0x4fe3c1 },
+    { kind: 'head', id: 'god_of_wealth', tint: 0xd8452f },
+    { kind: 'head', id: 'bamboo_hat', tint: 0xc9a35c },
+    { kind: 'head', id: 'curse_hoop', tint: 0xf2c94c },
+    { kind: 'neck', id: 'chinese_knot', tint: 0xd8452f },
+    { kind: 'neck', id: 'jade_pendant', tint: 0x3fbf8f },
     { kind: 'hair', id: 'buzz', tint: 0xffc53d },
     { kind: 'hair', id: 'bangs', tint: 0xffc53d },
     { kind: 'hair', id: 'ponytail', tint: 0xffc53d },
     { kind: 'hair', id: 'afro', tint: 0xffc53d },
     { kind: 'hair', id: 'slick', tint: 0xffc53d },
+    { kind: 'hair', id: 'topknot', tint: 0xffc53d },
+    { kind: 'hair', id: 'braid', tint: 0xffc53d },
   ];
   const dirs = [0, 2, 3] as const;
   const width = pad + items.length * (cell + pad);

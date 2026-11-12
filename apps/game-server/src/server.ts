@@ -13,6 +13,7 @@ import {
   OpCode,
   QUEUE_REJECT_REASON,
   TICK_MS,
+  clampSessionCarry,
   decodeAction,
   decodeBoardRequest,
   decodeCareerReport,
@@ -23,12 +24,14 @@ import {
   decodeMove,
   decodePing,
   decodeSetAppearance,
+  decodeSetName,
   decodeSetStatus,
   encodeAppearanceBroadcast,
   encodeBoard,
   encodeCareerBroadcast,
   encodeChatHistory,
   encodeGraze,
+  encodeNameBroadcast,
   encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
@@ -46,12 +49,16 @@ import {
 import { AdmissionController, type HelloPayload } from './admission/controller';
 import type { ServerConfig } from './config';
 import { EgressMeter, RingSampler } from './metrics';
+import { PACKET_MALFORMED, PACKET_UNKNOWN, checkPacket } from './net/guard';
+import { createOriginGuard } from './net/origin';
 import { SpatialGrid } from './spatial/grid';
 import { buildBoardSnapshot, canQueryBoard } from './sim/board';
 import { handleChat } from './sim/chat';
 import { handleLike } from './sim/like';
 import { ChatHistory, type ChatPage } from './sim/history';
 import { loadModerationFilter } from './sim/moderation';
+import { resolveRename } from './sim/name';
+import { createNpcDirector } from './npc';
 import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
 import { resolveSpawn } from './sim/resume';
@@ -67,6 +74,9 @@ interface SocketData {
   openedAt: number;
   msgWindowStart: number;
   msgCount: number;
+  /** 移动包的独立 1 秒窗口：总量窗口挡不住「20Hz 合法包 + 999Hz 移动包」 */
+  moveWindowStart: number;
+  moveCount: number;
 }
 
 const MOVE_SCRATCH = { id: 0, x: 0, y: 0, state: 0 };
@@ -75,6 +85,11 @@ const MOVE_SCRATCH = { id: 0, x: 0, y: 0, state: 0 };
  * 没有下限的话一条伪造包循环就能把整片 AOI 变成广播放大器。
  */
 const STATUS_THROTTLE_MS = 200;
+/**
+ * 改名广播的节流窗口。改名比状态更罕用，1 秒足够挡住伪造包，
+ * 又不会误伤「照着新想的名字反复改两次」的正常操作。
+ */
+const RENAME_THROTTLE_MS = 1000;
 
 export function startGameServer(config: ServerConfig) {
   const world = new World();
@@ -92,6 +107,36 @@ export function startGameServer(config: ServerConfig) {
   let nextWsId = 1;
   let tickCount = 0;
   let lastSampleAt = 0;
+  /**
+   * 进程启动时刻：会话续算的硬上限（ADR-0060）。
+   * 重启后世界与玩家都已消失，凭旧值虚增的在线时长必须一并失效。
+   */
+  const bootedAt = Date.now();
+
+  /**
+   * WS 握手的第二道来源校验。nginx 那层还能被绕过（改站点、暴露端口、
+   * 内嵌 WebView 直连），这一层才是「谁接连接谁负责」。
+   */
+  const originAllowed = createOriginGuard(config.security.allowedOrigins);
+
+  /**
+   * 畸形包与频率攻击的日志必须限流。
+   *
+   * 正常玩家永远不会走到这里，所以这几条日志的唯一来源就是攻击流量。
+   * 逐包打一条带堆栈的 error，等于把磁盘 IO 交给攻击者控制 —— 只汇总计数，
+   * 每 5 秒最多吐一行。
+   */
+  let abuseLogAt = 0;
+  let abuseDropped = 0;
+  let abuseClosed = 0;
+  function logAbuse(kind: string): void {
+    const now = Date.now();
+    if (now - abuseLogAt < 5000) return;
+    console.warn(`[guard] ${kind} dropped=${abuseDropped} closed=${abuseClosed} (5s window)`);
+    abuseLogAt = now;
+    abuseDropped = 0;
+    abuseClosed = 0;
+  }
 
   const transport: Transport = {
     send(wsId, data) {
@@ -102,6 +147,31 @@ export function startGameServer(config: ServerConfig) {
       socket.send(data);
     },
   };
+
+  /**
+   * 园区同事：服务端权威 NPC。
+   *
+   * 与真人共用实体通道，因此 AOI、去脏广播、地形碰撞与工牌渲染全部复用；
+   * 人数容量、排队与榜单只读 `world.humans`，NPC 永远不占真人的名额。
+   * `GAME_NPC_COUNT=0` 是完整回滚开关：不生成、不广播、不发言。
+   */
+  const npcs = createNpcDirector({
+    world,
+    grid,
+    transport,
+    config: config.npc,
+    chatHistory,
+    // 外置台词进频道前过一遍与昵称同一套审核；拒绝整条丢弃（fail-closed）
+    inspect: (text) => {
+      const verdict = moderation.inspect(text);
+      return verdict.verdict === 'reject' ? null : verdict.text;
+    },
+  });
+  const npcSampler = new RingSampler(1200);
+  npcs.spawn();
+  if (npcs.count > 0) {
+    console.log(`[npc] count=${npcs.count} seed=${config.npc.seed} chat=${config.npc.chat ? 'on' : 'off'}`);
+  }
 
   /**
    * 历史页只发给本人：补发与上翻都不走 `handleChat`，
@@ -148,6 +218,9 @@ export function startGameServer(config: ServerConfig) {
   function admit(ws: ServerWebSocket<SocketData>, payload: HelloPayload): void {
     if (ws.data.playerId !== 0) return;
     const now = Date.now();
+    // 续算：把入场时刻往前挪，在岗时长跨重连接着算（ADR-0060）。
+    // 已在 HELLO 里按「一天 / 进程运行时长」钳过，这里只做区间计算。
+    const sessionSec = payload.sessionSec ?? 0;
     // resume 是不可信输入：坐标重新过地形判据，座位重新查权威占用表（见 resolveSpawn）
     const spawn = resolveSpawn(payload.resume, (seatId) => seats.isFree(seatId), config.spawnRadius);
     const player = world.create(
@@ -158,7 +231,7 @@ export function startGameServer(config: ServerConfig) {
       spawn.y,
       payload.status,
       // 入场时刻即在线时长的起点：与座位占用共用同一个 now，避免同一次入场出现两个口径
-      now,
+      now - sessionSec * 1000,
     );
     if (!player) {
       ws.close(1013, 'server full');
@@ -189,6 +262,8 @@ export function startGameServer(config: ServerConfig) {
         state: player.state,
         // 条目格式由服务端说了算：客户端据此用对应的长度解析同步包
         syncFormat: player.syncFormat,
+        // 回显服务端实际采信的会话秒数：客户端拿它当走秒基准，重连后不再归零
+        sessionSec,
       }),
     );
     const occupied = seats.snapshot();
@@ -204,7 +279,7 @@ export function startGameServer(config: ServerConfig) {
     refreshView(player, world, grid, transport);
     // 必须在 refreshView 之后：这时双方的 known 才补齐，播报才发得到「看得见他的人」
     announceEnter(player, world, transport);
-    console.log(`[game] + ${player.name}#${player.id} online=${world.size}`);
+    console.log(`[game] + ${player.name}#${player.id} online=${world.humans}`);
   }
 
   function rejectWaiter(ws: ServerWebSocket<SocketData>, reason: number): void {
@@ -232,9 +307,14 @@ export function startGameServer(config: ServerConfig) {
         `[moderation] status ${statusVerdict.verdict} ws=${ws.data.wsId} hits=${statusVerdict.hits}`,
       );
     }
-    // 新会话的在线增量从 0 起算：客户端上报的 reportedOnlineSec 一律不采信
+    // 会话续算（ADR-0060）：只采信客户端上报的「断线前在线秒数」，
+    // 且按「客户端值 / 一天 / 进程已运行秒数」三方取最小，防止伪造把在岗榜刷爆。
+    const sessionSec = clampSessionCarry(hello.sessionSec, (Date.now() - bootedAt) / 1000);
+    // 新会话的在线增量基线：由服务端写成续算秒数，客户端自报的 reportedOnlineSec 不采信。
+    // 必须与 admit 里前移的 joinedAt 用同一个基准，否则工时会被重复计一遍。
+    // 只对「真的上报过摘要」的连接写基线：从未上报的人不该因为续算被拉进工时榜。
     const career = sanitizeIncomingCareer(hello.career, ws.data.wsId);
-    career.reportedOnlineSec = 0;
+    career.reportedOnlineSec = career.firstJoinDate.length > 0 ? sessionSec : 0;
     const payload: HelloPayload = {
       name: adLikeName || nameVerdict.verdict === 'reject' ? FALLBACK_NICKNAME : nameVerdict.text,
       appearance: hello.appearance,
@@ -244,9 +324,12 @@ export function startGameServer(config: ServerConfig) {
       // 能力协商结果同样要跟着排队走：放行时才知道该给这个连接编 6 还是 7 字节
       syncFormat: hello.syncFormat,
       career,
+      // 排队时间不计入在岗：续算秒数在 HELLO 那一刻就定住了
+      sessionSec,
     };
     const alreadyQueued = admission.isQueued(ws.data.wsId);
-    const decision = admission.decide(ws.data.wsId, payload, world.size, Date.now());
+    // 准入只看真人：NPC 是氛围实体，不该让真人少一个名额或排更久的队
+    const decision = admission.decide(ws.data.wsId, payload, world.humans, Date.now());
 
     if (decision.kind === 'admit') {
       admit(ws, payload);
@@ -279,6 +362,25 @@ export function startGameServer(config: ServerConfig) {
     if (!player) return;
 
     if (op === OpCode.C2S_MOVE) {
+      // ---- 移动包独立频率窗口 ----
+      // 总量窗口（maxMessagesPerSecond=120）挡不住「19 个 ping + 999 个 move」，
+      // 而 move 是唯一每个包都改世界状态的指令，必须单独计量。
+      // 软上限内照常处理（正常客户端 20Hz）；软到硬之间丢弃；过硬直接踢。
+      if (now - ws.data.moveWindowStart > 1000) {
+        ws.data.moveWindowStart = now;
+        ws.data.moveCount = 0;
+      }
+      ws.data.moveCount += 1;
+      if (ws.data.moveCount > config.security.moveHardLimit) {
+        abuseClosed += 1;
+        logAbuse('move-flood');
+        ws.close(1008, 'move rate limit');
+        return;
+      }
+      if (ws.data.moveCount > config.security.moveSoftLimit) {
+        abuseDropped += 1;
+        return;
+      }
       const packet = decodeMove(data, MOVE_SCRATCH);
       const result = applyMove(player, packet, now, seats);
       if (result.released.length > 0) broadcastSeats(result.released);
@@ -327,7 +429,16 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_CHAT) {
-      handleChat(player, decodeChatSend(data), now, world, transport, moderation, chatHistory);
+      handleChat(
+        player,
+        decodeChatSend(data),
+        now,
+        world,
+        transport,
+        moderation,
+        chatHistory,
+        config.security.chatCooldownMs,
+      );
       return;
     }
 
@@ -381,6 +492,29 @@ export function startGameServer(config: ServerConfig) {
       }
       // 即便没变化也回给自己：客户端据此把本地乐观值对齐成服务端裁决后的文本
       const packet = encodeStatusBroadcast(player.id, player.status);
+      transport.send(player.wsId, packet);
+      for (const id of player.known) {
+        const other = world.get(id);
+        if (other) transport.send(other.wsId, packet);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_SET_NAME) {
+      // 与状态同一条通道：只挡高频伪造包，正常用户在界面上改名的间隔远大于 1s
+      if (now - player.lastRenameAt < RENAME_THROTTLE_MS) return;
+      player.lastRenameAt = now;
+      const result = resolveRename(player.name, decodeSetName(data), moderation);
+      if (result.verdict === 'reject') {
+        console.warn(`[moderation] name reject ws=${player.wsId} hits=${result.hits}`);
+      }
+      if (result.changed) {
+        player.name = result.name;
+        // 名字进了入场资料的不变部分：不失效缓存，之后进入视野的人会看到旧名字
+        player.markSpawnDirty();
+      }
+      // 即便没变化也回给自己：客户端据此把本地乐观值对齐成服务端裁决后的名字
+      const packet = encodeNameBroadcast(player.id, player.name);
       transport.send(player.wsId, packet);
       for (const id of player.known) {
         const other = world.get(id);
@@ -447,7 +581,7 @@ export function startGameServer(config: ServerConfig) {
     broadcastDespawn(player, world, transport);
     grid.remove(player.id);
     world.destroy(player.id);
-    console.log(`[game] - ${label} online=${world.size}`);
+    console.log(`[game] - ${label} online=${world.humans}`);
   }
 
   const server = Bun.serve<SocketData>({
@@ -456,15 +590,25 @@ export function startGameServer(config: ServerConfig) {
     fetch(req, bunServer) {
       const url = new URL(req.url);
       if (url.pathname === '/ws') {
+        // 必须在 upgrade 之前拒绝：升级完成后再 close 已经算一次「连接成功」，
+        // 攻击者能据此确认服务端活着，也白占了一个 wsId 与一条 socket。
+        if (!originAllowed(req.headers.get('origin'))) {
+          abuseClosed += 1;
+          logAbuse('ws-origin');
+          return new Response('forbidden origin', { status: 403 });
+        }
         const wsId = nextWsId;
         nextWsId += 1;
+        const now = Date.now();
         const upgraded = bunServer.upgrade(req, {
           data: {
             wsId,
             playerId: 0,
-            openedAt: Date.now(),
-            msgWindowStart: Date.now(),
+            openedAt: now,
+            msgWindowStart: now,
             msgCount: 0,
+            moveWindowStart: now,
+            moveCount: 0,
           },
         });
         return upgraded ? undefined : new Response('websocket upgrade failed', { status: 400 });
@@ -476,7 +620,17 @@ export function startGameServer(config: ServerConfig) {
             // 园区自述身份：选园页用它确认「连的确实是这一座」
             parkId: config.parkId,
             parkName: config.parkName,
-            online: world.size,
+            // online 只算真人：NPC 数量单独放在 npcs，口径永不合并
+            online: world.humans,
+            npcs: world.npcCount,
+            npc: {
+              count: npcs.count,
+              // 只展示同事自身的推进耗时；tickMs 仍是包含它的真实总耗时
+              updateMs: {
+                avg: Number(npcSampler.average().toFixed(3)),
+                p95: Number(npcSampler.percentile(0.95).toFixed(3)),
+              },
+            },
             tick: tickCount,
             tickMs: {
               avg: Number(tickSampler.average().toFixed(3)),
@@ -485,7 +639,7 @@ export function startGameServer(config: ServerConfig) {
               max: Number(tickSampler.max().toFixed(3)),
             },
             egressKbps: Number(egress.kbps().toFixed(2)),
-            admission: admission.snapshot(world.size),
+            admission: admission.snapshot(world.humans),
             clampedMoves: moveSampler.count,
             gridBuckets: grid.bucketCount,
             uptimeSec: Math.round(process.uptime()),
@@ -513,11 +667,35 @@ export function startGameServer(config: ServerConfig) {
         if (ws.data.msgCount > config.maxMessagesPerSecond) return;
         if (typeof message === 'string') return;
         const data = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
-        if (data.byteLength === 0 || data.byteLength > MAX_PACKET_BYTES) return;
+        if (data.byteLength === 0) return;
+
+        // ---- 长度闸门：一次数组索引，判定「这个包配不配进 dispatch」----
+        const verdict = checkPacket(data[0]!, data);
+        if (verdict === PACKET_UNKNOWN) {
+          // 不认识的 opcode 只丢不断：可能是新旧客户端混跑时的未来包
+          abuseDropped += 1;
+          return;
+        }
+        if (verdict === PACKET_MALFORMED) {
+          // 截断包/长度不自洽：不抛异常、不进 try/catch、不打堆栈，直接断开。
+          // 这种包正常客户端一个字节都不会发，发它的只可能是扫描器或外挂。
+          abuseDropped += 1;
+          abuseClosed += 1;
+          logAbuse('malformed');
+          ws.close(1008, 'malformed_packet');
+          return;
+        }
+
         try {
           dispatch(ws, data, now);
         } catch (error) {
-          console.error('[game] dropped malformed packet', error);
+          // 兜底：闸门放行但 decoder 仍抛了（说明闸门和协议的假设不一致）。
+          // 同样只计数不打堆栈，否则攻击者可以让这里变成日志放大器。
+          abuseDropped += 1;
+          logAbuse('dispatch-error');
+          if (process.env.GAME_DEBUG_PACKETS === '1') {
+            console.error('[game] dropped malformed packet', error);
+          }
         }
       },
       close(ws) {
@@ -544,7 +722,7 @@ export function startGameServer(config: ServerConfig) {
       lastSampleAt = now;
       const event = admission.observe(now, {
         egressKbps: egress.kbps(now),
-        online: world.size,
+        online: world.humans,
         tickP95Ms: tickSampler.percentile(0.95),
       });
       if (event) {
@@ -554,7 +732,7 @@ export function startGameServer(config: ServerConfig) {
       }
     }
 
-    const { admitted, expired } = admission.drain(now, world.size);
+    const { admitted, expired } = admission.drain(now, world.humans);
     for (const entry of expired) {
       const socket = sockets.get(entry.wsId);
       if (!socket) continue;
@@ -568,7 +746,7 @@ export function startGameServer(config: ServerConfig) {
     }
 
     // 排队位次每秒推一次，排队者除此之外不产生任何流量
-    for (const { wsId, status } of admission.statuses(now, world.size)) {
+    for (const { wsId, status } of admission.statuses(now, world.humans)) {
       const socket = sockets.get(wsId);
       if (socket && socket.readyState === 1) socket.send(encodeQueueStatus(status));
     }
@@ -577,6 +755,10 @@ export function startGameServer(config: ServerConfig) {
     // dirty 广播里发出去。放到 runTick 之后会晚 50ms，旁观者先看到站着、再看到倒下。
     const ventSeats = resolveVents(world, grid, seats, transport, now);
     if (ventSeats.length > 0) broadcastSeats(ventSeats);
+
+    // 同事的行为要跑在 runTick 之前：新坐标与朝向赶在同一 Tick 的 dirty 广播里发出去
+    npcs.update(now);
+    npcSampler.push(npcs.updateMs);
 
     const result = runTick(world, grid, transport, tickCount);
     tickSampler.push(result.duration);

@@ -23,7 +23,7 @@ import type { WorldRect } from './geometry';
  *
  * 上下铺不新增种类：每个铺位就是一张 `bed` 座位，两层各一张，见下方的 LOUNGE_SEATS。
  */
-export type SeatKind = 'chair' | 'toilet' | 'stool' | 'sofa' | 'bed';
+export type SeatKind = 'chair' | 'toilet' | 'stool' | 'sofa' | 'bed' | 'drum';
 
 /**
  * 座位锚点：入座后角色的世界坐标。`id` 从 1 开始，0 保留为「无座位」。
@@ -90,7 +90,17 @@ export type PropKind =
   | 'sideTable'
   | 'hedge'
   | 'ladder'
-  | 'logo';
+  | 'logo'
+  /**
+   * 牛马放假告示板（ADR-0059）：全图只有一块，坐标与底座碰撞由
+   * `layout.ts` 的 `BULLETIN_BOARD` / `BULLETIN_BOARD_SOLID` 单点定义。
+   * 因此这里不进 `PROP_FOOTPRINT`——碰撞不按道具尺寸推导，避免第二份尺寸表。
+   */
+  | 'bulletin'
+  /** 翠竹（ADR-0061）：一丛 3–5 根，variant 决定疏密与高度，底座很窄，人能从竹间穿过 */
+  | 'bamboo'
+  /** 太湖石叠石盆景（ADR-0061）：variant 0 带透光孔洞的太湖石，1 青石叠景 */
+  | 'taihu';
 
 /** 纯装饰（或带碰撞的小设施）：渲染端按 kind 选贴图 */
 export interface PropInstance {
@@ -130,6 +140,8 @@ export function propSolids(props: readonly PropInstance[]): SolidRect[] {
  * 尺寸与 apps/web 的 `PROP_SIZE` 对齐，只取「底座」那一截：
  * 长椅与野餐桌是矮家具，碰撞只覆盖椅面 / 桌腿，正面不留隐形墙。
  * 树篱、灯、垃圾桶、绿植、标识、爬梯、logo 等小件不在表里 —— `propSolid` 返回 undefined。
+ * `bulletin`（放假告示板）也不在：它的底座尺寸由 `layout.ts` 的 `BULLETIN_BOARD` 派生，
+ * 只保留一处真相，不再抄一份 80×20 进来。
  */
 const PROP_FOOTPRINT: Partial<Record<PropKind, { w: number; h: number }>> = {
   vending: { w: 32, h: 24 },
@@ -138,6 +150,10 @@ const PROP_FOOTPRINT: Partial<Record<PropKind, { w: number; h: number }>> = {
   bench: { w: 40, h: 16 },
   table: { w: 40, h: 28 },
   bike: { w: 38, h: 14 },
+  // 竹丛的碰撞只取根部一窄条：竹竿之间有缝，整丛挡人会像一道墙
+  bamboo: { w: 22, h: 10 },
+  // 太湖石：底座的石座占 26×16，石身悬在上面不挡人
+  taihu: { w: 26, h: 16 },
 };
 
 /**

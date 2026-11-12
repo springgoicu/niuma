@@ -658,6 +658,26 @@ function drawLeaf(g: Graphics, x: number): void {
   g.rect(x + 9, 11, 2, 1).fill(C.leafAmber);
 }
 
+/**
+ * 竹笋（ADR-0061）：一支主笋 + 一支侧笋，笋壳三道斜压。
+ * 贴花只有 16×16，笋壳不能画成横线——三道斜压已经在读成「竹」的下限。
+ */
+function drawShoot(g: Graphics, x: number): void {
+  // 主笋：下宽上尖
+  g.rect(x + 6, 10, 4, 6).fill(C.bambooShootDark);
+  g.rect(x + 7, 7, 3, 9).fill(C.bambooShoot);
+  g.rect(x + 8, 5, 1, 3).fill(C.bambooShoot);
+  // 笋壳
+  g.rect(x + 6, 12, 4, 1).fill(C.bambooHusk);
+  g.rect(x + 7, 10, 3, 1).fill(C.bambooHusk);
+  g.rect(x + 8, 8, 2, 1).fill(C.bambooHusk);
+  // 侧笋
+  g.rect(x + 12, 12, 2, 4).fill(C.bambooShoot);
+  g.rect(x + 12, 13, 2, 1).fill(C.bambooHusk);
+  // 根部压一档暗草
+  g.rect(x + 5, 15, 9, 1).fill(C.grassDeep);
+}
+
 export function makeDecalAtlas(renderer: TextureFactory): DecalAtlas {
   const at = (kind: (typeof DECAL_KINDS)[number]): number => DECAL_SPRITE * DECAL_KINDS.indexOf(kind);
   const texture = bake(
@@ -671,6 +691,7 @@ export function makeDecalAtlas(renderer: TextureFactory): DecalAtlas {
       drawBloomGold(g, at('bloomGold'));
       drawBloomRose(g, at('bloomRose'));
       drawLeaf(g, at('leaf'));
+      drawShoot(g, at('shoot'));
     },
     { frame: new Rectangle(0, 0, DECAL_SPRITE * DECAL_KINDS.length, DECAL_SPRITE) },
   );

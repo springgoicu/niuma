@@ -11,8 +11,10 @@ import {
   MOVE_SPEED,
   NAV_TARGETS,
   QUEUE_REJECT_REASON,
+  SHRINE_ALTAR,
   SIT_RANGE,
   STATE_BITS,
+  TEA_STATION,
   SYSTEM_NOTICE_KIND,
   VENT_COOLDOWN_MS,
   VENT_STUN_MS,
@@ -72,7 +74,12 @@ import { ACTION_BY_CODE, directionFromMask, type ActionKey } from './input';
 import type { ViewportInfo } from './runtime/control-channel';
 import type { AudioEvent, EngineEnv, SessionProfile } from './runtime/engine-env';
 import {
+  facesBulletin,
+  isBulletinHit,
+  isNearBulletin,
   isNearRankBoard,
+  isNearShrine,
+  isNearTeaStation,
   nearestInteractivePropInto,
   pickGrazeLine,
   pickLine,
@@ -82,7 +89,8 @@ import {
   type InteractiveTarget,
 } from './interactions';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
-import { jumpLiftTexels, jumpShadowFor } from './pony-motion';
+import { localDateKey } from './local-date';
+import { BOW_DURATION_MS, bowTexelsAt, jumpLiftTexels, jumpShadowFor } from './pony-motion';
 import { Navigator } from './navigator';
 import { findPath } from './pathfinding';
 import { GameRenderer } from './renderer';
@@ -155,6 +163,8 @@ export interface SessionCallbacks {
   onVentDealt?(): void;
   /** 在公告栏旁按了 F：宿主据此打开榜单面板并主动拉一次快照 */
   onBoardOpen?(): void;
+  /** 在放假告示板旁按 F 或点击牌面：宿主据此展开软木看板（ADR-0060） */
+  onBulletinOpen?(): void;
   /** 牛马榜快照（一个指标一条），宿主按 metric 归并后交给面板 */
   onBoard?(packet: BoardPacket): void;
   /** 工牌点赞变化：目标、计数与「是不是你点的」，宿主据此刷新档案弹窗 */
@@ -176,6 +186,13 @@ const SEAT_HINT_INTERVAL = 150;
 const INTERACT_COOLDOWN_MS = 900;
 /** 瞬时提示的保留时长：房间里的环境提示晚一步再抢回这一行 */
 const HINT_HOLD_MS = 1600;
+/**
+ * 上香飘字（ADR-0061）：三句一起升起。
+ * 写成多行而不是轮播，是因为「祈求暴富 / 无 Bug / 功德 +1」是一整套念词，拆开就散了。
+ */
+const INCENSE_FLOAT_TEXT = '🙏 祈求暴富\n保佑本周无 Bug\n功德 +1';
+/** 当日首香的淡金光晕时长：60 秒，只在本机可见 */
+const INCENSE_AURA_MS = 60_000;
 /**
  * 会话快照的落盘间隔。
  *
@@ -203,6 +220,15 @@ export class GameSession {
   private readonly renderer = new GameRenderer();
   /** 弹幕偏好：宿主注入初值，运行期由设置面板更新（ADR-0056） */
   private danmakuPrefs: DanmakuPrefs = { ...DEFAULT_DANMAKU_PREFS };
+  /**
+   * 最近一次上香的自然日（ADR-0061）。初值由宿主从 localStorage 带进来，
+   * 换日即自动失效——不需要任何清理逻辑，也不需要服务端状态。
+   */
+  private incenseDay = '';
+  /** 上香动作的起始时刻：作揖包络按它算，0 表示当前没有在作揖 */
+  private prayAt = -1;
+  /** 本地上香计数：只用来轮换三句飘字，不做累计展示 */
+  private incenseCount = 0;
   private readonly ecs = new Ecs();
   private readonly tracks = buildClipTracks();
   /** 叠加动作轨表：发泄按姿态分三条，跳一条；帧循环里只做下标访问 */
@@ -239,6 +265,11 @@ export class GameSession {
   private readonly onlineById = new Map<number, { sec: number; at: number }>();
   /** 本地入场成功时刻（performance.now）：自己的在线时长从 WELCOME 起算 */
   private welcomeAt = 0;
+  /**
+   * 断线那一刻的在岗秒数（ADR-0060）：只在第一次 onClose 取一次，
+   * 重连反复失败时不会把离线时间也累计进去；下次 WELCOME 后归零。
+   */
+  private reconnectCarrySec = 0;
   /** 座位占用镜像：seatId → 占用者的 netId，以服务端广播为准 */
   private readonly seatOwner = new Map<number, number>();
   /** 反向镜像：netId → seatId，用于把入座抬升算到正确的角色上（ADR-0032） */
@@ -284,6 +315,11 @@ export class GameSession {
   private renovationNoticed = false;
   /** 下一个该播报的在岗档位下标；每次 WELCOME 归零 */
   private onDutyCursor = 0;
+  /**
+   * 当前工牌名：重连后 `handleWelcome` 重建本地角色时要用它。
+   * 与状态同理，不能读 `start()` 的 profile 闭包——游戏内改过名字就是旧值。
+   */
+  private name = '';
   /**
    * 当前状态：重连后 `handleWelcome` 重建本地角色时要用它。
    * 不能读 `start()` 的 profile 闭包——那是入场瞬间的快照，游戏内改过状态就是旧值。
@@ -350,6 +386,7 @@ export class GameSession {
     this.env.readViewport(this.viewport);
     // 初值来自宿主（localStorage 只能在主线程读）；Worker 里由 init 消息带进来
     this.danmakuPrefs = { ...this.env.danmakuPrefs };
+    this.incenseDay = this.env.incenseDay;
     await this.renderer.init({
       canvas: this.env.canvas,
       width: this.viewport.width,
@@ -370,6 +407,12 @@ export class GameSession {
       // 断线时先落盘并刷新 resume：重连后服务端能把人放回断开处，
       // 同时保留最后一份排队快照，面板转为「重连中」而不是把人踢回空白页
       onClose: () => {
+        // 断线续算（ADR-0060）：只在第一次断开时取基准。
+        // 重连反复失败会反复触发 onClose，每次都取的话会把离线时间也算进在岗。
+        if (this.reconnectCarrySec === 0) {
+          this.reconnectCarrySec = this.onlineSecOf(this.localId);
+          this.net?.setSessionSec(this.reconnectCarrySec);
+        }
         this.persistNow();
         this.callbacks.onStatus('offline', '连接中断，正在重连');
         // 部署会重启游戏服：断线即查版本，避免带着旧地图重连后撞上空气墙。
@@ -417,6 +460,11 @@ export class GameSession {
         else this.statusById.set(id, status);
         this.renderer.setStatus(id, status);
       },
+      onName: (id, name) => {
+        // 名字表与渲染层一起换：牛马榜、点选档案、聊天弹幕都从 names 取名字
+        this.names.set(id, name);
+        this.renderer.setName(id, name);
+      },
       onCareer: (id, career) => this.handleCareer(id, career),
       onBoard: (packet) => this.handleBoard(packet),
       onLike: (packet) => this.handleLike(packet),
@@ -429,6 +477,7 @@ export class GameSession {
       },
     }, this.options.wsUrl);
 
+    this.name = profile.name;
     this.status = profile.status ?? '';
     this.species = profile.appearance.species;
     this.localAppearance = profile.appearance;
@@ -452,12 +501,18 @@ export class GameSession {
     this.snapshotAt = 0;
     // 换连接后 tick 基准与接收时钟都变了：只清传输偏移，RTT 样本保留（ADR-0048）
     this.jitter.reset();
-    // 自己的在线时长从入场成功这一刻起算：断线重连会重建世界，计时随 WELCOME 归零
-    this.welcomeAt = performance.now();
-    // 服务端在新会话里把 reportedOnlineSec 归零；本地也归零，视野榜才会把本次会话算进去
-    if (this.localCareer) this.localCareer = { ...this.localCareer, reportedOnlineSec: 0 };
-    this.onDutyCursor = 0;
-    this.names.set(packet.entityId, profile.name);
+    // 会话续算（ADR-0060）：服务端回显它采信的秒数，本地把走秒基准往前挪，
+    // 断线重连后接着算而不是归零；旧服务端不回显时缺席，退化成「重连归零」。
+    const carrySec = Math.max(0, Math.floor(packet.sessionSec ?? 0));
+    this.welcomeAt = performance.now() - carrySec * 1000;
+    // 本地摘要的增量基线必须与服务端写进 career 的值一致，
+    // 否则视野榜会把上一段会话的工时再加一遍。
+    if (this.localCareer) this.localCareer = { ...this.localCareer, reportedOnlineSec: carrySec };
+    // 在岗提醒从续算后的位置继续：重连回来不该把「在岗 8 小时」再播一遍
+    this.onDutyCursor = advanceOnDuty(carrySec, 0).cursor;
+    // 新会话已经开始计时，下一次断线要重新取基准
+    this.reconnectCarrySec = 0;
+    this.names.set(packet.entityId, this.name);
     this.speciesById.set(packet.entityId, profile.appearance.species);
     const x = dequantizeCoord(packet.x);
     const y = dequantizeCoord(packet.y);
@@ -471,7 +526,7 @@ export class GameSession {
     this.net?.setEntityId(packet.entityId);
     void this.renderer.addEntity(
       packet.entityId,
-      profile.name,
+      this.name,
       profile.appearance,
       this.status,
       x,
@@ -607,6 +662,23 @@ export class GameSession {
    * 点空白与点到自己返回 null；自己的工牌常显在 HUD，不需要再弹一份重复的详情。
    */
   pickAt(stageX: number, stageY: number): PlayerBadge | null {
+    /**
+     * 先判放假告示板（ADR-0060）：牌面是静态地标，不在角色命中表里。
+     * 点击命中牌面但人还站在 64px 外时只给一句提示，不隔空开面板——
+     * 这条规则与 F 键的距离门完全一致。
+     */
+    const localEid = this.ecs.get(this.localId);
+    if (localEid) {
+      const point = this.renderer.worldPointAt(stageX, stageY);
+      if (point && isBulletinHit(point.x, point.y)) {
+        if (isNearBulletin(Position.x[localEid]!, Position.y[localEid]!)) {
+          this.callbacks.onBulletinOpen?.();
+        } else {
+          this.showHint('走近一点再看');
+        }
+        return null;
+      }
+    }
     const id = this.renderer.pickEntityAt(stageX, stageY);
     if (id === null || id === this.localId) return null;
     return this.badgeOf(id);
@@ -830,8 +902,12 @@ export class GameSession {
   }
 
   /**
-   * 环境提示：已入座 → 附近床 → 附近坐位 → 附近可互动设施，只显示优先级最高的一条。
+   * 环境提示：已入座 → 附近床 → 附近坐位 → 放假告示板 → 牛马榜 → 附近设施，
+   * 只显示优先级最高的一条。
    * 瞬时提示（被拦下 / 附近没东西）在 `hintUntil` 之前不被覆盖。
+   *
+   * 告示板要求「在 64px 内且面朝板面」（ADR-0060）；牛马榜仍是纯距离判定，
+   * 两者相距 272px，不会出现两条提示抢位。
    */
   private updateSeatHint(eid: number): void {
     if (this.elapsed < this.hintUntil) return;
@@ -841,12 +917,18 @@ export class GameSession {
     } else {
       const x = Position.x[eid]!;
       const y = Position.y[eid]!;
+      const direction = Motion.direction[eid]! as Direction;
       const isFree = (id: number) => !this.seatOwner.has(id);
       const seat = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind !== 'bed');
       const bed = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind === 'bed');
       if (seat) hint = seat.kind === 'toilet' ? HINT.toilet : HINT.seat;
       else if (bed) hint = HINT.bed;
+      else if (isNearBulletin(x, y) && facesBulletin(x, y, direction)) hint = HINT.bulletin;
       else if (isNearRankBoard(x, y)) hint = HINT.board;
+      // 国风玄学两处（ADR-0061）：与 `interact()` 的判定顺序严格一致，
+      // 否则会出现「提示说续杯、按下去却在接水」
+      else if (isNearShrine(x, y)) hint = HINT.shrine;
+      else if (isNearTeaStation(x, y)) hint = HINT.tea;
       else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = HINT.interact;
     }
     if (hint === this.seatHint) return;
@@ -1020,6 +1102,7 @@ export class GameSession {
     this.interactAt = 0;
     this.lieAt = 0;
     this.snoreAt = 0;
+    this.prayAt = -1;
     // 换连接后旧的硬直 / 出招窗口都失去意义：新角色从站立开始
     this.stunUntil = 0;
     this.ventLockUntil = 0;
@@ -1069,6 +1152,19 @@ export class GameSession {
     this.status = status;
     this.net?.sendStatus(status);
     if (this.localId) this.renderer.setStatus(this.localId, status);
+  }
+
+  /**
+   * 改工牌名：本机先乐观上屏，服务端回执再对齐（打码后的名字可能不同）。
+   * 名字表必须一起改，否则牛马榜与聊天弹幕还叫旧名。
+   */
+  setName(name: string): void {
+    this.name = name;
+    this.net?.sendName(name);
+    if (this.localId) {
+      this.names.set(this.localId, name);
+      this.renderer.setName(this.localId, name);
+    }
   }
 
   /**
@@ -1239,6 +1335,9 @@ export class GameSession {
    * 与最近的售货机 / 饮水机 / 咖啡机互动：本地冒一句气泡，并在设施坐标上发声（ADR-0024 / 0048）。
    * 900ms 节流：连按 F 不刷屏，也不至于把台词吞掉。
    *
+   * 两块公告板都不是设施：不冒气泡、不播机器音，直接把面板交给宿主（ADR-0054 / 0058）。
+   * 按键只判距离不判朝向——提示已经告诉玩家「面朝它」能按键，真按下去时别再拦一道。
+   *
    * 查询写进复用槽位，不在按键栈里造 `{kind,x,y}`；设施在 56px 内，空间音效的
    * 距离衰减几乎满音量，pan 由它相对玩家的左右偏移决定。
    */
@@ -1246,10 +1345,25 @@ export class GameSession {
     if (this.elapsed < this.interactAt) return;
     const x = Position.x[eid]!;
     const y = Position.y[eid]!;
-    // 公告栏不是设施：不冒气泡、不播机器音，直接把面板交给宿主（ADR-0054）
+    if (isNearBulletin(x, y)) {
+      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+      this.callbacks.onBulletinOpen?.();
+      return;
+    }
     if (isNearRankBoard(x, y)) {
       this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
       this.callbacks.onBoardOpen?.();
+      return;
+    }
+    // 国风玄学两处（ADR-0061）排在设施之前：茶台就贴在饮水机旁，
+    // 优先级写反了会出现「提示说续杯、按下去却在接水」。感应区已经收窄到 48px，
+    // 站在饮水机西侧仍然按得到 cooler。
+    if (isNearShrine(x, y)) {
+      this.offerIncense(eid);
+      return;
+    }
+    if (isNearTeaStation(x, y)) {
+      this.brewTea();
       return;
     }
     const target = this.interactTarget;
@@ -1261,6 +1375,56 @@ export class GameSession {
     this.emitAudio({ kind: 'interact', target: target.kind, x: target.x, y: target.y });
     this.renderer.showBubble(this.localId, pickLine(target.kind, this.interactCount));
     this.interactCount += 1;
+  }
+
+  /**
+   * 上香（ADR-0061）：作揖 + 磬音 + 财神金光 + 头顶金色飘字。
+   *
+   * 「当天首次」只按本地自然日判定，凭据存在 localStorage 里（`incense-day.ts`）：
+   * 零服务端持久化，别人看不到你的光晕，「功德 +1」也只做当次提示、不成账。
+   */
+  private offerIncense(eid: number): void {
+    this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+    this.prayAt = this.elapsed;
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    this.renderer.flashShrine();
+    this.emitAudio({ kind: 'incense', x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y });
+    this.renderer.showFloatText(x, y, INCENSE_FLOAT_TEXT);
+
+    const today = localDateKey();
+    if (this.incenseDay === today) return;
+    this.incenseDay = today;
+    this.env.writeIncenseDay(today);
+    this.renderer.grantAura(this.localId, INCENSE_AURA_MS);
+  }
+
+  /**
+   * 续杯（ADR-0061）。
+   *
+   * 「消除疲倦状态」落在仓库里真实存在的两处疲倦表现上：被创飞后的硬直
+   * `stunUntil`，与躺床打盹的计时 `snoreAt`。不新增精力条——那会变成一套
+   * 需要服务端同步的状态机，与零持久化冲突。
+   */
+  private brewTea(): void {
+    this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+    this.emitAudio({ kind: 'tea', x: TEA_STATION.x, y: TEA_STATION.y });
+    this.showHint('咕嘟咕嘟… 喝了一大口枸杞黄芪老参茶！');
+    this.stunUntil = 0;
+    this.snoreAt = this.elapsed;
+    this.renderer.showBubble(this.localId, '防脱发指数 +10% ｜ 气血恢复中');
+  }
+
+  /** 作揖包络：只在 900ms 窗口内逐帧写下沉量，窗口结束补一次归零 */
+  private updatePray(): void {
+    if (this.prayAt < 0) return;
+    const since = this.elapsed - this.prayAt;
+    if (since >= BOW_DURATION_MS) {
+      this.prayAt = -1;
+      this.renderer.setBow(this.localId, 0);
+      return;
+    }
+    this.renderer.setBow(this.localId, bowTexelsAt(since));
   }
 
   /**
@@ -1643,6 +1807,8 @@ export class GameSession {
         this.updateSeatHint(localEid);
       }
       this.updateSnore(localEid);
+      // 上香作揖：同样挂在本地帧节拍上，900ms 包络走完补一次归零
+      this.updatePray();
     }
 
     if (now - this.statsAt >= STATS_INTERVAL) {

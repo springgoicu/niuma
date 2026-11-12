@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { POSE, WELCOME_LANDMARKS, WORLD_LAYOUT, type PropKind } from '@niuma/shared-types';
+import { BULLETIN_BOARD, DIRECTION, POSE, WELCOME_LANDMARKS, WORLD_LAYOUT, type PropKind } from '@niuma/shared-types';
 import {
+  BULLETIN_INTERACT_RANGE,
   BOARD_INTERACT_RANGE,
   INTERACT_RANGE,
   SNORE_FIRST_MS,
   SNORE_INTERVAL_MS,
+  facesBulletin,
+  isBulletinHit,
+  isNearBulletin,
   isNearRankBoard,
   nearestInteractiveProp,
   pickLine,
@@ -60,6 +64,51 @@ describe('牛马榜公告栏', () => {
     expect(isNearRankBoard(board.x, board.y + BOARD_INTERACT_RANGE + 1)).toBe(false);
     expect(isNearRankBoard(Number.NaN, board.y)).toBe(false);
     expect(isNearRankBoard(board.x, board.y, Number.POSITIVE_INFINITY)).toBe(false);
+  });
+});
+
+describe('放假告示板（ADR-0059）', () => {
+  const foot = { x: BULLETIN_BOARD.x, y: BULLETIN_BOARD.y };
+  const face = { x: foot.x, y: BULLETIN_BOARD.y - BULLETIN_BOARD.height / 2 };
+
+  it('64px 内才算站在板前，边缘多 1px 就失效', () => {
+    expect(BULLETIN_INTERACT_RANGE).toBe(64);
+    expect(isNearBulletin(foot.x, foot.y)).toBe(true);
+    expect(isNearBulletin(foot.x, foot.y + BULLETIN_INTERACT_RANGE)).toBe(true);
+    expect(isNearBulletin(foot.x, foot.y + BULLETIN_INTERACT_RANGE + 1)).toBe(false);
+    expect(isNearBulletin(foot.x - 40, foot.y - 40)).toBe(true);
+    expect(isNearBulletin(Number.NaN, foot.y)).toBe(false);
+    expect(isNearBulletin(foot.x, foot.y, Number.POSITIVE_INFINITY)).toBe(false);
+  });
+
+  it('面朝板面才提示：从南边要朝上，从北边要朝下，背对不算', () => {
+    // 站在南侧（脚底 y 更大）朝北
+    expect(facesBulletin(face.x, foot.y + 40, DIRECTION.Up)).toBe(true);
+    expect(facesBulletin(face.x, foot.y + 40, DIRECTION.Down)).toBe(false);
+    // 站在北侧朝南
+    expect(facesBulletin(face.x, BULLETIN_BOARD.y - 70, DIRECTION.Down)).toBe(true);
+    // 站在西侧朝东，斜一格也认
+    expect(facesBulletin(foot.x - 50, face.y + 10, DIRECTION.Right)).toBe(true);
+    expect(facesBulletin(foot.x - 50, face.y + 10, DIRECTION.Left)).toBe(false);
+    // 站在牌面正中：视为面对面
+    expect(facesBulletin(face.x, face.y, DIRECTION.Up)).toBe(true);
+  });
+
+  it('点击命中整块牌面，底座以下与牌面之外都不算', () => {
+    const left = foot.x - BULLETIN_BOARD.width / 2;
+    const top = BULLETIN_BOARD.y - BULLETIN_BOARD.height;
+    expect(isBulletinHit(foot.x, foot.y - 10)).toBe(true);
+    expect(isBulletinHit(left, top)).toBe(true);
+    expect(isBulletinHit(left + BULLETIN_BOARD.width, top)).toBe(true);
+    expect(isBulletinHit(left - 1, top)).toBe(false);
+    expect(isBulletinHit(foot.x, top - 1)).toBe(false);
+    expect(isBulletinHit(foot.x, foot.y + 1)).toBe(false);
+    expect(isBulletinHit(Number.NaN, foot.y)).toBe(false);
+  });
+
+  it('与牛马榜的感应区不重叠：两块牌子各认各的', () => {
+    expect(isNearBulletin(WELCOME_LANDMARKS.rankBoard.x, WELCOME_LANDMARKS.rankBoard.y)).toBe(false);
+    expect(isNearRankBoard(foot.x, foot.y)).toBe(false);
   });
 });
 

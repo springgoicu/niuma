@@ -11,6 +11,7 @@ import {
   type NavTargetId,
 } from '@niuma/shared-types';
 import { BadgeCard } from '@/components/BadgeCard';
+import { BulletinModal } from '@/components/BulletinModal';
 import { RemoteArchiveDialog } from '@/components/badge/RemoteArchiveDialog';
 import { parseSpeciesParam } from '@/lib/creator-seed';
 import { useGameUi } from '@/lib/game-ui';
@@ -27,7 +28,7 @@ import {
 import { loadGeo, readCachedGeo } from '@/lib/game/geo';
 import { createGameClient } from '@/lib/game/client/create-game-client';
 import type { GameClient } from '@/lib/game/client/game-client';
-import { touchHint } from '@/lib/game/hint-copy';
+import { HINT, touchHint } from '@/lib/game/hint-copy';
 import type { ActionKey } from '@/lib/game/input';
 import { loadSnapshot, resumeForPark } from '@/lib/game/snapshot';
 import type { ParkEntry } from '@/lib/park';
@@ -40,8 +41,10 @@ import {
   type Profile,
 } from '@/lib/profile';
 import { ActionBar } from './ActionBar';
+import type { BadgeSavePayload } from './BadgeEditor';
 import { ChatDock } from './ChatDock';
 import { ConnectionBanner, OnlineBadge, SfxToggle } from './Hud';
+import { InstallAppButton } from './InstallAppButton';
 import { JoinGate } from './JoinGate';
 import { LeaderboardDialog } from './LeaderboardDialog';
 import { MiniMap } from './MiniMap';
@@ -104,6 +107,8 @@ export function GameViewport({
   const [inspectSeed, setInspectSeed] = useState<PlayerBadge | null>(null);
   /** 牛马榜面板：靠近公告栏按 F 打开 */
   const [boardOpen, setBoardOpen] = useState(false);
+  /** 牛马放假告示板：靠近按 F 或点击牌面展开软木看板（ADR-0059） */
+  const [bulletinOpen, setBulletinOpen] = useState(false);
   /** 五个指标的快照：一次请求回五条，页签切换只读本地缓存 */
   const [boards, setBoards] = useState<Partial<Record<BoardMetric, BoardPacket>>>({});
   /** 行为统计门面：距离 / 摸鱼 / 被喷 / 加班都从这里记 */
@@ -158,10 +163,24 @@ export function GameViewport({
     clientRef.current?.clearMovement();
     // 公告栏是模态：把可能开着的工牌档案收起，避免两块面板叠在一起
     setInspectId(null);
+    setBulletinOpen(false);
     setBoardOpen(true);
   }, []);
 
   const closeBoard = useCallback(() => setBoardOpen(false), []);
+
+  /**
+   * 展开放假告示板：与牛马榜互斥，先收回移动控制权再让面板接管。
+   * 两块牌子相距 272px，正常走位不会同时命中，这里只防手快 / 脚本。
+   */
+  const openBulletin = useCallback(() => {
+    clientRef.current?.clearMovement();
+    setInspectId(null);
+    setBoardOpen(false);
+    setBulletinOpen(true);
+  }, []);
+
+  const closeBulletin = useCallback(() => setBulletinOpen(false), []);
 
   /** 拉全部指标：打开面板、手动刷新与 20 秒自动刷新都走这里 */
   const requestBoard = useCallback(() => {
@@ -179,6 +198,7 @@ export function GameViewport({
     useGameUi.getState().restoreChatOpen();
     setInspectId(null);
     setBoardOpen(false);
+    setBulletinOpen(false);
     setBoards({});
     const stored = loadProfile();
     if (stored) {
@@ -300,6 +320,7 @@ export function GameViewport({
         },
         onVentDealt: () => careerClockRef.current?.recordKnockdown(),
         onBoardOpen: openBoard,
+        onBulletinOpen: openBulletin,
         onBoard: (packet) => setBoards((prev) => ({ ...prev, [packet.metric]: packet })),
       },
       // Enter 与点选都发生在主线程：键盘监听不经过渲染线程，命中判定在渲染线程
@@ -356,6 +377,7 @@ export function GameViewport({
     applyHistory,
     openChat,
     openBoard,
+    openBulletin,
     setHint,
     setLocalState,
     setNavTarget,
@@ -438,17 +460,21 @@ export function GameViewport({
   }, []);
 
   /**
-   * 状态：先过与协议同一把尺子，再「存档 → 通知会话」。
+   * 工牌：先过与协议同一把尺子，再「存档 → 通知会话」。
    * 存档要在这里做而不是在 session 里：session 只认识网络与渲染，不碰 localStorage。
    */
-  const handleStatusChange = useCallback(
-    (raw: string) => {
+  const handleBadgeSave = useCallback(
+    ({ name: rawName, status: rawStatus }: BadgeSavePayload) => {
       if (!profile) return;
-      const status = resolveProfileStatus(raw);
-      const next: Profile = { ...profile, status };
+      const name = resolveProfileName(rawName);
+      const status = resolveProfileStatus(rawStatus);
+      if (name === profile.name && status === profile.status) return;
+      const next: Profile = { ...profile, name, status };
       setProfile(next);
       saveProfile(next);
-      clientRef.current?.setStatus(status);
+      // 只广播真的变了的字段：改名不该顺手重发一遍状态，反之亦然
+      if (name !== profile.name) clientRef.current?.setName(name);
+      if (status !== profile.status) clientRef.current?.setStatus(status);
     },
     [profile],
   );
@@ -525,7 +551,7 @@ export function GameViewport({
                   species={profile.appearance.species}
                   appearance={profile.appearance}
                   statusText={profile.status}
-                  onStatusChange={handleStatusChange}
+                  onSave={handleBadgeSave}
                   compact={isTouch}
                   onDetailOpen={handleDetailOpen}
                 />
@@ -548,8 +574,14 @@ export function GameViewport({
                   下班入口收成图标，左侧工牌才保得住可读宽度 */}
               <div className={`flex shrink-0 ${isTouch && !portrait ? 'items-center gap-2' : 'flex-col items-end gap-2'}`}>
                 <OnlineBadge compact={isTouch} />
-                <div className={portrait ? 'grid grid-cols-2 gap-2' : 'flex items-center gap-2'}>
+                {/* 桌面端窄视口（768–900px）五个控件会顶到左上工牌：允许换行而不是溢出 */}
+                <div
+                  className={
+                    portrait ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap items-center justify-end gap-2'
+                  }
+                >
                   <NoticeBoard compact={isTouch} />
+                  <InstallAppButton compact={isTouch} />
                   <SfxToggle compact={isTouch} />
                   {/* 手机端唯一全屏入口：只有这里的手动点击才会收起浏览器界面 */}
                   {isTouch && immersive.supported && (
@@ -632,6 +664,9 @@ export function GameViewport({
             />
           )}
 
+          {/* 牛马放假告示板：靠近广场北缘的木板按 F 或点击牌面展开（ADR-0059） */}
+          {bulletinOpen && <BulletinModal onClose={closeBulletin} />}
+
           {/* 出生点的引导层：实体地标在画面里，这两块负责「说清楚」与随时可查（ADR-0036） */}
           <NavCard
             compact={isTouch}
@@ -645,8 +680,16 @@ export function GameViewport({
           {hint && (
             <div
               role="status"
-              className={`pointer-events-none absolute left-1/2 -translate-x-1/2 border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${
-                portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-24'
+              className={`pointer-events-none absolute border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${
+                // 放假告示板的感应提示走右下角（ADR-0059）：它在世界里的位置就在广场北缘，
+                // 底部居中的通用提示容易被动作条与聊天面板挤在一起
+                hint === HINT.bulletin
+                  ? portrait
+                    ? 'bottom-[300px] right-3'
+                    : isTouch
+                      ? 'bottom-56 right-3'
+                      : 'bottom-28 right-4'
+                  : `left-1/2 -translate-x-1/2 ${portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-24'}`
               }`}
             >
               {/* 引擎只产出按键说法，触屏在渲染层投影成按钮名（hint-copy 单一事实源） */}

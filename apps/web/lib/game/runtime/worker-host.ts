@@ -79,6 +79,9 @@ export function runWorkerHost(scope: WorkerScope): void {
       fontsReady: readFontsReady,
       // 偏好由主线程读盘后随 init 带进来：Worker 碰不到 localStorage
       danmakuPrefs: message.danmaku,
+      // 当日首香标记同理：读盘在主线程，写回也交回主线程
+      incenseDay: message.incenseDay,
+      writeIncenseDay: (day) => post({ t: 'incenseDay', day }),
       writeSnapshot: (patch) => {
         block.writeSnapshot(patch);
         // 没有共享内存时主线程读不到这块私有内存，另发一条定长消息由它落盘
@@ -103,6 +106,7 @@ export function runWorkerHost(scope: WorkerScope): void {
         onVentHit: (local) => post({ t: 'ventHit', local }),
         onVentDealt: () => post({ t: 'ventDealt' }),
         onBoardOpen: () => post({ t: 'boardOpen' }),
+        onBulletinOpen: () => post({ t: 'bulletinOpen' }),
         onBoard: (packet) => post({ t: 'board', packet }),
         onLike: (packet) => post({ t: 'like', packet }),
       },
@@ -163,6 +167,9 @@ export function runWorkerHost(scope: WorkerScope): void {
         return;
       case 'status':
         session?.setStatus(message.text);
+        return;
+      case 'name':
+        session?.setName(message.text);
         return;
       case 'appearance':
         session?.setAppearance(message.appearance);

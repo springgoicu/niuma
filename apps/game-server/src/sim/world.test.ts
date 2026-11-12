@@ -64,3 +64,30 @@ describe('实体 id 分配', () => {
     expect(world.size).toBe(MAX_ENTITIES);
   });
 });
+
+describe('真人与 NPC 的人头口径', () => {
+  it('createNpc 只增加 npcCount，不占真人名额', () => {
+    const world = new World();
+    join(world, 1);
+    const npc = world.createNpc('同事', DEFAULT_APPEARANCE.cow, 4096, 4096)!;
+    expect(npc.isNpc).toBe(true);
+    expect(npc.wsId).toBe(0);
+    expect(world.size).toBe(2);
+    expect(world.humans).toBe(1);
+    expect(world.npcCount).toBe(1);
+  });
+
+  it('destroy 按实体类型分别减账，对象池复用不会把 NPC 标记带过来', () => {
+    const world = new World();
+    const npc = world.createNpc('同事', DEFAULT_APPEARANCE.cow, 4096, 4096)!;
+    world.destroy(npc.id);
+    expect(world.npcCount).toBe(0);
+    expect(world.humans).toBe(0);
+
+    // 同一个对象会从池里被复用：reset 必须把 isNpc 清掉
+    const human = join(world, 1)!;
+    expect(human.isNpc).toBe(false);
+    expect(world.humans).toBe(1);
+    expect(world.npcCount).toBe(0);
+  });
+});

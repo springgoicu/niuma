@@ -9,8 +9,15 @@ import {
 } from 'pixi.js';
 import { ISLAND, WORLD_LAYOUT, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
+import { BulletinView } from './bulletin';
 import { DanmakuField, type DanmakuMessage } from './danmaku';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
+import { LanternView } from './lighting/lanterns';
+import { PavilionView } from './pavilion';
+import { PlaqueView } from './plaques';
+import { RitualFx } from './ritual-fx';
+import { ShrineView } from './shrine';
+import { TeaStationView } from './tea-station';
 import { isOutdoorGround } from './ground';
 import { InteriorArt } from './interior-art';
 import { LightmapLayer } from './lighting/lightmap';
@@ -328,6 +335,11 @@ class EntityView {
     this.setShadow(motion.shadow);
   }
 
+  /** 合十作揖的下俯量（ADR-0061）：与呼吸起伏分开记，两者互不覆盖 */
+  applyBow(bowTexels: number): void {
+    this.body.setBow(bowTexels);
+  }
+
   /**
    * 跳跃弧线：本体与昵称一起抬高，接触阴影留在地面。
    * 抬升量已经是整数纹素，这里不再做任何浮点缩放（ADR-0013）。
@@ -360,6 +372,21 @@ class EntityView {
     if (this.statusText) {
       this.statusText.position.y = statusBottomY(nameBottom, this.label.height);
     }
+    if (this.bubble.visible) this.layoutBubble(this.bubbleHeight);
+  }
+
+  /**
+   * 改头顶昵称。名字只影响这一行文本，锚点居中，横向不需要重排；
+   * 行高变化时（字体 fallback 可能不同）状态行与气泡要跟着让位。
+   */
+  setName(name: string): void {
+    const text = nameplateText(name);
+    if (this.label.text === text) return;
+    const previousHeight = Math.ceil(this.label.height);
+    this.label.text = text;
+    const height = Math.ceil(this.label.height);
+    if (height === previousHeight) return;
+    if (this.statusText) this.statusText.position.y = statusBottomY(this.nameBottom, height);
     if (this.bubble.visible) this.layoutBubble(this.bubbleHeight);
   }
 
@@ -618,6 +645,22 @@ export class GameRenderer {
   private props?: PropsView;
   /** 北门迎宾地标：横幅与指路牌，构造期烘焙一次（ADR-0036） */
   private welcome?: WelcomeView;
+  /** 放假告示板的动态文本：红色横幅与常驻跑马灯（ADR-0059） */
+  private bulletin?: BulletinView;
+  /** 摸鱼亭：八角重檐凉亭，后景/前景双深度键（ADR-0061） */
+  private pavilion?: PavilionView;
+  /** 迎宾拱门与四角院落门柱上的红色宫灯（ADR-0061） */
+  private lanterns?: LanternView;
+  /** 赛博财神供案：案面、财神像、三足香炉与三缕青烟（ADR-0061） */
+  private shrine?: ShrineView;
+  /** 老干部紫砂茶台：紫砂壶、白瓷杯与蒸汽（ADR-0061） */
+  private tea?: TeaStationView;
+  /** 门头牌匾与对联：三座自建牌坊（ADR-0061） */
+  private plaques?: PlaqueView;
+  /** 上香 / 续杯的一次性反馈：金色飘字与当日首香光晕（ADR-0061） */
+  private ritual?: RitualFx;
+  /** 淡金光晕跟随的实体：0 表示当前没有光晕 */
+  private auraEid = 0;
   /** 头顶眩晕星星：被发泄命中的角色脚下不倒，头上转圈（ADR-0051） */
   private stunStars?: StunStars;
   /** 园区小动物与蝴蝶：纯客户端氛围，`?critters=0` 时整层不构造（ADR-0042） */
@@ -741,6 +784,10 @@ export class GameRenderer {
       });
       this.lightmap.register(propLights(WORLD_LAYOUT.props));
       this.lightmap.register(this.interior?.lights ?? []);
+      // 从 `buildLayers` 里构造的视图现场收集的光位（摸鱼亭四角 + 拱门/门柱宫灯）
+      this.lightmap.register(this.pavilion?.lights ?? []);
+      this.lightmap.register(this.lanterns?.lights ?? []);
+      this.lightmap.register(this.shrine?.lights ?? []);
       this.app.stage.addChild(this.lightmap.container);
     }
     // 弹幕是屏幕空间最顶层：必须在 lightmap 之后入栈，柔光才不会盖住文字。
@@ -824,6 +871,28 @@ export class GameRenderer {
     this.welcome = new WelcomeView();
     this.welcome.build(this.sortLayer, this.app.renderer, this.metrics.devicePxPerTexel);
 
+    // 放假告示板的动态文本（ADR-0059）：展板本体已在 props 里，这里只叠横幅与跑马灯
+    this.bulletin = new BulletinView(this.metrics.devicePxPerTexel);
+    this.bulletin.build(this.sortLayer);
+
+    // 摸鱼亭（ADR-0061）：台基走地面层，亭身拆后景/前景两条深度键，人能走进去坐下
+    this.pavilion = new PavilionView();
+    this.pavilion.build(this.sortLayer, this.props.base);
+
+    // 固定宫灯（ADR-0061）：拱门横梁两端 + 四角院落门柱，入夜由光图层统一点亮
+    this.lanterns = new LanternView();
+    this.lanterns.build(this.sortLayer);
+
+    // 职场玄学两处（ADR-0061）：供案与茶台都是小件，按脚底 y 进同一套遮挡关系
+    this.shrine = new ShrineView(this.app.renderer);
+    this.shrine.build(this.sortLayer);
+    this.tea = new TeaStationView(this.app.renderer);
+    this.tea.build(this.sortLayer);
+
+    // 门头牌匾（ADR-0061）：墙体是平铺色带没有立面，所以每处门头自带一座牌坊
+    this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
+    this.plaques.build(this.sortLayer);
+
     this.shadowTextures = GroundFx.shadowTextures(this.app.renderer);
     this.fx = new GroundFx(this.app.renderer);
     this.world.addChild(this.fx.container);
@@ -834,6 +903,10 @@ export class GameRenderer {
     this.world.addChild(this.waterFx.container);
 
     this.world.addChild(this.sortLayer.container);
+
+    // 仪式反馈压在 y 排序层之后：金色飘字从头顶升起，不能被树冠或角色吃掉
+    this.ritual = new RitualFx(this.app.renderer, this.metrics.devicePxPerTexel);
+    this.world.addChild(this.ritual.container);
 
     // 星星在 y 排序层之后入场景：它绕在头顶，不该被树冠或角色身体挡住
     this.stunStars = new StunStars(this.app.renderer);
@@ -1011,6 +1084,11 @@ export class GameRenderer {
     this.views.get(id)?.applyMotion(motion);
   }
 
+  /** 作揖（ADR-0061）：900ms 的下俯包络，只作用于本机角色 */
+  setBow(id: number, bowTexels: number): void {
+    this.views.get(id)?.applyBow(bowTexels);
+  }
+
   /** 跳跃弧线：抬升本体与昵称、切换阴影档位；lift 为 0 时即回到地面 */
   setJump(id: number, liftTexels: number, shadow: number): void {
     this.views.get(id)?.applyJump(liftTexels, shadow);
@@ -1023,6 +1101,11 @@ export class GameRenderer {
   /** 状态变更：本机与视野内的远端角色走同一条路径，空串即清除 */
   setStatus(id: number, status: string): void {
     this.views.get(id)?.setStatus(status);
+  }
+
+  /** 改名变更：本机与视野内的远端角色走同一条路径 */
+  setName(id: number, name: string): void {
+    this.views.get(id)?.setName(name);
   }
 
   showBubble(id: number, text: string): void {
@@ -1061,6 +1144,23 @@ export class GameRenderer {
     this.stunStars.set(id, performance.now() + durationMs);
   }
 
+  /** 上香成功：财神像闪一道金色微光（ADR-0061） */
+  flashShrine(): void {
+    this.shrine?.flash();
+  }
+
+  /** 头顶升起金色飘字：(x, y) 取角色的脚底坐标（ADR-0061） */
+  showFloatText(x: number, y: number, text: string): void {
+    this.ritual?.floatText(x, y, text, performance.now());
+  }
+
+  /** 当日首香的淡金光晕：跟着指定实体走，`durationMs` 后自动熄灭（ADR-0061） */
+  grantAura(id: number, durationMs: number): void {
+    if (!this.ritual) return;
+    this.auraEid = id;
+    this.ritual.grantAura(performance.now(), durationMs);
+  }
+
   tickBubbles(dtMs: number): void {
     const now = performance.now();
 
@@ -1097,9 +1197,20 @@ export class GameRenderer {
     // 星星与气泡同一个节拍：两者都挂在头顶，同一帧推进不会互相错位
     this.stunStars?.update(now, this.views);
 
+    // 职场玄学两处的常驻微动（青烟 / 蒸汽）与一次性反馈（金色飘字、首香光晕）
+    this.shrine?.update(dtMs);
+    this.tea?.update(dtMs);
+    this.ritual?.update(now);
+    if (this.auraEid !== 0) {
+      const auraView = this.views.get(this.auraEid);
+      if (auraView) this.ritual?.followAura(auraView.root.position.x, auraView.root.position.y);
+    }
+
     this.fx?.update(dtMs);
     this.waterFx?.update(dtMs);
     this.terrain?.update(dtMs);
+    // 跑马灯：只推进滚动坐标，文案每秒重算一次（ADR-0059）
+    this.bulletin?.update(dtMs);
     // 雪在屏幕空间，只累加坐标；灯串亮度由它自己 30s 采样一次
     this.snow?.update(dtMs);
     // 弹幕与雪同一层空间：只改 x / alpha，离屏当帧回收
@@ -1251,6 +1362,9 @@ export class GameRenderer {
     if (this.app.renderer.resolution !== next.dpr) this.app.renderer.resolution = next.dpr;
     for (const view of this.views.values()) view.setTextResolution(next.devicePxPerTexel);
     this.welcome?.setTextResolution(next.devicePxPerTexel);
+    this.bulletin?.setTextResolution(next.devicePxPerTexel);
+    this.ritual?.setTextResolution(next.devicePxPerTexel);
+    this.plaques?.setTextResolution(next.devicePxPerTexel);
   }
 
   get entityCount(): number {
@@ -1265,16 +1379,26 @@ export class GameRenderer {
    * 屏外被 `setShown(false)` 的角色不参与命中——它们的位置停留在最后一次可见处。
    */
   pickEntityAt(stageX: number, stageY: number): number | null {
-    const scale = this.metrics.cssScale;
-    if (!Number.isFinite(stageX) || !Number.isFinite(stageY) || scale <= 0) return null;
-    const worldX = (stageX - this.world.x) / scale;
-    const worldY = (stageY - this.world.y) / scale;
+    const point = this.worldPointAt(stageX, stageY);
+    if (!point) return null;
     const candidates: PickCandidate[] = [];
     for (const [id, view] of this.views) {
       if (!view.isShown) continue;
       candidates.push({ id, x: view.root.position.x, y: view.root.position.y });
     }
-    return pickCharacter(candidates, worldX, worldY);
+    return pickCharacter(candidates, point.x, point.y);
+  }
+
+  /**
+   * 舞台局部 CSS 坐标 → 世界坐标。
+   *
+   * `world` 容器按 `cssScale` 缩放并平移，反变换只有一次除法和两次减法。
+   * 点选角色与点选静态地标（放假告示板）共用这一份换算，避免两处各写一遍。
+   */
+  worldPointAt(stageX: number, stageY: number): { x: number; y: number } | null {
+    const scale = this.metrics.cssScale;
+    if (!Number.isFinite(stageX) || !Number.isFinite(stageY) || scale <= 0) return null;
+    return { x: (stageX - this.world.x) / scale, y: (stageY - this.world.y) / scale };
   }
 
   /** 座位占用变化：对应工位的显示器随之点亮或熄灭 */
@@ -1303,6 +1427,13 @@ export class GameRenderer {
     this.terrain?.destroy();
     this.props?.destroy();
     this.welcome?.destroy();
+    this.bulletin?.destroy();
+    this.pavilion?.destroy();
+    this.lanterns?.destroy();
+    this.shrine?.destroy();
+    this.tea?.destroy();
+    this.plaques?.destroy();
+    this.ritual?.destroy();
     // 冬季与室内陈设的精灵先交给 app.destroy 统一回收，纹理在这里手动释放
     this.winterArt?.destroy();
     this.interior?.destroy();

@@ -7,8 +7,8 @@ import { coveredTrackCount, type DanmakuCoverage } from './danmaku-prefs';
  * `danmaku.ts` 只负责把结果画出来。
  */
 
-/** 每条轨道的高度：16px 字号 + 描边 + 上下呼吸位 */
-export const DANMAKU_TRACK_HEIGHT = 28;
+/** 每条轨道的高度：22px 字号 + 上下呼吸位 */
+export const DANMAKU_TRACK_HEIGHT = 32;
 /** 轨道数下限与上限：屏幕再高也不铺满整屏，避免聊天盖住操作视野 */
 export const DANMAKU_MIN_TRACKS = 8;
 export const DANMAKU_MAX_TRACKS = 12;

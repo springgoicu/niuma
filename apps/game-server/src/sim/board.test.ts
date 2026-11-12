@@ -8,7 +8,13 @@ import {
   WELCOME_LANDMARKS,
   type CareerSummary,
 } from '@niuma/shared-types';
-import { buildBoardSnapshot, canQueryBoard, hasCareerReport, sessionSecOf } from './board';
+import {
+  boardValueOf,
+  buildBoardSnapshot,
+  canQueryBoard,
+  hasCareerReport,
+  sessionSecOf,
+} from './board';
 import { Player } from './world';
 
 const NOW = 1_700_000_000_000;
@@ -152,6 +158,19 @@ describe('牛马榜聚合', () => {
     expect(board.selfValue).toBe(20);
   });
 
+  it('NPC 不进任何榜单，也不计入在岗人数与自己的名次', () => {
+    const human = makePlayer(1, '真牛', 10, { career: { steps: 10 } });
+    const npc = makePlayer(2, '假马', 9_999, { career: { steps: 99_999 } });
+    npc.isNpc = true;
+    for (const metric of [BOARD_METRIC.Duty, BOARD_METRIC.Steps, BOARD_METRIC.Likes]) {
+      const board = buildBoardSnapshot([human, npc], metric, NOW, 2);
+      expect(board.rows.map((row) => row.id)).toEqual([1]);
+      expect(board.online).toBe(1);
+      expect(board.selfRank).toBe(0);
+      expect(board.selfValue).toBe(0);
+    }
+  });
+
   it('未上报判定：有入职日期或服务端写入过会话基线都算上报过', () => {
     expect(hasCareerReport(makePlayer(1, 'a', 10))).toBe(true);
     expect(hasCareerReport(makePlayer(2, 'b', 10, { reported: false }))).toBe(false);
@@ -167,5 +186,23 @@ describe('牛马榜聚合', () => {
     expect(sessionSecOf(player, NOW - 20_000)).toBe(0);
     player.joinedAt = 0;
     expect(sessionSecOf(player, NOW)).toBe(0);
+  });
+});
+
+describe('会话续算（ADR-0060）', () => {
+  it('入场时刻前移后在岗时长接着算，而不是从 0 重来', () => {
+    const back = makePlayer(1, '断线回来的', 3_600);
+    expect(sessionSecOf(back, NOW)).toBe(3_600);
+    // 榜单与工牌同一口径：在岗榜读的就是这个数
+    expect(boardValueOf(back, BOARD_METRIC.Duty, NOW)).toBe(3_600);
+  });
+
+  it('增量基线跟续算秒数一致时，工时不会被重连重复计一遍', () => {
+    const back = makePlayer(1, '断线回来的', 3_600, {
+      career: { weekMinutes: 600, reportedOnlineSec: 3_600 },
+    });
+    expect(boardValueOf(back, BOARD_METRIC.Week, NOW)).toBe(600);
+    // 再过两分钟只补两分钟，不会把上一段 60 分钟再加一次
+    expect(boardValueOf(back, BOARD_METRIC.Week, NOW + 120_000)).toBe(602);
   });
 });

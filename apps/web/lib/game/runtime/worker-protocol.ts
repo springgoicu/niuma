@@ -45,6 +45,8 @@ export type MainToWorker =
       dpr: number;
       /** 弹幕偏好初值：localStorage 只能在主线程读 */
       danmaku: DanmakuPrefs;
+      /** 最近一次上香的自然日（ADR-0061）：同样只能主线程读 */
+      incenseDay: string;
     }
   /** 小地图画布：可能晚于 init 到达，Worker 侧只换绘制目标 */
   | { t: 'minimap'; canvas: OffscreenCanvas }
@@ -54,6 +56,8 @@ export type MainToWorker =
   | { t: 'danmaku'; prefs: DanmakuPrefs }
   | { t: 'history'; cursor: number }
   | { t: 'status'; text: string }
+  /** 改工牌名：与状态同一条低速通道 */
+  | { t: 'name'; text: string }
   | { t: 'appearance'; appearance: CharacterAppearance }
   /** 考勤摘要补报：geo 就绪后与 60 秒心跳各发一次 */
   | { t: 'career'; career: CareerSummary }
@@ -91,6 +95,8 @@ export type WorkerToMain =
   | { t: 'ventDealt' }
   /** 在公告栏旁按了 F：主线程打开榜单面板并请求快照 */
   | { t: 'boardOpen' }
+  /** 在放假告示板旁按 F / 点击牌面：主线程展开软木看板（ADR-0059） */
+  | { t: 'bulletinOpen' }
   /** 牛马榜快照：一个指标一条，主线程按 metric 归并 */
   | { t: 'board'; packet: BoardPacket }
   /** 工牌点赞变化：主线程更新工牌与已赞集合 */
@@ -99,5 +105,7 @@ export type WorkerToMain =
   | { t: 'audio'; event: AudioEvent; listenerX: number; listenerY: number }
   /** 仅在无共享内存时使用：主线程据此落盘 */
   | { t: 'snapshot'; patch: SnapshotPatch }
+  /** 上香后写回本地日期键（ADR-0061）：零服务端状态，只记在本机 */
+  | { t: 'incenseDay'; day: string }
   /** Worker 遇到断线等情况，请求主线程做一次构建版本检查 */
   | { t: 'build-check' };

@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { CharacterAppearance, Species } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
+import { unlockedAchievements } from '@/lib/game/almanac-store';
 import { buildSelfArchive } from '@/lib/game/archive';
 import { useAttendance } from '@/lib/game/attendance';
 import { useCareer } from '@/lib/game/career';
@@ -42,7 +44,13 @@ export function SelfArchiveDialog({
   const seated = useGameUi((state) => state.seated);
   const seatKind = useGameUi((state) => state.seatKind);
   const onlineSec = useGameUi((state) => state.onlineSec);
+  const connection = useGameUi((state) => state.status);
   const myLikes = useGameUi((state) => state.myLikes);
+  /** 成就存在 localStorage：首帧给空数组，挂载后再读，避免 SSR 读不到本地数据 */
+  const [achievements, setAchievements] = useState<string[]>([]);
+  useEffect(() => {
+    setAchievements(unlockedAchievements());
+  }, []);
 
   const archive = buildSelfArchive({
     name,
@@ -58,8 +66,10 @@ export function SelfArchiveDialog({
     seatKind,
     board,
     rank,
-    onlineSec,
+    // 与服务端会话同一口径：断线时不给一个还在往前走的数字
+    onlineSec: connection === 'online' ? onlineSec : null,
     likes: myLikes,
+    achievements,
     now: now || Date.now(),
   });
 

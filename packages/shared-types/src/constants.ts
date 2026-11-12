@@ -69,8 +69,33 @@ export const ONLINE_EXTENSION_BYTES = 5;
  * 补报走独立的 C2S_CAREER / S2C_CAREER，不依赖这条尾部段。
  */
 export const CAREER_EXTENSION_MAGIC = 0xfc;
-/** 补报间隔：摘要是展示数据，60 秒足够跟上今日/本周工时的变化 */
-export const CAREER_REPORT_INTERVAL_MS = 60_000;
+/**
+ * HELLO 尾部的「上次会话已在线秒数」段：`[0xfa][sec u32 小端]`（ADR-0060）。
+ *
+ * 0xfa 既不是任何已知魔数（0xff / 0xfe / 0xfd / 0xfc / 0xfb 都已占用），
+ * 也大于 MAX_STATUS_BYTES(48)，不可能是合法状态长度；段永远追加在最后，
+ * 旧服务端读完已知段就停止，天然忽略。重连续算会话时长全靠这一段。
+ */
+export const SESSION_EXTENSION_MAGIC = 0xfa;
+/** 会话段总字节数：魔数 1 + u32 4 */
+export const SESSION_EXTENSION_BYTES = 5;
+/**
+ * WELCOME 尾部的「服务端采信的会话秒数」回显：`[0xf9][sec u32]`。
+ *
+ * 写在可选格式字节之后：旧客户端先读到格式字节（1）就停，
+ * 既不会把会话段当成格式，也不会因为多出 5 字节而错位。
+ */
+export const WELCOME_SESSION_MAGIC = 0xf9;
+export const WELCOME_SESSION_BYTES = 5;
+/**
+ * 会话续算上限：一天。
+ *
+ * 客户端上报的续算秒数只影响展示型的在岗榜，但虚报一整天也能霸榜，
+ * 所以服务端取 min(上报值, 一天, 进程已运行秒数) —— 进程重启后旧值自然失效。
+ */
+export const SESSION_CARRY_MAX_SEC = 86_400;
+/** 补报间隔：摘要是展示数据，20 秒足够跟上今日/本周工时的变化（服务端限频 10s） */
+export const CAREER_REPORT_INTERVAL_MS = 20_000;
 /** 补报限频：服务端按连接维度收口，防止伪造包把广播当放大器 */
 export const CAREER_UPDATE_INTERVAL_MS = 10_000;
 export const MAX_PACKET_BYTES = 2048;

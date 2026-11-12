@@ -11,6 +11,7 @@ import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
+import { readIncenseDay, writeIncenseDay } from '../incense-day';
 import { drawMiniMap, MINIMAP_SIZE, prepareMiniMap, type MiniMapContext } from '../minimap-draw';
 import { applyAudioEvent } from '../runtime/audio-sink';
 import {
@@ -85,6 +86,9 @@ export class MainThreadGameClient implements GameClient {
       },
       // 主线程回退实现直接读宿主注入的初值，与 Worker 模式共用同一份偏好
       danmakuPrefs: this.options.danmakuPrefs,
+      // 回退模式本来就在主线程：直接读写 localStorage，不必绕一圈消息
+      incenseDay: readIncenseDay(),
+      writeIncenseDay: (day) => writeIncenseDay(day),
       writeSnapshot: (patch) => {
         const park = this.options.parkId;
         // 落点按园区分区：换园区后这份快照会被 resumeForPark 判为不匹配而丢弃
@@ -203,6 +207,10 @@ export class MainThreadGameClient implements GameClient {
 
   setStatus(status: string): void {
     this.session?.setStatus(status);
+  }
+
+  setName(name: string): void {
+    this.session?.setName(name);
   }
 
   setAppearance(appearance: CharacterAppearance): void {

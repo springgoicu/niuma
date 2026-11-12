@@ -180,6 +180,8 @@ export class PonyRenderer {
   /** 呼吸 / 行走起伏（≤ 0）与座位抬升（≥ 0）分开记，合成后落在一个整数 y 上 */
   private bobTexels = 0;
   private seatLiftTexels = 0;
+  /** 作揖下俯（≥ 0，向下沉 0–2 纹素）：与起伏 / 抬升分开记，互不覆盖 */
+  private bowTexels = 0;
   private appearanceValue: CharacterAppearance;
   private builtKey = '';
 
@@ -219,8 +221,21 @@ export class PonyRenderer {
     this.applyOffset();
   }
 
+  /**
+   * 合十作揖的下俯量（ADR-0061）：0–2 纹素，向下沉。
+   *
+   * 不复用 `setBob`：那个槽位由呼吸 / 行走每帧覆盖，作揖会被瞬间冲掉。
+   * 也不做纵向缩放——非整数缩放会把 1px 描边拉成半像素（ADR-0005）。
+   */
+  setBow(bowTexels: number): void {
+    const next = Math.max(0, Math.min(2, Math.round(bowTexels)));
+    if (this.bowTexels === next) return;
+    this.bowTexels = next;
+    this.applyOffset();
+  }
+
   private applyOffset(): void {
-    const y = this.bobTexels - this.seatLiftTexels;
+    const y = this.bobTexels - this.seatLiftTexels + this.bowTexels;
     if (this.container.y !== y) this.container.y = y;
   }
 

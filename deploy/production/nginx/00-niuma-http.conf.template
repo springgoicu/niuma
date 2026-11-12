@@ -102,4 +102,18 @@ proxy_buffers              8 32k;
 proxy_busy_buffers_size    64k;
 proxy_temp_file_write_size 64k;
 
+# ---- 掐掉上游指纹 ----
+# 只对 proxy 响应生效：Next 可能带 X-Powered-By，Bun 会带自己的 Server 头。
+# nginx 自身那一行 `Server: nginx` 不归它管 —— 见下面 @SERVER_HEADER_FILTER@。
+proxy_hide_header X-Powered-By;
+proxy_hide_header Server;
+proxy_hide_header X-AspNet-Version;
+proxy_hide_header X-Runtime;
+
+# nginx 自己的 Server 头只有 headers-more 模块能删（原生没有「删除响应头」指令，
+# server_tokens off 只是去版本号，仍会发 `Server: nginx`）。
+# 渲染时按模块是否可用填入，装不了就留一行注释 —— 不能写死，
+# 否则新机器上没装模块会直接 nginx -t 失败，整站起不来。
+@SERVER_HEADER_FILTER@
+
 client_max_body_size 4m;

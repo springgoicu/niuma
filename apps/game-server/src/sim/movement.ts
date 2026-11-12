@@ -4,7 +4,6 @@ import {
   clampWorldX,
   clampWorldY,
   dequantizeCoord,
-  quantizeCoord,
   resolveMotionInto,
   seatById,
   seatPose,
@@ -54,23 +53,6 @@ export interface MoveResult {
 }
 
 /**
- * 只有「观测者看得出差别」时才置 dirty。
- *
- * 三元组（量化坐标 + state）与上次真正广播出去的值相同，说明这一包对别人不可见：
- * 客户端在工位上坐着也会 20Hz 发 MOVE，若每包都置 dirty，广播成本就与「有没有变化」无关，
- * 这正是 5M 带宽只够 60 人的根因。基准在 `runTick` 真正发包后回写。
- */
-function markIfChanged(player: Player): void {
-  if (
-    quantizeCoord(player.x) !== player.lastBroadcastQx ||
-    quantizeCoord(player.y) !== player.lastBroadcastQy ||
-    player.state !== player.lastBroadcastState
-  ) {
-    player.dirty = true;
-  }
-}
-
-/**
  * 服务端权威移动：客户端上报目标点，服务端按时间窗限速。
  * 超速不踢人，只把坐标沿原方向截断到允许距离——避免误伤高延迟玩家。
  * 
@@ -102,7 +84,7 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
    */
   if (now < player.stunUntil) {
     player.applyState(player.direction, POSE.Lie, false);
-    markIfChanged(player);
+    player.markDirtyIfChanged();
     return RESULT;
   }
 
@@ -119,7 +101,7 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
       // 座位上位置不动，只接受原地的发泄 / 挥手；跳跃需要先起身，这里不接
       const stationary = !state.moving;
       player.applyState(player.direction, expected, false, stationary && state.vent, false, stationary && state.wave);
-      markIfChanged(player);
+      player.markDirtyIfChanged();
       return RESULT;
     }
   }
@@ -156,7 +138,7 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
     state.jump,
     stationary && state.wave,
   );
-  markIfChanged(player);
+  player.markDirtyIfChanged();
 
   RESULT.accepted = true;
   RESULT.clamped = clamped;

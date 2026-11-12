@@ -55,6 +55,22 @@ export function hsvToHex(h: number, s: number, v: number): number {
   return (to255(r) << 16) | (to255(g) << 8) | to255(b);
 }
 
+/**
+ * 由 store 颜色决定滑轨要不要重同步。
+ *
+ * `emitted` 是我们自己刚写进 store 的颜色，调用方必须按 565 归一后传入
+ * （`normalizeColor(hsvToHex(...))`），否则量化误差会把它认成外部改色。
+ *
+ * 命中 emitted 就原样返回 draft：色相拖到 360° 时 `hsvToHex` 会折成 0° 的红，
+ * 照 store 回读滑块就会从末端弹回最前端；饱和度 / 明度拖到 0 时颜色丢失色相，
+ * 回读同样会把另外两根滑轨一起拽回起点。只有外部改色（预设色块、hex 输入、
+ * 切换槽位、套用整妆、读档）才回读。
+ */
+export function resolveHsvDraft(storeColor: number, emitted: number | null, draft: Hsv): Hsv {
+  if (emitted !== null && storeColor === emitted) return draft;
+  return hexToHsv(storeColor);
+}
+
 export function toHexString(hex: number): string {
   return `#${(hex & 0xffffff).toString(16).padStart(6, '0')}`;
 }

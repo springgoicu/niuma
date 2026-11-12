@@ -10,7 +10,13 @@ import {
 } from '@niuma/shared-types';
 import type { ConnectionStatus } from '@/lib/game-ui';
 import { GAME_KEYS, TAB_KEYS } from '@/lib/game/game-keys';
-import { BOARD_METRICS, formatBoardValue, metricMeta } from '@/lib/game/leaderboard';
+import {
+  advanceBoardValue,
+  BOARD_METRICS,
+  formatBoardValue,
+  isBackdropCloseAllowed,
+  metricMeta,
+} from '@/lib/game/leaderboard';
 import { nextTabIndex, type TabNavKey } from '@/lib/game/tab-keyboard';
 
 /**
@@ -69,15 +75,21 @@ function BoardMark() {
 function PodiumSlot({
   rank,
   entry,
+  value,
   metric,
   unit,
   self,
+  tied,
 }: {
   rank: 1 | 2 | 3;
   entry: BoardPacket['rows'][number] | undefined;
+  /** 已按本地走秒推进过的数值 */
+  value: number;
   metric: BoardMetric;
   unit: string;
   self: boolean;
+  /** 与相邻名次数值相同：标一枚「并列」小签 */
+  tied: boolean;
 }) {
   const accent = ACCENT[rank];
   return (
@@ -94,8 +106,11 @@ function PodiumSlot({
               )}
             </p>
             <p className={`mt-0.5 font-mono text-[10px] tabular-nums ${accent.text}`}>
-              {formatBoardValue(metric, entry.value)}
+              {formatBoardValue(metric, value)}
               {unit && <span className="ml-1 text-[8px] text-mist-500">{unit}</span>}
+              {tied && (
+                <span className="ml-1 align-middle font-mono text-[8px] text-mist-500">并列</span>
+              )}
             </p>
           </>
         ) : (
@@ -119,15 +134,35 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
   const dialogRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const refreshTimer = useRef<number | null>(null);
+  /** 打开时刻：遮罩的免疫窗按它算，挡住同一次手势的余波 */
+  const openedAt = useRef(Date.now());
+  /** 快照到达时刻，按指标分开记：切页签不该把别的指标的时间戳刷新掉 */
+  const stampOf = useRef<Partial<Record<BoardMetric, number>>>({});
+  const seenBoards = useRef(boards);
   const [metric, setMetric] = useState<BoardMetric>(BOARD_METRICS[0]!.id);
   const [cooling, setCooling] = useState(false);
-  const [snapshotAt, setSnapshotAt] = useState(0);
+  const [nowTick, setNowTick] = useState(0);
 
   const meta = metricMeta(metric);
   const packet = boards[metric];
   const rows = packet?.rows ?? [];
   const podium = rows.slice(0, 3);
   const rest = rows.slice(3);
+
+  /** 当前页签这份快照的到达时刻；0 表示还没有快照 */
+  const snapshotAt = stampOf.current[metric] ?? 0;
+  /** 距快照到达过了多久：在岗按秒推进，工时按整分钟推进 */
+  const elapsedSec = snapshotAt > 0 && nowTick > snapshotAt ? (nowTick - snapshotAt) / 1000 : 0;
+  const valueOf = (value: number) => advanceBoardValue(metric, value, elapsedSec);
+  /** 与相邻行数值相同就算并列：让「时间一样」读作并列，而不是排序出错 */
+  const tiedAt = (index: number) => {
+    const value = rows[index]?.value;
+    return (
+      value !== undefined &&
+      ((index > 0 && rows[index - 1]?.value === value) ||
+        (index + 1 < rows.length && rows[index + 1]?.value === value))
+    );
+  };
 
   // 打开：把焦点从画布 / 聊天输入框收进面板；关闭后还给游戏画布
   useEffect(() => {
@@ -146,9 +181,10 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
     };
   }, []);
 
-  // 打开即拉一次；之后按节拍补快照。onRequest 由宿主 useCallback 固定。
+  // 打开即拉一次：放到下一帧，别让「挂载 → 6 条快照」跟入场动画抢同一帧。
   useEffect(() => {
-    onRequest();
+    const frame = window.requestAnimationFrame(() => onRequest());
+    return () => window.cancelAnimationFrame(frame);
   }, [onRequest]);
 
   useEffect(() => {
@@ -156,9 +192,26 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
     return () => window.clearInterval(timer);
   }, [onRequest]);
 
+  // 每秒推一次「现在」：在岗按秒走，20 秒快照只用来校准。
   useEffect(() => {
-    if (packet) setSnapshotAt(Date.now());
-  }, [packet]);
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // 只在真的来了新快照时盖时间戳：按对象身份比对，切页签不会重置别的指标。
+  useEffect(() => {
+    const previous = seenBoards.current;
+    let fresh = false;
+    for (const item of BOARD_METRICS) {
+      const next = boards[item.id];
+      if (next !== undefined && next !== previous[item.id]) {
+        stampOf.current[item.id] = Date.now();
+        fresh = true;
+      }
+    }
+    seenBoards.current = boards;
+    if (fresh) setNowTick(Date.now());
+  }, [boards]);
 
   useEffect(
     () => () => {
@@ -241,9 +294,19 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6">
+      {/*
+        遮罩只在「按下去」时关闭，并且要满足两个条件：
+        1) 按下的就是遮罩本身（不是面板里冒泡上来的）；
+        2) 已经过了打开免疫窗——面板是被这一下点击打开的，同一次手势的余波
+           （触屏合成的 click、手快的第二下）不该把刚打开的面板关掉。
+      */}
       <div
         className="absolute inset-0 cursor-pointer bg-black/75 backdrop-blur-[2px]"
-        onClick={onClose}
+        onPointerDown={(event) => {
+          if (event.button !== 0 || event.target !== event.currentTarget) return;
+          if (!isBackdropCloseAllowed(openedAt.current, Date.now())) return;
+          onClose();
+        }}
         aria-hidden="true"
       />
 
@@ -392,23 +455,29 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                   <PodiumSlot
                     rank={2}
                     entry={podium[1]}
+                    value={podium[1] ? valueOf(podium[1].value) : 0}
                     metric={metric}
                     unit={meta.unit}
                     self={packet.selfRank === 2}
+                    tied={tiedAt(1)}
                   />
                   <PodiumSlot
                     rank={1}
                     entry={podium[0]}
+                    value={podium[0] ? valueOf(podium[0].value) : 0}
                     metric={metric}
                     unit={meta.unit}
                     self={packet.selfRank === 1}
+                    tied={tiedAt(0)}
                   />
                   <PodiumSlot
                     rank={3}
                     entry={podium[2]}
+                    value={podium[2] ? valueOf(podium[2].value) : 0}
                     metric={metric}
                     unit={meta.unit}
                     self={packet.selfRank === 3}
+                    tied={tiedAt(2)}
                   />
                 </div>
 
@@ -416,6 +485,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                   {rest.map((entry, index) => {
                     const rank = index + 4;
                     const self = packet.selfRank === rank;
+                    const tied = tiedAt(index + 3);
                     return (
                       <li
                         key={entry.id}
@@ -437,9 +507,14 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                               你
                             </span>
                           )}
+                          {tied && (
+                            <span className="ml-1.5 align-middle font-mono text-[8px] tracking-[0.06em] text-mist-500">
+                              并列
+                            </span>
+                          )}
                         </span>
                         <span className="shrink-0 font-mono text-[12px] tabular-nums text-mist-100">
-                          {formatBoardValue(metric, entry.value)}
+                          {formatBoardValue(metric, valueOf(entry.value))}
                         </span>
                         {meta.unit && (
                           <span className="w-3 shrink-0 font-mono text-[8px] text-mist-500">{meta.unit}</span>
@@ -456,7 +531,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                         我的位置 · 第 {packet.selfRank} 名
                       </span>
                       <span className="font-mono text-[12px] tabular-nums text-mist-100">
-                        {formatBoardValue(metric, packet.selfValue)}
+                        {formatBoardValue(metric, valueOf(packet.selfValue))}
                         {meta.unit && <span className="ml-1 text-[8px] text-mist-500">{meta.unit}</span>}
                       </span>
                     </div>
@@ -489,7 +564,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
               </button>
             </div>
             <p className="mt-1 font-mono text-[8px] leading-relaxed tracking-[0.06em] text-mist-500">
-              工时 / 摸鱼 / 击倒 / 步数由本人自报，最多 60 秒延迟 · 快照 {snapshotTime}
+              工时按本浏览器累计，换设备或清缓存会重来 · 自报数据最多 20 秒延迟 · 快照 {snapshotTime}
             </p>
           </footer>
         </div>
