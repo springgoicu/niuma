@@ -54,6 +54,7 @@ function spawnPacketOf(player: Player): Uint8Array {
     onlineSec,
     player.career,
     player.careerSegment,
+    player.likes,
   );
   return writer.finish();
 }

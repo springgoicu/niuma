@@ -48,6 +48,10 @@ export interface BadgeArchive {
   species: Species;
   appearance: CharacterAppearance;
   isSelf: boolean;
+  /** 服务端内存里的工牌点赞数（ADR-0057） */
+  likes: number;
+  /** 当前连接是否已给这块工牌点过赞；本人档案恒为 false */
+  liked: boolean;
   department: string;
   shift: string;
   jobTitle: string;
@@ -98,6 +102,8 @@ export interface SelfArchiveInput {
   board: BoardEntry[];
   rank: number | null;
   onlineSec: number;
+  /** 服务端当前记录的收到赞数；缺省 0（旧服务端 / 刚入场） */
+  likes?: number;
   now?: number;
 }
 
@@ -128,6 +134,8 @@ export function buildSelfArchive(input: SelfArchiveInput): BadgeArchive {
     species: input.species,
     appearance: input.appearance,
     isSelf: true,
+    likes: Math.max(0, Math.floor(input.likes ?? 0)),
+    liked: false,
     department: departmentOf(input.name),
     shift: shiftOf(input.name),
     jobTitle: job.title,
@@ -188,6 +196,8 @@ export function buildRemoteArchive(badge: PlayerBadge, now = Date.now()): BadgeA
     species: badge.species,
     appearance: badge.appearance,
     isSelf: false,
+    likes: Math.max(0, Math.floor(badge.likes)),
+    liked: badge.liked,
     department: departmentOf(badge.name),
     shift: shiftOf(badge.name),
     jobTitle: hasCareer ? job.title : '未上报',

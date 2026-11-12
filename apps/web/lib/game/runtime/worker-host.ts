@@ -77,6 +77,8 @@ export function runWorkerHost(scope: WorkerScope): void {
       control: block,
       readViewport: (out) => block.readViewport(out),
       fontsReady: readFontsReady,
+      // 偏好由主线程读盘后随 init 带进来：Worker 碰不到 localStorage
+      danmakuPrefs: message.danmaku,
       writeSnapshot: (patch) => {
         block.writeSnapshot(patch);
         // 没有共享内存时主线程读不到这块私有内存，另发一条定长消息由它落盘
@@ -100,6 +102,9 @@ export function runWorkerHost(scope: WorkerScope): void {
         onNav: (nav) => post({ t: 'nav', nav }),
         onVentHit: (local) => post({ t: 'ventHit', local }),
         onVentDealt: () => post({ t: 'ventDealt' }),
+        onBoardOpen: () => post({ t: 'boardOpen' }),
+        onBoard: (packet) => post({ t: 'board', packet }),
+        onLike: (packet) => post({ t: 'like', packet }),
       },
       env,
       { wsUrl: message.wsUrl, parkId: message.parkId },
@@ -148,7 +153,10 @@ export function runWorkerHost(scope: WorkerScope): void {
         control?.apply(message.message);
         return;
       case 'chat':
-        session?.sendChat(message.text);
+        session?.sendChat(message.packet.text, message.packet.colorIndex, message.packet.danmakuMode);
+        return;
+      case 'danmaku':
+        session?.setDanmakuPrefs(message.prefs);
         return;
       case 'history':
         session?.requestHistory(message.cursor);
@@ -162,11 +170,20 @@ export function runWorkerHost(scope: WorkerScope): void {
       case 'career':
         session?.updateCareer(message.career);
         return;
+      case 'board':
+        session?.requestBoard(message.metric);
+        return;
+      case 'like':
+        session?.like(message.id);
+        return;
       case 'navigate':
         session?.navigateTo(message.id);
         return;
       case 'cancelNav':
         session?.cancelNavigation();
+        return;
+      case 'like':
+        session?.like(message.id);
         return;
       case 'pick': {
         const badge = session?.pickAt(message.x, message.y) ?? null;

@@ -13,6 +13,8 @@ interface RemoteArchiveDialogProps {
   seed?: PlayerBadge | null;
   subscribeBadge: (id: number | null, onChange: (badge: PlayerBadge | null) => void) => void;
   onClose: () => void;
+  /** 给这块工牌点赞；省略时按钮降级为不可用 */
+  onLike?: (id: number) => void;
 }
 
 /**
@@ -24,6 +26,7 @@ export function RemoteArchiveDialog({
   seed = null,
   subscribeBadge,
   onClose,
+  onLike,
 }: RemoteArchiveDialogProps) {
   const [badge, setBadge] = useState<PlayerBadge | null>(
     seed && seed.id === playerId ? seed : null,
@@ -51,7 +54,11 @@ export function RemoteArchiveDialog({
   if (typeof document === 'undefined') return null;
 
   return createPortal(
-    <BadgeArchiveDialog archive={buildRemoteArchive(badge)} onClose={onClose} />,
+    <BadgeArchiveDialog
+      archive={buildRemoteArchive(badge)}
+      onClose={onClose}
+      onLike={onLike ? () => onLike(playerId) : undefined}
+    />,
     document.body,
   );
 }

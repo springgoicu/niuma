@@ -1,14 +1,17 @@
 'use client';
 
 import {
+  BOARD_METRIC_ALL,
   OpCode,
   decodeAppearanceBroadcast,
+  decodeBoard,
   decodeCareerBroadcast,
   decodeChatBroadcast,
   decodeChatHistory,
   decodeChatRejected,
   decodeDespawn,
   decodeGraze,
+  decodeLike,
   decodePong,
   decodeQueueRejected,
   decodeQueueStatus,
@@ -18,10 +21,12 @@ import {
   decodeSystemNotice,
   decodeVent,
   decodeWelcome,
+  encodeBoardRequest,
   encodeCareerReport,
   encodeChatHistoryRequest,
   encodeChatSend,
   encodeHello,
+  encodeLikeRequest,
   encodeMoveInto,
   encodePing,
   encodeSetAppearance,
@@ -29,10 +34,14 @@ import {
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
+  type BoardMetric,
+  type BoardPacket,
   type CareerSummary,
   type CharacterAppearance,
   type ChatHistoryPacket,
   type ChatPacket,
+  type ChatSendPacket,
+  type LikePacket,
   type MovePacket,
   type QueueStatusPacket,
   type ResumeState,
@@ -74,6 +83,10 @@ export interface NetHandlers {
   onStatus(id: number, status: string): void;
   /** 某个实体的考勤摘要变了（补报后服务端定向广播） */
   onCareer(id: number, career: CareerSummary): void;
+  /** 工牌点赞变化：目标、当前计数与「是不是你点的」flag（ADR-0057） */
+  onLike(packet: LikePacket): void;
+  /** 牛马榜快照：一次请求最多回五条，按 metric 归并 */
+  onBoard(packet: BoardPacket): void;
   /** 附近玩家咀嚼：只带实体 id，音效按该实体当前位置空间化 */
   onGraze(id: number): void;
   /**
@@ -274,6 +287,16 @@ export class NetClient {
         if (packet) this.handlers.onCareer(packet.entityId, packet.career);
         break;
       }
+      case OpCode.S2C_LIKE: {
+        const packet = decodeLike(data);
+        if (packet) this.handlers.onLike(packet);
+        break;
+      }
+      case OpCode.S2C_BOARD: {
+        const packet = decodeBoard(data);
+        if (packet) this.handlers.onBoard(packet);
+        break;
+      }
       case OpCode.S2C_SEAT_STATE:
         this.handlers.onSeatState(decodeSeatState(data));
         break;
@@ -345,9 +368,10 @@ export class NetClient {
     this.socket.send(new Uint8Array([OpCode.C2S_ACTION, entityId & 0xff, (entityId >> 8) & 0xff, action & 0xff]));
   }
 
-  sendChat(text: string): void {
+  /** 发言：颜色索引与飞行模式随包上行（ADR-0056） */
+  sendChat(packet: ChatSendPacket): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeChatSend(text));
+    this.socket.send(encodeChatSend(packet));
   }
 
   /** 上翻：`beforeMsgId = 0` 表示要最新一页（服务端会以 Replace 语义回） */
@@ -374,6 +398,18 @@ export class NetClient {
     this.career = career;
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeCareerReport(career));
+  }
+
+  /** 工牌点赞：服务端裁决；离线时是空操作，UI 的超时会收回「点赞中」 */
+  sendLike(targetId: number): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeLikeRequest(targetId));
+  }
+
+  /** 牛马榜查询：默认一次拉全部指标；服务端按指标各回一条 */
+  sendBoard(metric: BoardMetric | typeof BOARD_METRIC_ALL = BOARD_METRIC_ALL): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeBoardRequest(metric));
   }
 
   dispose(): void {

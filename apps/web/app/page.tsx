@@ -1,3 +1,4 @@
+import { ChangelogSection } from '@/components/site/Changelog';
 import { SiteFooter, TopNav } from '@/components/site/Chrome';
 import { Hero } from '@/components/site/Hero';
 import { BenefitsMarquee, RulesSection, SpeciesSection, TechSection } from '@/components/site/Sections';
@@ -15,6 +16,7 @@ export default function LandingPage() {
         <SpeciesSection />
         <BenefitsMarquee />
         <TechSection />
+        <ChangelogSection />
         <RulesSection />
       </main>
       <SiteFooter />

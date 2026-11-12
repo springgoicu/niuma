@@ -38,10 +38,14 @@ const COLOR = {
   mintGlow: 0xd9fff2,
   iron: 0x4a4f58,
   ironLight: 0x6f7680,
+  /** 榜单图钉：与 HUD 的 amber / ember 同一色值，只给前三名做金 / 铜点色 */
+  amber: 0xf2c879,
+  ember: 0xe07a4a,
 } as const;
 
 const ARCH = WELCOME_LANDMARKS.arch;
 const DIRECTORY = WELCOME_LANDMARKS.directory;
+const RANK_BOARD = WELCOME_LANDMARKS.rankBoard;
 
 /** 一个带 1px 描边的圆角矩形：与 props.ts 的 box 同一种画法 */
 function box(g: Graphics, x: number, y: number, w: number, h: number, fill: number, line: number = COLOR.ink): void {
@@ -167,6 +171,73 @@ function drawSignpost(g: Graphics, w: number, h: number, arrows: readonly number
   box(g, tagX, tagY, 52, 10, COLOR.inkSoft, COLOR.woodDark);
 }
 
+/**
+ * 牛马榜公告栏（ADR-0054）：两根深木柱撑起一块奶油纸面，
+ * 顶梁挂三齿小皇冠，纸面钉三张小便签（柱条暗示榜单）。
+ *
+ * 「牛马榜 / NIOMA · LEADERBOARD / 按 F 查看」由 Pixi Text 叠加，
+ * 与拱门、导览牌共用同一套中文字体与分辨率；Graphics 只负责形与钉。
+ */
+function drawRankBoard(g: Graphics, w: number, h: number): void {
+  g.ellipse(w / 2, h - 2, w / 2 - 16, 5).fill({ color: COLOR.shadow, alpha: 0.22 });
+
+  // 两根木柱：先画，后面被纸面压住中段
+  for (const x of [8, w - 18]) {
+    box(g, x, 12, 10, h - 12, COLOR.woodDark, COLOR.woodEdge);
+    box(g, x + 2, 14, 6, h - 16, COLOR.woodLight, COLOR.woodDark);
+  }
+
+  // 顶梁与两只黄铜钉
+  box(g, 2, 6, w - 4, 12, COLOR.woodDark, COLOR.woodEdge);
+  box(g, 4, 8, w - 8, 8, COLOR.woodLight, COLOR.woodDark);
+  for (const x of [14, w - 14]) {
+    g.rect(x - 2, 10, 4, 4).fill(COLOR.iron);
+    g.rect(x - 1, 11, 2, 2).fill(COLOR.ironLight);
+  }
+
+  // 纸面：奶油底 + 一道薄荷细线 + 标题下的分隔线
+  box(g, 5, 18, w - 10, h - 30, COLOR.paper, COLOR.paperEdge);
+  g.rect(7, 20, w - 14, 2).fill({ color: COLOR.mintDark, alpha: 0.45 });
+  g.rect(10, 48, w - 20, 1).fill({ color: COLOR.paperEdge, alpha: 0.55 });
+
+  // 三张钉住的小榜单：薄荷 / 金 / 铜三枚图钉，柱条一次比一次高
+  const noteW = 32;
+  const gap = 6;
+  const noteY = 52;
+  const noteH = 26;
+  const startX = Math.round((w - (noteW * 3 + gap * 2)) / 2);
+  const pins = [COLOR.mintDark, COLOR.amber, COLOR.ember] as const;
+  for (let i = 0; i < 3; i += 1) {
+    const x = startX + i * (noteW + gap);
+    box(g, x, noteY, noteW, noteH, COLOR.clothLight, COLOR.paperEdge);
+    g.rect(x + noteW / 2 - 1, noteY + 1, 3, 3).fill(pins[i]!);
+    g.rect(x + noteW / 2, noteY + 2, 1, 1).fill(COLOR.mintGlow);
+    const heights = [8, 12, 6] as const;
+    for (let bar = 0; bar < 3; bar += 1) {
+      const barH = heights[(bar + i) % 3]!;
+      g.rect(x + 6 + bar * 7, noteY + noteH - 4 - barH, 4, barH).fill(
+        bar === 1 ? COLOR.mintDark : COLOR.woodDark,
+      );
+    }
+  }
+
+  // 底部木条：这里写「按 F 查看」
+  box(g, 5, h - 12, w - 10, 10, COLOR.woodDark, COLOR.woodEdge);
+  box(g, 7, h - 10, w - 14, 6, COLOR.woodLight, COLOR.woodDark);
+
+  // 榜一的小皇冠：三齿 + 深木描边，远看也能认出这是排行榜
+  const cx = w / 2;
+  g.rect(cx - 9, 1, 18, 8).fill(COLOR.woodEdge);
+  for (const [x, top] of [
+    [cx - 8, 4],
+    [cx - 1, 2],
+    [cx + 5, 4],
+  ] as const) {
+    g.rect(x, top, 3, 5).fill(COLOR.amber);
+  }
+  g.rect(cx - 8, 6, 16, 2).fill(COLOR.amber);
+}
+
 interface Landmark {
   root: Container;
   texture: Texture;
@@ -180,6 +251,7 @@ export class WelcomeView {
   build(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
     this.buildArch(depth, renderer, devicePxPerTexel);
     this.buildSignpost(depth, renderer, devicePxPerTexel);
+    this.buildRankBoard(depth, renderer, devicePxPerTexel);
   }
 
   private addText(
@@ -296,6 +368,48 @@ export class WelcomeView {
     });
 
     depth.add(DIRECTORY.y, root);
+    this.landmarks.push({ root, texture });
+  }
+
+  private buildRankBoard(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
+    const texture = bake(renderer, (g) => drawRankBoard(g, RANK_BOARD.width, RANK_BOARD.height), {
+      frame: new Rectangle(0, 0, RANK_BOARD.width, RANK_BOARD.height),
+    });
+    const root = new Container();
+    root.position.set(RANK_BOARD.x, RANK_BOARD.y);
+    const sprite = new Sprite(texture);
+    sprite.anchor.set(0.5, 1);
+    root.addChild(sprite);
+
+    const base = -RANK_BOARD.height;
+    this.addText(root, devicePxPerTexel, {
+      text: '牛马榜',
+      x: 0,
+      y: base + 31,
+      size: 17,
+      weight: '600',
+      fill: COLOR.inkSoft,
+      spacing: 3,
+    });
+    this.addText(root, devicePxPerTexel, {
+      text: 'NIOMA · LEADERBOARD',
+      x: 0,
+      y: base + 42,
+      size: 7,
+      font: MONO_FONT,
+      fill: COLOR.mintInk,
+      spacing: 1,
+    });
+    this.addText(root, devicePxPerTexel, {
+      text: '按 F 查看',
+      x: 0,
+      y: base + 89,
+      size: 7,
+      fill: COLOR.paper,
+      spacing: 2,
+    });
+
+    depth.add(RANK_BOARD.y, root);
     this.landmarks.push({ root, texture });
   }
 

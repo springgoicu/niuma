@@ -42,6 +42,7 @@ export function SelfArchiveDialog({
   const seated = useGameUi((state) => state.seated);
   const seatKind = useGameUi((state) => state.seatKind);
   const onlineSec = useGameUi((state) => state.onlineSec);
+  const myLikes = useGameUi((state) => state.myLikes);
 
   const archive = buildSelfArchive({
     name,
@@ -58,6 +59,7 @@ export function SelfArchiveDialog({
     board,
     rank,
     onlineSec,
+    likes: myLikes,
     now: now || Date.now(),
   });
 

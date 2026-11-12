@@ -119,7 +119,6 @@ export function NoticeBoard({ compact = false }: { compact?: boolean }) {
         aria-controls="notice-board-panel"
         aria-label={open ? '收起园区公告栏' : '展开园区公告栏，扫码加入微信群'}
         title="园区公告 · 微信群"
-        data-no-immersive
         data-notice-trigger
         className={`flex cursor-pointer items-center border-2 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] backdrop-blur-sm transition-colors focus-visible:border-mint-400 focus-visible:outline-none ${
           open
@@ -154,7 +153,6 @@ export function NoticeBoard({ compact = false }: { compact?: boolean }) {
               type="button"
               onClick={() => close(true)}
               aria-label="收起公告栏"
-              data-no-immersive
               className="-mr-1 grid h-5 w-5 cursor-pointer place-items-center text-mist-500 transition-colors hover:text-mint-400 focus-visible:text-mint-400 focus-visible:outline-none"
             >
               <X className="h-3.5 w-3.5" aria-hidden />

@@ -28,6 +28,17 @@ export class Player {
   career: CareerSummary = { ...EMPTY_CAREER };
   /** 上一次考勤补报的时刻：按连接限频，防止伪造包把视野广播当放大器 */
   lastCareerAt = 0;
+  /**
+   * 收到的工牌点赞数（ADR-0057）：服务端内存计数，离园 / 进程重启即清零。
+   * 只用于展示与「人气」榜，不参与任何权威判定。
+   */
+  likes = 0;
+  /** 谁点过我：一个连接对同一目标只能点一次；点赞者离开时从所有目标里清掉 */
+  readonly likedBy = new Set<number>();
+  /** 上一次点赞时刻：按连接限频，防止伪造包把点赞广播当放大器 */
+  lastLikeAt = 0;
+  /** 上一次拉取牛马榜的时刻：榜单是按需查询，同样要限频防放大（ADR-0054） */
+  lastBoardAt = 0;
   /** 摘要编码后的尾部段：与 spawnBody 同一套缓存纪律，补报时失效 */
   private careerSegmentCache: Uint8Array | null = null;
   /**
@@ -147,6 +158,10 @@ export class Player {
     this.career = { ...EMPTY_CAREER };
     this.careerSegmentCache = null;
     this.lastCareerAt = 0;
+    this.lastBoardAt = 0;
+    this.likes = 0;
+    this.likedBy.clear();
+    this.lastLikeAt = 0;
     this.joinedAt = 0;
     this.x = 0;
     this.y = 0;
@@ -249,6 +264,9 @@ export class World {
     const player = this.players.get(id);
     if (!player) return undefined;
     this.players.delete(id);
+    // 点赞去重集合只记 liker id：玩家离开后从所有目标里清掉，
+    // 避免实体 id 复用后新玩家顶着旧 id 无法点赞（ADR-0057）。
+    for (const other of this.players.values()) other.likedBy.delete(id);
     player.reset();
     if (this.pool.length < 256) this.pool.push(player);
     return player;

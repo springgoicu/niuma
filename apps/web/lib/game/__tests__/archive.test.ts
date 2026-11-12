@@ -39,6 +39,7 @@ function selfInput() {
     board: [{ id: 1, name: '夜班实习生', weekMinutes: 360, self: true }],
     rank: 1,
     onlineSec: 3_600,
+    likes: 5,
     now: NOW,
   };
 }
@@ -75,6 +76,8 @@ function remoteBadge(overrides: Partial<PlayerBadge> = {}): PlayerBadge {
     },
     board: [{ id: 7, name: '夜班实习生', weekMinutes: 180, self: false }],
     rank: 1,
+    likes: 8,
+    liked: true,
     ...overrides,
   };
 }
@@ -84,6 +87,8 @@ describe('self archive', () => {
     const archive = buildSelfArchive(selfInput());
     expect(archive.isSelf).toBe(true);
     expect(archive.hasCareer).toBe(true);
+    expect(archive.likes).toBe(5);
+    expect(archive.liked).toBe(false);
     expect(archive.location).toBe('中国 · 浙江 · 杭州');
     expect(archive.weekHours).toBe(6);
     expect(archive.todayDuration).toBe('01:00:00');
@@ -106,6 +111,8 @@ describe('remote archive', () => {
     const archive = buildRemoteArchive(remoteBadge(), NOW);
     expect(archive.isSelf).toBe(false);
     expect(archive.hasCareer).toBe(true);
+    expect(archive.likes).toBe(8);
+    expect(archive.liked).toBe(true);
     expect(archive.location).toBe('中国 · 江苏');
     expect(archive.sessionDuration).toBe('00:03:00');
     // 上报时 60 分钟 + 2 分钟会话增量（180s - 60s，向下取整到分钟）

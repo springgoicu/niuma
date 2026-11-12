@@ -1,6 +1,14 @@
-import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import type {
+  BoardMetric,
+  CareerSummary,
+  CharacterAppearance,
+  ChatSendPacket,
+  NavTargetId,
+  ResumeState,
+} from '@niuma/shared-types';
 import { requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
+import type { DanmakuPrefs } from '../danmaku-prefs';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
 import { drawMiniMap, MINIMAP_SIZE, prepareMiniMap, type MiniMapContext } from '../minimap-draw';
@@ -75,6 +83,8 @@ export class MainThreadGameClient implements GameClient {
       fontsReady: async () => {
         if (document.fonts?.ready) await document.fonts.ready;
       },
+      // 主线程回退实现直接读宿主注入的初值，与 Worker 模式共用同一份偏好
+      danmakuPrefs: this.options.danmakuPrefs,
       writeSnapshot: (patch) => {
         const park = this.options.parkId;
         // 落点按园区分区：换园区后这份快照会被 resumeForPark 判为不匹配而丢弃
@@ -179,8 +189,12 @@ export class MainThreadGameClient implements GameClient {
     this.cancelNavigation();
   }
 
-  sendChat(text: string): void {
-    this.session?.sendChat(text);
+  sendChat(packet: ChatSendPacket): void {
+    this.session?.sendChat(packet.text, packet.colorIndex, packet.danmakuMode);
+  }
+
+  setDanmakuPrefs(prefs: DanmakuPrefs): void {
+    this.session?.setDanmakuPrefs(prefs);
   }
 
   requestHistory(beforeMsgId: number): void {
@@ -197,6 +211,14 @@ export class MainThreadGameClient implements GameClient {
 
   updateCareer(career: CareerSummary): void {
     this.session?.updateCareer(career);
+  }
+
+  requestBoard(metric: BoardMetric | 0 = 0): void {
+    this.session?.requestBoard(metric);
+  }
+
+  like(targetId: number): void {
+    this.session?.like(targetId);
   }
 
   navigateTo(id: NavTargetId): void {

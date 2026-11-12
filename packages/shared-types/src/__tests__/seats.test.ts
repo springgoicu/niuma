@@ -35,7 +35,7 @@ function rectsOverlap(a: SolidRect, b: { x: number; y: number; w: number; h: num
 
 describe('座位布局', () => {
   it('座位 id 从 1 连续编号，seatById 可反查', () => {
-    // ADR-0044：四边散布的工位删除后，座位只剩工作区 8 + 会议 8 + 马桶 4 + 宿舍 7
+    // ADR-0044：四边散布的工位删除后，座位只剩工作区 8 + 会议 8 + 马桶 6（ADR-0053）+ 宿舍 7
     expect(seats.length).toBeGreaterThanOrEqual(20);
     seats.forEach((seat, index) => {
       expect(seat.id).toBe(index + 1);
@@ -75,11 +75,21 @@ describe('座位布局', () => {
 
   it('马桶位于卫生间内，背靠水箱、面朝房间', () => {
     const toilets = seats.filter((seat) => seat.kind === 'toilet');
-    expect(toilets.length).toBe(4);
+    // 每侧三格（ADR-0053）：房间尺寸不变，北墙从 2 个坑加到 3 个
+    expect(toilets.length).toBe(6);
     for (const seat of toilets) {
       // 水箱画在精灵北端（drawToilet），人必须背对它：面向南 = 背靠水箱
       expect(seat.facing).toBe(DIRECTION.Down);
       expect(seat.desk).toBe(-1);
+    }
+  });
+
+  it('每个坑位都能从南侧走进：隔断不挡在格子中间', () => {
+    for (const seat of seats.filter((item) => item.kind === 'toilet')) {
+      const from = { x: seat.x, y: seat.y + 100 };
+      expect(isBlocked(from.x, from.y, PLAYER_RADIUS)).toBe(false);
+      const moved = resolveMotion(from.x, from.y, seat.x, seat.y);
+      expect(Math.hypot(moved.x - seat.x, moved.y - seat.y)).toBeLessThan(1);
     }
   });
 

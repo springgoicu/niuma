@@ -339,6 +339,9 @@ const loungeSolids = roomWalls(LOUNGE, LOUNGE_DOOR);
  * 卫生间三区（自西向东）：男 140 / 洗手池 140 / 女 140。
  * 两道 10px 内隔墙各留一扇 60px 门洞，中央区从北门直进，
  * 两侧要绕过隔墙才能进——这是「男女生分割 + 中间洗手池」的几何。
+ *
+ * 隔墙的视觉由 `interior-art.ts` 按本文件的 solids 反查后绘制（ADR-0053）：
+ * 早先它只进碰撞、不进贴图，玩家会在门洞之外撞到一道看不见的墙。
  */
 const RESTROOM_ZONE_W = 140;
 const RESTROOM_LANE_W = RESTROOM_ZONE_W + WALL_THICKNESS;
@@ -346,8 +349,17 @@ const RESTROOM_DIVIDER_X = [
   RESTROOM.x + WALL_THICKNESS + RESTROOM_ZONE_W,
   RESTROOM.x + WALL_THICKNESS + RESTROOM_LANE_W + RESTROOM_ZONE_W,
 ] as const;
-const RESTROOM_DIVIDER_GAP_FROM = RESTROOM.y + 200;
-const RESTROOM_DIVIDER_GAP_TO = RESTROOM.y + 260;
+
+/** 隔断宽 6px、进深 154：28px 高的马桶整只落在格子里，南沿留出进出的空隙 */
+const STALL_PARTITION_W = 6;
+const STALL_PARTITION_H = 154;
+
+/**
+ * 内隔墙的门洞正好落在坑位排的前缘：从北门进来沿中央区走到这里，
+ * 侧身就是男 / 女区，不用先绕到房间最南端再折回来。
+ */
+const RESTROOM_DIVIDER_GAP_FROM = RESTROOM.y + WALL_THICKNESS + STALL_PARTITION_H;
+const RESTROOM_DIVIDER_GAP_TO = RESTROOM_DIVIDER_GAP_FROM + 60;
 
 const restroomDividers: SolidRect[] = RESTROOM_DIVIDER_X.flatMap((x) => [
   {
@@ -366,21 +378,56 @@ const restroomDividers: SolidRect[] = RESTROOM_DIVIDER_X.flatMap((x) => [
   },
 ]);
 
-/** 卫生间每侧两个马桶的横向中心：男 4440/4512、女 4740/4812 */
-const TOILET_XS = [
-  RESTROOM.x + 44,
-  RESTROOM.x + 116,
-  RESTROOM.x + 344,
-  RESTROOM.x + 416,
-] as const;
+/**
+ * 卫生间坑位（ADR-0053）：每侧三个，净宽 42 / 44 / 42 + 6px 隔断。
+ *
+ * 一条北墙从 2 个坑加到 3 个，房间尺寸不变：42 + 6 + 44 + 6 + 42 = 140，
+ * 正好是一个分区的整宽。宽度首尾对称，所以女区从东往西排也自动是镜像。
+ * 马桶落在格子中点，相邻两坑相距 49，仍满足座位表「两两间距 > 40」的断言。
+ */
+const STALL_WIDTHS = [42, 44, 42] as const;
+
+/** 一个坑位：净宽区间 + 进深，以及右邻的隔断（最东一格贴内隔墙，没有隔断） */
+export interface RestroomStall {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  partition: SolidRect | null;
+}
+
+/** 从起点往东排一组坑位：最后一格抵住内隔墙，不再补隔断 */
+function restroomStalls(startX: number): RestroomStall[] {
+  const y = RESTROOM.y + WALL_THICKNESS;
+  const stalls: RestroomStall[] = [];
+  let cursor = startX;
+  STALL_WIDTHS.forEach((w, index) => {
+    const last = index === STALL_WIDTHS.length - 1;
+    const partition: SolidRect | null = last
+      ? null
+      : { kind: 'fixture', x: cursor + w, y, w: STALL_PARTITION_W, h: STALL_PARTITION_H };
+    stalls.push({ x: cursor, y, w, h: STALL_PARTITION_H, partition });
+    cursor += w + STALL_PARTITION_W;
+  });
+  return stalls;
+}
+
+/**
+ * 卫生间两排坑位：男区从西墙内侧起排，女区从第二道内隔墙内侧起排。
+ * 座位、隔断碰撞与隔间渲染都读这一张表——再加减坑位只改 `STALL_WIDTHS`。
+ */
+export const RESTROOM_STALLS: ReadonlyArray<RestroomStall> = [
+  ...restroomStalls(RESTROOM.x + WALL_THICKNESS),
+  ...restroomStalls(RESTROOM_DIVIDER_X[1] + WALL_THICKNESS),
+];
+
 /** 马桶贴房间北墙：与旧卫生间同一档「水箱离墙 56px」的坐点 */
 const TOILET_SEAT_Y = RESTROOM.y + WALL_THICKNESS + 78;
 
-/** 隔间隔断：男、女各一道 6px 短隔断，夹住两个马桶 */
-const stallPartitions: SolidRect[] = [
-  { kind: 'fixture', x: RESTROOM.x + 77, y: RESTROOM.y + WALL_THICKNESS, w: 6, h: 154 },
-  { kind: 'fixture', x: RESTROOM.x + 377, y: RESTROOM.y + WALL_THICKNESS, w: 6, h: 154 },
-];
+/** 隔间隔断：每侧两片，夹出三格 */
+const stallPartitions: SolidRect[] = RESTROOM_STALLS.flatMap((stall) =>
+  stall.partition ? [stall.partition] : [],
+);
 
 /** 会议桌：200×90，居中偏北，南侧留出走道 */
 const MEETING_TABLE: SolidRect = {
@@ -412,7 +459,11 @@ const MEETING_END_SEATS: Array<{ x: number; y: number; facing: Direction }> = [
 ];
 
 /** 卫生间马桶：水箱在精灵北端，人面朝房间（南）坐下，背靠水箱 */
-const TOILET_SEATS = TOILET_XS.map((cx) => ({ x: cx, y: TOILET_SEAT_Y, facing: DIRECTION.Down as Direction }));
+const TOILET_SEATS = RESTROOM_STALLS.map((stall) => ({
+  x: stall.x + stall.w / 2,
+  y: TOILET_SEAT_Y,
+  facing: DIRECTION.Down as Direction,
+}));
 
 /**
  * 工作区的八个工位：两排背靠背、每排 4 张，横向成排。
@@ -529,7 +580,7 @@ export const CAMPUS_BUILDINGS: BuildingSpec[] = [
 ];
 
 /**
- * 三间有墙房间的墙体，加上卫生间两道内隔墙、两组隔间与会议桌。
+ * 三间有墙房间的墙体，加上卫生间两道内隔墙、四片坑位隔断与会议桌。
  * 工作区按需求不加墙，因此这里没有它的任何碰撞矩形。
  */
 export const CAMPUS_SOLIDS: SolidRect[] = [

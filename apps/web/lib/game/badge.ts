@@ -1,5 +1,6 @@
 import {
   POSE,
+  careerSessionDeltaMinutes,
   type CareerSummary,
   type CharacterAppearance,
   type Pose,
@@ -39,6 +40,10 @@ export interface PlayerBadge {
   seatKind: SeatKind | null;
   /** 本人自报的考勤摘要；旧服务端或未上报时为 undefined */
   career?: CareerSummary;
+  /** 服务端内存里的工牌点赞数（ADR-0057）；0 表示没人点过 */
+  likes: number;
+  /** 当前连接是否已经点过这块工牌；来自 S2C_LIKE 的 flag0 */
+  liked: boolean;
   /** 视野内本周工时榜（最多 5 条） */
   board: BoardEntry[];
   /** 该玩家在视野榜里的名次；未上报或不在榜内为 null */
@@ -126,7 +131,7 @@ export function shiftOf(name: string): string {
  * 重连与两端时钟差都不会造成重复计时。行为统计是累计值，不做增量。
  */
 export function withCareerDelta(career: CareerSummary, onlineSec: number): CareerSummary {
-  const deltaMin = Math.floor(Math.max(0, onlineSec - career.reportedOnlineSec) / 60);
+  const deltaMin = careerSessionDeltaMinutes(career, onlineSec);
   if (deltaMin <= 0) return career;
   return {
     ...career,

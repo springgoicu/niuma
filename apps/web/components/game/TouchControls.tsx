@@ -88,7 +88,6 @@ export function Joystick({ onMove, onEngage, onTap, portrait = false }: Joystick
     <div
       role="application"
       aria-label={portrait ? '移动摇杆：左下区域任意位置按下并拖动' : '移动摇杆：左半屏任意位置按下并拖动'}
-      data-no-immersive
       className={`pointer-events-auto absolute touch-none select-none ${
         portrait ? 'bottom-0 left-0 h-[58%] w-[56%]' : 'inset-y-0 left-0 w-[54%]'
       }`}

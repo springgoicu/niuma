@@ -1,4 +1,5 @@
 import {
+  DANMAKU_MODE,
   DEFAULT_APPEARANCE,
   DIRECTION,
   OpCode,
@@ -169,7 +170,8 @@ for (let i = 0; i < TOTAL; i += 1) spawnBot(i);
 const chatter = setInterval(() => {
   const bot = bots[0];
   if (!bot || bot.entityId === 0) return;
-  bot.socket.send(encodeChatSend('摸鱼中，勿扰'));
+  // 压测机器人固定用默认白 + 滚动：只验证下行包量与渲染帧率，不叠加颜色分支
+  bot.socket.send(encodeChatSend({ colorIndex: 0, danmakuMode: DANMAKU_MODE.Scroll, text: '摸鱼中，勿扰' }));
 }, 1500);
 timers.push(chatter);
 

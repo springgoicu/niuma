@@ -3,12 +3,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
-import { CAREER_REPORT_INTERVAL_MS, type NavTargetId } from '@niuma/shared-types';
+import {
+  CAREER_REPORT_INTERVAL_MS,
+  type BoardMetric,
+  type BoardPacket,
+  type ChatSendPacket,
+  type NavTargetId,
+} from '@niuma/shared-types';
 import { BadgeCard } from '@/components/BadgeCard';
 import { RemoteArchiveDialog } from '@/components/badge/RemoteArchiveDialog';
 import { parseSpeciesParam } from '@/lib/creator-seed';
 import { useGameUi } from '@/lib/game-ui';
+import { loadDanmakuPrefs, saveDanmakuPrefs } from '@/lib/danmaku-prefs';
 import { loadAttendance, startAttendanceClock, useAttendance } from '@/lib/game/attendance';
+import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from '@/lib/game/danmaku-prefs';
 import type { PlayerBadge } from '@/lib/game/badge';
 import {
   EMPTY_CAREER_STATS,
@@ -34,6 +42,7 @@ import { ActionBar } from './ActionBar';
 import { ChatDock } from './ChatDock';
 import { ConnectionBanner, OnlineBadge, SfxToggle } from './Hud';
 import { JoinGate } from './JoinGate';
+import { LeaderboardDialog } from './LeaderboardDialog';
 import { MiniMap } from './MiniMap';
 import { NavCard } from './NavCard';
 import { NoticeBoard } from './NoticeBoard';
@@ -83,16 +92,19 @@ export function GameViewport({
   const isPortrait = useIsPortrait();
   // 竖屏只决定触控区与 HUD 的排布；世界倍率由 renderer 按屏幕宽高比自适应
   const portrait = isTouch && isPortrait;
-  // 全屏只负责收起浏览器界面，不再锁横屏：朝向始终交给设备与用户
+  // 全屏只由右上角按钮手动触发，不自动进入：朝向始终交给设备与用户
   const immersive = useImmersiveStage();
   // 输入法弹起时 dvh 不变，用可视视口高度把舞台缩到键盘之上
   const viewport = useVisualViewportSize();
-  const autoImmersiveRef = useRef(false);
   const [checked, setChecked] = useState(false);
   /** 正在查看的角色 netId；null 表示没有打开详情 */
   const [inspectId, setInspectId] = useState<number | null>(null);
   /** 点选当帧的工牌：档案弹窗首帧直接有内容，不必等 2Hz 推送 */
   const [inspectSeed, setInspectSeed] = useState<PlayerBadge | null>(null);
+  /** 牛马榜面板：靠近公告栏按 F 打开 */
+  const [boardOpen, setBoardOpen] = useState(false);
+  /** 五个指标的快照：一次请求回五条，页签切换只读本地缓存 */
+  const [boards, setBoards] = useState<Partial<Record<BoardMetric, BoardPacket>>>({});
   /** 行为统计门面：距离 / 摸鱼 / 被喷 / 加班都从这里记 */
   const careerClockRef = useRef<ReturnType<typeof startCareerClock> | null>(null);
   /** 上一次统计坐标：2Hz 采样差分算里程 */
@@ -108,6 +120,13 @@ export function GameViewport({
   );
   /** 只有多园区部署时「切换园区」才有意义 */
   const canSwitchPark = parks.length > 1;
+  /**
+   * 弹幕偏好。
+   *
+   * 首帧用默认值而不是直接读盘：服务端渲染没有 localStorage，
+   * 两端初始 DOM 必须一致；真正的值在挂载后的 effect 里补上。
+   */
+  const [danmakuPrefs, setDanmakuPrefs] = useState<DanmakuPrefs>({ ...DEFAULT_DANMAKU_PREFS });
 
   const setStatus = useGameUi((state) => state.setStatus);
   const setStats = useGameUi((state) => state.setStats);
@@ -119,6 +138,7 @@ export function GameViewport({
   const setLocalState = useGameUi((state) => state.setLocalState);
   const setNavTarget = useGameUi((state) => state.setNavTarget);
   const hint = useGameUi((state) => state.hint);
+  const status = useGameUi((state) => state.status);
 
   /**
    * 打开聊天：先清掉仍按住的移动键（输入框接管键盘后角色不该继续滑行），
@@ -129,11 +149,36 @@ export function GameViewport({
     useGameUi.getState().requestChat();
   }, []);
 
+  /**
+   * 打开牛马榜：先收回移动控制权，再让面板接管。
+   * 与聊天同一条纪律——按住 W 靠近公告栏按 F 时，角色不该顶着面板继续走。
+   */
+  const openBoard = useCallback(() => {
+    clientRef.current?.clearMovement();
+    // 公告栏是模态：把可能开着的工牌档案收起，避免两块面板叠在一起
+    setInspectId(null);
+    setBoardOpen(true);
+  }, []);
+
+  const closeBoard = useCallback(() => setBoardOpen(false), []);
+
+  /** 拉全部指标：打开面板、手动刷新与 20 秒自动刷新都走这里 */
+  const requestBoard = useCallback(() => {
+    clientRef.current?.requestBoard();
+  }, []);
+
+  /** 给正在查看的工牌点赞：服务端裁决，面板按推送结果点亮「已点赞」 */
+  const handleLike = useCallback((id: number) => {
+    clientRef.current?.like(id);
+  }, []);
+
   useEffect(() => {
     useGameUi.getState().reset();
     // reset 会清空 chatOpen：必须排在其后恢复上次的常驻状态（只开面板，不抢焦点）
     useGameUi.getState().restoreChatOpen();
     setInspectId(null);
+    setBoardOpen(false);
+    setBoards({});
     const stored = loadProfile();
     if (stored) {
       setProfile(stored);
@@ -154,6 +199,11 @@ export function GameViewport({
     }
     setChecked(true);
   }, [initialName, initialSpecies]);
+
+  // 挂载后再读盘：localStorage 在 SSR 不存在，首帧必须与默认值一致才不触发水合告警
+  useEffect(() => {
+    setDanmakuPrefs(loadDanmakuPrefs());
+  }, []);
 
   // 进入园区即开始本地考勤：1 秒心跳走内存，离开页面 / 卸载时停表并落盘。
   // 只依赖「有没有工牌」：改状态不应该把本次在岗计时清零。
@@ -201,22 +251,6 @@ export function GameViewport({
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  // 已经存过工牌的人不会经过上岗按钮，只有在园区里的第一次按下才能补上全屏。
-  // 浏览器要求全屏由用户手势触发，所以这一次按下之后就不再重试：用户主动退出全屏也不会被拉回去。
-  useEffect(() => {
-    if (autoImmersiveRef.current) return;
-    if (!profile || !isTouch || !immersive.supported || immersive.active) return;
-    const onFirstPress = (event: PointerEvent) => {
-      // 聊天与显式避开全屏的控件不抢手势，留给右上角的按钮
-      if (event.target instanceof Element && event.target.closest('input, textarea, [data-no-immersive]')) return;
-      autoImmersiveRef.current = true;
-      window.removeEventListener('pointerdown', onFirstPress);
-      immersive.enter();
-    };
-    window.addEventListener('pointerdown', onFirstPress);
-    return () => window.removeEventListener('pointerdown', onFirstPress);
-  }, [profile, isTouch, immersive]);
-
   useEffect(() => {
     const host = hostRef.current;
     const current = profileRef.current;
@@ -230,6 +264,8 @@ export function GameViewport({
       parkId,
       // 灰度开关（?zoom/?flat/?light/?season/?render）原样转给渲染线程：Worker 里没有 location
       search: window.location.search,
+      // 初值直接读盘：Worker 里拿不到 localStorage，必须在主线程读好再随 init 带过去
+      danmakuPrefs: loadDanmakuPrefs(),
       callbacks: {
         onStatus: (status, detail) => setStatus(status, detail),
         onQueue: (queue) => setQueue(queue),
@@ -262,6 +298,8 @@ export function GameViewport({
           if (local) careerClockRef.current?.recordVented();
         },
         onVentDealt: () => careerClockRef.current?.recordKnockdown(),
+        onBoardOpen: openBoard,
+        onBoard: (packet) => setBoards((prev) => ({ ...prev, [packet.metric]: packet })),
       },
       // Enter 与点选都发生在主线程：键盘监听不经过渲染线程，命中判定在渲染线程
       onRequestChat: openChat,
@@ -316,6 +354,7 @@ export function GameViewport({
     pushMessage,
     applyHistory,
     openChat,
+    openBoard,
     setHint,
     setLocalState,
     setNavTarget,
@@ -336,7 +375,18 @@ export function GameViewport({
     [],
   );
 
-  const handleChat = useCallback((text: string) => clientRef.current?.sendChat(text), []);
+  const handleChat = useCallback((packet: ChatSendPacket) => clientRef.current?.sendChat(packet), []);
+  /**
+   * 弹幕设置变更：先落盘再下发。
+   *
+   * 落盘在主线程（Worker 碰不到 localStorage），下发走一条低频消息——
+   * 设置也是事件驱动，不进每帧控制块。
+   */
+  const handleDanmakuPrefsChange = useCallback((next: DanmakuPrefs) => {
+    setDanmakuPrefs(next);
+    saveDanmakuPrefs(next);
+    clientRef.current?.setDanmakuPrefs(next);
+  }, []);
   /**
    * 上翻到顶：先点亮加载态，再发请求。加载态由响应里的 `applyHistory` 清掉，
    * ChatDock 另有超时兜底——离线时请求会石沉大海，不能让「正在加载」永远转着。
@@ -447,8 +497,6 @@ export function GameViewport({
       {checked && !profile && (
         <JoinGate
           onEnter={(next) => {
-            // 必须在这次点击的同一个调用栈里请求全屏，晚一拍浏览器就不认这个手势了
-            immersive.enter();
             setProfile(next);
           }}
         />
@@ -488,6 +536,8 @@ export function GameViewport({
                       onSend={handleChat}
                       onOpen={openChat}
                       onLoadHistory={handleLoadHistory}
+                      danmakuPrefs={danmakuPrefs}
+                      onDanmakuPrefsChange={handleDanmakuPrefsChange}
                       compact
                     />
                   </div>
@@ -500,7 +550,7 @@ export function GameViewport({
                 <div className={portrait ? 'grid grid-cols-2 gap-2' : 'flex items-center gap-2'}>
                   <NoticeBoard compact={isTouch} />
                   <SfxToggle compact={isTouch} />
-                  {/* 手机端的收尾出口：自动全屏被系统拒掉之后，这里还能再要一次 */}
+                  {/* 手机端唯一全屏入口：只有这里的手动点击才会收起浏览器界面 */}
                   {isTouch && immersive.supported && (
                     <button
                       type="button"
@@ -508,7 +558,6 @@ export function GameViewport({
                       aria-pressed={immersive.active}
                       aria-label={immersive.active ? '退出全屏' : '全屏游戏'}
                       title={immersive.active ? '退出全屏' : '全屏游戏'}
-                      data-no-immersive
                       className="pointer-events-auto grid h-9 w-9 place-items-center border-2 border-ink-600 bg-ink-900/92 text-mist-500 backdrop-blur-sm transition-colors hover:border-mint-400/60 hover:text-mint-400 focus-visible:border-mint-400 focus-visible:outline-none"
                     >
                       {immersive.active ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
@@ -519,7 +568,6 @@ export function GameViewport({
                       href="/enter?from=play"
                       aria-label="切换园区"
                       title={`切换园区（当前在${parkName}）`}
-                      data-no-immersive
                       className={`pointer-events-auto flex min-h-9 items-center border-2 border-ink-600 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-mint-400/60 hover:text-mint-400 ${
                         portrait ? 'w-9 justify-center px-0' : 'gap-1.5 px-2 py-1.5'
                       }`}
@@ -532,7 +580,6 @@ export function GameViewport({
                     href="/"
                     aria-label="打卡下班"
                     title="打卡下班"
-                    data-no-immersive
                     className={`pointer-events-auto flex min-h-9 items-center border-2 border-ink-600 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500 ${
                       portrait ? 'w-9 justify-center px-0' : 'gap-1.5 px-2 py-1.5'
                     }`}
@@ -550,7 +597,13 @@ export function GameViewport({
               </div>
             ) : (
               <div className="flex items-end justify-between gap-4">
-                <ChatDock onSend={handleChat} onOpen={openChat} onLoadHistory={handleLoadHistory} />
+                <ChatDock
+                  onSend={handleChat}
+                  onOpen={openChat}
+                  onLoadHistory={handleLoadHistory}
+                  danmakuPrefs={danmakuPrefs}
+                  onDanmakuPrefsChange={handleDanmakuPrefsChange}
+                />
                 <div className="hidden flex-1 justify-center md:flex">
                   <ActionBar onAction={handleAction} onChat={openChat} />
                 </div>
@@ -565,7 +618,18 @@ export function GameViewport({
             seed={inspectSeed}
             subscribeBadge={subscribeBadge}
             onClose={handleCloseInspect}
+            onLike={handleLike}
           />
+
+          {/* 牛马榜：靠近中央广场的公告栏按 F 打开（ADR-0054） */}
+          {boardOpen && (
+            <LeaderboardDialog
+              boards={boards}
+              status={status}
+              onRequest={requestBoard}
+              onClose={closeBoard}
+            />
+          )}
 
           {/* 出生点的引导层：实体地标在画面里，这两块负责「说清楚」与随时可查（ADR-0036） */}
           <NavCard

@@ -6,6 +6,7 @@ import { MobileNav } from './MobileNav';
 const NAV = [
   { href: '#species', label: '物种档案' },
   { href: '#tech', label: '技术底牌' },
+  { href: '#changelog', label: '版本更新' },
   { href: '#rules', label: '工位守则' },
 ];
 

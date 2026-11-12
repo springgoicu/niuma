@@ -4,6 +4,7 @@ import {
   LOUNGE,
   MEETING_ROOM,
   RESTROOM,
+  RESTROOM_STALLS,
   ROOM_H,
   ROOM_W,
   WALL_THICKNESS,
@@ -82,11 +83,11 @@ describe('四角院落（ADR-0044）', () => {
     }
 
     const toilets = seats.filter((seat) => seat.kind === 'toilet' && inside(RESTROOM, seat.x, seat.y));
-    expect(toilets).toHaveLength(4);
+    expect(toilets).toHaveLength(6);
     const west = toilets.filter((seat) => seat.x < RESTROOM.x + ROOM_W / 2);
     const east = toilets.filter((seat) => seat.x > RESTROOM.x + ROOM_W / 2);
-    expect(west).toHaveLength(2);
-    expect(east).toHaveLength(2);
+    expect(west).toHaveLength(3);
+    expect(east).toHaveLength(3);
 
     // 两道内隔墙各被门洞断成两段 → 房间内部恰好 4 段纵墙
     const innerWalls = solids.filter(
@@ -98,6 +99,32 @@ describe('四角院落（ADR-0044）', () => {
         solid.y + solid.h <= RESTROOM.y + ROOM_H,
     );
     expect(innerWalls).toHaveLength(4);
+  });
+
+  it('卫生间每侧三格坑位（ADR-0053）：隔断夹出三格，格子之间互不重叠', () => {
+    expect(RESTROOM_STALLS).toHaveLength(6);
+    // 每侧两片隔断，各自进碰撞表；最后一格贴内隔墙，没有隔断
+    const partitions = solids.filter(
+      (solid) =>
+        solid.kind === 'fixture' &&
+        solid.w === 6 &&
+        solid.y >= RESTROOM.y &&
+        solid.y + solid.h <= RESTROOM.y + ROOM_H &&
+        solid.x > RESTROOM.x &&
+        solid.x < RESTROOM.x + ROOM_W,
+    );
+    expect(partitions).toHaveLength(4);
+    for (const stall of RESTROOM_STALLS) {
+      // 第一格贴西墙内侧、最后一格贴内隔墙：两端都正好落在房间净宽内
+      expect(stall.x).toBeGreaterThanOrEqual(RESTROOM.x + WALL_THICKNESS);
+      expect(stall.x + stall.w).toBeLessThanOrEqual(RESTROOM.x + ROOM_W - WALL_THICKNESS);
+      if (stall.partition) expect(solids).toContainEqual(stall.partition);
+    }
+    for (let i = 0; i < RESTROOM_STALLS.length; i += 1) {
+      for (let j = i + 1; j < RESTROOM_STALLS.length; j += 1) {
+        expect(rectsOverlap(RESTROOM_STALLS[i]!, RESTROOM_STALLS[j]!)).toBe(false);
+      }
+    }
   });
 
   it('宿舍区是两组上下铺：同 x 的两张床相距 44，并各配一架爬梯', () => {

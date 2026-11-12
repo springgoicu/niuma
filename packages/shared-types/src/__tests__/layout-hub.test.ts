@@ -154,6 +154,38 @@ describe('中央迎宾广场与出生点', () => {
     }
   });
 
+  it('牛马榜公告栏立在广场北缘，不挡出生圈与北向主路', () => {
+    const board = WELCOME_LANDMARKS.rankBoard;
+    expect(board).toEqual({ x: 3960, y: 3832, width: 128, height: 96 });
+    expect(isOnPlaza(board.x, board.y)).toBe(true);
+    expect(regionAt(board.x, board.y)).toBe('中央迎宾广场');
+    expect(isWaterAt(board.x, board.y)).toBe(false);
+    // 牌面顶部与广场北缘齐平，底座离出生点足够远
+    expect(board.y - board.height).toBe(WORLD_CENTER.y - PLAZA_RADIUS);
+    expect(Math.hypot(board.x - SPAWN_CENTER.x, board.y - SPAWN_CENTER.y)).toBeGreaterThan(SPAWN_RADIUS + 100);
+    // 底座挡人，但北向主路中央线（x=4096）从广场一直通到路外
+    expect(isBlocked(board.x, board.y - 6)).toBe(true);
+    for (let y = board.y - board.height; y <= board.y + 64; y += 8) {
+      expect(isBlocked(WORLD_CENTER.x, y)).toBe(false);
+    }
+    // 牌面四角不压北向主路
+    const face = {
+      x: board.x - board.width / 2,
+      y: board.y - board.height,
+      w: board.width,
+      h: board.height,
+    };
+    const northPath = WORLD_LAYOUT.paths[0]!;
+    for (const [x, y] of [
+      [face.x, face.y],
+      [face.x + face.w, face.y],
+      [face.x, face.y + face.h],
+      [face.x + face.w, face.y + face.h],
+    ] as const) {
+      expect(pointInPolygon(x, y, northPath.polygon)).toBe(false);
+    }
+  });
+
   it('广场陈设对称，售货机 / 咖啡机 / 长椅都在出生圈外', () => {
     const hub = WORLD_LAYOUT.props.filter((prop) => Math.abs(prop.x - WORLD_CENTER.x) < 380 && Math.abs(prop.y - WORLD_CENTER.y) < 380);
     for (const kind of ['vending', 'coffee', 'bench'] as const) {

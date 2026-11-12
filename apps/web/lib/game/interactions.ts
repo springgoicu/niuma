@@ -1,6 +1,6 @@
 'use client';
 
-import { POSE, WORLD_LAYOUT, type Pose, type PropKind, type SeatKind } from '@niuma/shared-types';
+import { POSE, WELCOME_LANDMARKS, WORLD_LAYOUT, type Pose, type PropKind, type SeatKind } from '@niuma/shared-types';
 
 /**
  * 轻互动：售货机、饮水机、咖啡机的一次性反馈，与躺床打呼。
@@ -11,6 +11,24 @@ import { POSE, WORLD_LAYOUT, type Pose, type PropKind, type SeatKind } from '@ni
 
 /** 互动判定半径：比入座半径小一档，站在机器旁边才触发 */
 export const INTERACT_RANGE = 56;
+
+/**
+ * 牛马榜公告栏的互动半径（ADR-0054）。
+ *
+ * 牌面 128px 宽，站在正中或两侧都能按 F；与设施 56px 分开，
+ * 是因为公告栏是「走过去看」的地标，不该要求玩家贴着底座站。
+ * 服务端另有 240px 距离门，只负责挡住离开后仍刷请求的伪造包。
+ */
+export const BOARD_INTERACT_RANGE = 96;
+
+/** 是否站在公告栏旁边：坐标取地标底座中心，与碰撞盒同一份真相 */
+export function isNearRankBoard(x: number, y: number, range: number = BOARD_INTERACT_RANGE): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  const board = WELCOME_LANDMARKS.rankBoard;
+  const dx = x - board.x;
+  const dy = y - board.y;
+  return dx * dx + dy * dy <= range * range;
+}
 
 const INTERACTIVE_KINDS = ['vending', 'cooler', 'coffee'] as const;
 export type InteractiveKind = (typeof INTERACTIVE_KINDS)[number];

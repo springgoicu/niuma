@@ -1,6 +1,8 @@
 import {
   ACTION,
+  BOARD_METRIC_ALL,
   CHAT_HISTORY_FLAG,
+  LIKE_FLAG_SELF,
   CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
   DEFAULT_APPEARANCE,
@@ -29,9 +31,14 @@ import {
   seatById,
   seatPose,
   unpackState,
+  type BoardMetric,
+  type BoardPacket,
   type CareerSummary,
+  type LikePacket,
   type CharacterAppearance,
   type ChatHistoryPacket,
+  type ChatPacket,
+  type DanmakuMode,
   type Direction,
   type MotionTarget,
   type NavTargetId,
@@ -64,6 +71,7 @@ import { ACTION_BY_CODE, directionFromMask, type ActionKey } from './input';
 import type { ViewportInfo } from './runtime/control-channel';
 import type { AudioEvent, EngineEnv, SessionProfile } from './runtime/engine-env';
 import {
+  isNearRankBoard,
   nearestInteractivePropInto,
   pickGrazeLine,
   pickLine,
@@ -72,6 +80,7 @@ import {
   snoreDue,
   type InteractiveTarget,
 } from './interactions';
+import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
 import { jumpLiftTexels, jumpShadowFor } from './pony-motion';
 import { Navigator } from './navigator';
 import { findPath } from './pathfinding';
@@ -108,6 +117,8 @@ export interface SessionStats {
   region: string;
   /** 本地会话已在线秒数；未入场为 0，断线时 UI 显示 --:-- */
   onlineSec: number;
+  /** 本地玩家收到的工牌点赞数：本人档案用，随 2Hz 推送 */
+  likes: number;
   /** 视野内本周工时榜（最多 5 条） */
   board: BoardEntry[];
   /** 本地玩家在视野榜里的名次；未上榜为 null */
@@ -141,6 +152,12 @@ export interface SessionCallbacks {
   onVentHit?(local: boolean): void;
   /** 本地成功击倒他人：空放不回调，旁观互殴也不回调 */
   onVentDealt?(): void;
+  /** 在公告栏旁按了 F：宿主据此打开榜单面板并主动拉一次快照 */
+  onBoardOpen?(): void;
+  /** 牛马榜快照（一个指标一条），宿主按 metric 归并后交给面板 */
+  onBoard?(packet: BoardPacket): void;
+  /** 工牌点赞变化：目标、计数与「是不是你点的」，宿主据此刷新档案弹窗 */
+  onLike?(packet: LikePacket): void;
 }
 
 /** 一次会话绑定的园区：构造后不再变化，重连与落盘都以它为准 */
@@ -183,6 +200,8 @@ function clamp(value: number, min: number, max: number): number {
 
 export class GameSession {
   private readonly renderer = new GameRenderer();
+  /** 弹幕偏好：宿主注入初值，运行期由设置面板更新（ADR-0056） */
+  private danmakuPrefs: DanmakuPrefs = { ...DEFAULT_DANMAKU_PREFS };
   private readonly ecs = new Ecs();
   private readonly tracks = buildClipTracks();
   /** 叠加动作轨表：发泄按姿态分三条，跳一条；帧循环里只做下标访问 */
@@ -279,6 +298,12 @@ export class GameSession {
   private readonly appearanceById = new Map<number, CharacterAppearance>();
   /** netId → 远端考勤摘要；旧服务端或未上报时没有条目 */
   private readonly careerById = new Map<number, CareerSummary>();
+  /** netId → 工牌点赞数：spawn 尾段与 S2C_LIKE 共同维护（ADR-0057） */
+  private readonly likesById = new Map<number, number>();
+  /** 当前连接已点赞过的目标：S2C_LIKE flag1 点亮，despawn 时清理 */
+  private readonly likedTargets = new Set<number>();
+  /** 本地玩家收到的赞：随 2Hz stats 推给本人档案 */
+  private localLikes = 0;
   /** 视野内本周工时榜与名次：缓存 2 秒，不在 20Hz / 4Hz 推送里重复排序 */
   private careerBoard: BoardEntry[] = [];
   private readonly rankById = new Map<number, number>();
@@ -322,6 +347,8 @@ export class GameSession {
     this.callbacks.onStatus('connecting');
     // 首帧就用真实视口：宿主在 start 之前已经把尺寸写进控制块
     this.env.readViewport(this.viewport);
+    // 初值来自宿主（localStorage 只能在主线程读）；Worker 里由 init 消息带进来
+    this.danmakuPrefs = { ...this.env.danmakuPrefs };
     await this.renderer.init({
       canvas: this.env.canvas,
       width: this.viewport.width,
@@ -329,6 +356,7 @@ export class GameSession {
       dpr: this.viewport.dpr,
       search: this.env.search,
       fontsReady: () => this.env.fontsReady(),
+      danmaku: this.danmakuPrefs,
     });
     if (this.disposed) return;
     this.renderer.app.ticker.add(this.tick);
@@ -363,7 +391,7 @@ export class GameSession {
       onSpawn: (packet) => this.handleSpawn(packet),
       onDespawn: (id) => this.handleDespawn(id),
       onSync: (data, format) => this.handleSync(data, format),
-      onChat: (packet) => this.handleChat(packet.entityId, packet.msgId, packet.text),
+      onChat: (packet) => this.handleChat(packet),
       onChatHistory: (packet) => this.handleChatHistory(packet),
       onSystemNotice: (packet) => this.handleSystemNotice(packet),
       onChatRejected: (reason) => {
@@ -389,6 +417,8 @@ export class GameSession {
         this.renderer.setStatus(id, status);
       },
       onCareer: (id, career) => this.handleCareer(id, career),
+      onBoard: (packet) => this.handleBoard(packet),
+      onLike: (packet) => this.handleLike(packet),
       onSeatState: (entries) => this.handleSeatState(entries),
       onGraze: (id) => this.handleGraze(id),
       onVent: (packet) => this.handleVent(packet),
@@ -464,6 +494,7 @@ export class GameSession {
     this.appearanceById.set(id, appearance);
     this.statusById.set(id, status ?? '');
     if (packet.career) this.careerById.set(id, packet.career);
+    if (packet.likes !== undefined) this.likesById.set(id, packet.likes);
     this.boardDirty = true;
     // 旧服务端不带在线秒数：从 0 起算，退化为「首次看到」，不显示假的长时长
     this.onlineById.set(id, { sec: packet.onlineSec ?? 0, at: performance.now() });
@@ -481,6 +512,8 @@ export class GameSession {
     this.speciesById.delete(id);
     this.appearanceById.delete(id);
     this.careerById.delete(id);
+    this.likesById.delete(id);
+    this.likedTargets.delete(id);
     this.statusById.delete(id);
     this.onlineById.delete(id);
     this.entitySeat.delete(id);
@@ -505,6 +538,41 @@ export class GameSession {
     this.localCareer = career;
     this.boardDirty = true;
     this.net?.sendCareer(career);
+  }
+
+  /**
+   * 拉取园区牛马榜（ADR-0054）。
+   *
+   * 默认一次要全部指标：五条小包换来页签切换零往返。面板打开、手动刷新与
+   * 20 秒自动刷新都走这里；离线时 sendBoard 是空操作，宿主保留上一份快照。
+   */
+  requestBoard(metric: BoardMetric | typeof BOARD_METRIC_ALL = BOARD_METRIC_ALL): void {
+    this.net?.sendBoard(metric);
+  }
+
+  private handleBoard(packet: BoardPacket): void {
+    this.callbacks.onBoard?.(packet);
+  }
+
+  /**
+   * 给看得见的人点个赞（ADR-0057）：只发意图，计数与「是否已赞」由服务端裁决。
+   * 离线时是空操作，面板上的 pending 态由 UI 自己超时收回。
+   */
+  like(targetId: number): void {
+    this.net?.sendLike(targetId);
+  }
+
+  /**
+   * 点赞广播：目标与目标视野内的人收 flag0，点赞者本人收 flag1。
+   * 自己收到的赞另存 `localLikes`，随 stats 推给本人档案；`likedTargets`
+   * 只在 flag1 时点亮，别人点赞不会误标成「你已点赞」。
+   */
+  private handleLike(packet: LikePacket): void {
+    this.likesById.set(packet.targetId, packet.likes);
+    if ((packet.flags & LIKE_FLAG_SELF) !== 0) this.likedTargets.add(packet.targetId);
+    if (packet.targetId === this.localId) this.localLikes = packet.likes;
+    // 与榜单同一条纪律：状态留在会话里，通知主线程去刷新对应的 UI
+    this.callbacks.onLike?.(packet);
   }
 
   /**
@@ -582,6 +650,8 @@ export class GameSession {
       moving: Motion.moving[eid] === 1,
       seated: seat !== undefined,
       seatKind: seat?.kind ?? null,
+      likes: local ? this.localLikes : (this.likesById.get(id) ?? 0),
+      liked: this.likedTargets.has(id),
       board: this.careerBoard,
       rank: this.rankById.get(id) ?? null,
     };
@@ -775,6 +845,7 @@ export class GameSession {
       const bed = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind === 'bed');
       if (seat) hint = seat.kind === 'toilet' ? '按 Z 使用马桶' : '按 Z 坐下';
       else if (bed) hint = '按 X 上床躺平';
+      else if (isNearRankBoard(x, y)) hint = '按 F 查看牛马榜';
       else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = '按 F 互动';
     }
     if (hint === this.seatHint) return;
@@ -807,11 +878,27 @@ export class GameSession {
     this.callbacks.onLocalState({ pose: pose as Pose, seated, seatKind });
   }
 
-  private handleChat(entityId: number, msgId: number, text: string): void {
-    this.renderer.showBubble(entityId, text);
+  /**
+   * 聊天上屏（ADR-0056）。
+   *
+   * 聊天不再弹头顶气泡：屏幕空间弹幕是唯一表现，频道列表是完整记录。
+   * Zzz / 发泄 / 互动 / 咀嚼这些非聊天台词仍走 `renderer.showBubble`。
+   */
+  private handleChat(packet: ChatPacket): void {
+    const { entityId, msgId, text } = packet;
+    // 自己的名字也在 names 里（WELCOME 时写入），弹幕上显示真名而不是「我」；
+    // 频道列表仍用「我」做第一人称标记。
+    const name = this.names.get(entityId) ?? '匿名牛马';
+    this.renderer.showDanmaku({
+      name,
+      species: this.speciesById.get(entityId),
+      text,
+      colorIndex: packet.colorIndex,
+      danmakuMode: packet.danmakuMode,
+    });
     this.callbacks.onChat({
       id: msgId,
-      name: entityId === this.localId ? '我' : this.names.get(entityId) ?? '匿名牛马',
+      name: entityId === this.localId ? '我' : name,
       text,
       at: Date.now(),
       self: entityId === this.localId,
@@ -903,6 +990,8 @@ export class GameSession {
   private clearWorld(): void {
     // 重连 / 换世界后旧路径的路点已经失效，必须先停掉导航再清实体
     this.cancelNavigation();
+    // 旧世界的弹幕不该漂进新世界：它们没有实体可归属，留着只会读成「有人在说话」
+    this.renderer.clearDanmaku();
     for (const id of this.names.keys()) {
       this.ecs.despawn(id);
       this.renderer.removeEntity(id);
@@ -911,6 +1000,9 @@ export class GameSession {
     this.speciesById.clear();
     this.appearanceById.clear();
     this.careerById.clear();
+    this.likesById.clear();
+    this.likedTargets.clear();
+    this.localLikes = 0;
     this.statusById.clear();
     this.onlineById.clear();
     this.rankById.clear();
@@ -945,9 +1037,16 @@ export class GameSession {
     this.net?.retry();
   }
 
-  sendChat(text: string): void {
+  /** 发言：颜色与模式随包上行，服务端钳制后广播，所有人看到同一份外观 */
+  sendChat(text: string, colorIndex: number, danmakuMode: DanmakuMode): void {
     if (text.trim().length === 0) return;
-    this.net?.sendChat(text);
+    this.net?.sendChat({ colorIndex, danmakuMode, text });
+  }
+
+  /** 设置面板变更：开关 / 不透明度 / 覆盖区域立即作用到渲染层 */
+  setDanmakuPrefs(prefs: DanmakuPrefs): void {
+    this.danmakuPrefs = { ...prefs };
+    this.renderer.setDanmakuPrefs(this.danmakuPrefs);
   }
 
   /** 上翻更早的聊天；`beforeMsgId = 0` 表示重新要最新一页（首屏语义） */
@@ -1144,8 +1243,16 @@ export class GameSession {
    */
   private interact(eid: number): void {
     if (this.elapsed < this.interactAt) return;
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    // 公告栏不是设施：不冒气泡、不播机器音，直接把面板交给宿主（ADR-0054）
+    if (isNearRankBoard(x, y)) {
+      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+      this.callbacks.onBoardOpen?.();
+      return;
+    }
     const target = this.interactTarget;
-    if (!nearestInteractivePropInto(target, Position.x[eid]!, Position.y[eid]!)) {
+    if (!nearestInteractivePropInto(target, x, y)) {
       this.showHint('附近没有可互动的设施');
       return;
     }
@@ -1553,6 +1660,7 @@ export class GameSession {
         backend: this.renderer.backend,
         region: localEid ? regionAt(Position.x[localEid]!, Position.y[localEid]!) : '',
         onlineSec,
+        likes: this.localLikes,
         board: this.careerBoard,
         rank: this.rankById.get(this.localId) ?? null,
       });

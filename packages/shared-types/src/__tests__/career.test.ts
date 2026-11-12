@@ -3,6 +3,7 @@ import {
   CAREER_FIXED_BYTES,
   CAREER_MAX_BYTES,
   EMPTY_CAREER,
+  careerSessionDeltaMinutes,
   dateToEpochDays,
   epochDaysToDate,
   sanitizeCareer,
@@ -83,6 +84,16 @@ describe('career summary', () => {
       reportedOnlineSec: 61,
     };
     expect(decodeCareer(encodeCareer(career))).toEqual(career);
+  });
+
+  it('computes the session delta from the server-reported baseline', () => {
+    const career = { ...EMPTY_CAREER, reportedOnlineSec: 600 };
+    expect(careerSessionDeltaMinutes(career, 600)).toBe(0);
+    expect(careerSessionDeltaMinutes(career, 659)).toBe(0);
+    expect(careerSessionDeltaMinutes(career, 660)).toBe(1);
+    // 重连后服务端会话秒数归零：不能倒扣历史工时
+    expect(careerSessionDeltaMinutes(career, 0)).toBe(0);
+    expect(careerSessionDeltaMinutes(career, Number.NaN)).toBe(0);
   });
 
   it('decodes a legacy v1 payload with knockdownCount defaulted to zero', () => {

@@ -254,7 +254,7 @@ export function RulesSection() {
       <div className="mx-auto max-w-[1440px] px-5 sm:px-8">
         <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-mint-400">// 03 · rules</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-mint-400">// 04 · rules</p>
             <h2 className="mt-3 font-display text-4xl font-bold tracking-tight text-mist-100 sm:text-5xl">
               工位守则
             </h2>

@@ -5,6 +5,7 @@
 
 import type { CareerSummary } from './career';
 import type { Direction, Pose, SyncFormat } from './constants';
+import type { DanmakuMode } from './danmaku';
 
 export type Species = 'cow' | 'horse';
 
@@ -130,6 +131,17 @@ export const OpCode = {
   C2S_CAREER: 0x22,
   /** 考勤摘要广播：`[op][entityId u16][len u8][payload]` */
   S2C_CAREER: 0x23,
+  /**
+   * 牛马榜查询：`[op][metric u8]`。0 表示一次拉全部五个指标，
+   * 服务端按指标各回一条 `S2C_BOARD`（ADR-0054）。
+   */
+  C2S_BOARD: 0x24,
+  /** 牛马榜快照：`[op][metric u8][online u16][slacking u16][count u8][selfRank u16][selfValue u32]` + 条目 */
+  S2C_BOARD: 0x25,
+  /** 工牌点赞：`[op][targetId u16]`，服务端内存计数（ADR-0057） */
+  C2S_LIKE: 0x26,
+  /** 点赞广播：`[op][targetId u16][likes u16][flags u8]`，flags bit0 = 接收者就是点赞者 */
+  S2C_LIKE: 0x27,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -169,6 +181,11 @@ export interface SpawnPacket {
    * 旧服务端不带这一段时为 undefined，工牌显示「未上报」而不是 0。
    */
   career?: CareerSummary;
+  /**
+   * 服务端内存里的工牌点赞数（ADR-0057）。
+   * 旧服务端不带这一段时为 undefined，按 0 展示；只有大于 0 才写进包，省 3 字节。
+   */
+  likes?: number;
 }
 
 /** 考勤摘要广播：`entityId` 是被围观者，payload 与 HELLO / SPAWN 的尾部段一致。 */
@@ -208,9 +225,26 @@ export interface ResumeState {
   seatId: number;
 }
 
+/**
+ * 园区频道发言（`S2C_CHAT_BROADCAST`）。
+ *
+ * `colorIndex` / `danmakuMode` 是发送时选定的弹幕外观，服务端钳制后原样广播：
+ * 所有接收端看到的颜色与模式必须一致，不能各自按本地偏好重算。
+ */
 export interface ChatPacket {
   entityId: number;
   msgId: number;
+  /** 调色板预设索引，已归一化到 0~7 */
+  colorIndex: number;
+  danmakuMode: DanmakuMode;
+  text: string;
+}
+
+/** 客户端发言（`C2S_CHAT`）：服务端复核前先由客户端带上弹幕外观 */
+export interface ChatSendPacket {
+  /** 调色板预设索引；越界由服务端回落到默认白 */
+  colorIndex: number;
+  danmakuMode: DanmakuMode;
   text: string;
 }
 

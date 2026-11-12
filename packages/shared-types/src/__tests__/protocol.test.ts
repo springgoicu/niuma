@@ -10,6 +10,9 @@ import {
   CHAT_HISTORY_PACKET_BUDGET,
   CHAT_REJECT_BYTES,
   CHAT_REJECT_REASON,
+  DANMAKU_COLOR_COUNT,
+  DANMAKU_META_BYTES,
+  DANMAKU_MODE,
   DIRECTION,
   LIMIT_KIND,
   MOVE_PACKET_BYTES,
@@ -32,6 +35,7 @@ import {
   decodeCareerReport,
   decodeChatBroadcast,
   decodeChatHistory,
+  decodeChatSend,
   decodeChatHistoryRequest,
   decodeChatRejected,
   decodeDespawn,
@@ -52,6 +56,7 @@ import {
   encodeChatBroadcast,
   encodeChatHistory,
   encodeChatHistoryRequest,
+  encodeChatSend,
   encodeCareer,
   encodeCareerBroadcast,
   encodeCareerReport,
@@ -82,6 +87,8 @@ import {
   decodeQueueRejected,
   decodeQueueStatus,
   normalizeColor,
+  normalizeDanmakuColor,
+  normalizeDanmakuMode,
   packState,
   quantizeCoord,
   sanitizeAppearance,
@@ -768,8 +775,20 @@ describe('spawn / despawn / chat / hello', () => {
   });
 
   it('keeps multi-byte chat intact', () => {
-    const packet = encodeChatBroadcast({ entityId: 3, msgId: 512, text: '摸鱼中 🐟 别卷了' });
-    expect(decodeChatBroadcast(packet)).toEqual({ entityId: 3, msgId: 512, text: '摸鱼中 🐟 别卷了' });
+    const packet = encodeChatBroadcast({
+      entityId: 3,
+      msgId: 512,
+      colorIndex: 2,
+      danmakuMode: DANMAKU_MODE.Top,
+      text: '摸鱼中 🐟 别卷了',
+    });
+    expect(decodeChatBroadcast(packet)).toEqual({
+      entityId: 3,
+      msgId: 512,
+      colorIndex: 2,
+      danmakuMode: DANMAKU_MODE.Top,
+      text: '摸鱼中 🐟 别卷了',
+    });
   });
 
   it('routes hello through appearance validation', () => {
@@ -846,6 +865,68 @@ describe('chat rejected', () => {
   });
 });
 
+describe('chat danmaku metadata', () => {
+  it('writes the two metadata bytes right before the text length', () => {
+    const packet = encodeChatBroadcast({
+      entityId: 1,
+      msgId: 2,
+      colorIndex: 3,
+      danmakuMode: DANMAKU_MODE.Bottom,
+      text: 'hi',
+    });
+    // op(1) + entityId(2) + msgId(2) + 元数据(2) + len(2) + 正文(2)
+    expect(packet.byteLength).toBe(7 + DANMAKU_META_BYTES + 2);
+    expect(packet[5]).toBe(3);
+    expect(packet[6]).toBe(DANMAKU_MODE.Bottom);
+    expect(packet[7]! | (packet[8]! << 8)).toBe(2);
+  });
+
+  it('round-trips the send packet', () => {
+    const text = '带薪拉屎中…';
+    const packet = encodeChatSend({ colorIndex: 7, danmakuMode: DANMAKU_MODE.Top, text });
+    expect(decodeChatSend(packet)).toEqual({ colorIndex: 7, danmakuMode: DANMAKU_MODE.Top, text });
+    // op(1) + 元数据(2) + len(2) + 正文
+    expect(packet.byteLength).toBe(3 + DANMAKU_META_BYTES + new TextEncoder().encode(text).length);
+  });
+
+  it('falls back to the default white for out-of-palette colors', () => {
+    expect(normalizeDanmakuColor(3)).toBe(3);
+    expect(normalizeDanmakuColor(DANMAKU_COLOR_COUNT)).toBe(0);
+    expect(normalizeDanmakuColor(200)).toBe(0);
+    expect(normalizeDanmakuColor(-1)).toBe(0);
+    expect(normalizeDanmakuColor(Number.NaN)).toBe(0);
+    // 编码端也不把脏值写进字节：接收端不该看到一个不存在的颜色
+    const packet = encodeChatBroadcast({
+      entityId: 1,
+      msgId: 1,
+      colorIndex: 99,
+      danmakuMode: DANMAKU_MODE.Scroll,
+      text: 'x',
+    });
+    expect(packet[5]).toBe(0);
+    // 模式位被伪造时同样在解码端回落，而不是把 42 传进渲染层
+    packet[6] = 42;
+    expect(decodeChatBroadcast(packet).danmakuMode).toBe(DANMAKU_MODE.Scroll);
+  });
+
+  it('normalizes unknown modes to scroll', () => {
+    expect(normalizeDanmakuMode(DANMAKU_MODE.Top)).toBe(DANMAKU_MODE.Top);
+    expect(normalizeDanmakuMode(DANMAKU_MODE.Bottom)).toBe(DANMAKU_MODE.Bottom);
+    expect(normalizeDanmakuMode(9)).toBe(DANMAKU_MODE.Scroll);
+  });
+
+  it('decodes tampered metadata through the same clamp', () => {
+    const packet = encodeChatBroadcast({ entityId: 1, msgId: 1, colorIndex: 0, danmakuMode: 0, text: 'hi' });
+    packet[5] = 200;
+    packet[6] = 7;
+    expect(decodeChatBroadcast(packet)).toMatchObject({
+      colorIndex: 0,
+      danmakuMode: DANMAKU_MODE.Scroll,
+      text: 'hi',
+    });
+  });
+});
+
 describe('chat history', () => {
   it('round-trips flags, ageSec and multi-byte name/text', () => {
     const packet = encodeChatHistory({
@@ -905,7 +986,9 @@ describe('chat history', () => {
   });
 
   it('rejects a wrong opcode', () => {
-    expect(() => decodeChatHistory(encodeChatBroadcast({ entityId: 1, msgId: 1, text: 'hi' }))).toThrow(
+    expect(() =>
+      decodeChatHistory(encodeChatBroadcast({ entityId: 1, msgId: 1, colorIndex: 0, danmakuMode: 0, text: 'hi' })),
+    ).toThrow(
       /chat history/,
     );
   });
@@ -950,7 +1033,9 @@ describe('system notice', () => {
   });
 
   it('rejects a packet with the wrong opcode', () => {
-    expect(() => decodeSystemNotice(encodeChatBroadcast({ entityId: 1, msgId: 1, text: 'hi' }))).toThrow(
+    expect(() =>
+      decodeSystemNotice(encodeChatBroadcast({ entityId: 1, msgId: 1, colorIndex: 0, danmakuMode: 0, text: 'hi' })),
+    ).toThrow(
       /system notice/,
     );
   });

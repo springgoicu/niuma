@@ -75,7 +75,8 @@ export function useIsPortrait(): boolean {
 }
 
 /* ------------------------------------------------------------------ *
- * 全屏：只负责把浏览器界面收起来，不碰屏幕方向——横竖屏由设备自己决定。
+ * 全屏：唯一入口是界面上的手动按钮。进入园区、首次按压、横竖屏切换都不
+ * 会主动请求全屏，页面始终保持浏览器默认显示。
  * iOS Safari 没有 Element.requestFullscreen，此时 supported 为 false，
  * 界面不出现点不动的按钮。
  * ------------------------------------------------------------------ */
@@ -120,10 +121,11 @@ export interface ImmersiveStage {
 }
 
 /**
- * 全屏舞台：只开合全屏，不请求横屏锁。屏幕朝向始终交给设备与用户。
+ * 全屏舞台：只响应手动按钮，不自动进入、不请求横屏锁。
+ * 屏幕朝向始终交给设备与用户。
  *
  * 注意：requestFullscreen 必须由用户手势同步触发，任何延迟（setState 后、
- * 定时器里）都会被浏览器拒绝，所以 `enter` 要直接挂在点击回调上。
+ * 定时器里）都会被浏览器拒绝，所以 `enter` 只能挂在点击回调上。
  */
 export function useImmersiveStage(): ImmersiveStage {
   const [supported] = useState(supportsFullscreen);

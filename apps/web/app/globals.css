@@ -384,6 +384,11 @@
   .animate-archive-panel-in {
     animation: archive-panel-in 120ms var(--ease-out-expo);
   }
+
+  /* 牛马榜：整块面板从下方 4px 落定，像把公告栏拉近到眼前 */
+  .animate-board-in {
+    animation: board-in 180ms var(--ease-out-expo);
+  }
 }
 
 @keyframes marquee {
@@ -458,6 +463,17 @@
 @keyframes notice-in {
   from {
     transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes board-in {
+  from {
+    transform: translateY(4px);
     opacity: 0;
   }
   to {

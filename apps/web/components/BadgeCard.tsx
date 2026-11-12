@@ -92,7 +92,6 @@ export function BadgeCard({
           aria-controls="status-editor"
           aria-label={`${name} 的工牌，点击设置状态`}
           title={statusText ? '修改状态' : '设置状态'}
-          data-no-immersive
           className={`block w-full cursor-pointer pr-11 text-left transition-colors hover:bg-neutral-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400 ${
             compact ? 'px-2 py-2' : 'px-3 py-2.5'
           }`}
@@ -155,7 +154,6 @@ export function BadgeCard({
           aria-haspopup="dialog"
           aria-label="打开牛马考勤档案"
           title="牛马考勤档案"
-          data-no-immersive
           className="absolute inset-y-0 right-0 flex w-10 cursor-pointer flex-col items-center justify-center gap-1 border-l-2 border-neutral-700 bg-neutral-900/60 text-mist-400 transition-colors hover:bg-neutral-800 hover:text-mint-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400"
         >
           <span className="text-[12px] leading-none" aria-hidden="true">

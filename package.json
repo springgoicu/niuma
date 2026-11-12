@@ -13,7 +13,8 @@
     "test": "turbo run test",
     "assets": "pnpm --filter @niuma/pixel-assets run generate",
     "bench": "pnpm --filter @niuma/game-server run bench",
-    "server": "pnpm --filter @niuma/game-server run dev"
+    "server": "pnpm --filter @niuma/game-server run dev",
+    "changelog:check": "pnpm --filter @niuma/web run changelog:check"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

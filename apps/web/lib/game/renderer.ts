@@ -9,6 +9,8 @@ import {
 } from 'pixi.js';
 import { ISLAND, WORLD_LAYOUT, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
+import { DanmakuField, type DanmakuMessage } from './danmaku';
+import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
 import { isOutdoorGround } from './ground';
 import { InteriorArt } from './interior-art';
 import { LightmapLayer } from './lighting/lightmap';
@@ -492,6 +494,8 @@ export interface RendererInit {
   fontsReady(): Promise<void>;
   /** 强制渲染后端：`?gpu=webgl` 用于线上定位 WebGPU 回归 */
   gpu?: 'webgpu' | 'webgl';
+  /** 弹幕偏好：宿主从 localStorage 读出后注入，渲染线程自己碰不到存储 */
+  danmaku?: DanmakuPrefs;
 }
 
 /** 星星纹理的生成器：只用到 `generateTexture`，不必把整个 Application 传进来 */
@@ -632,6 +636,10 @@ export class GameRenderer {
   /** 冬季雪景（ADR-0046）：非冬季时三个字段都不构造，零开销 */
   private snow?: SnowField;
   private winterArt?: WinterArt;
+  /** 屏幕空间弹幕（ADR-0056）：挂在 stage 最顶层，不进 world、不随相机 */
+  private danmaku?: DanmakuField;
+  /** 弹幕偏好：由宿主注入，`?danmaku=0` 可临时关闭 */
+  private danmakuPrefs: DanmakuPrefs = { ...DEFAULT_DANMAKU_PREFS };
   /** 季节判定结果：只读一次，其余图层只消费 `winter` 布尔量 */
   private season: SeasonState = { winter: false, snow: false, source: 'date' };
   /** 室内陈设补完层：与季节无关，改动只落在渲染层 */
@@ -735,6 +743,20 @@ export class GameRenderer {
       this.lightmap.register(this.interior?.lights ?? []);
       this.app.stage.addChild(this.lightmap.container);
     }
+    // 弹幕是屏幕空间最顶层：必须在 lightmap 之后入栈，柔光才不会盖住文字。
+    // 它不进 `world`，所以相机平移 / 缩放都不影响位置；DOM 面板天然在画布之上。
+    this.danmakuPrefs = options.danmaku ? { ...options.danmaku } : { ...DEFAULT_DANMAKU_PREFS };
+    const danmakuParam = params.get('danmaku');
+    // 线上紧急开关：`?danmaku=0` 只关渲染，聊天仍写进频道列表
+    if (danmakuParam === '0') this.danmakuPrefs = { ...this.danmakuPrefs, enabled: false };
+    this.danmaku = new DanmakuField(
+      this.danmakuPrefs,
+      this.app.screen.width,
+      this.app.screen.height,
+      dpr,
+      danmakuParam === 'stress',
+    );
+    this.app.stage.addChild(this.danmaku.container);
     this.world.scale.set(this.metrics.cssScale);
     this.ready = true;
   }
@@ -1008,6 +1030,27 @@ export class GameRenderer {
   }
 
   /**
+   * 弹幕上屏（ADR-0056）。
+   *
+   * 与 `showBubble` 并存：Zzz、发泄与互动台词仍然跟在角色头顶，
+   * 只有聊天改走屏幕空间。
+   */
+  showDanmaku(message: DanmakuMessage): void {
+    this.danmaku?.push(message);
+  }
+
+  /** 偏好变更：开关、不透明度与覆盖区域都只作用在这一层 */
+  setDanmakuPrefs(prefs: DanmakuPrefs): void {
+    this.danmakuPrefs = { ...prefs };
+    this.danmaku?.setPrefs(prefs);
+  }
+
+  /** 重连 / 换园区时清屏：旧弹幕不该漂在新世界里 */
+  clearDanmaku(): void {
+    this.danmaku?.clear();
+  }
+
+  /**
    * 点亮头顶的眩晕星星。
    *
    * 时长由调用方给（与硬直同一个常量），渲染层不推断「为什么晕」——
@@ -1059,6 +1102,8 @@ export class GameRenderer {
     this.terrain?.update(dtMs);
     // 雪在屏幕空间，只累加坐标；灯串亮度由它自己 30s 采样一次
     this.snow?.update(dtMs);
+    // 弹幕与雪同一层空间：只改 x / alpha，离屏当帧回收
+    this.danmaku?.update(dtMs);
     this.winterArt?.update(now);
     // 相机在 session 里先于本方法更新，这里拿到的边界与焦点属于同一帧
     this.critters?.update(dtMs, this.focusX, this.focusY, this.cameraBounds);
@@ -1121,6 +1166,7 @@ export class GameRenderer {
     // 尺寸变了要让光图与雪量立刻跟上，不然会等到下一次 updateCamera 才对齐
     this.lightmap?.resize(this.app.screen.width, this.app.screen.height);
     this.snow?.resize(this.app.screen.width, this.app.screen.height);
+    this.danmaku?.resize(this.app.screen.width, this.app.screen.height, nextDpr);
   }
 
   updateCamera(x: number, y: number): void {
@@ -1261,6 +1307,7 @@ export class GameRenderer {
     this.winterArt?.destroy();
     this.interior?.destroy();
     this.snow?.destroy();
+    this.danmaku?.destroy();
     // 先放两个 Field 的精灵，再放共享图集：反了会让还在引用纹理的 Sprite 悬空
     this.fish?.destroy();
     this.critters?.destroy();

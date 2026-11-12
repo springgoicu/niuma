@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { POSE, WORLD_LAYOUT, type PropKind } from '@niuma/shared-types';
+import { POSE, WELCOME_LANDMARKS, WORLD_LAYOUT, type PropKind } from '@niuma/shared-types';
 import {
+  BOARD_INTERACT_RANGE,
   INTERACT_RANGE,
   SNORE_FIRST_MS,
   SNORE_INTERVAL_MS,
+  isNearRankBoard,
   nearestInteractiveProp,
   pickLine,
   snoreDue,
@@ -41,6 +43,23 @@ describe('可互动设施', () => {
     expect(pickLine('vending', 0)).toBe(pickLine('vending', 0));
     expect(pickLine('vending', 0)).not.toBe(pickLine('vending', 1));
     expect(pickLine('vending', -3)).toBe(pickLine('vending', 3));
+  });
+});
+
+describe('牛马榜公告栏', () => {
+  it('站在牌面正前与两侧 96px 内都能按 F', () => {
+    const board = WELCOME_LANDMARKS.rankBoard;
+    expect(isNearRankBoard(board.x, board.y)).toBe(true);
+    expect(isNearRankBoard(board.x, board.y + BOARD_INTERACT_RANGE)).toBe(true);
+    expect(isNearRankBoard(board.x - 60, board.y + 40)).toBe(true);
+    expect(isNearRankBoard(board.x + 60, board.y + 40)).toBe(true);
+  });
+
+  it('离开牌面超过半径就收不到提示', () => {
+    const board = WELCOME_LANDMARKS.rankBoard;
+    expect(isNearRankBoard(board.x, board.y + BOARD_INTERACT_RANGE + 1)).toBe(false);
+    expect(isNearRankBoard(Number.NaN, board.y)).toBe(false);
+    expect(isNearRankBoard(board.x, board.y, Number.POSITIVE_INFINITY)).toBe(false);
   });
 });
 

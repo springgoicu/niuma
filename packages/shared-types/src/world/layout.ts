@@ -62,6 +62,7 @@ export {
   CHAIR_GAP,
   DESK_H,
   DESK_W,
+  RESTROOM_STALLS,
   chairOffset,
   deskDepthOffset,
   deskFootprint,
@@ -71,7 +72,7 @@ export {
   seatPose,
   workstation,
 } from './campus';
-export type { BuildingSpec, DeskInstance, PropInstance, SeatInstance, SolidRect, SolidKind, PropKind, SeatKind, Workstation } from './campus';
+export type { BuildingSpec, DeskInstance, PropInstance, RestroomStall, SeatInstance, SolidRect, SolidKind, PropKind, SeatKind, Workstation } from './campus';
 
 export interface LakeShape {
   points: Point[];
@@ -224,6 +225,12 @@ export const WELCOME_LANDMARKS = {
   arch: { x: PLAZA_CENTER.x, y: 4408, width: 320, height: 112 },
   /** 四向园区导览牌：拱门东侧、圆庭外缘（避开东南支路）；96×92 与旧画布一致 */
   directory: { x: 4310, y: 4432, width: 96, height: 92 },
+  /**
+   * 牛马榜公告栏（ADR-0054）：广场北缘、出生点斜北侧，顶部与广场边界齐平。
+   * 刻意偏西 136px：128px 宽横在 112px 的北向主路（含两侧余量 128px 通道）上
+   * 会把出口堵死；靠路西侧摆放既保住通道，又让从出生点向北走的人第一眼看到。
+   */
+  rankBoard: { x: 3960, y: 3832, width: 128, height: 96 },
 } as const;
 
 /** 树干碰撞半径：>3 才挡得住人，<14 才能从树缝里穿过去 */
@@ -901,7 +908,7 @@ export function findNearestSeat(
 }
 
 /**
- * 中央地标碰撞：拱门两根立柱与四向导览牌。
+ * 中央地标碰撞：拱门两根立柱、四向导览牌与牛马榜公告栏。
  * 用 `kind: 'prop'` 让 props.ts 的地面层跳过——本体由 welcome.ts 画精灵。
  */
 const HUB_SOLIDS: SolidRect[] = [
@@ -926,6 +933,14 @@ const HUB_SOLIDS: SolidRect[] = [
     y: WELCOME_LANDMARKS.directory.y - WELCOME_LANDMARKS.directory.height,
     w: WELCOME_LANDMARKS.directory.width,
     h: WELCOME_LANDMARKS.directory.height,
+  },
+  {
+    // 只挡底座那一截：牌面在头顶，玩家仍可贴着板面走过
+    kind: 'prop',
+    x: WELCOME_LANDMARKS.rankBoard.x - 60,
+    y: WELCOME_LANDMARKS.rankBoard.y - 18,
+    w: 120,
+    h: 18,
   },
 ];
 

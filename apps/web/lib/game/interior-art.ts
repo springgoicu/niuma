@@ -2,6 +2,7 @@
 
 import { Container, Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
 import {
+  RESTROOM_STALLS,
   WORLD_LAYOUT,
   type BuildingSpec,
   type PropInstance,
@@ -606,6 +607,24 @@ function fixtureIn(room: Room, minW: number): WorldRect | undefined {
   );
 }
 
+/**
+ * 房间内部的纵向隔墙：直接反查共享碰撞体（宽度不超过两堵墙，两端都不贴外圈）。
+ * 卫生间那两道内隔墙早先只进碰撞、不进贴图，玩家会在 60px 门洞之外撞到「空气墙」（ADR-0053）。
+ */
+function innerWalls(room: Room): WorldRect[] {
+  const { x, y, w, h } = room.rect;
+  const t = room.wall;
+  return WORLD_LAYOUT.solids.filter(
+    (solid) =>
+      solid.kind === 'wall' &&
+      solid.w <= t * 2 &&
+      solid.x >= x + t &&
+      solid.x + solid.w <= x + w - t &&
+      solid.y >= y &&
+      solid.y + solid.h <= y + h,
+  );
+}
+
 function seatsIn(room: Room, kind: SeatInstance['kind']): SeatInstance[] {
   return WORLD_LAYOUT.seats.filter((seat) => seat.kind === kind && insideRect(room.rect, seat.x, seat.y));
 }
@@ -932,10 +951,13 @@ export class InteriorArt {
     rect(g, innerX, innerY, 6, innerH, COLOR.mintTileDeep);
     rect(g, x + w - t - 6, innerY, 6, innerH, COLOR.mintTileDeep);
 
+    // 两道内隔墙：位置从共享碰撞体读，墙画出来了才不会变成「空气墙」（ADR-0053）
+    for (const wall of innerWalls(room)) this.zoneDivider(g, wall);
+
     // 连体洗手台 + 宽镜 + 台面小物
     this.vanity(g, room);
     // 隔间木门 + 红锁 + 厕纸架
-    this.stallDoors(g, room);
+    this.stallDoors(g);
     // 北墙提示牌：节约用水 · 严禁超时（图标 + 点阵字块）
     this.restroomSign(g, x + 268, y + 2);
   }
@@ -943,8 +965,9 @@ export class InteriorArt {
   private decorateRestroomFittings(depth: DepthSink, renderer: TextureFactory, room: Room): void {
     const { x, y, h } = room.rect;
     this.place(depth, renderer, 'dryer', drawHandDryer, HAND_DRYER, x + 320, y + h - room.wall);
-    this.place(depth, renderer, 'diffuser', drawDiffuser, DIFFUSER, x + 28, y + 42);
-    this.place(depth, renderer, 'pothos', drawPothos, POTHOS, x + 432, y + 42);
+    // 香薰与绿萝挪到男 / 女区南端：北墙整排让给坑位，留在原处会压在马桶上
+    this.place(depth, renderer, 'diffuser', drawDiffuser, DIFFUSER, x + 26, y + h - room.wall - 6);
+    this.place(depth, renderer, 'pothos', drawPothos, POTHOS, x + 424, y + h - room.wall - 6);
 
     // 水龙头下的一滴水：sink 精灵在 depth y+350，水滴要再晚一格才画得出来
     const sink = propsIn(room, 'sink')[0];
@@ -1104,29 +1127,40 @@ export class InteriorArt {
     rect(g, right + 15, counterTop + 4, 5, 1, COLOR.fixtureEdge);
   }
 
-  /** 隔间：6px 木隔断 + 留 2px 缝的门扇 + 使用中红锁 + 厕纸架 */
-  private stallDoors(g: Graphics, room: Room): void {
-    const { x, y } = room.rect;
-    const t = room.wall;
-    for (const px of [x + 77, x + 377]) {
-      // 6px 隔断重绘为胡桃木
-      box(g, px, y + t, 6, 154, COLOR.walnut, COLOR.walnutDark);
-      rect(g, px + 1, y + t + 1, 1, 152, COLOR.walnutLight);
-      rect(g, px + 5, y + t + 1, 1, 152, COLOR.walnutDark);
-      // 门扇：与隔断留 2px 缝，贴在南半段
-      const doorX = px + 8;
-      const doorTop = y + t + 82;
-      box(g, doorX, doorTop, 4, 70, COLOR.walnutLight, COLOR.walnutDark);
-      rect(g, doorX + 1, doorTop + 3, 1, 64, COLOR.walnut);
-      rect(g, doorX + 4, doorTop + 4, 1, 62, 0xf2d6b8);
-      // 使用中红锁
-      g.rect(doorX + 2, doorTop + 32, 2, 3).fill(COLOR.peachDark);
-      g.rect(doorX + 1, doorTop + 30, 3, 2).fill(COLOR.peachDark);
-      rect(g, doorX + 2, doorTop + 32, 1, 1, 0xffc4b8);
-      // 厕纸架：挂在隔断上，位于门扇上方
-      box(g, px + 2, y + 70, 5, 7, COLOR.fixture, COLOR.fixtureEdge);
-      rect(g, px + 4, y + 72, 3, 3, COLOR.ceramic);
-      rect(g, px + 4, y + 72, 3, 1, COLOR.ceramicEdge);
+  /** 内隔墙：与外墙同一套冷白墙面 + 亮压顶 + 暗收边 */
+  private zoneDivider(g: Graphics, wall: WorldRect): void {
+    const { x, y, w, h } = wall;
+    rect(g, x, y, w, h, COLOR.fixture);
+    rect(g, x, y, 2, h, COLOR.ceramic);
+    rect(g, x + w - 2, y, 2, h, COLOR.fixtureEdge);
+    // 两端亮口：北端接外墙，南端就是 60px 门洞的门垛
+    rect(g, x, y, w, 2, COLOR.ceramic);
+    rect(g, x, y + h - 2, w, 2, COLOR.ceramicEdge);
+  }
+
+  /**
+   * 隔间：6px 胡桃木隔断 + 南沿半掩门扇 + 红锁 + 厕纸架。
+   * 坑位表来自共享布局（ADR-0053），加减坑位不用在渲染层重写坐标。
+   */
+  private stallDoors(g: Graphics): void {
+    for (const stall of RESTROOM_STALLS) {
+      const { partition } = stall;
+      if (partition) {
+        box(g, partition.x, partition.y, partition.w, partition.h, COLOR.walnut, COLOR.walnutDark);
+        rect(g, partition.x + 1, partition.y + 1, 1, partition.h - 2, COLOR.walnutLight);
+        rect(g, partition.x + partition.w - 2, partition.y + 1, 1, partition.h - 2, COLOR.walnutDark);
+        // 厕纸架：挂在隔断朝本格的一侧
+        box(g, partition.x + 2, stall.y + 60, 5, 7, COLOR.fixture, COLOR.fixtureEdge);
+        rect(g, partition.x + 4, stall.y + 62, 3, 3, COLOR.ceramic);
+        rect(g, partition.x + 4, stall.y + 62, 3, 1, COLOR.ceramicEdge);
+      }
+      // 门扇：贴坑位南沿，与东侧隔断留 5px 缝；红锁表示使用中
+      const doorY = stall.y + stall.h - 6;
+      const doorW = stall.w - 8;
+      box(g, stall.x + 3, doorY, doorW, 6, COLOR.walnutLight, COLOR.walnutDark);
+      rect(g, stall.x + 4, doorY + 2, doorW - 2, 1, COLOR.walnut);
+      g.rect(stall.x + stall.w - 9, doorY + 2, 3, 2).fill(COLOR.peachDark);
+      rect(g, stall.x + stall.w - 9, doorY + 2, 1, 1, 0xffc4b8);
     }
   }
 

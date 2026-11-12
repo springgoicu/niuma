@@ -13,6 +13,14 @@ import {
   type CareerSummary,
 } from './career';
 import {
+  LIKE_EXTENSION_BYTES,
+  LIKE_EXTENSION_MAGIC,
+  LIKE_PACKET_BYTES,
+  LIKE_REQUEST_BYTES,
+  MAX_LIKES,
+  type LikePacket,
+} from './like';
+import {
   APPEARANCE_BYTES,
   CAREER_EXTENSION_MAGIC,
   CHAT_HISTORY_FLAG,
@@ -45,6 +53,7 @@ import {
   type SyncFormat,
 } from './constants';
 import { displayWidth } from './name';
+import { DANMAKU_META_BYTES, normalizeDanmakuColor, normalizeDanmakuMode } from './danmaku';
 import {
   dequantizeCoord,
   fromSyncCoord,
@@ -60,6 +69,7 @@ import type {
   ChatHistoryPacket,
   ChatHistoryRequest,
   ChatPacket,
+  ChatSendPacket,
   EntitySnapshot,
   LimitKind,
   MovePacket,
@@ -608,13 +618,23 @@ export function writeCareerSegment(writer: ByteWriter, career: CareerSummary | u
   writer.u8(CAREER_EXTENSION_MAGIC).u8(payload.length).raw(payload);
 }
 
+/**
+ * career 段在包里的总字节数（魔数 + 长度字节 + payload）。
+ * 段不合法返回 0；`readCareerSegment` 与后续点赞段的定位共用这一份校验。
+ */
+function careerSegmentLengthAt(data: Uint8Array, offset: number): number {
+  if (data.length - offset < 2 || data[offset] !== CAREER_EXTENSION_MAGIC) return 0;
+  const length = data[offset + 1]!;
+  if (length < CAREER_MIN_BYTES || length > CAREER_MAX_BYTES) return 0;
+  if (data.length - offset - 2 < length) return 0;
+  return 2 + length;
+}
+
 /** 读尾部段；不是 career 段或长度不合法都返回 undefined，不消费调用方的 offset。 */
 export function readCareerSegment(data: Uint8Array, offset: number): CareerSummary | undefined {
-  if (data.length - offset < 2 || data[offset] !== CAREER_EXTENSION_MAGIC) return undefined;
-  const length = data[offset + 1]!;
-  if (length < CAREER_MIN_BYTES || length > CAREER_MAX_BYTES) return undefined;
-  if (data.length - offset - 2 < length) return undefined;
-  return decodeCareer(data, offset + 2, length);
+  const total = careerSegmentLengthAt(data, offset);
+  if (total === 0) return undefined;
+  return decodeCareer(data, offset + 2, total - 2);
 }
 
 /** 补报：`[op 0x22][len u8][payload]` */
@@ -686,17 +706,22 @@ export function encodeSpawnInto(
   career?: CareerSummary,
   /** 调用方已缓存的整段（服务端按玩家缓存）；优先级高于 career */
   careerSegment?: Uint8Array,
+  /** 工牌点赞数（ADR-0057）：只写 > 0 的 3 字节尾段 */
+  likes?: number,
 ): void {
   writer.u8(OpCode.S2C_ENTITY_SPAWN).u16(id).u16(x).u16(y).u8(state).raw(body);
   // 在线秒数每秒变化，不能进 spawnBody 缓存；只有调用方现算时才追加这一段
   if (onlineSec !== undefined) writer.u8(ONLINE_EXTENSION_MAGIC).u32(onlineSec);
   if (careerSegment) writer.raw(careerSegment);
   else writeCareerSegment(writer, career);
+  writeLikeSegment(writer, likes);
 }
 
 export function encodeSpawn(packet: SpawnPacket): Uint8Array {
   const body = buildSpawnBody(packet.name, packet.appearance, packet.status);
-  const writer = new ByteWriter(6 + body.length + ONLINE_EXTENSION_BYTES + CAREER_SEGMENT_MAX_BYTES);
+  const writer = new ByteWriter(
+    6 + body.length + ONLINE_EXTENSION_BYTES + CAREER_SEGMENT_MAX_BYTES + LIKE_EXTENSION_BYTES,
+  );
   encodeSpawnInto(
     writer,
     packet.id,
@@ -706,6 +731,8 @@ export function encodeSpawn(packet: SpawnPacket): Uint8Array {
     body,
     packet.onlineSec,
     packet.career,
+    undefined,
+    packet.likes,
   );
   return writer.finish();
 }
@@ -722,12 +749,13 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
   const appearance = decodeAppearance(data, reader.offset);
   reader.offset += APPEARANCE_BYTES;
   // 旧服务端的入场包没有状态段：剩余 0 字节即「没设置」，不能因此拒收整条 spawn。
-  // 0xfe / 0xfc 是尾部扩展段的魔数，不是状态长度，必须先排除再按长度读状态。
+  // 0xfe / 0xfc / 0xfb 是尾部扩展段的魔数，不是状态长度，必须先排除再按长度读状态。
   let status = '';
   if (
     reader.remaining >= 1 &&
     data[reader.offset] !== ONLINE_EXTENSION_MAGIC &&
-    data[reader.offset] !== CAREER_EXTENSION_MAGIC
+    data[reader.offset] !== CAREER_EXTENSION_MAGIC &&
+    data[reader.offset] !== LIKE_EXTENSION_MAGIC
   ) {
     const statusLength = reader.u8();
     // 长度字段与剩余字节不符说明包被截断或伪造：丢掉状态而不是猜半个字符
@@ -741,9 +769,13 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
   }
   // 考勤摘要段：旧服务端没有这一段，按 undefined 显示「未上报」
   const career = readCareerSegment(data, reader.offset);
+  // 点赞段：只有 likes > 0 才写；旧服务端没有这一段时按 0 展示。
+  // `readCareerSegment` 不消费 offset，这里显式跳过 career 段再定位 0xfb。
+  const likes = readLikeSegment(data, reader.offset + careerSegmentLengthAt(data, reader.offset));
   const packet: SpawnPacket = { id, x, y, state, name, appearance, status };
   if (onlineSec !== undefined) packet.onlineSec = onlineSec;
   if (career) packet.career = career;
+  if (likes !== undefined) packet.likes = likes;
   return packet;
 }
 
@@ -762,6 +794,54 @@ export function decodeDespawn(data: Uint8Array): { id: number; reason: number } 
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_ENTITY_DESPAWN) throw new Error('not a despawn packet');
   return { id: reader.u16(), reason: reader.u8() };
+}
+
+// ---------------------------------------------------------------------------
+// 工牌点赞（ADR-0057）：查询、广播与 spawn 尾段
+// ---------------------------------------------------------------------------
+
+/** 点赞查询：`[op][targetId u16]`；targetId=0 或长度不符返回 undefined。 */
+export function encodeLikeRequest(targetId: number): Uint8Array {
+  const writer = new ByteWriter(LIKE_REQUEST_BYTES);
+  writer.u8(OpCode.C2S_LIKE).u16(targetId & 0xffff);
+  return writer.finish();
+}
+
+export function decodeLikeRequest(data: Uint8Array): number | undefined {
+  if (data.length !== LIKE_REQUEST_BYTES || data[0] !== OpCode.C2S_LIKE) return undefined;
+  const targetId = data[1]! | (data[2]! << 8);
+  return targetId === 0 ? undefined : targetId;
+}
+
+/** 点赞广播：`[op][targetId u16][likes u16][flags u8]` */
+export function encodeLike(targetId: number, likes: number, flags: number): Uint8Array {
+  const writer = new ByteWriter(LIKE_PACKET_BYTES);
+  const safeLikes = Number.isFinite(likes) ? Math.min(MAX_LIKES, Math.max(0, Math.floor(likes))) : 0;
+  writer.u8(OpCode.S2C_LIKE).u16(targetId & 0xffff).u16(safeLikes).u8(flags & 0xff);
+  return writer.finish();
+}
+
+export function decodeLike(data: Uint8Array): LikePacket | undefined {
+  if (data.length !== LIKE_PACKET_BYTES || data[0] !== OpCode.S2C_LIKE) return undefined;
+  return {
+    targetId: data[1]! | (data[2]! << 8),
+    likes: data[3]! | (data[4]! << 8),
+    flags: data[5]!,
+  };
+}
+
+/** spawn 尾段：`[0xfb][likes u16]`；0 赞一个字节都不写，旧包体不变。 */
+export function writeLikeSegment(writer: ByteWriter, likes: number | undefined): void {
+  if (likes === undefined || !Number.isFinite(likes) || likes <= 0) return;
+  writer.u8(LIKE_EXTENSION_MAGIC).u16(Math.min(MAX_LIKES, Math.floor(likes)));
+}
+
+/** 读 spawn 尾段；不是点赞段或长度不足返回 undefined，不消费调用方 offset。 */
+export function readLikeSegment(data: Uint8Array, offset: number): number | undefined {
+  if (data.length - offset < LIKE_EXTENSION_BYTES || data[offset] !== LIKE_EXTENSION_MAGIC) {
+    return undefined;
+  }
+  return data[offset + 1]! | (data[offset + 2]! << 8);
 }
 
 /**
@@ -803,10 +883,30 @@ export function decodeVent(data: Uint8Array): VentEventPacket {
   return { attackerId: reader.u16(), targetId: reader.u16(), x: reader.u16(), y: reader.u16() };
 }
 
+/**
+ * 聊天包布局（ADR-0056）：文本前先写 2 字节弹幕元数据。
+ *
+ * `C2S_CHAT`             = `[op u8][colorIndex u8][danmakuMode u8][len u16][utf8]`
+ * `S2C_CHAT_BROADCAST`   = `[op u8][entityId u16][msgId u16][colorIndex u8][danmakuMode u8][len u16][utf8]`
+ *
+ * 这是一次有意破坏兼容的硬切：旧客户端会把 colorIndex 读成长度高字节。
+ * 发布保障是构建版本强制刷新（ADR-0050），不做双格式分支。
+ */
+const CHAT_SEND_FIXED_BYTES = 3 + DANMAKU_META_BYTES;
+const CHAT_BROADCAST_FIXED_BYTES = 7 + DANMAKU_META_BYTES;
+
 export function encodeChatBroadcast(packet: ChatPacket): Uint8Array {
   const bytes = textEncoder.encode(packet.text);
-  const writer = new ByteWriter(7 + bytes.length);
-  writer.u8(OpCode.S2C_CHAT_BROADCAST).u16(packet.entityId).u16(packet.msgId).u16(bytes.length).raw(bytes);
+  const writer = new ByteWriter(CHAT_BROADCAST_FIXED_BYTES + bytes.length);
+  writer
+    .u8(OpCode.S2C_CHAT_BROADCAST)
+    .u16(packet.entityId)
+    .u16(packet.msgId)
+    // 编码端也归一化：服务端已经把值钳过一遍，这里防的是自造包与浮点残留
+    .u8(normalizeDanmakuColor(packet.colorIndex))
+    .u8(normalizeDanmakuMode(packet.danmakuMode))
+    .u16(bytes.length)
+    .raw(bytes);
   return writer.finish();
 }
 
@@ -815,22 +915,31 @@ export function decodeChatBroadcast(data: Uint8Array): ChatPacket {
   if (reader.u8() !== OpCode.S2C_CHAT_BROADCAST) throw new Error('not a chat packet');
   const entityId = reader.u16();
   const msgId = reader.u16();
+  const colorIndex = normalizeDanmakuColor(reader.u8());
+  const danmakuMode = normalizeDanmakuMode(reader.u8());
   const length = reader.u16();
-  return { entityId, msgId, text: reader.utf8(length) };
+  return { entityId, msgId, colorIndex, danmakuMode, text: reader.utf8(length) };
 }
 
-export function encodeChatSend(text: string): Uint8Array {
-  const bytes = textEncoder.encode(text);
-  const writer = new ByteWriter(3 + bytes.length);
-  writer.u8(OpCode.C2S_CHAT).u16(bytes.length).raw(bytes);
+export function encodeChatSend(packet: ChatSendPacket): Uint8Array {
+  const bytes = textEncoder.encode(packet.text);
+  const writer = new ByteWriter(CHAT_SEND_FIXED_BYTES + bytes.length);
+  writer
+    .u8(OpCode.C2S_CHAT)
+    .u8(normalizeDanmakuColor(packet.colorIndex))
+    .u8(normalizeDanmakuMode(packet.danmakuMode))
+    .u16(bytes.length)
+    .raw(bytes);
   return writer.finish();
 }
 
-export function decodeChatSend(data: Uint8Array): string {
+export function decodeChatSend(data: Uint8Array): ChatSendPacket {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.C2S_CHAT) throw new Error('not a chat send packet');
+  const colorIndex = normalizeDanmakuColor(reader.u8());
+  const danmakuMode = normalizeDanmakuMode(reader.u8());
   const length = reader.u16();
-  return reader.utf8(length);
+  return { colorIndex, danmakuMode, text: reader.utf8(length) };
 }
 
 export function encodeHello(

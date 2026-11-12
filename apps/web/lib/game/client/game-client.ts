@@ -1,5 +1,13 @@
-import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import type {
+  BoardMetric,
+  CareerSummary,
+  CharacterAppearance,
+  ChatSendPacket,
+  NavTargetId,
+  ResumeState,
+} from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
+import type { DanmakuPrefs } from '../danmaku-prefs';
 import type { SessionCallbacks } from '../session';
 import type { SessionProfile } from '../runtime/engine-env';
 import type { ActionKey } from '../input';
@@ -26,12 +34,19 @@ export interface GameClient {
   perform(action: ActionKey): void;
   /** 收回移动控制权：打开聊天、点画布空白处时调用 */
   clearMovement(): void;
-  sendChat(text: string): void;
+  /** 发言：弹幕外观随包上行，服务端复核后广播 */
+  sendChat(packet: ChatSendPacket): void;
+  /** 弹幕设置（开关 / 不透明度 / 覆盖区域 + 发送侧偏好） */
+  setDanmakuPrefs(prefs: DanmakuPrefs): void;
   requestHistory(beforeMsgId: number): void;
   setStatus(status: string): void;
   setAppearance(appearance: CharacterAppearance): void;
   /** 补报考勤摘要：入场后、geo 就绪后与 60 秒心跳各调用一次 */
   updateCareer(career: CareerSummary): void;
+  /** 拉取牛马榜：默认 `0` 一次拉全部指标，页签切换不再往返 */
+  requestBoard(metric?: BoardMetric | 0): void;
+  /** 给看得见的人点个赞（ADR-0057）：服务端裁决，重复请求是幂等的 */
+  like(targetId: number): void;
   navigateTo(id: NavTargetId): void;
   cancelNavigation(): void;
   /** 舞台局部坐标 → 命中角色的 netId（经 `options.onPick` 回调） */
@@ -48,6 +63,8 @@ export interface GameClientOptions {
   parkId: string;
   /** 主线程的 `location.search`：`?zoom/?flat/?light/?season` 等灰度开关原样转给渲染线程 */
   search: string;
+  /** 弹幕偏好初值：宿主读盘后注入，Worker 模式随 init 带进渲染线程 */
+  danmakuPrefs: DanmakuPrefs;
   callbacks: SessionCallbacks;
   /** Enter 打开聊天：键盘监听留在主线程，这条路径不经过渲染线程 */
   onRequestChat(): void;

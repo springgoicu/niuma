@@ -1,6 +1,14 @@
-import type { CareerSummary, CharacterAppearance, NavTargetId, ResumeState } from '@niuma/shared-types';
+import type {
+  BoardMetric,
+  CareerSummary,
+  CharacterAppearance,
+  ChatSendPacket,
+  NavTargetId,
+  ResumeState,
+} from '@niuma/shared-types';
 import { requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
+import type { DanmakuPrefs } from '../danmaku-prefs';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
 import { MINIMAP_SIZE } from '../minimap-draw';
@@ -150,6 +158,7 @@ export class WorkerGameClient implements GameClient {
           width: size.width,
           height: size.height,
           dpr: size.dpr,
+          danmaku: this.options.danmakuPrefs,
         } satisfies MainToWorker,
         [offscreen],
       );
@@ -307,9 +316,14 @@ export class WorkerGameClient implements GameClient {
     this.cancelNavigation();
   }
 
-  sendChat(text: string): void {
-    if (this.delegate) return this.delegate.sendChat(text);
-    this.post({ t: 'chat', text });
+  sendChat(packet: ChatSendPacket): void {
+    if (this.delegate) return this.delegate.sendChat(packet);
+    this.post({ t: 'chat', packet });
+  }
+
+  setDanmakuPrefs(prefs: DanmakuPrefs): void {
+    if (this.delegate) return this.delegate.setDanmakuPrefs(prefs);
+    this.post({ t: 'danmaku', prefs });
   }
 
   requestHistory(beforeMsgId: number): void {
@@ -330,6 +344,16 @@ export class WorkerGameClient implements GameClient {
   updateCareer(career: CareerSummary): void {
     if (this.delegate) return this.delegate.updateCareer(career);
     this.post({ t: 'career', career });
+  }
+
+  requestBoard(metric: BoardMetric | 0 = 0): void {
+    if (this.delegate) return this.delegate.requestBoard(metric);
+    this.post({ t: 'board', metric });
+  }
+
+  like(targetId: number): void {
+    if (this.delegate) return this.delegate.like(targetId);
+    this.post({ t: 'like', id: targetId });
   }
 
   navigateTo(id: NavTargetId): void {
@@ -439,6 +463,15 @@ export class WorkerGameClient implements GameClient {
         return;
       case 'ventDealt':
         callbacks.onVentDealt?.();
+        return;
+      case 'boardOpen':
+        callbacks.onBoardOpen?.();
+        return;
+      case 'board':
+        callbacks.onBoard?.(message.packet);
+        return;
+      case 'like':
+        callbacks.onLike?.(message.packet);
         return;
       case 'audio':
         applyAudioEvent(message.event, message.listenerX, message.listenerY);

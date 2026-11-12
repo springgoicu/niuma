@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { Heart, X } from 'lucide-react';
 import { toShareCardData, type BadgeArchive } from '@/lib/game/archive';
+import { GAME_KEYS, TAB_KEYS } from '@/lib/game/game-keys';
 import { downloadShareCard, renderShareCard, shareOrDownload } from '@/lib/game/share-card';
 import { nextTabIndex, type TabNavKey } from '@/lib/game/tab-keyboard';
 import { ArchiveFooter, type ArchiveBusy } from './ArchiveFooter';
@@ -15,30 +16,11 @@ const SELF_TOAST = '工牌已就绪，快去向老板/社交平台证明你的�
 const OTHER_TOAST = 'TA 的工卡已生成，代打存档请谨慎传播';
 const FAILURE_TEXT = '工卡打印失败，稍后再试一次';
 
-/** 弹窗打开期间要吞掉的游戏键：不清掉的话角色会顶着弹窗继续走 */
-const GAME_KEYS = new Set([
-  'KeyW',
-  'KeyA',
-  'KeyS',
-  'KeyD',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'Space',
-  'KeyZ',
-  'KeyX',
-  'KeyC',
-  'KeyE',
-  'KeyF',
-  'KeyG',
-]);
-
-const TAB_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
-
 interface BadgeArchiveDialogProps {
   archive: BadgeArchive;
   onClose: () => void;
+  /** 给这块工牌点赞；本人档案与未接入点赞的宿主不传 */
+  onLike?: () => void;
 }
 
 /**
@@ -48,18 +30,38 @@ interface BadgeArchiveDialogProps {
  * 本人与他人的差异只在取数壳：这里只认 `BadgeArchive`，
  * 印章、条码、分享、焦点与按键处理都只有一份。
  */
-export function BadgeArchiveDialog({ archive, onClose }: BadgeArchiveDialogProps) {
+export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const toastTimer = useRef<number | null>(null);
+  const likeTimer = useRef<number | null>(null);
+  const likedRef = useRef(archive.liked);
+  likedRef.current = archive.liked;
   const [tab, setTab] = useState<ArchiveTabId>('identity');
   const [busy, setBusy] = useState<ArchiveBusy>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [pendingLike, setPendingLike] = useState(false);
 
   // 换人 / 本人↔代打切换时回到证件页，避免打开别人的档案先看到上一页签
   useEffect(() => {
     setTab('identity');
   }, [archive.employeeNo, archive.isSelf]);
+
+  // 换人时清掉上一块的「点赞中」，避免旧计时器在新档案上弹失败提示
+  useEffect(() => {
+    setPendingLike(false);
+    return () => {
+      if (likeTimer.current !== null) {
+        window.clearTimeout(likeTimer.current);
+        likeTimer.current = null;
+      }
+    };
+  }, [archive.employeeNo]);
+
+  // 服务端确认后立刻收回 pending；别人点赞不会误点亮「已点赞」
+  useEffect(() => {
+    if (archive.liked) setPendingLike(false);
+  }, [archive.liked]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -69,6 +71,22 @@ export function BadgeArchiveDialog({ archive, onClose }: BadgeArchiveDialogProps
       toastTimer.current = null;
     }, 3_200);
   }, []);
+
+  /**
+   * 点赞：按钮先进入 pending，服务端 ack 到达后由 `archive.liked` 收回。
+   * 2 秒收不到就退回普通态并提示；网络抖动时不把按钮永久卡在「点赞中」。
+   */
+  const handleLike = useCallback(() => {
+    if (archive.isSelf || archive.liked || pendingLike || !onLike) return;
+    setPendingLike(true);
+    onLike();
+    if (likeTimer.current !== null) window.clearTimeout(likeTimer.current);
+    likeTimer.current = window.setTimeout(() => {
+      likeTimer.current = null;
+      setPendingLike(false);
+      if (!likedRef.current) notify('点赞没送到，稍后再试');
+    }, 2_000);
+  }, [archive.isSelf, archive.liked, pendingLike, onLike, notify]);
 
   // 打开：先把当前焦点（可能是聊天输入框）摘掉，再让焦点落到关闭按钮
   useEffect(() => {
@@ -103,7 +121,7 @@ export function BadgeArchiveDialog({ archive, onClose }: BadgeArchiveDialogProps
       const target = event.target;
       const tabButton =
         target instanceof HTMLElement ? target.closest<HTMLElement>('[role="tab"]') : null;
-      if (tabButton && TAB_KEYS.has(event.key)) {
+      if (tabButton && TAB_KEYS.has(event.key as TabNavKey)) {
         const tabs = Array.from(
           dialogRef.current?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
         );
@@ -205,7 +223,6 @@ export function BadgeArchiveDialog({ archive, onClose }: BadgeArchiveDialogProps
         className="absolute inset-0 cursor-pointer bg-black/75 backdrop-blur-[2px]"
         onClick={onClose}
         aria-hidden="true"
-        data-no-immersive
       />
 
       <div
@@ -214,7 +231,6 @@ export function BadgeArchiveDialog({ archive, onClose }: BadgeArchiveDialogProps
         aria-modal="true"
         aria-labelledby="badge-archive-title"
         onKeyDown={trapFocus}
-        data-no-immersive
         className="relative z-10 flex h-[min(640px,92dvh)] w-[min(430px,94vw)] flex-col overflow-hidden border-2 border-ink-500 bg-ink-800 p-[3px] shadow-[0_28px_70px_-30px_rgba(0,0,0,0.95)]"
       >
         <div className="flex min-h-0 flex-1 flex-col border-2 border-ink-600 bg-ink-900">
@@ -280,6 +296,39 @@ export function BadgeArchiveDialog({ archive, onClose }: BadgeArchiveDialogProps
               {archive.status && (
                 <p className="mt-1 truncate font-mono text-[10px] text-mint-400">{archive.status}</p>
               )}
+
+              {/* 点赞：本人只看收到的赞，他人才有按钮（ADR-0057） */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span
+                  className="flex items-center gap-1 border border-ink-500 px-1.5 py-0.5 font-mono text-[9px] tracking-[0.06em] text-mist-400"
+                  title="只在本园区本次运行期间有效；离园或服务端重启即清零"
+                >
+                  <Heart
+                    className={`h-3 w-3 ${archive.liked ? 'fill-mint-400 text-mint-400' : 'text-mist-500'}`}
+                    aria-hidden="true"
+                  />
+                  <span className="tabular-nums text-mist-100">{archive.likes}</span>
+                  <span>赞</span>
+                </span>
+                {archive.isSelf ? (
+                  <span className="font-mono text-[8px] tracking-[0.08em] text-mist-500">收到的赞 · 本次在园</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleLike}
+                    disabled={archive.liked || pendingLike || !onLike}
+                    aria-pressed={archive.liked}
+                    aria-label={archive.liked ? `已点赞 ${archive.name}` : `为 ${archive.name} 的工牌点赞`}
+                    className={`cursor-pointer border px-2 py-0.5 font-mono text-[9px] tracking-[0.08em] transition-colors focus-visible:outline-none disabled:cursor-default ${
+                      archive.liked
+                        ? 'border-mint-400/60 bg-mint-400/10 text-mint-400'
+                        : 'border-ink-500 text-mist-300 hover:border-mint-400 hover:text-mint-400'
+                    }`}
+                  >
+                    {archive.liked ? '已点赞' : pendingLike ? '点赞中…' : '点赞'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 

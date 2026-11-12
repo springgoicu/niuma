@@ -1,4 +1,5 @@
 import type { CareerSummary, CharacterAppearance } from '@niuma/shared-types';
+import type { DanmakuPrefs } from '../danmaku-prefs';
 import type { InteractiveKind } from '../interactions';
 import type { ControlBlock, SnapshotPatch, ViewportInfo } from './control-channel';
 
@@ -48,6 +49,11 @@ export interface EngineEnv {
   readViewport(out: ViewportInfo): boolean;
   /** 字体就绪：主线程等 `document.fonts.ready`，Worker 等自己注册的 FontFace */
   fontsReady(): Promise<void>;
+  /**
+   * 弹幕偏好初值。localStorage 只能在主线程读：Worker 侧由 init 消息带进来，
+   * 主线程回退实现直接读同一份存储。
+   */
+  readonly danmakuPrefs: DanmakuPrefs;
   /** 落点快照：主线程直接写 localStorage，Worker 写进控制块由主线程落盘 */
   writeSnapshot(patch: SnapshotPatch): void;
   /** 发声请求：主线程直接合成，Worker 转成一条消息 */

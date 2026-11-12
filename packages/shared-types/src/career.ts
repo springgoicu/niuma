@@ -13,6 +13,19 @@
  * v1 → v2：在 `ventedCount` 后插入 `knockdownCount u16`，后续字段整体后移 2 字节。
  * 因此版本号必须升级：v1 解码器看到 v2 会整段丢弃，而不是把省份读成乱码。
  */
+/**
+ * 上报之后又过了多少分钟。
+ *
+ * 只算「服务端会话秒数 − 上报时的会话秒数」：重连会重置 `joinedAt`，
+ * 两端时钟差也不会造成重复计时。与 `withCareerDelta` 同一口径，
+ * 服务端榜单与客户端工牌都必须调用这一份，不要各写一遍。
+ */
+export function careerSessionDeltaMinutes(career: CareerSummary, onlineSec: number): number {
+  if (!Number.isFinite(onlineSec)) return 0;
+  const reported = Math.max(0, career.reportedOnlineSec);
+  return Math.floor(Math.max(0, onlineSec - reported) / 60);
+}
+
 export const CAREER_VERSION = 2;
 export const CAREER_VERSION_LEGACY = 1;
 
