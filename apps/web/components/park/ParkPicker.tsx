@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Gauge, RefreshCw, Timer, Users } from 'lucide-react';
 import type { ParkEntry, ParkHealth } from '@/lib/park';
+import { displayOnline } from '@/lib/park-display';
 import { loadParkId, saveParkId } from '@/lib/park-pref';
 import { loadProfile, type Profile } from '@/lib/profile';
 import { useParkHealth } from './use-park-health';
@@ -102,7 +103,13 @@ function ParkCard({
   const state = cardState(park, health, loading);
   const tone = STATE_STYLE[state];
   const dead = state === 'down';
-  const percent = health ? Math.min(100, Math.round(health.utilizationPermille / 10)) : 0;
+  // 展示层放大：真实在线仍走 /health，这里只影响玩家看到的数字与水位条
+  const shownOnline = health ? displayOnline(health.online, health.capacity) : 0;
+  const percent = health
+    ? health.capacity > 0
+      ? Math.min(100, Math.round((shownOnline / health.capacity) * 100))
+      : Math.min(100, Math.round(health.utilizationPermille / 10))
+    : 0;
 
   return (
     <button
@@ -148,7 +155,7 @@ function ParkCard({
         <Stat
           icon={<Users className="h-3 w-3" />}
           label="在线"
-          value={health ? String(health.online) : '--'}
+          value={health ? String(shownOnline) : '--'}
           unit={health ? `/ ${health.capacity}` : undefined}
         />
         <Stat
@@ -168,7 +175,7 @@ function ParkCard({
       {/* 闸门水位：移动端三列压缩成两列后，这一条替代「水位」列 */}
       <span className="block h-0.5 w-full bg-ink-700" aria-hidden>
         <span
-          className={`block h-full transition-[width] duration-300 ${meterColor(health?.utilizationPermille ?? 0)}`}
+          className={`block h-full transition-[width] duration-300 ${meterColor(percent * 10)}`}
           style={{ width: `${health ? Math.max(2, percent) : 0}%` }}
         />
       </span>
