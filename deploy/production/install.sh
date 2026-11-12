@@ -345,6 +345,14 @@ echo "   只放开部署需要的 6 条命令"
 # ==================== 9. Webhook 服务 ====================
 step "9. 自动发版 Webhook"
 install -m 755 "$TPL_DIR/webhook.mjs" /opt/niuma/webhook.mjs
+# 状态速查：玩家随时在线时也要能一条命令看清负载，不必记长参数
+install -m 755 "$TPL_DIR/status.sh" /opt/niuma/status.sh
+cat > /usr/local/bin/niuma-status <<'STATUS_EOF'
+#!/bin/sh
+# niuma 运行状态速查，实现在 /opt/niuma/status.sh（随部署更新）
+exec /opt/niuma/status.sh "$@"
+STATUS_EOF
+chmod 755 /usr/local/bin/niuma-status
 install -m 644 "$TPL_DIR/niuma-webhook.service" /etc/systemd/system/niuma-webhook.service
 systemctl daemon-reload
 systemctl enable niuma-webhook >/dev/null 2>&1 || true

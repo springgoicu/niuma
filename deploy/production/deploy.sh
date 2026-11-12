@@ -173,4 +173,14 @@ if [ -f /opt/niuma/webhook.mjs ] && ! cmp -s "$SRC_DIR/deploy/production/webhook
   fi
 fi
 
+# 状态脚本同理：运维随时要看的那条命令，不能停在旧版本。
+# cmp 在目标不存在时返回非 0，正好把「首次安装」也一并覆盖。
+if ! cmp -s "$SRC_DIR/deploy/production/status.sh" /opt/niuma/status.sh 2>/dev/null; then
+  if install -m 755 "$SRC_DIR/deploy/production/status.sh" /opt/niuma/status.sh 2>/dev/null; then
+    log "状态脚本已更新：/opt/niuma/status.sh（niuma-status）"
+  else
+    log "⚠ status.sh 有更新但无权写入 /opt/niuma"
+  fi
+fi
+
 pm2 ls 9>&- || true
