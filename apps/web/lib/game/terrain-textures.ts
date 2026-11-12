@@ -216,6 +216,34 @@ export function makeDirtTexture(renderer: TextureFactory): Texture {
   });
 }
 
+/**
+ * 石砖：128px 平铺，32px 错缝方砖 + 1px 砖缝 + 极轻的磨面颗粒。
+ * 砖缝沿平铺边界连续，圆庭的 mask 只负责切外轮廓，不会露出方块感。
+ */
+export function makeStoneTexture(renderer: TextureFactory): Texture {
+  const size = 128;
+  return bake(renderer, (g) => {
+    g.rect(0, 0, size, size).fill(C.stoneBase);
+    const random = seeded(0x5d3a71b9);
+    for (let row = 0; row < 4; row += 1) {
+      const y = row * 32;
+      g.rect(0, y, size, 1).fill(C.stoneSeam);
+      const offset = row % 2 === 0 ? 0 : 16;
+      for (let x = offset; x < size; x += 32) {
+        g.rect(x, y, 1, 32).fill(C.stoneSeam);
+        // 每块砖一点点亮面，砖面不整片死平
+        if (random() > 0.55) wrappedRect(g, x + 2, y + 2, 26, 1, size, C.stoneLight);
+      }
+    }
+    // 磨面颗粒：1px 的浅灰与暗灰，密度压到只做质感
+    for (let i = 0; i < 90; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
+      wrappedRect(g, x, y, 1, 1, size, random() > 0.5 ? C.stoneAlt : C.stoneSeam);
+    }
+  });
+}
+
 /** 水面色：夏冬两套键名一致，绘制代码只换表不换写法 */
 function waterPalette(winter: boolean): typeof C {
   return winter ? (W as unknown as typeof C) : C;
@@ -620,6 +648,16 @@ function drawBloomRose(g: Graphics, x: number): void {
   g.rect(x + 4, 15, 8, 1).fill(C.grassDeep);
 }
 
+/** 林间落叶：一片斜躺的 6×5 叶子 + 2px 叶柄，三档暖色压出层次 */
+function drawLeaf(g: Graphics, x: number): void {
+  g.rect(x + 8, 11, 1, 3).fill(C.trunkDark);
+  g.rect(x + 5, 6, 5, 4).fill(C.leafAmber);
+  g.rect(x + 10, 7, 2, 3).fill(C.leafRust);
+  g.rect(x + 6, 5, 3, 1).fill(C.leafGold);
+  g.rect(x + 5, 10, 3, 1).fill(C.leafRust);
+  g.rect(x + 9, 11, 2, 1).fill(C.leafAmber);
+}
+
 export function makeDecalAtlas(renderer: TextureFactory): DecalAtlas {
   const at = (kind: (typeof DECAL_KINDS)[number]): number => DECAL_SPRITE * DECAL_KINDS.indexOf(kind);
   const texture = bake(
@@ -632,6 +670,7 @@ export function makeDecalAtlas(renderer: TextureFactory): DecalAtlas {
       drawBloomWhite(g, at('bloomWhite'));
       drawBloomGold(g, at('bloomGold'));
       drawBloomRose(g, at('bloomRose'));
+      drawLeaf(g, at('leaf'));
     },
     { frame: new Rectangle(0, 0, DECAL_SPRITE * DECAL_KINDS.length, DECAL_SPRITE) },
   );

@@ -37,10 +37,10 @@ describe('spawnPoint', () => {
     }
   });
 
-  it('默认出生半径把新玩家放在北门入园口，而不是工位环里', () => {
+  it('默认出生半径把新玩家放在中央迎宾广场，而不是工位环里', () => {
     for (let i = 0; i < 60; i += 1) {
       const point = spawnPoint(SPAWN_RADIUS);
-      expect(regionAt(point.x, point.y)).toBe('牛马园北门');
+      expect(regionAt(point.x, point.y)).toBe('中央迎宾广场');
       // findFreePoint 最坏会沿 24px 一圈挪一次
       expect(Math.hypot(point.x - SPAWN_CENTER.x, point.y - SPAWN_CENTER.y)).toBeLessThanOrEqual(
         SPAWN_RADIUS + 24,

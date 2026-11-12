@@ -1,13 +1,15 @@
 'use client';
 
 /** 贴花种类与顺序同时决定图集里的帧号，两端只认这一份常量 */
-export const DECAL_KINDS = ['clover', 'daisy', 'grassTip', 'pebble', 'bloomWhite', 'bloomGold', 'bloomRose'] as const;
+export const DECAL_KINDS = ['clover', 'daisy', 'grassTip', 'pebble', 'bloomWhite', 'bloomGold', 'bloomRose', 'leaf'] as const;
 export type DecalKind = (typeof DECAL_KINDS)[number];
 
 /** 基础草地层只撒前四种：花只长在花海里与零散点缀层 */
 export const GROUND_DECAL_KINDS: readonly number[] = [0, 1, 2, 3];
 /** 三种花海贴花在 DECAL_KINDS 里的起点，与 FlowerPatch.palette 顺序一一对应 */
 export const BLOOM_KIND_BASE = 4;
+/** 林间落叶：只在树丛半径内单独撒，不混进基础草地层 */
+export const LEAF_KINDS: readonly number[] = [DECAL_KINDS.indexOf('leaf')];
 /** 花海贴花在单个花田里的种类：0 白雏菊 / 1 金盏 / 2 暖粉 */
 export function bloomDecalKind(palette: 0 | 1 | 2): number {
   return BLOOM_KIND_BASE + palette;

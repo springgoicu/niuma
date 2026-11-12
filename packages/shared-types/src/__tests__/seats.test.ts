@@ -35,7 +35,7 @@ function rectsOverlap(a: SolidRect, b: { x: number; y: number; w: number; h: num
 
 describe('座位布局', () => {
   it('座位 id 从 1 连续编号，seatById 可反查', () => {
-    // ADR-0044：四边散布的工位删除后，座位只剩工作区 8 + 会议 6 + 马桶 4 + 宿舍 7
+    // ADR-0044：四边散布的工位删除后，座位只剩工作区 8 + 会议 8 + 马桶 4 + 宿舍 7
     expect(seats.length).toBeGreaterThanOrEqual(20);
     seats.forEach((seat, index) => {
       expect(seat.id).toBe(index + 1);

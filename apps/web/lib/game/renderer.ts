@@ -620,7 +620,7 @@ export class GameRenderer {
     this.props.build(this.sortLayer, this.app.renderer);
     this.world.addChild(this.props.base);
 
-    // 室内陈设补完（宿舍 / 工作区 / 卫生间）：与季节无关，始终挂上。
+    // 室内陈设补完（会议室 / 宿舍 / 工作区 / 卫生间）：与季节无关，始终挂上。
     // 墙上的窗、钟、镜与衣柜这类「贴墙家具」都没有碰撞——贴墙位置本来就在墙体里
     this.interior = new InteriorArt();
     this.interior.build(this.sortLayer, this.props.base, this.app.renderer);

@@ -42,6 +42,26 @@ describe('园区频道历史合并', () => {
     expect(state.history).toEqual({ loading: false, hasMore: false, cursor: 9 });
   });
 
+  it('上翻返回空页时不动列表引用，也不前移游标', () => {
+    useGameUi.getState().applyHistory([chat(10, 10_000), chat(11, 11_000)], {
+      replace: true,
+      hasMore: true,
+    });
+    useGameUi.getState().setHistoryLoading(true);
+    const before = useGameUi.getState().messages;
+
+    // 全是本地已有的条目：换新数组会让 ChatLog 多跑一次滚动判定，
+    // 还会把「上翻到底」误当成新消息拉回底部
+    useGameUi.getState().applyHistory([chat(10, 10_000), chat(11, 11_000)], {
+      replace: false,
+      hasMore: false,
+    });
+
+    const state = useGameUi.getState();
+    expect(state.messages).toBe(before);
+    expect(state.history).toEqual({ loading: false, hasMore: false, cursor: 10 });
+  });
+
   it('游标永远指向最旧的一条聊天：负数系统消息 id 不参与', () => {
     useGameUi.getState().pushMessage(system(-1, 5_000));
     useGameUi.getState().applyHistory([chat(7, 7_000), chat(8, 8_000)], {

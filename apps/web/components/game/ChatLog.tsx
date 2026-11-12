@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useLayoutEffect, useRef } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   MAX_NAME_DISPLAY_UNITS,
   SYSTEM_NOTICE_KIND,
@@ -22,6 +22,8 @@ interface ChatLogProps {
 
 /** 距顶部多远触发上翻 */
 const TOP_TRIGGER = 16;
+/** 贴底判定容差：分数像素不该被当成「用户已经滚开」 */
+const BOTTOM_EPSILON = 1;
 
 /** 列表身份键：系统消息 id 是负数，与聊天 msgId 分开记 */
 function entryKey(entry: ChatEntry): string {
@@ -55,27 +57,80 @@ function systemMarker(kind: number | undefined): { glyph: string; tone: string }
  */
 export function ChatLog({ messages, history, open, compact, onLoadHistory }: ChatLogProps) {
   const listRef = useRef<HTMLDivElement>(null);
+  /** 前插回填基准：上一次落定时的内容总高 */
   const scrollHeightRef = useRef(0);
   const firstKeyRef = useRef<string | null>(null);
   const lastKeyRef = useRef<string | null>(null);
+  /** 上一次滚动位置：只有 `scrollTop` 变小才可能是用户主动上翻 */
+  const lastScrollTopRef = useRef(0);
+  /** 视图是否该跟随布局变化：用户滚开后为 false，贴底后回到 true */
+  const followLayoutRef = useRef(true);
+  /** ResizeObserver 回调合并到一帧，避免同一帧多次写入滚动位置 */
+  const frameRef = useRef<number | null>(null);
 
-  // 打开面板一律贴底：从最新处开始读，而不是接着上次翻到的地方。
-  // 用 layout effect 在绘制前落位，避免看见一帧旧位置；宽度/字体在首帧后可能再变，
-  // 再补一次 rAF 校正，保证「每次打开都在最下方」。
-  useLayoutEffect(() => {
-    if (!open) return;
+  /**
+   * 唯一贴底入口：写滚动位置并把所有基准对齐。
+   * 所有「该看最新一条」的路径都走这里，避免多处各写一遍 `scrollTop`。
+   */
+  const pinToBottom = useCallback(() => {
     const node = listRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
     scrollHeightRef.current = node.scrollHeight;
-    const frame = requestAnimationFrame(() => {
-      const current = listRef.current;
-      if (!current) return;
-      current.scrollTop = current.scrollHeight;
-      scrollHeightRef.current = current.scrollHeight;
-    });
+    lastScrollTopRef.current = node.scrollTop;
+    followLayoutRef.current = true;
+  }, []);
+
+  // 打开面板一律贴底：从最新处开始读，而不是接着上次翻到的地方。
+  // 用 layout effect 在绘制前落位，避免看见一帧旧位置；滚动条、dvh、父级 flex
+  // 在首帧后还会再改一次高度，所以补一次 rAF，并由下面的 ResizeObserver 继续跟随。
+  useLayoutEffect(() => {
+    if (!open) return;
+    pinToBottom();
+    const frame = requestAnimationFrame(() => pinToBottom());
     return () => cancelAnimationFrame(frame);
-  }, [open]);
+  }, [open, pinToBottom]);
+
+  // 字体就绪会改变文本度量（换行位置、行数），内容总高可能晚于首帧才稳定。
+  // `fonts.ready` 已 resolve 时这里只是多贴一次，代价可以忽略。
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void document.fonts.ready.then(() => {
+      if (!cancelled && followLayoutRef.current) pinToBottom();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, pinToBottom]);
+
+  // 容器尺寸变化（视口变矮、地址栏收展、键盘、窗口缩放、max-h 换档、滚动条出现）
+  // 会让「离底部的距离」凭空出现；只在用户本来就该看底部时跟随，上翻读史时不抢滚动。
+  // 观察容器而不是内容：内容超出 max-h 之后追加/前插都不改变容器尺寸，
+  // 因此不会与历史前插的锚定互抢（ADR-0047 修正 ADR-0041 方案 C 的失效理由）。
+  useEffect(() => {
+    if (!open) return;
+    const node = listRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      if (!followLayoutRef.current) return;
+      if (frameRef.current !== null) return;
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
+        if (followLayoutRef.current) pinToBottom();
+      });
+    });
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    };
+  }, [open, pinToBottom]);
 
   // 消息变化：首尾条目身份判断，不依赖长度——200 条封顶后长度恒定，
   // 按「有没有变长」判断会让新消息永远滚不到底。
@@ -93,10 +148,16 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
     if (!node) return;
     const height = node.scrollHeight;
 
-    // 首次挂载由上面的 open effect 负责落位，这里只记录基准
-    if (previousFirst === null && previousLast === null) {
-      node.scrollTop = height;
+    // 首尾都没变：内容实际上没动（例如上翻返回空页 / 全是本地已有的条目），
+    // 不碰滚动位置，也不要翻掉基准——否则下一次前插会按错误的高度差回填。
+    if (firstKey === previousFirst && lastKey === previousLast) {
       scrollHeightRef.current = height;
+      return;
+    }
+
+    // 首次落位由上面的 open effect 负责，这里再对一次即可
+    if (previousFirst === null && previousLast === null) {
+      pinToBottom();
       return;
     }
 
@@ -104,23 +165,33 @@ export function ChatLog({ messages, history, open, compact, onLoadHistory }: Cha
     // 其余情况（追加、整表替换、前插同时夹带新消息）一律贴底。
     if (firstKey !== previousFirst && lastKey === previousLast) {
       node.scrollTop += height - previousHeight;
-    } else {
-      node.scrollTop = height;
+      scrollHeightRef.current = height;
+      lastScrollTopRef.current = node.scrollTop;
+      // 前插后通常已不在底部：别让后续布局变化把正在读的那句话顶走
+      followLayoutRef.current =
+        node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_EPSILON;
+      return;
     }
-    scrollHeightRef.current = height;
-  }, [messages, open]);
+
+    pinToBottom();
+  }, [messages, open, pinToBottom]);
 
   const handleScroll = () => {
     const node = listRef.current;
     if (!node) return;
+
+    const top = node.scrollTop;
+    const previousTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = top;
+    followLayoutRef.current = node.scrollHeight - top - node.clientHeight <= BOTTOM_EPSILON;
+
+    // 只有「向上滚」才可能是用户想翻更早的消息：程序化贴底与前插回填都是增大
+    // scrollTop，天然不会把自己的滚动当成用户上翻，也就不会自动多发一页请求。
+    if (top >= previousTop || top >= TOP_TRIGGER) return;
+    // 内容不足一屏时没有真正的「上面」可翻，别在空频道里自动请求历史
+    if (node.scrollHeight <= node.clientHeight) return;
     // 加载中 / 没有更多 / 还没有游标都直接跳过，滚动抖动不该连发请求
-    if (
-      node.scrollTop < TOP_TRIGGER &&
-      onLoadHistory &&
-      history.hasMore &&
-      !history.loading &&
-      history.cursor > 0
-    ) {
+    if (onLoadHistory && history.hasMore && !history.loading && history.cursor > 0) {
       onLoadHistory(history.cursor);
     }
   };

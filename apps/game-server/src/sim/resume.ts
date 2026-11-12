@@ -24,8 +24,8 @@ export interface ResolvedSpawn {
 }
 
 /**
- * 出生点在北门入园口散布（ADR-0036）；落进花坛/水面/障碍时由 `findFreePoint` 就近挪到空地。
- * 压测会把半径放大到 3000，采样点可能落海：先拒绝采样重抽，避免整批人被兜底塞回门口。
+ * 出生点在中央迎宾广场散布（ADR-0047）；落进花坛/水面/障碍时由 `findFreePoint` 就近挪到空地。
+ * 压测会把半径放大到 3000，采样点可能落海：先拒绝采样重抽，避免整批人被兜底塞回广场。
  */
 export function spawnPoint(radius: number): { x: number; y: number } {
   for (let attempt = 0; attempt < 16; attempt += 1) {
@@ -33,11 +33,11 @@ export function spawnPoint(radius: number): { x: number; y: number } {
     const distance = Math.sqrt(Math.random()) * radius;
     const x = SPAWN_CENTER.x + Math.cos(angle) * distance;
     const y = SPAWN_CENTER.y + Math.sin(angle) * distance;
-    // 连障碍与水面一起拒：出生点落在湖心/河心观感糟糕，也确实离入园口太远
+    // 连障碍与水面一起拒：出生点落在湖心观感糟糕，也确实离广场中心太远
     if (!isOnLand(x, y) || isBlocked(x, y) || isWaterAt(x, y)) continue;
     return findFreePoint(x, y);
   }
-  // 兜底回北门口袋；`findFreePoint` 自己的世界中心兜底是给移动卡死恢复用的，不能改
+  // 兜底回中央广场；`findFreePoint` 自己的世界中心兜底是给移动卡死恢复用的，不能改
   return findFreePoint(SPAWN_CENTER.x, SPAWN_CENTER.y);
 }
 

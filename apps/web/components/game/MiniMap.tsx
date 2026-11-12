@@ -39,7 +39,7 @@ function traceWorldPolygon(ctx: CanvasRenderingContext2D, points: readonly Point
   ctx.closePath();
 }
 
-/** 树只画 1px 点：密到成片就说明到了加班林，孤树则是草地里的一粒深绿 */
+/** 树只画 1px 点：树丛是几粒聚在一起，孤树则是草地里的一粒深绿 */
 function drawTreeDots(
   ctx: CanvasRenderingContext2D,
   trees: readonly TreeInstance[],
@@ -70,8 +70,13 @@ function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number):
   ctx.stroke();
   ctx.lineWidth = 1;
 
+  // 树丛只铺一小片柔和底色，不再画整块「加班林」矩形
   ctx.fillStyle = M.forest;
-  for (const forest of WORLD_LAYOUT.forests) fillWorldRect(ctx, forest.rect, camX, camY);
+  for (const grove of WORLD_LAYOUT.groves) {
+    ctx.beginPath();
+    ctx.arc(screenX(grove.x, camX), screenY(grove.y, camY), span(grove.radius), 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // 花海：亮一档的草色块 + 三粒该花田配色的花点，20px 内也能和普通草地分开
   for (const field of WORLD_LAYOUT.flowerFields) {
@@ -93,26 +98,31 @@ function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number):
     }
   }
 
+  // 放射状土路：按带状多边形画，斜向路不会变成方块
   ctx.fillStyle = M.dirt;
-  for (const path of WORLD_LAYOUT.paths) fillWorldRect(ctx, path, camX, camY);
+  for (const path of WORLD_LAYOUT.paths) {
+    traceWorldPolygon(ctx, path.polygon, camX, camY);
+    ctx.fill();
+  }
 
-  // 广场只剩一圈路缘（ADR-0017）：地面与野地同色，不再填浅色块
+  // 中央石砖圆庭：浅石色圆 + 深缝描边（ADR-0047）
+  ctx.fillStyle = M.stone;
+  ctx.beginPath();
+  ctx.arc(
+    screenX(WORLD_CENTER.x, camX),
+    screenY(WORLD_CENTER.y, camY),
+    span(WORLD_LAYOUT.plazaRadius),
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
   ctx.strokeStyle = M.plazaCurb;
   ctx.lineWidth = 1;
-  ctx.strokeRect(
-    screenX(WORLD_LAYOUT.plaza.x, camX) + 0.5,
-    screenY(WORLD_LAYOUT.plaza.y, camY) + 0.5,
-    span(WORLD_LAYOUT.plaza.w) - 1,
-    span(WORLD_LAYOUT.plaza.h) - 1,
-  );
+  ctx.stroke();
 
   ctx.fillStyle = M.water;
   for (const lake of WORLD_LAYOUT.lakes) {
     traceWorldPolygon(ctx, lake.points, camX, camY);
-    ctx.fill();
-  }
-  for (const river of WORLD_LAYOUT.rivers) {
-    traceWorldPolygon(ctx, river.polygon, camX, camY);
     ctx.fill();
   }
 
@@ -122,18 +132,13 @@ function drawTerrain(ctx: CanvasRenderingContext2D, camX: number, camY: number):
     ctx.stroke();
   }
 
-  // 桥与码头同一种木色：都是「可以踩上去的水面」（ADR-0028）
-  ctx.fillStyle = M.bridge;
-  for (const bridge of WORLD_LAYOUT.bridges) fillWorldRect(ctx, bridge, camX, camY);
-  for (const dock of WORLD_LAYOUT.docks) fillWorldRect(ctx, dock, camX, camY);
-
   // 研发园：铺装庭院与室内空间，颜色沿用路缘色以免小地图出现新色系
   ctx.fillStyle = M.plazaCurb;
   for (const area of WORLD_LAYOUT.paved) fillWorldRect(ctx, area, camX, camY);
   for (const building of WORLD_LAYOUT.buildings) fillWorldRect(ctx, building.rect, camX, camY);
 
-  for (const forest of WORLD_LAYOUT.forests) drawTreeDots(ctx, forest.trees, camX, camY, M.forestDot);
-  drawTreeDots(ctx, WORLD_LAYOUT.wildTrees, camX, camY, M.forestDot);
+  for (const grove of WORLD_LAYOUT.groves) drawTreeDots(ctx, grove.trees, camX, camY, M.forestDot);
+  drawTreeDots(ctx, WORLD_LAYOUT.looseTrees, camX, camY, M.forestDot);
 }
 
 export function MiniMap({ getSession }: { getSession: () => GameSession | null }) {

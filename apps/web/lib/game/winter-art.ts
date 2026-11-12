@@ -190,7 +190,7 @@ export class WinterArt {
     );
     this.textures.push(texture);
 
-    const trees = [...WORLD_LAYOUT.forests.flatMap((forest) => forest.trees), ...WORLD_LAYOUT.wildTrees];
+    const trees = [...WORLD_LAYOUT.groves.flatMap((grove) => grove.trees), ...WORLD_LAYOUT.looseTrees];
     for (let i = 0; i < trees.length; i += BULB_TREE_EVERY) {
       const tree = trees[i]!;
       const sprite = new Sprite(texture);

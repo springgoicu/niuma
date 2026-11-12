@@ -1,4 +1,4 @@
-import { ISLAND, isBlocked, isOnBridge, isWaterAt, resolveMotion } from '@niuma/shared-types';
+import { ISLAND, isBlocked, isWaterAt, resolveMotion } from '@niuma/shared-types';
 
 /**
  * 园区自动寻路（ADR-0040）：在静态碰撞数据上跑 8 向 A*。
@@ -17,7 +17,7 @@ export interface PathPoint {
 export const NAV_CELL = 16;
 /** 单次查询最多展开的格子数：超过就当不可达，避免病态查询拖住点击 */
 const MAX_EXPANSIONS = 24000;
-/** 涉水代价倍数：水可涉，但优先绕桥与土路 */
+/** 涉水代价倍数：水可涉，但优先绕湖岸与土路 */
 const WATER_COST = 3;
 /** 起点 / 终点被挡时向外找空地的最大半径（格） */
 const SNAP_RADIUS = 6;
@@ -53,7 +53,7 @@ function terrainAt(index: number): number {
   const cached = terrain[index]!;
   if (cached !== 0) return cached;
   const { x, y } = centerOf(index);
-  const kind = isBlocked(x, y) ? 3 : isWaterAt(x, y) && !isOnBridge(x, y) ? 2 : 1;
+  const kind = isBlocked(x, y) ? 3 : isWaterAt(x, y) ? 2 : 1;
   terrain[index] = kind;
   return kind;
 }

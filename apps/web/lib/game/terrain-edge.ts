@@ -8,6 +8,7 @@ import {
   WORLD_LAYOUT,
   WORLD_WIDTH,
   distanceSqToPolygon,
+  isOnPlaza,
   pointInPolygon,
   rectContains,
 } from '@niuma/shared-types';
@@ -36,70 +37,63 @@ export const MATERIAL = {
   grass: 3,
   dirt: 4,
   water: 5,
-  bridge: 6,
+  stone: 6,
 } as const satisfies Record<string, MaterialId>;
 
 /**
  * 绘制顺序 = 优先级从低到高。后画的盖先画的，与 `TerrainView.build()` 的既有层序一致。
  * 边缘层的绘制顺序与它无关：草缘永远最后压上（见 EDGE_DRAW_ORDER）。
  *
- * 广场不是材质（ADR-0017）：办公区地面就是草地，只靠一圈石色路缘与围栏标识。
+ * ADR-0047：中央 720px 石砖圆庭成为独立材质；土路压石砖，水压土路。
  */
 export const PAINT_ORDER: readonly MaterialId[] = [
   MATERIAL.sea,
   MATERIAL.shallow,
   MATERIAL.grass,
   MATERIAL.sand,
+  MATERIAL.stone,
   MATERIAL.dirt,
   MATERIAL.water,
-  MATERIAL.bridge,
 ];
 
 /** 边缘层的绘制顺序：按「被覆盖」的先后，草地相关的边缘最后画 */
 export const EDGE_DRAW_ORDER: readonly MaterialId[] = [
   MATERIAL.sand,
+  MATERIAL.stone,
   MATERIAL.dirt,
   MATERIAL.water,
-  MATERIAL.bridge,
 ];
 
 /** 双网格采样格：与 autotile.TILE 同值，保证边缘判定与轮廓几何共用一个栅格 */
 export const EDGE_TILE = 32;
 
-const BRIDGES = WORLD_LAYOUT.bridges;
 const PATHS = WORLD_LAYOUT.paths;
 const LAKES = WORLD_LAYOUT.lakes;
-const RIVERS = WORLD_LAYOUT.rivers;
 const ISLAND_POINTS = ISLAND.points;
 const SAND_SQ = ISLAND_SAND * ISLAND_SAND;
 const SHALLOW_SQ = ISLAND_SHALLOW * ISLAND_SHALLOW;
 
 /**
  * 某点的材质。顺序即优先级，先命中者胜：
- * 桥 > 水（湖/河）> 土路 > 岸沙带 > 草地 > 浅滩 > 海。
+ * 水（三湖）> 土路 > 石砖圆庭 > 岸沙带 > 草地 > 浅滩 > 海。
  *
- * 广场不是材质（ADR-0017）：办公区地面就是草地，只靠一圈石色路缘与围栏标识，
- * 判定里不再有 plaza 这一档，草缘与贴花在广场内外完全连续。
- *
- * 为什么水在土路之前：河道穿过土路时水面必须盖住路面（当前布局里只有桥头相交，
- * 但布局一改就会出现真的穿路），而桥又在最前面放行。
+ * ADR-0047：中央石砖广场是独立材质，草缘会从草地一侧压进石缝；
+ * 土路从广场边缘穿出时压住石砖，形成「从圆庭走到土路」的连续过渡。
  */
 export function materialAt(x: number, y: number): MaterialId {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return MATERIAL.sea;
 
-  for (const bridge of BRIDGES) {
-    if (rectContains(bridge, x, y)) return MATERIAL.bridge;
-  }
   for (const lake of LAKES) {
-    // 先过包围盒：湖面判定是 20 点多边形，逐点跑一遍太贵
-    if (rectContains(lake.rect, x, y) && pointInPolygon(x, y, lake.points)) return MATERIAL.water;
-  }
-  for (const river of RIVERS) {
-    if (rectContains(river.rect, x, y) && pointInPolygon(x, y, river.polygon)) return MATERIAL.water;
+    // 先过包围盒：湖面判定是 16 点多边形，逐点跑一遍太贵。
+    // 与 isWaterAt 一样把边界距离 0 补成水面，避免岸边 1px 环「显示草地却触发涉水」。
+    if (!rectContains(lake.rect, x, y)) continue;
+    if (pointInPolygon(x, y, lake.points) || distanceSqToPolygon(x, y, lake.points) === 0) return MATERIAL.water;
   }
   for (const path of PATHS) {
-    if (rectContains(path, x, y)) return MATERIAL.dirt;
+    // 带状路是斜的：包围盒只能粗筛，必须再判多边形
+    if (rectContains(path.rect, x, y) && pointInPolygon(x, y, path.polygon)) return MATERIAL.dirt;
   }
+  if (isOnPlaza(x, y)) return MATERIAL.stone;
 
   // 岸沙带以海岸线为中线的 26px 带：一半在水里一半在陆地
   const distance = distanceSqToPolygon(x, y, ISLAND_POINTS);
@@ -350,16 +344,16 @@ export const EDGE_STYLE: Record<MaterialId, EdgeStyle> = {
     scallopEvery: 0,
     scallopRadius: 0,
   },
-  [MATERIAL.bridge]: {
-    rim: C.bridgeSeam,
-    rimWidth: 1,
-    tooth: null,
-    toothDeep: C.fenceLight,
-    toothLen: [1],
-    step: 10,
-    scallop: null,
-    scallopEvery: 0,
-    scallopRadius: 0,
+  [MATERIAL.stone]: {
+    rim: C.stoneEdge,
+    rimWidth: 2,
+    tooth: C.grassTuft,
+    toothDeep: C.grassDeep,
+    toothLen: [2, 3],
+    step: 6,
+    scallop: C.grassAlt,
+    scallopEvery: 46,
+    scallopRadius: 4,
   },
 };
 

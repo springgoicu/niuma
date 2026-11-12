@@ -22,7 +22,13 @@ export const TERRAIN_COLORS = {
   meadowTint: 0x8fb06a,
   meadowShade: 0x79a15c,
 
-  /** 广场不再铺地砖（ADR-0017）：只留一圈石色路缘，深缝压外沿 */
+  /** 中央石砖圆庭（ADR-0047）：暖灰石底 + 同色相压暗的砖缝 */
+  stoneBase: 0xbbb2a0,
+  stoneAlt: 0xc6bdaa,
+  stoneLight: 0xd8cfbb,
+  stoneSeam: 0x8f8574,
+  stoneEdge: 0x6f6656,
+  /** 广场外圈路缘：深缝压外沿，石色面层向内收 */
   plazaSeam: 0xb3a284,
   plazaCurb: 0xc9b998,
 
@@ -61,6 +67,10 @@ export const TERRAIN_COLORS = {
   /** 白花的暗边：暖米灰，压一档明度 */
   petalShade: 0xd6c9ad,
   flowerCore: 0xe8b44a,
+  /** 林间落叶：琥珀 / 熟褐 / 浅金三档，与金盏同色系但不抢花海 */
+  leafAmber: 0xd8a04a,
+  leafRust: 0xa8724a,
+  leafGold: 0xe8c47a,
   /** 金盏：花瓣比花心亮，暗边是熟褐黄 */
   petalGold: 0xf0cd78,
   petalGoldDeep: 0xc98f38,
@@ -142,6 +152,7 @@ export const EDGE_TINT = {
   trunk: TERRAIN_COLORS.trunkDark,
   fence: TERRAIN_COLORS.fenceDark,
   bridge: TERRAIN_COLORS.bridgeSeam,
+  stone: TERRAIN_COLORS.stoneEdge,
 } as const;
 
 /** canvas 2D 只吃 CSS 颜色，小地图统一从这里转换 */
@@ -164,12 +175,12 @@ export const MINIMAP_COLORS = {
   flowerWhite: cssColor(TERRAIN_COLORS.flowerPetal),
   flowerGold: cssColor(TERRAIN_COLORS.petalGold),
   flowerRose: cssColor(TERRAIN_COLORS.petalRose),
-  /** 广场只画路缘：小地图与主视图都不能再出现浅色块 */
+  /** 中央石砖圆庭：浅石色填充 + 深缝描边 */
+  stone: cssColor(TERRAIN_COLORS.stoneAlt),
   plazaCurb: cssColor(TERRAIN_COLORS.plazaCurb),
   dirt: cssColor(TERRAIN_COLORS.dirtBase),
   sand: cssColor(TERRAIN_COLORS.sandLight),
   water: cssColor(TERRAIN_COLORS.waterMid),
-  bridge: cssColor(TERRAIN_COLORS.bridgeWood),
   fence: cssColor(TERRAIN_COLORS.fenceRail),
   self: '#4fe3c1',
   other: '#f4ede1',

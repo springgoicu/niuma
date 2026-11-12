@@ -401,6 +401,16 @@ const MEETING_SEATS: Array<{ x: number; y: number; facing: Direction }> = [
   { x: MEETING_ROOM.x + 316, y: MEETING_ROOM.y + 258, facing: DIRECTION.Up },
 ];
 
+/**
+ * 会议桌两端的椅子：与南北两侧合起来是一圈 8 把。
+ * 桌沿在 x+140 / x+340，端椅中心外扩 16px——既让开 200×90 的桌体，
+ * 也满足座位两两距离 > 40 与「不被碰撞体挡住」的既有断言。
+ */
+const MEETING_END_SEATS: Array<{ x: number; y: number; facing: Direction }> = [
+  { x: MEETING_ROOM.x + 124, y: MEETING_ROOM.y + 187, facing: DIRECTION.Right },
+  { x: MEETING_ROOM.x + 356, y: MEETING_ROOM.y + 187, facing: DIRECTION.Left },
+];
+
 /** 卫生间马桶：水箱在精灵北端，人面朝房间（南）坐下，背靠水箱 */
 const TOILET_SEATS = TOILET_XS.map((cx) => ({ x: cx, y: TOILET_SEAT_Y, facing: DIRECTION.Down as Direction }));
 
@@ -470,10 +480,12 @@ export const SOUTH_YARD_PROPS: PropInstance[] = [
   { kind: 'bin', x: 3540, y: 5400 },
 ];
 
-/** 会议室陈设：北墙白板、绿植与垃圾桶，桌椅由 MEETING_SEATS 提供 */
+/**
+ * 会议室陈设：西南角绿植、东北角垃圾桶。
+ * 北墙超宽投屏与西墙白板立架都是无碰撞贴墙陈设，统一由 `interior-art.ts` 绘制；
+ * 旧的白板 prop 会让北墙投屏无处安放，因此这里不再保留。
+ */
 export const MEETING_PROPS: PropInstance[] = [
-  // 白板挂北墙内侧：精灵顶边贴墙内缘（y+10），24px 高的板面完整落在屋里
-  { kind: 'board', x: MEETING_ROOM.x + 230, y: MEETING_ROOM.y + WALL_THICKNESS + 24 },
   { kind: 'plant', x: MEETING_ROOM.x + 34, y: MEETING_ROOM.y + 334 },
   { kind: 'bin', x: MEETING_ROOM.x + 424, y: MEETING_ROOM.y + 30 },
 ];
@@ -500,23 +512,6 @@ export const LOUNGE_PROPS: PropInstance[] = [
   { kind: 'sideTable', x: LOUNGE.x + 304, y: LOUNGE.y + 214 },
   { kind: 'plant', x: LOUNGE.x + 404, y: LOUNGE.y + 324 },
   { kind: 'bin', x: LOUNGE.x + 404, y: LOUNGE.y + 34 },
-];
-
-/**
- * 中庭陈设：四角灯柱 + 沿边咖啡座、售货机、长椅与垃圾桶。
- * 中央十字留给四条通道，道具全部压在四角，进门不会撞到东西。
- */
-export const PLAZA_PROPS: PropInstance[] = [
-  { kind: 'lamp', x: 3836, y: 3876 },
-  { kind: 'lamp', x: 4356, y: 3876 },
-  { kind: 'lamp', x: 3836, y: 4316 },
-  { kind: 'lamp', x: 4356, y: 4316 },
-  { kind: 'table', x: 3880, y: 3960 },
-  { kind: 'vending', x: 4352, y: 3960 },
-  { kind: 'bench', x: 3880, y: 4220 },
-  { kind: 'bin', x: 4350, y: 4210 },
-  { kind: 'plant', x: 3960, y: 3862 },
-  { kind: 'plant', x: 4230, y: 4330 },
 ];
 
 /** 三个有门房间的门前铺装：把门洞接到草地，贴花不进入 */
@@ -546,8 +541,12 @@ export const CAMPUS_SOLIDS: SolidRect[] = [
   MEETING_TABLE,
 ];
 
-/** 会议室与卫生间的座位：椅子在前，马桶在后 */
+/**
+ * 会议室与卫生间的座位：椅子在前，马桶在后。
+ * 两把端椅追加在末尾，既有会议椅与马桶的 id 不会整体后移。
+ */
 export const CAMPUS_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
   ...MEETING_SEATS.map((seat) => ({ ...seat, kind: 'chair' as const })),
   ...TOILET_SEATS.map((seat) => ({ ...seat, kind: 'toilet' as const })),
+  ...MEETING_END_SEATS.map((seat) => ({ ...seat, kind: 'chair' as const })),
 ];

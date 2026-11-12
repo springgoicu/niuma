@@ -8,8 +8,8 @@ import {
   WELCOME_LANDMARKS,
   WORLD_CENTER,
   WORLD_LAYOUT,
-  isOnBridge,
   isOnLand,
+  isOnPlaza,
   isWadingAt,
   isWaterAt,
   regionAt,
@@ -43,7 +43,7 @@ describe('开放式办公区', () => {
   });
 
   it('四角房间之间留出十字通道，可以横穿院落', () => {
-    // 南北通道：北门 → 中庭 → 南侧庭院（x 4032–4160 全程无碰撞）
+    // 南北通道：北门 → 中庭 → 南侧庭院（x 4096 全程无碰撞，拱门立柱让开主路）
     const vertical = resolveMotion(CENTER.x, NORTH - 60, CENTER.x, SOUTH + 60);
     expect(vertical.y).toBeGreaterThan(SOUTH);
     // 东西通道：西侧土路 → 中庭 → 东侧土路
@@ -53,98 +53,44 @@ describe('开放式办公区', () => {
 });
 
 describe('水体', () => {
-  it('湖面可以涉水进入', () => {
-    expect(isWaterAt(5450, 5575)).toBe(true);
-    const result = resolveMotion(5450, 5150, 5450, 5650);
-    // 水不再是障碍：从北岸一路走进湖心，而不是停在水边
-    expect(result.y).toBeGreaterThan(5575);
-    expect(isWaterAt(result.x, result.y)).toBe(true);
-  });
-
-  it('主河木桥可以过河', () => {
-    const bridge = WORLD_LAYOUT.bridges[0]!;
-    const midY = bridge.y + bridge.h / 2;
-    const result = resolveMotion(bridge.x - 100, midY, bridge.x + bridge.w + 100, midY);
-    expect(result.x).toBeGreaterThan(bridge.x + bridge.w + 90);
-  });
-
-  it('晨会溪两座桥都能过', () => {
-    const bridges = WORLD_LAYOUT.bridges.slice(1, 3);
-    expect(bridges.length).toBe(2);
-    for (const bridge of bridges) {
-      const midX = bridge.x + bridge.w / 2;
-      const result = resolveMotion(midX, bridge.y - 100, midX, bridge.y + bridge.h + 100);
-      expect(result.y).toBeGreaterThan(bridge.y + bridge.h + 90);
+  it('三处湖面都可以涉水进入', () => {
+    for (const lake of WORLD_LAYOUT.lakes) {
+      const cx = lake.rect.x + lake.rect.w / 2;
+      const cy = lake.rect.y + lake.rect.h / 2;
+      expect(isWaterAt(cx, cy)).toBe(true);
+      expect(isBlocked(cx, cy)).toBe(false);
+      const result = resolveMotion(cx, lake.rect.y - 120, cx, cy);
+      expect(isWaterAt(result.x, result.y)).toBe(true);
+      expect(isWadingAt(result.x, result.y)).toBe(true);
     }
   });
 
-  it('护园溪三座桥都能过，南向复用晨会溪桥形成四向环水', () => {
-    // D 北门桥、E 西桥、F 东桥：通行方向由桥的长宽决定（北桥竖直、东西桥水平）
-    const [north, west, east] = WORLD_LAYOUT.bridges.slice(3);
-    expect(north && west && east).toBeTruthy();
-    for (const bridge of [north!, west!, east!]) {
-      const midX = bridge.x + bridge.w / 2;
-      const midY = bridge.y + bridge.h / 2;
-      const vertical = bridge.h > bridge.w;
-      const result = vertical
-        ? resolveMotion(midX, bridge.y - 100, midX, bridge.y + bridge.h + 100)
-        : resolveMotion(bridge.x - 100, midY, bridge.x + bridge.w + 100, midY);
-      if (vertical) expect(result.y).toBeGreaterThan(bridge.y + bridge.h + 90);
-      else expect(result.x).toBeGreaterThan(bridge.x + bridge.w + 90);
-    }
-    // 南向没有新桥：既有晨会溪桥同时承担环河第四向
-    const south = WORLD_LAYOUT.bridges[1]!;
-    expect(south.x).toBeLessThan(4096);
-    expect(south.x + south.w).toBeGreaterThan(4096);
-  });
-
-  it('桥面以外的河段也可以涉水', () => {
-    // 主河在 y=3000 处的水面约 x 2609–2833：从东岸向西走进河里，不再被无形墙挡住
-    const result = resolveMotion(2870, 3000, 2700, 3000);
-    expect(result.x).toBeLessThan(2760);
-    expect(isWaterAt(result.x, 3000)).toBe(true);
-  });
-
-  it('湖心与河心都算涉水', () => {
-    expect(isWadingAt(5450, 5575)).toBe(true);
-    expect(isWadingAt(2700, 3000)).toBe(true);
-  });
-
-  it('桥上与码头上不算涉水', () => {
-    for (const bridge of WORLD_LAYOUT.bridges) {
-      const midX = bridge.x + bridge.w / 2;
-      const midY = bridge.y + bridge.h / 2;
-      expect(isWaterAt(midX, midY)).toBe(true);
-      expect(isOnBridge(midX, midY)).toBe(true);
-      expect(isWadingAt(midX, midY)).toBe(false);
-    }
-    for (const dock of WORLD_LAYOUT.docks) {
-      const midX = dock.x + dock.w / 2;
-      const midY = dock.y + dock.h / 2;
-      expect(isWadingAt(midX, midY)).toBe(false);
+  it('湖心算涉水，岸边不算', () => {
+    for (const lake of WORLD_LAYOUT.lakes) {
+      const cx = lake.rect.x + lake.rect.w / 2;
+      const cy = lake.rect.y + lake.rect.h / 2;
+      expect(isWadingAt(cx, cy)).toBe(true);
+      expect(isWadingAt(cx, lake.rect.y - 40)).toBe(false);
     }
   });
 
-  it('码头伸进水面但可以站上去', () => {
-    const dock = WORLD_LAYOUT.docks[1]!;
-    const midX = dock.x + dock.w / 2;
-    const midY = dock.y + dock.h / 2;
-    expect(isWaterAt(midX, midY)).toBe(true);
-    expect(isOnBridge(midX, midY)).toBe(true);
-    expect(isBlocked(midX, midY)).toBe(false);
+  it('不再有桥与码头，所有通行都在陆地上', () => {
+    const raw = WORLD_LAYOUT as unknown as Record<string, unknown>;
+    expect(raw.bridges).toBeUndefined();
+    expect(raw.docks).toBeUndefined();
+    expect(raw.rivers).toBeUndefined();
   });
 
   it('海水仍是世界边界', () => {
     expect(isOnLand(100, 100)).toBe(false);
     expect(isBlocked(100, 100)).toBe(true);
-    // 从岛内往海里走，最终必须停在陆地上
     const result = resolveMotion(300, 300, 100, 100);
     expect(isOnLand(result.x, result.y)).toBe(true);
   });
 });
 
 describe('出生点与坐标兜底', () => {
-  it('北门 SPAWN_RADIUS 内的随机出生点都能落到空地上', () => {
+  it('中央广场 SPAWN_RADIUS 内的随机出生点都能落到空地上', () => {
     let seed = 0x1f2e3d4c;
     const next = () => {
       seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -155,13 +101,11 @@ describe('出生点与坐标兜底', () => {
       const distance = Math.sqrt(next()) * SPAWN_RADIUS;
       const x = SPAWN_CENTER.x + Math.cos(angle) * distance;
       const y = SPAWN_CENTER.y + Math.sin(angle) * distance;
-      // 北门口袋没有碰撞道具，服务端也是先采样再判一次可站立
       const spawn = findFreePoint(x, y);
       expect(isBlocked(spawn.x, spawn.y)).toBe(false);
       // 水虽可涉，出生点仍要避开水面（findFreePoint 默认 avoidWater）
       expect(isWaterAt(spawn.x, spawn.y)).toBe(false);
-      // 出生圈不能再被推回工位环：整个圆都在北门区域里，挪位最多一圈（24px）
-      expect(regionAt(spawn.x, spawn.y)).toBe('牛马园北门');
+      expect(regionAt(spawn.x, spawn.y)).toBe('中央迎宾广场');
       expect(Math.hypot(spawn.x - x, spawn.y - y)).toBeLessThan(48);
     }
   });
@@ -174,22 +118,20 @@ describe('出生点与坐标兜底', () => {
     }
   });
 
-  it('北门横幅与指路牌都立在欢迎区内，且让开出生圈', () => {
-    const { banner, signpost } = WELCOME_LANDMARKS;
-    for (const point of [
-      { x: banner.x, y: banner.y },
-      { x: signpost.x, y: signpost.y - 40 },
-      signpost,
-    ]) {
+  it('中央拱门、导览牌与打卡柱都立在迎宾带内，且让开出生圈', () => {
+    const { arch, directory, checkin } = WELCOME_LANDMARKS;
+    for (const point of [arch, directory, checkin]) {
       expect(isOnLand(point.x, point.y)).toBe(true);
-      expect(regionAt(point.x, point.y)).toBe('牛马园北门');
       expect(isWaterAt(point.x, point.y)).toBe(false);
+      expect(regionAt(point.x, point.y)).toBe('中央迎宾广场');
     }
-    // 布幡要盖住整个门洞，而不是只挂在土路中间
-    expect(banner.x - banner.width / 2).toBeLessThanOrEqual(3960);
-    expect(banner.x + banner.width / 2).toBeGreaterThanOrEqual(4232);
-    // 指路牌在门东肩，不占出生圆
-    expect(Math.hypot(signpost.x - SPAWN_CENTER.x, signpost.y - SPAWN_CENTER.y)).toBeGreaterThan(SPAWN_RADIUS);
+    expect(isOnPlaza(arch.x, arch.y)).toBe(true);
+    // 拱门横跨中轴，立柱让开 112px 的南向主路
+    expect(arch.x - arch.width / 2).toBeLessThan(4040);
+    expect(arch.x + arch.width / 2).toBeGreaterThan(4152);
+    for (const point of [directory, checkin]) {
+      expect(Math.hypot(point.x - SPAWN_CENTER.x, point.y - SPAWN_CENTER.y)).toBeGreaterThan(SPAWN_RADIUS);
+    }
   });
 
   it('广场花箱挡人', () => {
@@ -205,25 +147,22 @@ describe('出生点与坐标兜底', () => {
 });
 
 describe('地形布局', () => {
-  it('区域名按优先级命中', () => {
+  it('区域名按中央广场 / 湖 / 房间 / 办公区的优先级命中', () => {
     const lake = WORLD_LAYOUT.lakes[0]!.rect;
-    expect(regionAt(CENTER.x, CENTER.y)).toBe('办公区');
+    expect(regionAt(CENTER.x, CENTER.y)).toBe('中央迎宾广场');
     expect(regionAt(lake.x + lake.w / 2, lake.y + lake.h / 2)).toBe('摸鱼湖');
-    expect(regionAt(4700, 2200)).toBe('加班林');
+    expect(regionAt(3566, 3656)).toBe('工作区');
     expect(regionAt(2200, 4300)).toBe('园区野地');
   });
 
   it('树木不会长进广场、办公区、水面与道路上', () => {
-    const trees = [
-      ...WORLD_LAYOUT.forests.flatMap((forest) => forest.trees),
-      ...WORLD_LAYOUT.wildTrees,
-    ];
-    expect(trees.length).toBeGreaterThan(200);
+    const trees = [...WORLD_LAYOUT.groves.flatMap((grove) => grove.trees), ...WORLD_LAYOUT.looseTrees];
+    expect(trees.length).toBeGreaterThan(90);
     for (const tree of trees) {
-      expect(rectContains(WORLD_LAYOUT.plaza, tree.x, tree.y)).toBe(false);
+      expect(isOnPlaza(tree.x, tree.y)).toBe(false);
       expect(rectContains(WORLD_LAYOUT.office, tree.x, tree.y)).toBe(false);
       for (const path of WORLD_LAYOUT.paths) {
-        expect(rectContains(path, tree.x, tree.y)).toBe(false);
+        expect(pointInPolygon(tree.x, tree.y, path.polygon)).toBe(false);
       }
       expect(isWaterAt(tree.x, tree.y)).toBe(false);
       for (const lake of WORLD_LAYOUT.lakes) {
@@ -232,26 +171,24 @@ describe('地形布局', () => {
     }
   });
 
-  it('孤树散布全岛，参与碰撞且不进林地与花海', () => {
-    expect(WORLD_LAYOUT.wildTrees.length).toBeGreaterThan(60);
-    const gapSq = 112 * 112;
-    for (const tree of WORLD_LAYOUT.wildTrees) {
+  it('散树参与碰撞，且两两间隙不小于 80px', () => {
+    const trees = WORLD_LAYOUT.looseTrees;
+    expect(trees.length).toBeGreaterThan(30);
+    for (const tree of trees) {
       expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
       expect(isBlocked(tree.x, tree.y)).toBe(true);
-      for (const forest of WORLD_LAYOUT.forests) {
-        expect(rectContains(forest.rect, tree.x, tree.y)).toBe(false);
-      }
       for (const field of WORLD_LAYOUT.flowerFields) {
         expect(rectContains(field.rect, tree.x, tree.y)).toBe(false);
       }
     }
-    for (let i = 0; i < WORLD_LAYOUT.wildTrees.length; i += 1) {
-      for (let j = i + 1; j < WORLD_LAYOUT.wildTrees.length; j += 1) {
-        const a = WORLD_LAYOUT.wildTrees[i]!;
-        const b = WORLD_LAYOUT.wildTrees[j]!;
+    const gapSq = 80 * 80;
+    for (let i = 0; i < trees.length; i += 1) {
+      for (let j = i + 1; j < trees.length; j += 1) {
+        const a = trees[i]!;
+        const b = trees[j]!;
         const dx = a.x - b.x;
         const dy = a.y - b.y;
-        expect(dx * dx + dy * dy).toBeGreaterThan(gapSq);
+        expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(gapSq);
       }
     }
   });
@@ -271,21 +208,16 @@ describe('地形布局', () => {
       const cx = x + w / 2;
       const cy = y + h / 2;
       expect(isWaterAt(cx, cy)).toBe(false);
-      expect(rectContains(WORLD_LAYOUT.plaza, cx, cy)).toBe(false);
-      for (const path of WORLD_LAYOUT.paths) expect(rectContains(path, cx, cy)).toBe(false);
+      expect(isOnPlaza(cx, cy)).toBe(false);
+      for (const path of WORLD_LAYOUT.paths) expect(pointInPolygon(cx, cy, path.polygon)).toBe(false);
     }
   });
 
-  it('森林里确实有树，且全部落在森林矩形内', () => {
-    const total = WORLD_LAYOUT.forests.reduce((sum, forest) => sum + forest.trees.length, 0);
-    expect(total).toBeGreaterThan(200);
-    for (const forest of WORLD_LAYOUT.forests) {
-      for (const tree of forest.trees) {
-        expect(tree.x).toBeGreaterThan(forest.rect.x);
-        expect(tree.x).toBeLessThan(forest.rect.x + forest.rect.w);
-        expect(tree.y).toBeGreaterThan(forest.rect.y);
-        expect(tree.y).toBeLessThan(forest.rect.y + forest.rect.h);
-      }
+  it('树丛每簇 2–5 棵，且全部落在陆地上', () => {
+    for (const grove of WORLD_LAYOUT.groves) {
+      expect(grove.trees.length).toBeGreaterThanOrEqual(2);
+      expect(grove.trees.length).toBeLessThanOrEqual(5);
+      for (const tree of grove.trees) expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
     }
   });
 });
@@ -317,33 +249,15 @@ describe('海岛边界', () => {
   });
 
   it('所有静态地形都在岸线以内，且离海至少 24px', () => {
-    for (const forest of WORLD_LAYOUT.forests) {
-      for (const tree of forest.trees) {
-        expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
-      }
+    for (const grove of WORLD_LAYOUT.groves) {
+      for (const tree of grove.trees) expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
     }
-    for (const river of WORLD_LAYOUT.rivers) {
-      // 河口两点在岛外（通海），只校验岛内的中心线站点
-      for (const [px, py] of river.centerline.slice(1, -1)) {
-        expect(isOnLand(px, py, 24)).toBe(true);
-      }
-    }
+    for (const tree of WORLD_LAYOUT.looseTrees) expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
     for (const lake of WORLD_LAYOUT.lakes) {
-      for (const [px, py] of lake.points) {
-        expect(isOnLand(px, py, 24)).toBe(true);
-      }
-    }
-    for (const bridge of WORLD_LAYOUT.bridges) {
-      expect(isOnLand(bridge.x, bridge.y, 24)).toBe(true);
-      expect(isOnLand(bridge.x + bridge.w, bridge.y + bridge.h, 24)).toBe(true);
-    }
-    for (const dock of WORLD_LAYOUT.docks) {
-      expect(isOnLand(dock.x, dock.y, 24)).toBe(true);
-      expect(isOnLand(dock.x + dock.w, dock.y + dock.h, 24)).toBe(true);
+      for (const [px, py] of lake.points) expect(isOnLand(px, py, 24)).toBe(true);
     }
     for (const path of WORLD_LAYOUT.paths) {
-      expect(isOnLand(path.x, path.y, 24)).toBe(true);
-      expect(isOnLand(path.x + path.w, path.y + path.h, 24)).toBe(true);
+      for (const [px, py] of path.centerline) expect(isOnLand(px, py, 24)).toBe(true);
     }
     for (const planter of WORLD_LAYOUT.planters) {
       expect(isOnLand(planter.x, planter.y, 24)).toBe(true);
@@ -363,10 +277,12 @@ describe('海岛边界', () => {
   });
 
   it('就近挪位默认避水，显式允许时才接受水面', () => {
-    const safe = findFreePoint(5450, 5575);
+    const lake = WORLD_LAYOUT.lakes[0]!;
+    const cx = lake.rect.x + lake.rect.w / 2;
+    const cy = lake.rect.y + lake.rect.h / 2;
+    const safe = findFreePoint(cx, cy);
     expect(isWaterAt(safe.x, safe.y)).toBe(false);
-    // 移动求解的卡死恢复会传 avoidWater=false：水里可以站，不必兜底回广场
-    const allowed = findFreePoint(5450, 5575, 9, false);
+    const allowed = findFreePoint(cx, cy, 9, false);
     expect(isWaterAt(allowed.x, allowed.y)).toBe(true);
   });
 

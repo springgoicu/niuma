@@ -8,6 +8,6 @@ export * from './protocol';
 export * from './notice';
 export * from './moderation/index';
 export * from './world/geometry';
-export * from './world/river';
+export * from './world/ribbon';
 export * from './world/layout';
 export * from './world/collision';

@@ -83,12 +83,21 @@ const COLOR = {
   blanket: 0x9fd3ff,
   blanketLight: 0xc6e6ff,
   pillow: 0xffe49a,
+  // 宿舍床：深胡桃木框 + 暖色被褥（与蓝白床品分开，方便只改宿舍的床）
+  bedFrame: 0x6b4a35,
+  bedFrameLight: 0x8a6446,
+  bedFrameDark: 0x4a3226,
+  bedBlanket: 0xd98a6a,
+  bedBlanketLight: 0xf2b394,
   sofaBody: 0x8fe3c7,
   sofaSeat: 0xb6f0dc,
   stoolSeat: 0xffb59e,
   metal: 0x9aa5b4,
   gold: 0xffd166,
   lampGlow: 0xfff0b8,
+  /** 复古路灯：铸铁杆与磨亮的铁沿，不用纯黑 */
+  iron: 0x4a4f58,
+  ironLight: 0x6f7680,
   binBody: 0x7dd6b0,
   binLid: 0x4fb591,
   signPaper: 0xfff6e0,
@@ -176,12 +185,17 @@ function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
   shadow(g, w / 2, h - 1, Math.max(6, w / 2 - 2), 2);
   switch (kind) {
     case 'lamp':
-      // 灯罩先晕一圈暖光，再画实体灯头
-      g.circle(7, 5, 9).fill({ color: COLOR.lampGlow, alpha: 0.28 });
-      rect(g, 6, 8, 2, h - 8, COLOR.metal);
-      g.roundRect(2, 1, 10, 6, 3).fill(COLOR.outline);
-      g.roundRect(3, 2, 8, 4, 2).fill(COLOR.gold);
-      rect(g, 4, 3, 2, 1, COLOR.lampGlow);
+      // 复古铸铁灯柱：暖光先晕开，再压底座、杆身与四角灯檐
+      g.circle(7, 5, 10).fill({ color: COLOR.lampGlow, alpha: 0.24 });
+      box(g, 4, h - 4, 6, 3, COLOR.iron, COLOR.outline);
+      box(g, 5, h - 7, 4, 4, COLOR.ironLight, COLOR.iron);
+      box(g, 6, 12, 2, h - 18, COLOR.iron, COLOR.ironLight);
+      rect(g, 5, 19, 4, 1, COLOR.ironLight);
+      rect(g, 5, 27, 4, 1, COLOR.ironLight);
+      box(g, 2, 3, 10, 3, COLOR.iron, COLOR.outline);
+      g.poly([3, 6, 11, 6, 9, 12, 5, 12]).fill(COLOR.iron);
+      g.poly([5, 7, 9, 7, 8, 11, 6, 11]).fill(COLOR.gold);
+      rect(g, 6, 8, 2, 2, COLOR.lampGlow);
       return;
     case 'bench':
       rect(g, 2, 7, 36, 1, COLOR.outline);
@@ -217,7 +231,12 @@ function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
       box(g, 0, 0, 20, 11, COLOR.fixture, COLOR.fixtureEdge);
       rect(g, 2, 1, 16, 1, COLOR.wallCap);
       box(g, 4, 9, 12, 7, COLOR.ceramic, COLOR.ceramicEdge);
-      rect(g, 9, 16, 2, 6, COLOR.gold);
+      // 盆底一层薄水：让白瓷盆不是一块空白
+      rect(g, 5, 11, 10, 1, 0xbfe6f5);
+      // 龙头：冷灰金属 + 一道高光，金色留给咖啡机
+      rect(g, 9, 16, 2, 6, COLOR.metal);
+      rect(g, 8, 16, 4, 1, COLOR.metal);
+      rect(g, 9, 16, 1, 1, COLOR.wallCap);
       return;
     case 'vending':
       box(g, 0, 0, 34, 48, COLOR.vendingBody);
@@ -436,27 +455,45 @@ function drawDesk(g: Graphics, lit: boolean, art: DeskArt): void {
 }
 
 /**
- * 工位椅：薰衣草色软垫，靠背圆润，五星脚。
+ * 工位椅 / 会议椅：薰衣草色软垫，高背带一条头枕分区，五星脚带两个可见滚轮。
  *
  * 几何来自 `chairArtFor(facing)`：靠背永远在入座朝向的反侧，
  * 空椅不会出现「靠背朝着桌子、人却要坐上去」的错觉。
+ * 头枕、扶手与滚轮都画在既有 26×30 帧内，不改座面接触契约（ADR-0032）。
  */
 function drawChair(g: Graphics, art: ChairArt): void {
   const { seat, back, highlight, stem, base, shadow: sh } = art;
   shadow(g, sh.cx, sh.cy, sh.rx, sh.ry);
   box(g, seat.x, seat.y, seat.w, seat.h, COLOR.lilac);
   box(g, back.x, back.y, back.w, back.h, COLOR.lilacDark);
+  // 头枕：靠背顶端一条更亮的软包，下面压一道深色缝
+  rect(g, back.x + 1, back.y + 1, Math.max(1, back.w - 2), 2, COLOR.lilac);
+  rect(g, back.x, back.y + 3, back.w, 1, COLOR.chairBase);
+  // 扶手：正 / 背视角才看得到座面两侧，侧视不画，免得压住靠背
+  if (back.w >= 10) {
+    rect(g, seat.x - 1, seat.y + 2, 1, Math.max(1, seat.h - 2), COLOR.chairBase);
+    rect(g, seat.x + seat.w, seat.y + 2, 1, Math.max(1, seat.h - 2), COLOR.chairBase);
+  }
   rect(g, highlight.x, highlight.y, highlight.w, highlight.h, COLOR.ceramic);
   rect(g, stem.x, stem.y, stem.w, stem.h, COLOR.chairBase);
   rect(g, base.x, base.y, base.w, base.h, COLOR.chairBase);
+  // 滚轮：五星脚两端各一个 2×2 小轮，椅子可以「滑走」而不是钉在地上
+  for (const wheelX of [base.x + 2, base.x + base.w - 4]) {
+    rect(g, wheelX, base.y + base.h - 1, 2, 2, COLOR.chairBase);
+    rect(g, wheelX, base.y + base.h - 1, 1, 1, COLOR.metal);
+  }
 }
 
-/** 马桶：白瓷水箱 + 圆润马桶圈，坐上去时后背靠水箱 */
+/** 马桶：白瓷水箱 + 圆润马桶圈；水箱上放着一部亮屏手机（带薪摸鱼） */
 function drawToilet(g: Graphics): void {
   const { w, h } = TOILET_SPRITE;
   shadow(g, w / 2, h - 1, 9, 2.5);
   box(g, 4, 0, 14, 10, COLOR.ceramic, COLOR.ceramicEdge);
   rect(g, 6, 3, 10, 1, COLOR.ceramicEdge);
+  // 冲水按钮 + 手机：屏幕是整间卫生间最亮的一块
+  rect(g, 6, 5, 2, 1, COLOR.ceramicEdge);
+  box(g, 12, 1, 5, 3, COLOR.bezel, COLOR.outline);
+  rect(g, 13, 2, 3, 1, COLOR.screenLit);
   g.ellipse(11, 18, 9, 7).fill(COLOR.outline);
   g.ellipse(11, 18, 8, 6).fill(COLOR.ceramic);
   g.ellipse(11, 18, 5, 3.5).stroke({ width: 1, color: COLOR.ceramicEdge });
@@ -486,21 +523,52 @@ function drawSofa(g: Graphics): void {
 }
 
 /**
- * 床：木框 + 床垫 + 枕头 + 被子，朝向统一朝右（角色横卧时头朝右）。
- * 不做镜像翻转：`sprite.scale` 会把 1px 描边拉成半像素（ADR-0005）。
+ * 床：深胡桃木框 + 床垫 + 羽绒枕 + 凌乱被褥，朝向统一朝右（角色横卧时头朝右）。
+ *
+ * 宿舍区的「昏睡感」全部压在这张 64×42 的贴图里：床尾一角掀起、被子两段错位、
+ * 枕头两道褶皱，床头上挂防噪耳机与垂落的充电线。不做镜像翻转——
+ * `sprite.scale` 会把 1px 描边拉成半像素（ADR-0005）。
+ * 床底快递箱是地面陈设，交给 `interior-art.ts` 的 flat 层，避免上铺也长出箱子。
  */
 function drawBed(g: Graphics): void {
   const { w, h } = BED_SPRITE;
   shadow(g, w / 2, h - 2, w / 2 - 3, 3);
-  box(g, 2, 4, w - 4, h - 8, COLOR.woodDark);
+  // 胡桃木床架：外框深、内侧一道亮边
+  box(g, 2, 4, w - 4, h - 8, COLOR.bedFrame, COLOR.bedFrameDark);
+  rect(g, 3, 5, w - 6, 1, COLOR.bedFrameLight);
+  // 床垫
   box(g, 5, 7, w - 10, h - 14, COLOR.linen, COLOR.linenEdge);
-  // 被子铺左三分之二，靠右留出枕头
-  box(g, 7, 9, w - 26, h - 18, COLOR.blanket, COLOR.blanketLight);
-  rect(g, 9, 11, w - 30, 1, COLOR.blanketLight);
-  // 枕头与床头板
+  // 凌乱被褥：两段错位的暖色被子 + 三道褶皱，不再是一整块矩形
+  box(g, 7, 9, 30, 7, COLOR.bedBlanket, COLOR.bedBlanketLight);
+  box(g, 7, 16, 36, 6, COLOR.bedBlanket, COLOR.bedBlanketLight);
+  rect(g, 9, 12, 2, 5, COLOR.bedBlanketLight);
+  rect(g, 14, 18, 10, 1, COLOR.bedBlanketLight);
+  rect(g, 30, 10, 6, 1, COLOR.bedBlanketLight);
+  // 床尾掀起的一角：外层浅色描边、内层床垫、再叠一块折回的被子
+  g.poly([7, 22, 18, 22, 7, 33]).fill(COLOR.linenEdge);
+  g.poly([8, 23, 16, 23, 8, 31]).fill(COLOR.linen);
+  g.poly([8, 23, 14, 23, 8, 29]).fill(COLOR.bedBlanketLight);
+  rect(g, 9, 25, 5, 1, COLOR.linenEdge);
+  // 羽绒枕：右侧留出枕头，两道褶皱压出蓬松感
   box(g, w - 19, 10, 12, h - 20, COLOR.pillow, COLOR.linenEdge);
   rect(g, w - 17, 13, 8, 1, COLOR.ceramic);
-  box(g, w - 5, 2, 4, h - 4, COLOR.woodLight, COLOR.woodDark);
+  rect(g, w - 17, 20, 6, 1, COLOR.linenEdge);
+  rect(g, w - 16, 23, 4, 1, COLOR.ceramic);
+  rect(g, w - 19, 31, 12, 1, COLOR.linenEdge);
+  // 床头板
+  box(g, w - 5, 2, 4, h - 4, COLOR.bedFrameLight, COLOR.bedFrameDark);
+  // 防噪耳机：挂在床头板内侧，头梁一条弧、两团耳罩
+  rect(g, w - 10, 7, 1, 9, COLOR.bezel);
+  rect(g, w - 6, 7, 1, 9, COLOR.bezel);
+  rect(g, w - 10, 6, 5, 1, COLOR.bezel);
+  box(g, w - 11, 15, 3, 4, COLOR.bezel);
+  box(g, w - 6, 15, 3, 4, COLOR.bezel);
+  rect(g, w - 10, 16, 1, 1, COLOR.metal);
+  rect(g, w - 5, 16, 1, 1, COLOR.metal);
+  // 垂落的充电线：床头板外侧一根 1px 线 + 小插头
+  rect(g, w - 3, 19, 1, 13, COLOR.ceramicEdge);
+  rect(g, w - 4, 31, 3, 2, COLOR.bezel);
+  rect(g, w - 4, 31, 1, 1, COLOR.metal);
 }
 
 function fillFloorWood(g: Graphics, r: WorldRect): void {

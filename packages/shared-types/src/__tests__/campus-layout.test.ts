@@ -138,8 +138,8 @@ describe('四角院落（ADR-0044）', () => {
     for (const room of [WORKROOM, MEETING_ROOM, LOUNGE, RESTROOM]) expect(near(room)).toBe(true);
   });
 
-  it('区域名按房间优先于办公区命中', () => {
-    expect(regionAt(WORLD_CENTER.x, WORLD_CENTER.y)).toBe('办公区');
+  it('区域名按中央广场 / 房间优先于办公区命中', () => {
+    expect(regionAt(WORLD_CENTER.x, WORLD_CENTER.y)).toBe('中央迎宾广场');
     expect(regionAt(WORKROOM.x + 230, WORKROOM.y + 180)).toBe('工作区');
     expect(regionAt(MEETING_ROOM.x + 230, MEETING_ROOM.y + 180)).toBe('会议室');
     expect(regionAt(LOUNGE.x + 230, LOUNGE.y + 180)).toBe('宿舍区');

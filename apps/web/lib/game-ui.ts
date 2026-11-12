@@ -181,6 +181,14 @@ export const useGameUi = create<GameUiState>((set) => ({
         if (message.kind !== 'system') seen.add(message.id);
       }
       const fresh = entries.filter((entry) => !seen.has(entry.id));
+      // 一整页都是本地已有的条目（重连抖动，或被 200 条上限裁掉）：列表内容没变。
+      // 换一个新数组只会让 ChatLog 多跑一次滚动判定，还会把「上翻返回空页」
+      // 误当成新消息拉回底部；游标也保持原位，别在拿不到新内容时继续前移。
+      if (fresh.length === 0) {
+        return {
+          history: { loading: false, hasMore: meta.hasMore, cursor: state.history.cursor },
+        };
+      }
       // 历史时间只有秒级精度，与实时消息混排时按时间统一排序，避免前插顺序偶尔颠倒
       const messages = [...fresh, ...state.messages]
         .sort((a, b) => a.at - b.at)

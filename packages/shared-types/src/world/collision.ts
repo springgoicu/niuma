@@ -5,8 +5,7 @@
  * 1. 障碍按 128px 网格建索引，单次查询只遍历邻近桶；
  * 2. 4px 子步推进，薄隔断（6px 隔断 + 9px 玩家半径）不可能被一步跨过；
  * 3. 整段被挡时退化为单轴移动，贴着墙体与家具走会自然滑行而不是卡死；
- * 4. 湖面与河道全域可涉水（ADR-0030），水不再是障碍；海仍由 `isOnLand` 兜底，
- *    桥面与码头的放行语义退化为普通通行面。
+ * 4. 三处景观湖全域可涉水（ADR-0030 / ADR-0047），水不再是障碍；海仍由 `isOnLand` 兜底。
  *
  * 办公区已删除围栏（ADR-0028），软边界树篱不参与碰撞。
  */
@@ -45,12 +44,12 @@ type Blocker =
 const blockers: Blocker[] = [];
 
 // ADR-0028：办公区删除围栏，树篱只做视觉分区（走 props 管线，不产生 blocker）
-for (const forest of WORLD_LAYOUT.forests) {
-  for (const tree of forest.trees) {
+for (const grove of WORLD_LAYOUT.groves) {
+  for (const tree of grove.trees) {
     blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS });
   }
 }
-for (const tree of WORLD_LAYOUT.wildTrees) {
+for (const tree of WORLD_LAYOUT.looseTrees) {
   blockers.push({ kind: 'circle', x: tree.x, y: tree.y, r: TREE_TRUNK_RADIUS });
 }
 for (const planter of WORLD_LAYOUT.planters) {
@@ -68,7 +67,7 @@ for (const solid of WORLD_LAYOUT.solids) {
     ],
   });
 }
-// 湖与河不再注册为碰撞体：全岛水域可涉水（ADR-0030）。海仍由 isOnLand 兜底。
+// 三湖不再注册为碰撞体：全岛水域可涉水（ADR-0030 / ADR-0047）。海仍由 isOnLand 兜底。
 
 const cells = new Map<number, number[]>();
 
@@ -153,7 +152,7 @@ function overlaps(blocker: Blocker, x: number, y: number, radius: number): boole
 /** 该点是否与地形相交；非有限坐标视为被挡，避免 NaN 污染权威状态 */
 export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return true;
-  // 海即边界：先判陆地，再查家具与树。湖河可涉水，不再进障碍列表（ADR-0030）
+  // 海即边界：先判陆地，再查家具与树。湖面可涉水，不再进障碍列表（ADR-0030）
   if (!isOnLand(x, y, radius)) return true;
   const list = gather(x, y, radius);
   for (const index of list) {

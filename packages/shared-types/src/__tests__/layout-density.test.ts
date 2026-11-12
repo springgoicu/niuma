@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   WORLD_LAYOUT,
+  distanceSqToPolygon,
   isOnLand,
+  isOnPlaza,
   isWaterAt,
+  pointInPolygon,
   rectContains,
   rectExpanded,
   type TreeInstance,
@@ -10,10 +13,10 @@ import {
 import { SOUTH_YARD } from '../world/campus';
 
 /**
- * 空地密度（ADR-0028）：岛缩小后不允许再出现「走一段只有草」的走廊。
+ * 空地密度（ADR-0028 / ADR-0047）：岛缩小后不允许再出现「走一段只有草」的走廊。
  *
- * 采样 64px 栅格，一个格算「有内容」的条件是：水、路、桥、码头、建筑、铺装、
- * 林地、花海、办公区/广场这类功能区，或落在任意树冠 / 道具 / 工位的 80px 邻域内。
+ * 采样 64px 栅格，一个格算「有内容」的条件是：水、路、广场、建筑、铺装、
+ * 树丛、花海、南庭院这类功能区，或落在任意树冠 / 道具 / 工位的 80px 邻域内。
  * 剩下的纯草格既没有可读的地形，也没有可交互的物件。
  */
 
@@ -23,8 +26,8 @@ const COVER_RADIUS = 80;
 const WINDOW = 512;
 
 const TREES: TreeInstance[] = [
-  ...WORLD_LAYOUT.forests.flatMap((forest) => forest.trees),
-  ...WORLD_LAYOUT.wildTrees,
+  ...WORLD_LAYOUT.groves.flatMap((grove) => grove.trees),
+  ...WORLD_LAYOUT.looseTrees,
 ];
 
 const PROPS = [
@@ -35,16 +38,21 @@ const PROPS = [
 
 function covered(x: number, y: number): boolean {
   if (isWaterAt(x, y)) return true;
-  for (const path of WORLD_LAYOUT.paths) if (rectContains(rectExpanded(path, 24), x, y)) return true;
-  for (const bridge of WORLD_LAYOUT.bridges) if (rectContains(bridge, x, y)) return true;
-  for (const dock of WORLD_LAYOUT.docks) if (rectContains(dock, x, y)) return true;
-  for (const forest of WORLD_LAYOUT.forests) if (rectContains(forest.rect, x, y)) return true;
+  for (const path of WORLD_LAYOUT.paths) {
+    if (pointInPolygon(x, y, path.polygon)) return true;
+    if (distanceSqToPolygon(x, y, path.polygon) < 24 * 24) return true;
+  }
+  for (const grove of WORLD_LAYOUT.groves) {
+    const dx = grove.x - x;
+    const dy = grove.y - y;
+    if (dx * dx + dy * dy < (grove.radius + 24) * (grove.radius + 24)) return true;
+  }
   for (const field of WORLD_LAYOUT.flowerFields) if (rectContains(field.rect, x, y)) return true;
+  if (isOnPlaza(x, y)) return true;
   if (rectContains(WORLD_LAYOUT.office, x, y)) return true;
-  if (rectContains(WORLD_LAYOUT.plaza, x, y)) return true;
   if (rectContains(SOUTH_YARD, x, y)) return true;
   for (const building of WORLD_LAYOUT.buildings) if (rectContains(building.rect, x, y)) return true;
-  for (const area of WORLD_LAYOUT.paved) if (rectContains(area, x, y)) return true;
+  for (const area of WORLD_LAYOUT.paved) if (rectContains(rectExpanded(area, 24), x, y)) return true;
   for (const prop of PROPS) {
     const dx = prop.x - x;
     const dy = prop.y - y;
@@ -76,42 +84,48 @@ const SAMPLES: Sample[] = [];
 }
 
 describe('空地密度', () => {
-  it('纯草格不超过全部陆地的 20%', () => {
+  // ADR-0047：密林拆成 2–5 棵的树簇后，纯草比例必然上升；
+  // 阈值从 ADR-0028 的 20% / 45% 重新标定为 48% / 85%，
+  // 保留「不允许出现整片无内容的 512 窗口」这条底线，同时给开阔草地留呼吸感。
+  it('纯草格不超过全部陆地的 48%', () => {
     const empty = SAMPLES.filter((sample) => sample.empty).length;
     const ratio = empty / SAMPLES.length;
-    expect(ratio).toBeLessThan(0.2);
+    expect(ratio).toBeLessThan(0.48);
   });
 
-  it('任意 512×512 陆地窗口的纯草格不超过 45%', () => {
+  it('任意 512×512 陆地窗口的纯草格不超过 85%', () => {
     const { x, y, w, h } = WORLD_LAYOUT.island.bounds;
     let worst = 0;
     for (let wy = y; wy + WINDOW <= y + h; wy += WINDOW) {
       for (let wx = x; wx + WINDOW <= x + w; wx += WINDOW) {
-        const cells = SAMPLES.filter((sample) => sample.x >= wx && sample.x < wx + WINDOW && sample.y >= wy && sample.y < wy + WINDOW);
+        const cells = SAMPLES.filter(
+          (sample) => sample.x >= wx && sample.x < wx + WINDOW && sample.y >= wy && sample.y < wy + WINDOW,
+        );
         if (cells.length === 0) continue;
         const empty = cells.filter((sample) => sample.empty).length;
         const ratio = empty / cells.length;
         if (ratio > worst) worst = ratio;
       }
     }
-    expect(worst).toBeLessThan(0.45);
+    expect(worst).toBeLessThan(0.85);
   });
 
-  it('水系与桥梁数量达到加密目标', () => {
-    // ADR-0045：新增护园溪与三座环河桥，南向复用既有晨会溪桥
-    expect(WORLD_LAYOUT.rivers.length).toBe(3);
-    expect(WORLD_LAYOUT.lakes.length).toBe(6);
-    expect(WORLD_LAYOUT.bridges.length).toBe(6);
-    expect(WORLD_LAYOUT.docks.length).toBe(2);
+  it('水系拆成三湖，河流与桥码头归零', () => {
+    expect(WORLD_LAYOUT.lakes.length).toBe(3);
+    const raw = WORLD_LAYOUT as unknown as Record<string, unknown>;
+    expect(raw.rivers).toBeUndefined();
+    expect(raw.bridges).toBeUndefined();
+    expect(raw.docks).toBeUndefined();
   });
 
-  it('林地与花海数量达到加密目标', () => {
-    // ADR-0045：环河外补三片近景林带
-    expect(WORLD_LAYOUT.forests.length).toBe(10);
-    // ADR-0044 补了西北角与西岸水塘北侧两片草甸
-    expect(WORLD_LAYOUT.flowerFields.length).toBe(6);
-    const trees = WORLD_LAYOUT.forests.reduce((sum, forest) => sum + forest.trees.length, 0);
-    expect(trees).toBeGreaterThan(200);
-    expect(WORLD_LAYOUT.wildTrees.length).toBeGreaterThan(60);
+  it('树丛与花海数量达到新布局目标', () => {
+    expect(WORLD_LAYOUT.groves.length).toBeGreaterThanOrEqual(12);
+    expect(WORLD_LAYOUT.flowerFields.length).toBeGreaterThanOrEqual(6);
+    expect(TREES.length).toBeGreaterThanOrEqual(90);
+    expect(WORLD_LAYOUT.looseTrees.length).toBeGreaterThanOrEqual(30);
+    for (const grove of WORLD_LAYOUT.groves) {
+      expect(grove.trees.length).toBeGreaterThanOrEqual(2);
+      expect(grove.trees.length).toBeLessThanOrEqual(5);
+    }
   });
 });

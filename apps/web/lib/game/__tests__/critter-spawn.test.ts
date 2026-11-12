@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { ISLAND, WORLD_LAYOUT, isBlocked, isWaterAt, type WorldRect } from '@niuma/shared-types';
+import {
+  ISLAND,
+  WORLD_LAYOUT,
+  distanceSqToPolygon,
+  isBlocked,
+  isWaterAt,
+  pointInPolygon,
+} from '@niuma/shared-types';
 import {
   BUTTERFLY_POPULATION,
   FISH_POPULATION,
@@ -82,28 +89,20 @@ describe('小动物撒点', () => {
   });
 });
 
-/** 点到矩形的最近距离平方；点在矩形内为 0 */
-function rectGapSq(rect: WorldRect, x: number, y: number): number {
-  const dx = x < rect.x ? rect.x - x : x > rect.x + rect.w ? x - (rect.x + rect.w) : 0;
-  const dy = y < rect.y ? rect.y - y : y > rect.y + rect.h ? y - (rect.y + rect.h) : 0;
-  return dx * dx + dy * dy;
-}
-
-function nearestBridgeGapSq(x: number, y: number): number {
-  let best = Number.POSITIVE_INFINITY;
-  for (const bridge of WORLD_LAYOUT.bridges) best = Math.min(best, rectGapSq(bridge, x, y));
-  for (const dock of WORLD_LAYOUT.docks) best = Math.min(best, rectGapSq(dock, x, y));
-  return best;
-}
-
-describe('小鱼撒点（ADR-0045）', () => {
+describe('小鱼撒点（ADR-0047）', () => {
   it('同一种子可复现，人口固定', () => {
     expect(planFish(SEED)).toEqual(planFish(SEED));
     expect(planFish(SEED)).not.toEqual(planFish(SEED + 1));
     expect(planFish(SEED).length).toBe(FISH_POPULATION);
   });
 
-  it('鱼窝、往返端点与中点都在水里', () => {
+  it('多种子都能撒满：三湖不会因某个哈希少鱼', () => {
+    for (let i = 1; i <= 12; i += 1) {
+      expect(planFish((i * 2654435761) >>> 0).length).toBe(FISH_POPULATION);
+    }
+  });
+
+  it('鱼窝、往返端点与中点都在湖水里', () => {
     for (const fish of planFish(SEED)) {
       expect(isWaterAt(fish.x, fish.y)).toBe(true);
       for (const t of [-1, -0.5, 0.5, 1]) {
@@ -117,24 +116,26 @@ describe('小鱼撒点（ADR-0045）', () => {
     }
   });
 
-  it('鱼窝与往返端点都避开桥和码头', () => {
+  it('鱼窝离岸至少 60px，往返端点离岸至少 30px', () => {
     for (const fish of planFish(SEED)) {
-      expect(nearestBridgeGapSq(fish.x, fish.y)).toBeGreaterThanOrEqual(110 * 110);
+      const lake = WORLD_LAYOUT.lakes.find((item) => pointInPolygon(fish.x, fish.y, item.points));
+      expect(lake).toBeDefined();
+      expect(distanceSqToPolygon(fish.x, fish.y, lake!.points)).toBeGreaterThanOrEqual(60 * 60);
       for (const t of [-1, 1]) {
         const px = fish.x + fish.dirX * fish.range * t;
         const py = fish.y + fish.dirY * fish.range * t;
-        expect(nearestBridgeGapSq(px, py)).toBeGreaterThanOrEqual(60 * 60);
+        expect(distanceSqToPolygon(px, py, lake!.points)).toBeGreaterThanOrEqual(30 * 30);
       }
     }
   });
 
-  it('鱼两两间距不小于 120px', () => {
+  it('鱼两两间距不小于 100px', () => {
     const fish = planFish(SEED);
     for (let i = 0; i < fish.length; i += 1) {
       for (let j = i + 1; j < fish.length; j += 1) {
         const dx = fish[i]!.x - fish[j]!.x;
         const dy = fish[i]!.y - fish[j]!.y;
-        expect(Math.hypot(dx, dy)).toBeGreaterThanOrEqual(120);
+        expect(Math.hypot(dx, dy)).toBeGreaterThanOrEqual(100);
       }
     }
   });

@@ -27,10 +27,10 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(bearingDegOf(0, 0)).toBe(0);
   });
 
-  it('出生点四个目标全部可读，最近的是西侧的工作区', () => {
+  it('出生点四个目标全部可读，四角等距时按 NAV_TARGETS 顺序取工作区', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     expect(readings.map((reading) => reading.target.id)).toEqual(NAV_TARGETS.map((target) => target.id));
-    // 工作区与会议室到北门的直线距离并列，并列时按 NAV_TARGETS 顺序取工作区（ADR-0044）
+    // 中央广场到四角房中心等距，并列时按 NAV_TARGETS 顺序取工作区（ADR-0044）
     expect(nearestReading(readings)?.target.name).toBe('工作区');
     for (const reading of readings) {
       expect(reading.distance).toBeGreaterThan(0);
@@ -41,16 +41,31 @@ describe('园区导览方位（ADR-0036）', () => {
     }
   });
 
-  it('卫生间、会议室、宿舍区都在入口南侧：越往南走，步行秒数越小', () => {
+  it('出生点到四角房分别落在西北 / 东北 / 东南 / 西南四个象限', () => {
+    const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
+    const octant = (id: string) => readings.find((reading) => reading.target.id === id)!.octant;
+    expect(octant('workroom')).toBe(7);
+    expect(octant('meeting')).toBe(1);
+    expect(octant('restroom')).toBe(3);
+    expect(octant('lounge')).toBe(5);
+    // 中央广场到四角房中心等距，四条放射路长度在同一档
+    const distances = readings.map((reading) => reading.distance);
+    expect(Math.max(...distances) - Math.min(...distances)).toBeLessThan(1);
+  });
+
+  it('朝目标走 120px，步行秒数不会变大', () => {
     const before = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
-    const after = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y + 400);
-    const pick = (list: typeof before, id: string) => list.find((reading) => reading.target.id === id)!;
-    expect(pick(after, 'restroom').seconds).toBeLessThan(pick(before, 'restroom').seconds);
-    expect(pick(after, 'meeting').seconds).toBeLessThan(pick(before, 'meeting').seconds);
-    expect(pick(after, 'lounge').seconds).toBeLessThan(pick(before, 'lounge').seconds);
-    // 工作区在西北角：进门时在西南向，走到院落中段后基本正西
-    expect(pick(before, 'workroom').octant).toBe(5);
-    expect(pick(after, 'workroom').octant).toBe(6);
+    for (const reading of before) {
+      const dx = reading.target.x - SPAWN_CENTER.x;
+      const dy = reading.target.y - SPAWN_CENTER.y;
+      const length = Math.hypot(dx, dy);
+      const after = navReadings(
+        SPAWN_CENTER.x + (dx / length) * 120,
+        SPAWN_CENTER.y + (dy / length) * 120,
+      );
+      const next = after.find((item) => item.target.id === reading.target.id)!;
+      expect(next.seconds).toBeLessThanOrEqual(reading.seconds);
+    }
   });
 
   it('空列表没有最近目标', () => {
