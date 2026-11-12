@@ -379,6 +379,11 @@
   .animate-notice-in {
     animation: notice-in 220ms var(--ease-out-expo);
   }
+
+  /* 档案页签：只让内容轻推 2px，不整卡弹跳 */
+  .animate-archive-panel-in {
+    animation: archive-panel-in 120ms var(--ease-out-expo);
+  }
 }
 
 @keyframes marquee {
@@ -453,6 +458,17 @@
 @keyframes notice-in {
   from {
     transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes archive-panel-in {
+  from {
+    transform: translateY(2px);
     opacity: 0;
   }
   to {
