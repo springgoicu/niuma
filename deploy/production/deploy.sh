@@ -87,6 +87,55 @@ log "构建与切换（APP_BASE=${APP_BASE:-/srv/niuma/app}，园区 ${GAME_PARK
 # 关掉子树的 fd 9，锁只留在本进程手里。
 bash deploy/jenkins-deploy.sh 9>&-
 
+# nginx 站点配置同样住在仓库里：模板变了就重新渲染。否则「改一行限速还得 ssh 手抄
+# 到服务器」这种事迟早重演，而且新机器与老机器的配置会悄悄分叉。
+# 渲染后必须 nginx -t：校验不过自动还原，绝不让一次配置笔误把站点带走。
+sync_nginx_site() {
+  local tpl="$SRC_DIR/deploy/production/nginx/niuma-site.conf.template"
+  local live="/etc/nginx/sites-available/niuma"
+  local app_base="${APP_BASE:-/srv/niuma/app}"
+  local web_root hook_path www staged backup out
+
+  # 只处理 install.sh 已经铺过站点配置的机器；裸机上这一步留给 install.sh
+  [ -f "$tpl" ] && [ -f "$live" ] || return 0
+
+  if [ -d "$app_base/web/apps/web/.next" ]; then
+    web_root="$app_base/web/apps/web"
+  else
+    web_root="$app_base/web"
+  fi
+  hook_path="$(cat /etc/niuma/hook_path 2>/dev/null || true)"
+  www="www.$PUBLIC_HOST"
+  staged="$(mktemp)"
+  backup="$(mktemp)"
+
+  sed -e "s#@DOMAIN@#$PUBLIC_HOST#g" \
+      -e "s#@WWW@#$www#g" \
+      -e "s#@WEB_ROOT@#$web_root#g" \
+      -e "s#@HOOK_PATH@#$hook_path#g" \
+      "$tpl" > "$staged"
+
+  # 与线上完全一致就不动，避免每次部署都白白多一次 reload
+  if cmp -s "$staged" "$live"; then
+    rm -f "$staged" "$backup"
+    log "nginx 站点配置无变化"
+    return 0
+  fi
+
+  sudo -n cp "$live" "$backup"
+  if ! sudo -n cp "$staged" "$live" || ! out="$(sudo -n nginx -t 2>&1)"; then
+    printf '%s\n' "${out:-}" | sed 's/^/    /'
+    sudo -n cp "$backup" "$live"
+    rm -f "$staged" "$backup"
+    echo "✖ nginx 渲染后校验失败，已还原旧配置" >&2
+    return 1
+  fi
+  rm -f "$staged" "$backup"
+  log "nginx 站点配置已更新（WEB_ROOT=$web_root）"
+}
+
+sync_nginx_site
+
 # nginx 缓存的是文件的 inode/mtime：换版本后必须 reload，否则可能继续吐旧 chunk
 log "reload nginx"
 sudo -n systemctl reload nginx
