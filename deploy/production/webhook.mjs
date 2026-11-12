@@ -32,8 +32,8 @@ mkdirSync(dirname(LOG_FILE), { recursive: true });
 /** 免得一次 push 把硬盘写满 */
 const MAX_BODY = 1 << 20;
 
-/** 上一次部署的状态，供 /status 查看 */
-let state = { running: false, startedAt: null, lastExit: null, lastRev: null, lastAt: null };
+/** 上一次部署的状态，供 /status 查看；pending 是构建期间被合并的下一次推送 */
+let state = { running: false, startedAt: null, lastExit: null, lastRev: null, lastAt: null, pending: null };
 
 function log(line) {
   const text = `[${new Date().toISOString()}] ${line}\n`;
@@ -96,6 +96,16 @@ function runDeploy(reason) {
     out.write(`[${new Date().toISOString()}] ===== 部署结束，退出码 ${code} =====\n`);
     out.end();
     log(`部署结束，退出码 ${code}`);
+
+    // 构建期间到达的推送不能丢：旧版直接返回 202 就忘了，最后一次提交会永远
+    // 停在 gitee 上（线上依旧跑上一版）。等当前部署彻底收尾后再补跑一次，
+    // 仍然保持「同一时刻只有一个构建」——2 vCPU 上并行构建会把游戏 Tick 拖垮。
+    if (state.pending) {
+      const next = state.pending;
+      state.pending = null;
+      log(`补发：构建期间又收到推送（${next}）`);
+      setTimeout(() => runDeploy(next), 1000);
+    }
   });
 }
 
@@ -143,9 +153,14 @@ const server = createServer(async (req, res) => {
   }
 
   if (state.running) {
-    log('忽略：已有部署在跑');
+    // 后来的推送覆盖 pending：deploy.sh 每次都拉 origin/master 最新，
+    // 只要最后补发一次就能把期间所有提交一起发上线，不必逐个排队。
+    const reason = `${ref || 'manual'} ${rev}`;
+    state.pending = reason;
+    state.lastRev = rev || state.lastRev;
+    log(`排队：已有部署在跑，记下 ${reason}，结束后补发`);
     res.writeHead(202, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ queued: true }));
+    res.end(JSON.stringify({ queued: true, pending: reason }));
     return;
   }
 

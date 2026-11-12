@@ -183,15 +183,23 @@ export function runWorkerHost(scope: WorkerScope): void {
 /**
  * Worker 侧的字体就绪。
  *
- * 字体由 `font-bootstrap.ts` 在宿主启动前注册；这里只等 `fonts.ready`。
- * 浏览器不给 Worker 暴露 `fonts` 时直接放行，让文字用回退度量——宁可字宽
- * 略有差异，也不要因为等不到字体而卡住整个入场。
+ * 字体由 `font-bootstrap.ts` 与宿主并行注册，这里等 `fonts.ready`。
+ * 但 Chrome 的 Worker `FontFaceSet.ready` 有个坑：手动 `fonts.add()` 之后
+ * `status` 已是 `loaded`、`size` 也对，这个 Promise 却可能永远不 resolve
+ * （CDP 实测 Promise.race 判为 TIMEOUT）。没有上限会让 `renderer.init()`
+ * 永久挂起，NetClient 根本没机会创建，页面一直停在「正在接入园区…」。
+ * 宁可字宽略有差异，也不能把入场卡死。
  */
 async function readFontsReady(): Promise<void> {
   const fonts = (globalThis as { fonts?: FontFaceSet }).fonts;
   if (!fonts) return;
   try {
-    await fonts.ready;
+    await Promise.race([
+      fonts.ready,
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 1500);
+      }),
+    ]);
   } catch {
     // fonts.ready 只会 reject 在极端情况下，吞掉继续
   }
