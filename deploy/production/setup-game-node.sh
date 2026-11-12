@@ -64,10 +64,17 @@ ok "nginx $(nginx -v 2>&1 | awk -F/ '{print $2}') | certbot $(certbot --version 
 
 # 端口占用检查：Jenkins/1Panel 这类机器上 3000/3001 很可能已被 docker-proxy 占住，
 # 撞端口会让 pm2 反复重启而日志里只有 EADDRINUSE，不如提前拦下来。
+# 但「自己上一版正占着」是更新流程的正常状态（重复执行即更新），不能拦。
 if ss -Hltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$GAME_PORT$"; then
-  holder="$(ss -Hltnp 2>/dev/null | grep -E "[:.]$GAME_PORT " | head -1)"
-  die "端口 $GAME_PORT 已被占用：$holder
+  own=0
+  if command -v pm2 >/dev/null 2>&1; then
+    sudo -u "$AS_USER" -H env PATH="/usr/local/bin:$PATH" pm2 describe niuma-game >/dev/null 2>&1 && own=1
+  fi
+  if [ "$own" != "1" ]; then
+    holder="$(ss -Hltnp 2>/dev/null | grep -E "[:.]$GAME_PORT " | head -1)"
+    die "端口 $GAME_PORT 已被其它进程占用：$holder
      换一个端口重跑，例如 GAME_PORT=3011"
+  fi
 fi
 
 # ==================== 2. 运行时 ====================
@@ -237,10 +244,24 @@ upstream niuma_park_${PARK_ID} {
     keepalive 32;
 }
 
+# 单 IP 并发 WS 与握手频率。这台机器只服务一座园区，容量 ${MAX_ONLINE} 人，
+# 一个玩家 1~2 条连接，6 条已覆盖多标签页；不设上限时一条 IP 开上千条
+# 会把内存与广播队列吃空，而出口水位只看字节数，看不出连接数爆炸。
+limit_conn_zone \$binary_remote_addr zone=niuma_park_${PARK_ID}_ws:10m;
+limit_req_zone  \$binary_remote_addr zone=niuma_park_${PARK_ID}_req:10m rate=15r/s;
+
+# 只认主站来源：game-server 自己不校验 Origin，这层是唯一限制
 map \$http_origin \$niuma_park_${PARK_ID}_origin_ok {
     default                            0;
     "https://${MAIN_DOMAIN}"           1;
     "https://www.${MAIN_DOMAIN}"       1;
+}
+
+# 探活接口的 CORS 只回主站域名，不再用 *：在线人数不必对全网公开
+map \$http_origin \$niuma_park_${PARK_ID}_cors {
+    default                            "";
+    "https://${MAIN_DOMAIN}"           "https://${MAIN_DOMAIN}";
+    "https://www.${MAIN_DOMAIN}"       "https://www.${MAIN_DOMAIN}";
 }
 
 server {
@@ -253,9 +274,13 @@ server {
     }
 
     location = /health {
+        limit_req zone=niuma_park_${PARK_ID}_req burst=20 nodelay;
         proxy_pass http://niuma_park_${PARK_ID}/health;
+        # game-server 自己也发 ACAO: *，不掐掉就会出现两条
+        # Access-Control-Allow-Origin，浏览器直接判为非法、探活全失败
+        proxy_hide_header Access-Control-Allow-Origin;
         proxy_set_header Host \$host;
-        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Origin \$niuma_park_${PARK_ID}_cors always;
         add_header Cache-Control "no-store" always;
         access_log off;
     }
@@ -276,12 +301,20 @@ server {
 
     # 主站在另一台机器，这里不需要 COOP/COEP：本机没有页面，
     # 只有 WS 与健康检查，跨源隔离头加在这里毫无作用。
+    add_header X-Content-Type-Options "nosniff" always;
+    # slowloris：正常的 WS 握手与探活在毫秒级完成，60s 的默认值只会被用来占连接
+    client_header_timeout 10s;
+    client_body_timeout   10s;
 
     location = /health {
+        limit_req zone=niuma_park_${PARK_ID}_req burst=20 nodelay;
         proxy_pass http://niuma_park_${PARK_ID}/health;
+        # game-server 自己也发 ACAO: *，不掐掉就会出现两条
+        # Access-Control-Allow-Origin，浏览器直接判为非法、探活全失败
+        proxy_hide_header Access-Control-Allow-Origin;
         proxy_set_header Host \$host;
-        # 选园页从主站域名跨域探活，只有这一条放开 CORS
-        add_header Access-Control-Allow-Origin "*" always;
+        # 选园页从主站域名跨域探活；ACAO 只回主站，不再用 *
+        add_header Access-Control-Allow-Origin \$niuma_park_${PARK_ID}_cors always;
         add_header Cache-Control "no-store" always;
         proxy_connect_timeout 2s;
         proxy_read_timeout 2s;
@@ -290,6 +323,9 @@ server {
 
     location /ws {
         if (\$niuma_park_${PARK_ID}_origin_ok = 0) { return 403; }
+        # 单 IP 最多 6 条并发 WS；握手超过 15r/s 直接拒（断线重连远低于此）
+        limit_conn niuma_park_${PARK_ID}_ws 6;
+        limit_req zone=niuma_park_${PARK_ID}_req burst=10 nodelay;
         proxy_pass http://niuma_park_${PARK_ID};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;

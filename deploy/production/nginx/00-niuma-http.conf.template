@@ -52,6 +52,27 @@ gzip_types
 # 静态资源并发上限用的共享内存区
 limit_conn_zone $binary_remote_addr zone=addr:10m;
 
+# ---- 限流：按来源 IP ----
+# 速率按「人打不出来」的密度设：正常点击、RSC 预取、断线重连都远低于此，
+# 而脚本级洪水（几千 r/s）在这里就被 429 挡住，不会走到 Node/Bun。
+# 30r/s × burst 60：一个页面首屏的动态请求峰值约 10~20，留三倍余量。
+limit_req_zone  $binary_remote_addr zone=niuma_req:10m rate=30r/s;
+# 每 IP 并发 WebSocket：一个玩家 1~2 条（多标签页），8 条是很松的上限。
+# 这是游戏站最要命的一条——单 IP 开上千条连接会把内存和广播队列吃空，
+# 而 Tick 只统计「发出多少字节」，它看不到连接数爆炸。
+limit_conn_zone $binary_remote_addr zone=niuma_ws:10m;
+limit_req_status  429;
+limit_conn_status 429;
+
+# ---- 慢连接防护 ----
+# slowloris 靠「发一半请求头就不动」占满 worker 连接数。默认 60s 太长，
+# 正常客户端的首字节与请求体都在毫秒级完成。
+client_header_timeout 10s;
+client_body_timeout   10s;
+send_timeout          15s;
+client_header_buffer_size 4k;
+large_client_header_buffers 4 8k;
+
 # ---- 静态文件元数据缓存 ----
 # 2 vCPU 机器上省掉的就是一次次 stat()：命中后连 open() 都省了
 open_file_cache          max=20000 inactive=60s;

@@ -33,6 +33,17 @@ map $uri $niuma_static_cache_control {
     ~*niuma-game\.    "no-cache, must-revalidate";
 }
 
+# WS 握手来源白名单：别的站点无法把玩家的浏览器当跳板连进来（CSWSH）——
+# 恶意页面只要让访问者的浏览器连上 wss://本站/ws，就能白耗他的连接数配额。
+# 空 Origin 放行：非浏览器客户端（探活、压测脚本）本来就不发这个头，
+# 真正的连接洪水由 limit_conn 挡，这一层只管「浏览器被别的站点指使」。
+map $http_origin $niuma_ws_origin_ok {
+    default                     0;
+    ""                          1;
+    "https://@DOMAIN@"          1;
+    "https://@WWW@"             1;
+}
+
 # ---------- 80：ACME 验证与强跳 HTTPS ----------
 server {
     listen 80;
@@ -161,6 +172,8 @@ server {
 
     # ---- 游戏服探活：选园页靠它拿在线人数与延迟 ----
     location = /health {
+        # 选园页每张卡片探一次，加上失败重试也就个位数；超出这个量说明在被人刷
+        limit_req zone=niuma_req burst=20 nodelay;
         # 游戏服自己也会带一份 CORS 头，两边都发会出现两条
         # Access-Control-Allow-Origin，浏览器直接判为非法
         proxy_hide_header Access-Control-Allow-Origin;
@@ -179,6 +192,13 @@ server {
 
     # ---- 游戏服 WebSocket：零缓冲、零延迟 ----
     location /ws {
+        # 先过来源白名单，再谈连接数：被别的站点指使的浏览器连握手都不该完成
+        if ($niuma_ws_origin_ok = 0) { return 403; }
+
+        # 单 IP 并发连接与握手频率：正常玩家 1~2 条、重连不过几秒一次
+        limit_conn niuma_ws 8;
+        limit_req  zone=niuma_req burst=10 nodelay;
+
         proxy_pass http://niuma_game;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -209,8 +229,19 @@ server {
         access_log /var/log/nginx/niuma-hook.log;
     }
 
+    # ---- 扫描器常探的路径：直接断连 ----
+    # 返回 444 是 nginx 直接关连接，不生成响应也不占上游；不进 Node、不写日志。
+    # 正则 location 优先级高于普通前缀 location，但低于 ^~，不会误伤 /_next/ 与 /sprites/。
+    location ~* ^/(\.env|\.git|\.git/|\.aws|\.DS_Store|wp-admin|wp-login\.php|xmlrpc\.php|phpmyadmin|vendor/|backup|config\.json|\.well-known/security\.txt) {
+        access_log off;
+        return 444;
+    }
+
     # ---- 默认路由：Next.js Standalone SSR/RSC ----
     location / {
+        # 只限制动态请求：静态 chunk 走上面的 ^~ location，不消耗这里的配额。
+        # 30r/s + burst 60：首屏并发十几个 RSC/页面请求也碰不到。
+        limit_req zone=niuma_req burst=60 nodelay;
         proxy_pass http://niuma_web;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -232,5 +263,8 @@ server {
         add_header Strict-Transport-Security "max-age=31536000" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        # 页面不需要被任何站点 iframe 嵌入（防点击劫持），也不需要用定位/麦克风/摄像头
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
     }
 }
