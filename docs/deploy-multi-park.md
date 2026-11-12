@@ -130,6 +130,28 @@ GAME_TICK_BUDGET_MS=25
 
 任何一步都不会影响已经在线的园区。
 
+### 3.1 一条命令（推荐）
+
+`deploy/production/setup-game-node.sh` 把 3.2 的所有步骤脚本化了：装依赖 → 只装
+game-server 依赖并打包 → pm2 起在 `127.0.0.1` → nginx 站点（只放行 `/ws` 与
+`/health`，Origin 白名单只认主站）→ certbot 签证书 → 公网验活。
+
+```bash
+sudo DOMAIN=b.example.com MAIN_DOMAIN=example.com \
+     GIT_USER=<gitee 用户> GIT_PASS=<gitee 密码> \
+     PARK_ID=b PARK_NAME=二号园区 \
+     GAME_PORT=3001 MAX_EGRESS_KBPS=300 MAX_ONLINE=70 \
+     bash deploy/production/setup-game-node.sh
+```
+
+跑完会打印主站侧要执行的 `GAME_PARKS` 配置。**重复执行即更新**：代码快进、重新
+打包、重启进程，玩家会被踢下线重连（世界只在内存里，没有热升级）。
+
+它刻意不合并进 `install.sh`：游戏服机器上常常还跑着 Jenkins / 1Panel / 别的站点，
+动全局 `nginx.conf` 与 sysctl 等于赌别人的服务不受影响，所以只做增量。
+
+### 3.2 手动步骤（脚本做的事，便于排查）
+
 ```bash
 # ① 运行环境
 curl -fsSL https://bun.sh/install | bash
