@@ -86,15 +86,28 @@ export function OnlineBadge({ compact = false }: { compact?: boolean }) {
 
 export function ConnectionBanner() {
   const status = useGameUi((state) => state.status);
+  const detail = useGameUi((state) => state.detail);
   const rejected = useGameUi((state) => state.rejected);
   // 排队与被拒由 QueueGate 整屏接管，横幅只负责「接入中/断线」这类过渡态
   if (status === 'online' || status === 'idle' || status === 'queued' || rejected > 0) return null;
+  // error 是渲染/初始化故障，不是网络断线：复用「正在重连」会让用户一直刷新却
+  // 永远等不到重连成功。显示真实原因，颜色也和断线区分开。
+  const isError = status === 'error';
+  const label = status === 'connecting'
+    ? '正在接入园区…'
+    : isError
+      ? detail || '渲染器异常，请刷新页面'
+      : '连接中断，正在重连';
   return (
     <div className="pointer-events-none absolute left-1/2 top-20 z-30 -translate-x-1/2">
-      <div className="flex items-center gap-3 border-2 border-amber-400/60 bg-ink-900/95 px-4 py-2 backdrop-blur">
-        <span className="h-2 w-2 animate-blink bg-amber-400" />
-        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-amber-400">
-          {status === 'connecting' ? '正在接入园区…' : '连接中断，正在重连'}
+      <div className={`flex items-center gap-3 border-2 bg-ink-900/95 px-4 py-2 backdrop-blur ${
+        isError ? 'border-red-400/60' : 'border-amber-400/60'
+      }`}>
+        <span className={`h-2 w-2 ${isError ? 'bg-red-400' : 'animate-blink bg-amber-400'}`} />
+        <span className={`font-mono text-[11px] uppercase tracking-[0.18em] ${
+          isError ? 'text-red-400' : 'text-amber-400'
+        }`}>
+          {label}
         </span>
       </div>
     </div>

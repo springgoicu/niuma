@@ -16,6 +16,26 @@ import { loadWorkerFonts } from './font-bootstrap';
  */
 DOMAdapter.set(WebWorkerAdapter);
 
-void loadWorkerFonts().then(() => {
-  runWorkerHost(globalThis as unknown as WorkerScope);
-});
+/**
+ * Worker 内的未捕获异常必须主动送回主线程。
+ *
+ * 外部 `worker.onerror` 在「脚本被 COEP/CSP 拦截」或「模块加载失败」时
+ * `message` 常常是空串，`filename/lineno` 也不可用；只靠它既定位不了问题，
+ * 也拿不到触发自动回退的可靠信号。这条 fatal 消息带完整堆栈，由
+ * `WorkerGameClient` 统一决定是启动期回退还是运行期报错。
+ */
+function reportFatal(error: unknown): void {
+  const detail = error instanceof Error
+    ? `${error.name}: ${error.message}\n${error.stack ?? ''}`
+    : String(error);
+  (globalThis as unknown as { postMessage(message: unknown): void }).postMessage({ t: 'fatal', detail });
+}
+
+globalThis.addEventListener('error', (event: ErrorEvent) => reportFatal(event.error ?? event.message));
+globalThis.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => reportFatal(event.reason));
+
+void loadWorkerFonts()
+  .then(() => {
+    runWorkerHost(globalThis as unknown as WorkerScope);
+  })
+  .catch(reportFatal);

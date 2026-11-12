@@ -6,12 +6,31 @@
 #   /_next/static/  /sprites/   直接由 nginx 从磁盘发（不过 Node，省 CPU 与事件循环）
 #   /ws                         升级到游戏服（同源，浏览器不需要知道 3001）
 #   /                           其余全部交给 Next standalone
+#
+# 【跨源隔离头不能漏】next.config.ts 给所有页面发了 COOP/COEP（SharedArrayBuffer
+# 零拷贝控制块需要 crossOriginIsolated）。走 proxy 的响应自带这两条头，但 nginx
+# 直接 alias 到磁盘的静态响应不带。Chrome 在 COEP: require-corp 页面里要求
+# Worker/frame 类子上下文的脚本响应同样带 COEP，否则直接
+# net::ERR_BLOCKED_BY_RESPONSE（coep-frame-resource-needs-coep-header），
+# worker.onerror 的 message 还是空的 —— 表现为「连接中断，正在重连」但 WS 从未建立。
+# 因此每个静态 location 都要补这三条；注意 nginx 的 add_header 继承规则：
+# location 里只要出现任意一条 add_header，server 级安全头就全部不再继承，
+# 所以不能只在 server 级写一次（而且 server 级加 COEP 会让 proxy 响应出现重复头）。
 
 # 文档与接口缓存策略：页面必须每次回源校验，否则部署后用户会继续跑旧地图。
 # /api/version 是客户端判断「是否需要强刷」的唯一依据，连协商缓存都不能留。
 map $uri $niuma_cache_control {
     default          "no-cache, must-revalidate";
     /api/version     "no-store, max-age=0";
+}
+
+# Worker chunk 不能 immutable：它的响应头（COEP/CORP）属于部署配置，
+# 文件名 hash 只反映 JS 内容。若缓存一年，服务端修好响应头后，浏览器仍拿
+# 缓存里的旧头继续拒绝启动 Worker，且不会再来校验 —— 2026-11-12 线上故障就这么来的。
+# 其余带内容哈希的 chunk 保持一年强缓存。
+map $uri $niuma_static_cache_control {
+    default           "public, max-age=31536000, immutable";
+    ~*niuma-game\.    "no-cache, must-revalidate";
 }
 
 # ---------- 80：ACME 验证与强跳 HTTPS ----------
@@ -72,9 +91,15 @@ server {
 
     # ---- Next 构建产物（文件名带内容哈希，永久强缓存）----
     # 直接 alias 到磁盘：2 vCPU 上每一个走 Node 的静态请求都在和游戏 Tick 抢时间
+    # 静态响应的跨源隔离头：与 Next 上游的 /:path* 策略保持一致。
+    # webpack 的 Worker chunk 也落在这个 location，缺 COEP 会被浏览器直接拦掉。
     location ^~ /_next/static/ {
         alias @WEB_ROOT@/.next/static/;
-        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header Cache-Control $niuma_static_cache_control always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header X-Content-Type-Options "nosniff" always;
         # 前 128KB 顶满（极小的 chunk 不受限速影响），之后单流 80KB/s
         limit_rate_after 128k;
         limit_rate 80k;
@@ -86,6 +111,10 @@ server {
     location = /sprites/manifest.json {
         alias @WEB_ROOT@/public/sprites/manifest.json;
         add_header Cache-Control "no-store, max-age=0" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header X-Content-Type-Options "nosniff" always;
         limit_rate 100k;
         access_log off;
     }
@@ -96,6 +125,10 @@ server {
     location ^~ /sprites/ {
         alias @WEB_ROOT@/public/sprites/;
         add_header Cache-Control "no-cache, must-revalidate" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header X-Content-Type-Options "nosniff" always;
         limit_rate_after 128k;
         limit_rate 150k;
         access_log off;
@@ -105,12 +138,20 @@ server {
     location = /favicon.ico {
         alias @WEB_ROOT@/public/favicon.ico;
         add_header Cache-Control "public, max-age=604800" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header X-Content-Type-Options "nosniff" always;
         access_log off;
     }
 
     location ^~ /brand/ {
         alias @WEB_ROOT@/public/brand/;
         add_header Cache-Control "public, max-age=2592000" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header X-Content-Type-Options "nosniff" always;
         access_log off;
     }
 
