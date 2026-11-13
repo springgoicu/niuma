@@ -10,15 +10,22 @@ interface InteractionHintProps {
   onAction: (action: ActionKey) => void;
 }
 
-/** 位置沿用旧提示：告示板贴右下角（ADR-0059），其余底部居中 */
+/**
+ * 电脑端统一落在画面中线偏下（ADR-0079）。
+ *
+ * 角色由相机跟随、基本处于画面正中：压 50% 会挡住自己和设施本体；
+ * 62% 正好落在角色脚下，又离底部动作条足够远，不会被读成动作条的一部分。
+ */
+const DESKTOP_PLACEMENT = 'left-1/2 top-[62%] -translate-x-1/2 -translate-y-1/2';
+
+/** 触屏位置沿用旧提示：告示板贴右下角（ADR-0059），其余底部居中 */
 function placement(hint: string, isTouch: boolean, portrait: boolean): string {
+  if (!isTouch) return DESKTOP_PLACEMENT;
   if (hint === HINT.bulletin) {
-    // 竖屏要避开聊天面板与动作盘，横屏/桌面按原有偏移
-    return portrait ? 'bottom-[300px] right-3' : isTouch ? 'bottom-56 right-3' : 'bottom-28 right-4';
+    // 竖屏要避开聊天面板与动作盘
+    return portrait ? 'bottom-[300px] right-3' : 'bottom-56 right-3';
   }
-  // 桌面动作条（7 个纵向按钮）顶边距底约 95px：96px（bottom-24）会和它贴死，
-  // 视觉上被读成动作条的一部分，所以再抬高一档留出明确间隙
-  return `left-1/2 -translate-x-1/2 ${portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-[112px]'}`;
+  return `left-1/2 -translate-x-1/2 ${portrait ? 'bottom-[296px]' : 'bottom-56'}`;
 }
 
 /**
@@ -37,7 +44,9 @@ export function InteractionHint({ hint, isTouch, portrait, onAction }: Interacti
     return (
       <div
         role="status"
-        className={`pointer-events-none absolute z-30 ${where} border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm`}
+        className={`pointer-events-none absolute z-30 ${where} max-w-[min(92vw,36rem)] border-2 border-ink-600 bg-ink-900/92 text-center font-mono uppercase text-signal-500 backdrop-blur-sm ${
+          isTouch ? 'px-3 py-1.5 text-[10px] tracking-[0.16em]' : 'px-5 py-2.5 text-[13px] tracking-[0.18em]'
+        }`}
       >
         {isTouch ? touchHint(hint) : hint}
       </div>
@@ -58,19 +67,31 @@ export function InteractionHint({ hint, isTouch, portrait, onAction }: Interacti
         aria-label={isTouch ? `${button.label}，轻点执行` : `${button.label}，点击或按 ${button.key} 执行`}
         aria-keyshortcuts={button.key}
         title={isTouch ? `轻点${button.label}` : `点击或按 ${button.key} ${button.label}`}
-        className={`animate-hint-in pointer-events-auto flex cursor-pointer items-center gap-2 whitespace-nowrap border-2 border-mint-400/60 bg-ink-900/92 px-2.5 py-1 font-mono shadow-[0_0_18px_-6px_rgba(79,227,193,0.35)] backdrop-blur-sm transition-[border-color,background-color,transform] duration-150 hover:border-mint-400 hover:bg-mint-400/10 active:scale-[0.97] focus-visible:border-mint-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 ${
-          // 触屏给拇指留 40px 命中高度；桌面保持紧凑的 32px
-          isTouch ? 'min-h-10' : 'min-h-8'
+        className={`animate-hint-in pointer-events-auto flex cursor-pointer items-center whitespace-nowrap border-2 border-mint-400/60 bg-ink-900/92 font-mono backdrop-blur-sm transition-[border-color,background-color,transform] duration-150 hover:border-mint-400 hover:bg-mint-400/10 active:scale-[0.97] focus-visible:border-mint-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 ${
+          // 桌面放大一档：离角色更远的落位要更大的字才读得清；触屏仍是拇指 40px 命中区
+          isTouch
+            ? 'min-h-10 gap-2 px-2.5 py-1 shadow-[0_0_18px_-6px_rgba(79,227,193,0.35)]'
+            : 'min-h-14 gap-3 px-5 py-3 shadow-[0_12px_36px_-14px_rgba(79,227,193,0.55)]'
         }`}
       >
         {!isTouch && (
-          <kbd className="grid h-5 min-w-5 place-items-center border-2 border-ink-600 bg-ink-800 px-1 font-mono text-[10px] leading-none text-mist-300">
+          <kbd className="grid h-8 min-w-8 place-items-center border-2 border-ink-600 bg-ink-800 px-1.5 font-mono text-[13px] leading-none text-mist-300">
             {button.key}
           </kbd>
         )}
-        <span className="text-[11px] tracking-[0.12em] text-mint-400">{button.label}</span>
-        <span className="h-3 w-px bg-ink-600" aria-hidden />
-        <span className="text-[9px] tracking-[0.16em] text-mist-500">{isTouch ? '轻点' : '点击'}</span>
+        <span className={`${isTouch ? 'text-[11px] tracking-[0.12em]' : 'text-[15px] tracking-[0.14em]'} text-mint-400`}>
+          {button.label}
+        </span>
+        <span className={`w-px bg-ink-600 ${isTouch ? 'h-3' : 'h-5'}`} aria-hidden />
+        <span
+          className={
+            isTouch
+              ? 'text-[9px] tracking-[0.16em] text-mist-500'
+              : 'text-[11px] tracking-[0.18em] text-mist-400'
+          }
+        >
+          {isTouch ? '轻点' : '点击'}
+        </span>
       </button>
     </div>
   );

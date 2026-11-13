@@ -19,7 +19,7 @@ describe('设施互动提示', () => {
     expect(html).toContain('>Z</kbd>');
     expect(html).toContain('坐下');
     expect(html).toContain('点击');
-    expect(html).toContain('min-h-8');
+    expect(html).toContain('min-h-14');
     expect(html).not.toContain('role="status"');
   });
 
@@ -57,28 +57,48 @@ describe('设施互动提示', () => {
     }
   });
 
-  it('告示板提示继续落在右下角，通用提示在底部居中', () => {
-    const bulletinDesktop = render(HINT.bulletin);
-    expect(bulletinDesktop).toContain('bottom-28 right-4');
-    expect(bulletinDesktop).not.toContain('left-1/2');
-
-    const bulletinPortrait = render(HINT.bulletin, false, true);
-    expect(bulletinPortrait).toContain('bottom-[300px] right-3');
-
-    const bulletinTouch = render(HINT.bulletin, true);
-    expect(bulletinTouch).toContain('bottom-56 right-3');
-    expect(bulletinTouch).not.toContain('left-1/2');
-
-    expect(render(HINT.seat)).toContain('left-1/2');
-    expect(render(HINT.seat, true)).toContain('left-1/2');
-    expect(render(HINT.seat, true)).toContain('bottom-56');
-    expect(render(HINT.seat, false, true)).toContain('bottom-[296px]');
+  it('电脑端提示统一落在画面中线偏下，告示板也在同一位置', () => {
+    for (const hint of [HINT.seat, HINT.board, HINT.bulletin, HINT.bed]) {
+      const html = render(hint);
+      expect(html).toContain('left-1/2');
+      expect(html).toContain('top-[62%]');
+      expect(html).toContain('-translate-y-1/2');
+      expect(html).not.toContain('bottom-56');
+    }
+    // 桌面窗口拉成竖长条仍按电脑端处理，不退回触屏的底部偏移
+    expect(render(HINT.seat, false, true)).toContain('top-[62%]');
+    expect(render(HINT.seat, false, true)).not.toContain('bottom-[296px]');
   });
 
-  it('桌面端提示抬到动作条上方并带层级，不会被读成动作条的一部分', () => {
+  it('触屏落位保持原样：告示板贴右下角，其余底部居中', () => {
+    const bulletinLandscape = render(HINT.bulletin, true);
+    expect(bulletinLandscape).toContain('bottom-56 right-3');
+    expect(bulletinLandscape).not.toContain('left-1/2');
+
+    const bulletinPortrait = render(HINT.bulletin, true, true);
+    expect(bulletinPortrait).toContain('bottom-[300px] right-3');
+
+    const seatLandscape = render(HINT.seat, true);
+    expect(seatLandscape).toContain('left-1/2');
+    expect(seatLandscape).toContain('bottom-56');
+    expect(seatLandscape).not.toContain('top-[62%]');
+
+    expect(render(HINT.seat, true, true)).toContain('bottom-[296px]');
+  });
+
+  it('电脑端提示放大一档并带层级，不会被读成动作条的一部分', () => {
     const html = render(HINT.seat);
-    expect(html).toContain('bottom-[112px]');
-    expect(html).not.toContain('bottom-24 ');
+    expect(html).toContain('min-h-14');
+    expect(html).toContain('text-[15px]');
+    expect(html).toContain('h-8');
     expect(html).toContain('z-30');
+    expect(html).not.toContain('bottom-[112px]');
+    expect(html).not.toContain('bottom-24 ');
+  });
+
+  it('电脑端状态胶囊同步放大，触屏尺寸不变', () => {
+    expect(render(HINT.lieOnSeat)).toContain('text-[13px]');
+    expect(render(HINT.lieOnSeat, true)).toContain('text-[10px]');
+    expect(render(HINT.bed, true)).toContain('min-h-10');
   });
 });
