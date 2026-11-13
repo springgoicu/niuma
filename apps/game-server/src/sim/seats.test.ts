@@ -54,6 +54,25 @@ describe('SeatRegistry', () => {
     expect(player.direction).toBe(seat.facing);
   });
 
+  it('长椅也是座位：按 Z 入座并落坐姿，移动即起身释放', () => {
+    const world = new World();
+    const seats = new SeatRegistry();
+    const bench = WORLD_LAYOUT.seats.find((seat) => seat.kind === 'bench')!;
+    expect(bench).toBeDefined();
+    const player = spawn(world, bench.x, bench.y + 10);
+
+    expect(seats.sit(player, 1000)).toEqual([{ seatId: bench.id, occupant: player.id }]);
+    expect(player.seat).toBe(bench.id);
+    expect(player.x).toBe(bench.x);
+    expect(player.y).toBe(bench.y);
+    expect(player.pose).toBe(POSE.Sit);
+
+    const result = applyMove(player, movePacket(player.id, bench.x + 20, bench.y + 20, POSE.Idle, true), 1100, seats);
+    expect(result.released).toEqual([{ seatId: bench.id, occupant: 0 }]);
+    expect(player.seat).toBe(0);
+    expect(seats.isFree(bench.id)).toBe(true);
+  });
+
   it('同一座位只能坐一人', () => {
     const world = new World();
     const seats = new SeatRegistry();

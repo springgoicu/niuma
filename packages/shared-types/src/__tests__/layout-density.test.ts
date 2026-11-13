@@ -93,7 +93,9 @@ describe('空地密度', () => {
     expect(ratio).toBeLessThan(0.48);
   });
 
-  it('任意 512×512 陆地窗口的纯草格不超过 85%', () => {
+  // ADR-0064：北湾 / 东湾 / 南中湾填成陆地后，园区多了两片开阔草甸，
+  // 单元窗口的最差值从 0.85 抬到 0.90——仍保留「不允许整片无内容」这条底线。
+  it('任意 512×512 陆地窗口的纯草格不超过 90%', () => {
     const { x, y, w, h } = WORLD_LAYOUT.island.bounds;
     let worst = 0;
     for (let wy = y; wy + WINDOW <= y + h; wy += WINDOW) {
@@ -107,7 +109,7 @@ describe('空地密度', () => {
         if (ratio > worst) worst = ratio;
       }
     }
-    expect(worst).toBeLessThan(0.85);
+    expect(worst).toBeLessThan(0.9);
   });
 
   it('水系拆成三湖，河流与桥码头归零', () => {

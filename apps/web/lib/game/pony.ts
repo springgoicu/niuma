@@ -276,9 +276,19 @@ export class PonyRenderer {
   }
 
   setAppearance(next: CharacterAppearance): void {
+    const previous = this.appearanceValue;
     this.appearanceValue = next;
     if (variantKey(next) !== this.builtKey) {
-      void this.build(next);
+      // 换装要按新配件重新拉贴图：失败不能让 rejection 冒到 Worker 的
+      // unhandledrejection（那会被当成渲染线程致命错误）。回退到上一套外观，
+      // 同时把 builtKey 也还原，否则下一次同款换装会被误判为「已经建过」。
+      void this.build(next).catch((error: unknown) => {
+        console.error('[game] 换装贴图加载失败，保留原外观', error);
+        if (this.appearanceValue !== next) return;
+        this.appearanceValue = previous;
+        this.builtKey = variantKey(previous);
+        void this.build(previous).catch(() => undefined);
+      });
       return;
     }
     for (const entry of this.entries) {

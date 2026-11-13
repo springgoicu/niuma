@@ -26,6 +26,7 @@ import {
   decodeSetAppearance,
   decodeSetName,
   decodeSetStatus,
+  decodeSlideRequest,
   encodeAppearanceBroadcast,
   encodeBoard,
   encodeCareerBroadcast,
@@ -40,6 +41,7 @@ import {
   encodeWelcome,
   quantizeCoord,
   sanitizeCareer,
+  SLIDE_PHASE,
   SYNC_FORMAT_LEGACY,
   isAdLikeNickname,
   readOpCode,
@@ -61,6 +63,7 @@ import { resolveRename } from './sim/name';
 import { createNpcDirector } from './npc';
 import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
+import { advanceRides, broadcastSlide, startRide } from './sim/ride';
 import { resolveSpawn } from './sim/resume';
 import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
@@ -387,6 +390,8 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_ACTION) {
+      // 滑行中不接受坐 / 躺 / 起身 / 咀嚼：位移与坐姿由 sim/ride.ts 接管
+      if (player.rideSlide !== 0 && now < player.rideEndsAt) return;
       const { action } = decodeAction(data);
       // 咀嚼是一次性事件：state 字节已满，不能挤进同步条目，限频后按视野定向广播（ADR-0048）
       if (action === ACTION.Graze) {
@@ -421,6 +426,16 @@ export function startGameServer(config: ServerConfig) {
         broadcastSeats(changes);
         if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
       }
+      return;
+    }
+
+    if (op === OpCode.C2S_SLIDE) {
+      const slideId = decodeSlideRequest(data);
+      if (slideId === undefined) return;
+      // 起滑是脚本化传送：先写坐标，再刷空间索引与视野，最后广播开始事件
+      if (!startRide(player, slideId, now)) return;
+      if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+      broadcastSlide(world, player, slideId, SLIDE_PHASE.Start, transport);
       return;
     }
 
@@ -750,12 +765,15 @@ export function startGameServer(config: ServerConfig) {
 
     // 发泄结算必须跑在 runTick 之前：受害者被推开的坐标与躺姿要赶在同一 Tick 的
     // dirty 广播里发出去。放到 runTick 之后会晚 50ms，旁观者先看到站着、再看到倒下。
-    const ventSeats = resolveVents(world, grid, seats, transport, now);
-    if (ventSeats.length > 0) broadcastSeats(ventSeats);
+    // 入座者免伤（ADR-0065），因此这里不再产生座位释放条目。
+    resolveVents(world, grid, transport, now);
 
     // 同事的行为要跑在 runTick 之前：新坐标与朝向赶在同一 Tick 的 dirty 广播里发出去
     npcs.update(now);
     npcSampler.push(npcs.updateMs);
+
+    // 滑梯与发泄同理：位置与坐姿必须在 runTick 之前落盘，否则旁观者会先看到站立再看到瞬移
+    advanceRides(world, grid, transport, now);
 
     const result = runTick(world, grid, transport, tickCount);
     tickSampler.push(result.duration);

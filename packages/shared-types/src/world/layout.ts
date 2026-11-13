@@ -6,7 +6,9 @@
  *    否则 Bun(JSC) 与浏览器(V8) 可能给出不同结果，双端会各画各的地图。
  * 2) 只描述「世界是什么」，不依赖 Pixi / Bun / DOM。渲染尺寸、贴图与配色由各自的消费方决定。
  *
- * ADR-0028：岛按 0.7 收缩到 3805×4212，海岸线保持 16 点手写折线。
+ * ADR-0028：岛按 0.7 收缩到 3805×4212。
+ * ADR-0064：海岸线取消，边界改成同一个包围盒的四条直边（矩形陆地）；
+ *   北湾 / 东湾 / 南中湾全部填成陆地，四边由一片不可通行的密林封住。
  * ADR-0044：北门内收成四角院落（一院四房）。
  * ADR-0047：去掉周报河 / 晨会溪 / 护园溪与全部桥码头，内陆连成整块；
  *   出生点移到岛心 720px 石砖圆庭，四角房之间铺放射状土路；
@@ -28,11 +30,14 @@ import {
 import { buildRibbon, type RibbonShape } from './ribbon';
 import {
   AREA_LOGOS,
+  BENCH_SEAT_OFFSET,
   CAMPUS_BUILDINGS,
   CAMPUS_RECT,
   CAMPUS_SEATS,
   CAMPUS_SOLIDS,
   DOOR_PAVING,
+  HOME_THEATER,
+  LOUNGE_COUCH_SECOND,
   MEETING_PROPS,
   MEETING_ROOM,
   NAV_ARRIVALS,
@@ -43,6 +48,7 @@ import {
   SOUTH_YARD,
   SOUTH_YARD_PAVING,
   SOUTH_YARD_PROPS,
+  THEATER_SEATS,
   WORK_PROPS,
   WORKROOM,
   WORKSTATIONS,
@@ -57,12 +63,25 @@ import {
   type SeatInstance,
   type SolidRect,
 } from './campus';
+import {
+  AMUSEMENT_PARK,
+  PARK_BUILDING,
+  PARK_GATE_PAVING,
+  PARK_NORTH_GATE,
+  PARK_PROPS,
+  PARK_RIDE_SOLIDS,
+} from './park';
 
 export {
+  BENCH_SEAT_OFFSET,
   CHAIR_GAP,
   DESK_H,
   DESK_W,
+  HOME_THEATER,
   RESTROOM_STALLS,
+  THEATER_SCREEN,
+  THEATER_SEATS,
+  THEATER_SPEAKERS,
   chairOffset,
   deskDepthOffset,
   deskFootprint,
@@ -145,7 +164,7 @@ export interface WorldLayout {
   /** 花海：纯装饰，不阻挡行走 */
   flowerFields: FlowerPatch[];
   planters: PlanterInstance[];
-  /** 海岛海岸线：服务端碰撞、客户端渲染与小地图共用的唯一陆地边界 */
+  /** 矩形陆地边界：服务端碰撞、客户端渲染与小地图共用的唯一陆地边界 */
   island: IslandShape;
   /** 按优先级排列，先命中者胜 */
   regions: RegionSpec[];
@@ -521,36 +540,21 @@ const GROVE_RADIUS = 118;
 
 export const FALLBACK_REGION = '园区野地';
 
-/** 沙滩带宽：一半在水里一半在陆地，玩家碰撞线落在沙滩中线 */
+/** 沙滩装饰带宽：从矩形边界向内铺一条，玩家碰撞线正好落在沙滩外沿 */
 export const ISLAND_SAND = 26;
-/** 浅滩带：从海岸线向外延伸的浅水色带宽度 */
-export const ISLAND_SHALLOW = 72;
 
 /**
- * 海岸线（顺时针，屏幕坐标 y 向下）。
+ * 陆地边界（顺时针，屏幕坐标 y 向下）。
  *
- * ADR-0028：以世界中心为原点对上一版（5436×6018）再乘 0.7，
- * 岛收到 3805×4212（x 2146–5951 / y 1956–6168，面积约 −48%）。
- * 西南湾填成陆地；保留北湾（x 3392–4448，探到 y 3158）、
- * 东湾（x 5598–5951 / y 3393–5009）、南中湾（x 3392–4775 / y 5989–6168）。
- * ADR-0047 不再改海岸线：外海边界与地图总尺寸原样保留。
+ * ADR-0064：取消海岸线，直接取 ADR-0028 的岛界包围盒 ——
+ * 3805×4212（x 2146–5951 / y 1956–6168，地图尺寸与 ADR-0028 完全一致）。
+ * 原来伸进地图的北湾（x 3392–4448 / y 1956–3158）、东湾（x 5598–5951 / y 3393–5009）、
+ * 南中湾（x 3392–4775 / y 5989–6168）全部变成可通行陆地。
  */
 const ISLAND_POINTS: Point[] = [
   [2146, 1956],
-  [3392, 1956],
-  [3392, 3158],
-  [4448, 3158],
-  [4448, 1956],
   [5951, 1956],
-  [5951, 3393],
-  [5598, 3393],
-  [5598, 5009],
-  [5951, 5009],
   [5951, 6168],
-  [4775, 6168],
-  [4775, 5989],
-  [3392, 5989],
-  [3392, 6168],
   [2146, 6168],
 ];
 
@@ -560,22 +564,21 @@ export const ISLAND: IslandShape = {
 };
 
 /**
- * 世界边界契约：海即边界，岛外不可达。
- * `WORLD_WIDTH/HEIGHT` 只是协议坐标上限；真正挡人的是这条海岸线包围盒。
+ * 世界边界契约：矩形四边即边界，边界外不可达（视觉上是一片密林）。
+ * `WORLD_WIDTH/HEIGHT` 只是协议坐标上限；真正挡人的是这四条直边。
  */
 export const WORLD_BOUNDS: WorldRect = ISLAND.bounds;
 
 /**
- * 半径内是否完全落在陆地上。
- * 先过包围盒，再判内外，最后量到海岸线的距离；`radius = 0` 时只判内外。
+ * 半径内是否完全落在陆地上：`radius` 是离四边的净空，`radius = 0` 时只判边界内。
+ * 矩形边界是四条直边，直接比内缩矩形即可，不再走多边形内外与距离。
  */
 export function isOnLand(x: number, y: number, radius = 0): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return false;
   const { x: bx, y: by, w, h } = WORLD_BOUNDS;
-  if (x <= bx || y <= by || x >= bx + w || y >= by + h) return false;
-  if (!pointInPolygon(x, y, ISLAND.points)) return false;
-  if (radius <= 0) return true;
-  return distanceSqToPolygon(x, y, ISLAND.points) > radius * radius;
+  const inset = radius > 0 ? radius : 0;
+  if (w <= inset * 2 || h <= inset * 2) return false;
+  return x > bx + inset && x < bx + w - inset && y > by + inset && y < by + h - inset;
 }
 
 /** 是否站在中央石砖圆庭上：圆形判定，包围盒只用于小地图与粗筛 */
@@ -607,7 +610,7 @@ function buildPath(stations: ReadonlyArray<Point>, halfWidth: number): PathShape
  * - 所有端点都落在陆地上，宽度 112 / 96，转弯处由 miter 收成圆滑的带状。
  */
 const PATHS: PathShape[] = [
-  // 北入口：圆庭北缘 → 北湾南岸
+  // 北入口：圆庭北缘 → 北侧开阔地
   buildPath(
     [
       [4096, 3736],
@@ -657,13 +660,15 @@ const PATHS: PathShape[] = [
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
-  // 西南支路：西向主路 → 涟漪湖东岸
+  // 西南支路：西向主路 → 涟漪湖东岸 → 游乐园北门
   buildPath(
     [
       [3050, 4070],
       [2950, 4400],
       [2850, 4800],
       [2780, 5050],
+      [2780, 5300],
+      [PARK_NORTH_GATE.x, PARK_NORTH_GATE.y],
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
@@ -699,6 +704,15 @@ const PATHS: PathShape[] = [
       [4270, 4270],
       [4460, 4300],
       [4626, 4290],
+    ],
+    PATH_BRANCH_HALF_WIDTH,
+  ),
+  // 影音室支路：南向主路 → 东门前的铺装（门洞 / 支路同在 y=4950）
+  buildPath(
+    [
+      [4096, 4950],
+      [3990, 4950],
+      [3900, 4950],
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
@@ -830,16 +844,20 @@ const REGIONS: RegionSpec[] = [
     name: LAKE_NAMES[index]!,
     rect: rectExpanded(lake.rect, 50),
   })),
-  // 北门入园口：从海滩到院落北缘的一小段，含北向主路
+  // 北门入园口：北向主路的尽端，接院落北缘
   { name: '牛马园北门', rect: { x: 3824, y: 3184, w: 544, h: 292 } },
   // 四间房在办公区内部，必须先于「办公区」命中（ADR-0044）
   { name: '工作区', rect: WORKROOM },
   { name: '会议室', rect: MEETING_ROOM },
   { name: '宿舍区', rect: LOUNGE },
   { name: '卫生间', rect: RESTROOM },
+  // 校园与庭院之间的独立影厅（本轮新增）
+  { name: '家庭影音室', rect: HOME_THEATER },
   // 圆庭外缘 120px 的迎宾带：拱门、四向导览牌与四向路口都算广场
   { name: '中央迎宾广场', rect: rectExpanded(PLAZA, 120) },
   { name: '办公区', rect: CAMPUS_RECT },
+  // 地图下方的游乐园：区域名只影响状态栏文案
+  { name: '游乐园', rect: AMUSEMENT_PARK },
   { name: '研发园', rect: SOUTH_YARD },
 ];
 
@@ -917,11 +935,17 @@ function tooClose(x: number, y: number, trees: ReadonlyArray<TreeInstance>, gap:
  * 留白随地形件一起收紧：漏改这一处，树就会重新长进广场与门口。
  */
 function isPlantable(x: number, y: number): boolean {
-  if (!isOnLand(x, y, 30)) return false;
+  // 留白 = 沙带宽 + 树冠半宽：树冠（向两侧各探 36px）不能压到边界沙滩上（ADR-0064）
+  if (!isOnLand(x, y, ISLAND_SAND + 36)) return false;
   const plazaDx = x - PLAZA_CENTER.x;
   const plazaDy = y - PLAZA_CENTER.y;
   if (plazaDx * plazaDx + plazaDy * plazaDy < (PLAZA_RADIUS + 60) * (PLAZA_RADIUS + 60)) return false;
   if (rectContains(rectExpanded(CAMPUS_RECT, 70), x, y)) return false;
+  // 所有有地板的建筑（四间房 + 影音室 + 游乐园）都留 40px 树带
+  for (const building of CAMPUS_BUILDINGS) {
+    if (rectContains(rectExpanded(building.rect, 40), x, y)) return false;
+  }
+  if (rectContains(rectExpanded(AMUSEMENT_PARK, 40), x, y)) return false;
   // 竹林留白：这两片交给竹子，普通树不再混长进来（ADR-0061 的「替换部分普通树木」）
   for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
   if (rectContains(rectExpanded(SOUTH_YARD, 40), x, y)) return false;
@@ -952,12 +976,10 @@ function isPlantable(x: number, y: number): boolean {
 const FLOWER_FIELDS: FlowerPatch[] = [
   { rect: { x: 2180, y: 4400, w: 250, h: 170 }, palette: 2 },
   { rect: { x: 5150, y: 4900, w: 200, h: 160 }, palette: 1 },
-  { rect: { x: 2950, y: 5980, w: 380, h: 150 }, palette: 0 },
   { rect: { x: 5300, y: 5960, w: 300, h: 160 }, palette: 0 },
   { rect: { x: 2880, y: 3260, w: 240, h: 150 }, palette: 1 },
   { rect: { x: 2180, y: 4550, w: 240, h: 220 }, palette: 2 },
   { rect: { x: 5250, y: 3450, w: 180, h: 140 }, palette: 1 },
-  { rect: { x: 3550, y: 4780, w: 220, h: 160 }, palette: 2 },
 ];
 
 function buildGroves(): TreeCluster[] {
@@ -1157,9 +1179,11 @@ const SEAT_DRAFTS: Array<Omit<SeatInstance, 'id'>> = [
   ...LOUNGE_SEATS.map((seat) => ({ ...seat, desk: -1 })),
   // 摸鱼亭四张石鼓凳（ADR-0061）：`drum` 与 `stool` 一样走坐姿，只是外观换成石鼓
   ...PAVILION_SEATS.map((seat) => ({ ...seat, desk: -1 })),
+  // 新增座位一律追加在末尾：本地 `niuma:session:v1` 里存着 seatId，
+  // 插在中间会让既有工位 / 床 / 石鼓凳的 id 整体后移。
+  { ...LOUNGE_COUCH_SECOND, desk: -1 },
+  ...THEATER_SEATS.map((seat) => ({ ...seat, desk: -1 })),
 ];
-
-const SEATS: SeatInstance[] = SEAT_DRAFTS.map((seat, index) => ({ id: index + 1, ...seat }));
 
 /** 入座判定半径：角色中心与座位锚点的距离，超出则不会就座（服务端与客户端共用） */
 export const SIT_RANGE = 90;
@@ -1262,6 +1286,14 @@ function southYardHedges(): PropInstance[] {
   }
   for (const edgeX of [x + HEDGE_INSET, x + w - HEDGE_INSET]) {
     for (let py = y + 40; py <= y + h - 40; py += HEDGE_STEP) {
+      // 西侧正对游乐园东门的那一段断开：树篱让路，铺装接住
+      if (
+        edgeX === x + HEDGE_INSET &&
+        py > PARK_GATE_PAVING.y &&
+        py < PARK_GATE_PAVING.y + PARK_GATE_PAVING.h
+      ) {
+        continue;
+      }
       out.push({ kind: 'hedge', x: edgeX, y: py });
     }
   }
@@ -1277,9 +1309,31 @@ const PROPS: PropInstance[] = [
   ...WORK_PROPS,
   ...LOUNGE_PROPS,
   ...AREA_LOGOS,
+  ...PARK_PROPS,
   ...BAMBOO_PROPS,
   ...TAIHU_PROPS,
   ...southYardHedges(),
+];
+
+/**
+ * 长椅座位：外观与 40×16 碰撞仍由道具管线负责，这里只登记坐点。
+ *
+ * 坐点固定在长椅底座前方 `BENCH_SEAT_OFFSET` 处，避开自身碰撞盒；
+ * 长椅统一面朝南（靠背在北侧），与 `drawProp` 的固定画法一致。
+ * 必须追加在 `SEAT_DRAFTS` 末尾——`niuma:session:v1` 里存着既有 seatId。
+ */
+const BENCH_SEATS: SeatInstance[] = PROPS.filter((prop) => prop.kind === 'bench').map((prop, index) => ({
+  id: SEAT_DRAFTS.length + index + 1,
+  x: prop.x,
+  y: prop.y + BENCH_SEAT_OFFSET,
+  facing: DIRECTION.Down,
+  kind: 'bench',
+  desk: -1,
+}));
+
+const SEATS: SeatInstance[] = [
+  ...SEAT_DRAFTS.map((seat, index) => ({ id: index + 1, ...seat })),
+  ...BENCH_SEATS,
 ];
 
 /**
@@ -1321,9 +1375,11 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...MOPING_PAVILION_SOLIDS,
     { kind: 'prop', ...SHRINE_ALTAR_SOLID },
     { kind: 'prop', ...TEA_STATION_SOLID },
+    // 游乐园器械底座（滑梯塔楼 / 秋千 / 跷跷板 / 旋转木马）
+    ...PARK_RIDE_SOLIDS,
   ],
-  buildings: CAMPUS_BUILDINGS,
-  paved: [SOUTH_YARD_PAVING, ...DOOR_PAVING],
+  buildings: [...CAMPUS_BUILDINGS, PARK_BUILDING],
+  paved: [SOUTH_YARD_PAVING, PARK_GATE_PAVING, ...DOOR_PAVING],
 };
 
 /** 玩家所在区域名：中央圆庭优先，其余按区域表顺序命中，未命中则落到野地 */

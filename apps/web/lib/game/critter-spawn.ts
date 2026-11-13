@@ -1,16 +1,6 @@
 'use client';
 
-import {
-  ISLAND,
-  PLAZA_RADIUS,
-  WORLD_CENTER,
-  WORLD_LAYOUT,
-  distanceSqToPolygon,
-  isBlocked,
-  isWaterAt,
-  pointInPolygon,
-  type WorldRect,
-} from '@niuma/shared-types';
+import { ISLAND, WORLD_LAYOUT, distanceSqToPolygon, isBlocked, isWaterAt, pointInPolygon } from '@niuma/shared-types';
 import { isOutdoorGround } from './ground';
 import { seeded } from './seeded';
 
@@ -25,7 +15,7 @@ import { seeded } from './seeded';
  * 3. **稀疏**：320px 网格每格最多一只 + 80px 最小间距，避免出生就挤成一堆。
  */
 
-/** 地面小动物人口：72 只撒在 3805×4212 的岛上，视野内通常 2–4 只 */
+/** 地面兔子人口：72 只撒在 3805×4212 的岛上，视野内通常 2–4 只 */
 export const GROUND_POPULATION = 72;
 /** 蝴蝶人口：集中在花海周边，同一片花海里能看到 2–4 只 */
 export const BUTTERFLY_POPULATION = 18;
@@ -49,17 +39,12 @@ const ATTEMPTS_PER_CELL = 12;
 /** 撒点用的碰撞半径：比玩家小得多，动物才能钻进树与花箱之间的缝 */
 const SPAWN_RADIUS = 6;
 
-const NEAR_FLOWER = 240;
-const NEAR_GROVE = 180;
-const NEAR_ROAD = 200;
-
 export interface GroundSpawn {
   x: number;
   y: number;
   homeX: number;
   homeY: number;
-  /** 0 兔 / 1 猫 / 2 狗 */
-  species: number;
+  /** 兔子配色：0 奶油白 / 1 燕麦灰 / 2 焦糖棕 */
   variant: number;
   dirX: number;
   dirY: number;
@@ -75,66 +60,6 @@ export interface ButterflySpawn {
   radiusY: number;
   /** 角速度，弧度/秒 */
   speed: number;
-}
-
-/** 点到矩形的最近距离平方；点在矩形内为 0 */
-function rectGapSq(rect: WorldRect, x: number, y: number): number {
-  const dx = x < rect.x ? rect.x - x : x > rect.x + rect.w ? x - (rect.x + rect.w) : 0;
-  const dy = y < rect.y ? rect.y - y : y > rect.y + rect.h ? y - (rect.y + rect.h) : 0;
-  return dx * dx + dy * dy;
-}
-
-/** 点到一条带状路多边形的最短距离平方；点在路内为 0 */
-function pathGapSq(path: { polygon: ReadonlyArray<readonly [number, number]> }, x: number, y: number): number {
-  if (pointInPolygon(x, y, path.polygon)) return 0;
-  return distanceSqToPolygon(x, y, path.polygon);
-}
-
-/** 点到石砖圆庭的最短距离平方；点在圆内为 0 */
-function plazaGapSq(x: number, y: number): number {
-  const distance = Math.hypot(x - WORLD_CENTER.x, y - WORLD_CENTER.y) - PLAZA_RADIUS;
-  return distance <= 0 ? 0 : distance * distance;
-}
-
-/** 点到树丛边缘的最短距离平方 */
-function groveGapSq(x: number, y: number): number {
-  let best = Number.POSITIVE_INFINITY;
-  for (const grove of WORLD_LAYOUT.groves) {
-    const dx = Math.max(0, Math.abs(x - grove.x) - grove.radius);
-    const dy = Math.max(0, Math.abs(y - grove.y) - grove.radius);
-    const gap = dx * dx + dy * dy;
-    if (gap < best) best = gap;
-  }
-  return best;
-}
-
-/**
- * 生境权重：兔靠近花海与树丛、猫靠近园路与广场、狗留在开阔草地。
- * 权重只影响「这只落在哪个格子里时是谁」，不改变总量。
- */
-function pickSpecies(x: number, y: number, random: number): number {
-  const nearFlower = nearestRectGapSq(WORLD_LAYOUT.flowerFields.map((field) => field.rect), x, y);
-  const nearGrove = groveGapSq(x, y);
-  const nearRoad = Math.min(
-    WORLD_LAYOUT.paths.reduce((best, path) => Math.min(best, pathGapSq(path, x, y)), Number.POSITIVE_INFINITY),
-    plazaGapSq(x, y),
-  );
-  const rabbit = 1 + (nearFlower < NEAR_FLOWER * NEAR_FLOWER ? 2 : 0) + (nearGrove < NEAR_GROVE * NEAR_GROVE ? 1 : 0);
-  const cat = 1 + (nearRoad < NEAR_ROAD * NEAR_ROAD ? 2 : 0);
-  const dog = 1 + (nearRoad >= NEAR_ROAD * NEAR_ROAD && nearFlower >= NEAR_FLOWER * NEAR_FLOWER ? 1 : 0);
-  const total = rabbit + cat + dog;
-  const roll = random * total;
-  if (roll < rabbit) return 0;
-  return roll < rabbit + cat ? 1 : 2;
-}
-
-function nearestRectGapSq(rects: readonly WorldRect[], x: number, y: number): number {
-  let best = Number.POSITIVE_INFINITY;
-  for (const rect of rects) {
-    const gap = rectGapSq(rect, x, y);
-    if (gap < best) best = gap;
-  }
-  return best;
 }
 
 /**
@@ -187,7 +112,6 @@ export function planGroundCritters(seed: number): GroundSpawn[] {
         y,
         homeX: x,
         homeY: y,
-        species: pickSpecies(x, y, random()),
         variant: Math.floor(random() * 3),
         dirX: Math.cos(angle),
         dirY: Math.sin(angle),

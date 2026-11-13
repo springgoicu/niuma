@@ -3,6 +3,9 @@
 import { Container, Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
 import {
   RESTROOM_STALLS,
+  THEATER_SCREEN,
+  THEATER_SEATS,
+  THEATER_SPEAKERS,
   WORLD_LAYOUT,
   type BuildingSpec,
   type PropInstance,
@@ -652,17 +655,20 @@ export class InteriorArt {
     const meeting = roomOf('会议室');
     const lounge = roomOf('宿舍区');
     const restroom = roomOf('卫生间');
+    const theater = roomOf('家庭影音室');
 
     if (work) this.decorateWorkroom(flat, work);
     if (meeting) this.decorateMeeting(flat, meeting);
     if (lounge) this.decorateLounge(flat, lounge);
     if (restroom) this.decorateRestroom(flat, restroom);
+    if (theater) this.decorateTheater(flat, theater);
     base.addChild(flat);
 
     if (work) this.furnishWorkroom(depth, renderer, work);
     if (meeting) this.furnishMeeting(depth, renderer, meeting);
     if (lounge) this.furnishLounge(depth, renderer, lounge);
     if (restroom) this.decorateRestroomFittings(depth, renderer, restroom);
+    if (theater) this.furnishTheater(depth, renderer, theater);
   }
 
   destroy(): void {
@@ -862,8 +868,8 @@ export class InteriorArt {
     // 南墙软木留言板：离职倒计时 365
     this.corkBoard(g, x + 150, y + 330, 60, 18);
 
-    // 地面：圆形编织地毯 + 床边长毯 + 床脚拖鞋
-    this.roundRug(g, x + 250, y + 250, 34);
+    // 地面：圆形编织地毯铺在茶几下方 + 床边长毯 + 床脚拖鞋
+    this.roundRug(g, x + 341, y + 134, 34);
     rect(g, x + 70, y + 326, 52, 10, COLOR.carpetDark);
     rect(g, x + 71, y + 327, 50, 8, 0xe8cbaa);
     for (let i = 0; i < 5; i += 1) rect(g, x + 74 + i * 10, y + 329, 1, 4, COLOR.carpetDark);
@@ -886,11 +892,108 @@ export class InteriorArt {
     this.place(depth, renderer, 'rack', drawLuggageRack, LUGGAGE_RACK, x + 300, y + 320);
     this.place(depth, renderer, 'coat-rack', drawCoatRack, COAT_RACK, x + 438, y + 250);
 
-    // 床头几上的枸杞热水杯：位置从共享 sideTable 反查，杯底落在桌面上
-    const sideTable = propsIn(room, 'sideTable')[0];
-    if (sideTable) {
-      this.place(depth, renderer, 'hot-cup', drawHotCup, HOT_CUP, sideTable.x, sideTable.y - 10, sideTable.y + 1);
+    // 茶几上的枸杞热水杯：位置从共享 coffeeTable 反查，杯底落在桌面上
+    const coffeeTable = propsIn(room, 'coffeeTable')[0];
+    if (coffeeTable) {
+      this.place(depth, renderer, 'hot-cup', drawHotCup, HOT_CUP, coffeeTable.x, coffeeTable.y - 8, coffeeTable.y + 1);
     }
+  }
+
+  /* ---------------- 家庭影音室：深色地毯 + 冷蓝屏幕 + 四只环绕音箱 ---------------- */
+
+  private decorateTheater(g: Graphics, room: Room): void {
+    const { x, y, w, h } = room.rect;
+    const t = room.wall;
+    const innerX = x + t;
+    const innerY = y + t;
+    const innerW = w - t * 2;
+    const innerH = h - t * 2;
+
+    // 暗厅：地面再压一层冷黑，屏幕光才有对比；地毯接缝每 48px 一道
+    wash(g, innerX, innerY, innerW, innerH, 0x0b0e14, 0.3);
+    for (let sy = innerY + 48; sy < innerY + innerH; sy += 48) rect(g, innerX, sy, innerW, 1, 0x1b2029);
+
+    // 东侧走道：从门一直铺到屏幕前，酒红地毯；踏步灯落在走道内侧
+    const aisleX = x + w - 66;
+    rect(g, aisleX, innerY, 38, innerH, 0x4a2a2e);
+    rect(g, aisleX + 2, innerY, 34, innerH, 0x5c3438);
+
+    // 三排台阶：每排前缘一条亮边 + 下方阴影，逐排错位读出「阶梯」
+    const rowYs = [...new Set(THEATER_SEATS.map((seat) => seat.y))].sort((a, b) => a - b);
+    rowYs.forEach((rowY, index) => {
+      const stepY = rowY - 22;
+      rect(g, innerX + 8, stepY, innerW - 16, 7, 0x2a303d);
+      rect(g, innerX + 8, stepY, innerW - 16, 2, 0x4a5468);
+      rect(g, innerX + 8, stepY + 7, innerW - 16, 1, 0x12161d);
+      if (index < rowYs.length - 1) dot(g, aisleX + 6, stepY + 3, 2, 0xffd27a, 0x2a3142);
+    });
+
+    // 屏幕：北墙大屏 + 三层硬边光池（越靠外越淡）
+    const screen = THEATER_SCREEN;
+    wash(g, screen.x - 8, screen.y - 2, screen.w + 16, screen.h + 12, 0x7fd6ff, 0.05);
+    wash(g, screen.x + 10, screen.y + screen.h, screen.w - 20, 44, 0x7fd6ff, 0.06);
+    wash(g, screen.x + 26, screen.y + screen.h, screen.w - 52, 74, 0x7fd6ff, 0.04);
+    box(g, screen.x, screen.y, screen.w, screen.h, 0x121a26, 0x0b0e14);
+    rect(g, screen.x + 2, screen.y + 2, screen.w - 4, screen.h - 4, 0x0f2238);
+    // 画面：夜空星点 + 月亮 + 两层远山 + 一叶小舟
+    for (let i = 0; i < 14; i += 1) {
+      rect(g, screen.x + 8 + i * 17, screen.y + 8 + ((i * 7) % 18), 1, 1, 0x9fd3ff);
+    }
+    dot(g, screen.x + 58, screen.y + 20, 7, 0xfff6e0, 0x0f2238);
+    g.poly([screen.x + 12, screen.y + 48, screen.x + 82, screen.y + 28, screen.x + 152, screen.y + 48]).fill(0x1d3b5a);
+    g.poly([screen.x + 72, screen.y + 48, screen.x + 132, screen.y + 34, screen.x + 192, screen.y + 48]).fill(0x2a5478);
+    rect(g, screen.x + 150, screen.y + 44, 18, 2, 0x8fd4ff);
+    g.poly([screen.x + 158, screen.y + 41, screen.x + 158, screen.y + 48, screen.x + 165, screen.y + 44]).fill(0x8fd4ff);
+
+    // 四只环绕音箱：前左 / 前右 / 后左 / 后右，金色锥盆 + 一圈冷光
+    for (const speaker of THEATER_SPEAKERS) {
+      wash(g, speaker.x - 10, speaker.y - 12, 20, 24, 0x7fd6ff, 0.06);
+      box(g, speaker.x - 7, speaker.y - 9, 14, 18, 0x2a3142, 0x12161d);
+      rect(g, speaker.x - 1, speaker.y - 7, 2, 14, 0x12161d);
+      dot(g, speaker.x, speaker.y - 2, 3, 0x4a5468, 0x12161d);
+      dot(g, speaker.x, speaker.y + 4, 2, COLOR.amber, 0x12161d);
+    }
+
+    // 投影仪：南墙中央，一束淡蓝光打向屏幕
+    const projectorX = x + w / 2;
+    const projectorY = y + h - 22;
+    g.poly([
+      projectorX - 4,
+      projectorY,
+      screen.x + 20,
+      screen.y + screen.h,
+      screen.x + screen.w - 20,
+      screen.y + screen.h,
+    ]).fill({ color: 0x7fd6ff, alpha: 0.04 });
+    box(g, projectorX - 12, projectorY - 4, 24, 12, 0x2a3142, 0x12161d);
+    dot(g, projectorX, projectorY + 1, 3, 0x7fd6ff, 0x12161d);
+    rect(g, projectorX - 9, projectorY + 6, 18, 2, 0x12161d);
+
+    // 两盏灯：屏幕冷光 + 入口暖光；数量控制在 2 个，给外景光源留额度
+    this.lights.push(
+      {
+        x: screen.x + screen.w / 2,
+        y: screen.y + screen.h + 12,
+        radius: 150,
+        color: 0x7fd6ff,
+        intensity: 0.62,
+        flicker: 0.03,
+      },
+      {
+        x: x + w - 48,
+        y: y + 160,
+        radius: 60,
+        color: 0xffc07a,
+        intensity: 0.5,
+        flicker: 0.1,
+      },
+    );
+  }
+
+  private furnishTheater(depth: DepthSink, renderer: TextureFactory, room: Room): void {
+    const { x, y, h } = room.rect;
+    // 爆米花车压在西南角：不挡东侧走道，也不压任何座位
+    this.place(depth, renderer, 'theater-cart', drawCart, CART, x + 28, y + h - 12);
   }
 
   /* ---------------- 卫生间：薄荷马赛克 + 连体洗手台 ---------------- */

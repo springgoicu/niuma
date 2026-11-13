@@ -164,6 +164,10 @@ export const RESUME_BYTES = 8;
 export const QUEUE_STATUS_BYTES = 16;
 /** 发泄结算：op(1) + attackerId(2) + targetId(2) + x(2) + y(2) */
 export const VENT_PACKET_BYTES = 9;
+/** 滑梯请求：op(1) + slideId(1) */
+export const SLIDE_REQUEST_BYTES = 2;
+/** 滑行事件：op(1) + entityId(2) + slideId(1) + phase(1) */
+export const SLIDE_EVENT_BYTES = 5;
 /** 排队拒绝：op(1) + reason(1) */
 export const QUEUE_REJECT_BYTES = 2;
 /** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */

@@ -3,7 +3,9 @@
 import {
   BULLETIN_BOARD,
   DIRECTION,
+  PARK_SLIDE,
   POSE,
+  SLIDE_INTERACT_RANGE,
   SHRINE_ALTAR,
   TEA_STATION,
   WELCOME_LANDMARKS,
@@ -88,6 +90,26 @@ export function isNearTeaStation(x: number, y: number, range: number = TEA_INTER
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
   const dx = x - TEA_STATION.x;
   const dy = y - TEA_STATION.y;
+  return dx * dx + dy * dy <= range * range;
+}
+
+/**
+ * 游乐园入口滑梯（本轮新增）。
+ *
+ * 点击命中用整块精灵矩形（塔楼 + 滑道）；按键与「人在不在旁边」只认落地点，
+ * 与共享布局的 `SLIDE_INTERACT_RANGE` 同一把尺子。服务端再校验一次距离，
+ * 客户端这道只负责「站远了别发请求」，不承担权威裁决。
+ */
+export function isSlideHit(x: number, y: number): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const { x: left, y: top, w, h } = PARK_SLIDE.hit;
+  return x >= left && x <= left + w && y >= top && y <= top + h;
+}
+
+export function isNearSlide(x: number, y: number, range: number = SLIDE_INTERACT_RANGE): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  const dx = x - PARK_SLIDE.landing.x;
+  const dy = y - PARK_SLIDE.landing.y;
   return dx * dx + dy * dy <= range * range;
 }
 

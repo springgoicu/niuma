@@ -3,12 +3,48 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Link2, MonitorCheck, MonitorDown, X } from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
-import { detectInstallPlatform, installGuide, type InstallPlatform } from '@/lib/install-guide';
+import {
+  detectInstallPlatform,
+  installGuide,
+  type InstallGuide,
+  type InstallPlatform,
+} from '@/lib/install-guide';
 import { copyPageLink, promptInstall } from '@/lib/install-prompt';
 import { useInstallPrompt } from '@/lib/use-install-prompt';
+import { hudButtonClassName } from './Hud';
 
 /** 「已复制」就地停留的时长：够看清，又不至于让按钮一直是完成态 */
 const COPIED_MS = 1600;
+
+/**
+ * 手动引导正文：主路径（没有安装信号）与被拒之后的兜底路径共用同一段文案，
+ * 避免两处各写一套步骤、改一处漏一处。
+ */
+function GuideSteps({ guide }: { guide: InstallGuide }) {
+  return (
+    <>
+      <p className="font-display text-[14px] font-semibold leading-tight text-mist-100">
+        {guide.heading}
+      </p>
+      <ol className="mt-2 space-y-1.5">
+        {guide.steps.map((step, index) => (
+          <li key={step} className="flex gap-2">
+            <span
+              aria-hidden
+              className="mt-px shrink-0 font-mono text-[9px] tabular-nums text-mint-400/80"
+            >
+              {String(index + 1).padStart(2, '0')}
+            </span>
+            <span className="text-[10px] leading-relaxed text-mist-300">{step}</span>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-2 border-l-2 border-ink-600 pl-2 text-[9px] leading-relaxed text-mist-400">
+        {guide.shortcut}
+      </p>
+    </>
+  );
+}
 
 /**
  * 园区右上角的「存到桌面」入口。
@@ -27,6 +63,10 @@ export function InstallAppButton({ compact = false }: { compact?: boolean }) {
   const { canPrompt, installed } = useInstallPrompt();
   const [platform, setPlatform] = useState<InstallPlatform>('desktop-other');
   const [copied, setCopied] = useState(false);
+  /** 正在等原生安装框的答复：期间禁用按钮，避免连点二次弹框 */
+  const [pending, setPending] = useState(false);
+  /** 上一次安装尝试的结果：取消与失败都要有可见反馈，不能点完像没反应 */
+  const [note, setNote] = useState<'cancelled' | 'blocked' | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const copiedTimer = useRef<number | null>(null);
 
@@ -80,6 +120,28 @@ export function InstallAppButton({ compact = false }: { compact?: boolean }) {
     copiedTimer.current = window.setTimeout(() => setCopied(false), COPIED_MS);
   }, []);
 
+  /**
+   * 弹原生安装框。
+   *
+   * 事件是一次性的：被取消就真的用掉了（`dismissed`），但「没弹起来」
+   * 不该把这次会话的安装能力一起没收——`promptInstall()` 会把事件放回去，
+   * 所以这里允许用户再点一次。
+   */
+  const install = useCallback(async () => {
+    if (pending) return;
+    setPending(true);
+    setNote(null);
+    const outcome = await promptInstall();
+    setPending(false);
+    if (outcome === 'dismissed') setNote('cancelled');
+    else if (outcome === 'unavailable') setNote('blocked');
+  }, [pending]);
+
+  const toggle = useCallback(() => {
+    setNote(null);
+    setInstallOpen(!open);
+  }, [open, setInstallOpen]);
+
   const guide = installGuide(platform);
   const label = installed ? '已在桌面' : '存到桌面';
 
@@ -87,24 +149,19 @@ export function InstallAppButton({ compact = false }: { compact?: boolean }) {
     <div ref={rootRef} className="pointer-events-auto relative">
       <button
         type="button"
-        onClick={() => setInstallOpen(!open)}
+        onClick={toggle}
         aria-expanded={open}
         aria-controls="install-app-panel"
         aria-label={open ? '收起桌面入口' : `${label}，可加到桌面、主屏或书签`}
         title={installed ? '已经在桌面上了' : '存到桌面 · 加到主屏或书签'}
         data-install-trigger
-        className={`flex cursor-pointer items-center border-2 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] backdrop-blur-sm transition-colors focus-visible:border-mint-400 focus-visible:outline-none ${
-          open
-            ? 'border-mint-400/60 text-mint-400'
-            : 'border-ink-600 text-mist-500 hover:border-mint-400/60 hover:text-mint-400'
-        } ${compact ? 'h-9 w-9 justify-center' : 'min-h-9 gap-1.5 px-2 py-1.5'}`}
+        className={hudButtonClassName({ compact, active: open })}
       >
         {installed ? (
-          <MonitorCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <MonitorCheck className="h-4 w-4" aria-hidden />
         ) : (
-          <MonitorDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <MonitorDown className="h-4 w-4" aria-hidden />
         )}
-        {!compact && <span>{label}</span>}
       </button>
 
       {open && (
@@ -147,41 +204,37 @@ export function InstallAppButton({ compact = false }: { compact?: boolean }) {
           ) : canPrompt ? (
             <div className="px-3 py-3">
               <p className="font-display text-[14px] font-semibold leading-tight text-mist-100">
-                把园区装到桌面
+                {note === 'blocked' ? '这次没装成' : '把园区装到桌面'}
               </p>
               <p className="mt-1 text-[10px] leading-relaxed text-mist-300">
-                桌面或任务栏会多一个牛马图标，点开直接进上次那座园区。
+                {note === 'blocked'
+                  ? '浏览器这次没允许安装，可以再点一次，也可以按下面的方式手动添加。'
+                  : '桌面或任务栏会多一个牛马图标，点开直接进上次那座园区。'}
               </p>
               <button
                 type="button"
-                onClick={() => void promptInstall()}
-                className="mt-2.5 flex w-full cursor-pointer items-center justify-center gap-1.5 border-2 border-mint-400 bg-mint-400/15 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-mint-400 transition-colors hover:bg-mint-400/25 focus-visible:bg-mint-400/25 focus-visible:outline-none"
+                onClick={() => void install()}
+                disabled={pending}
+                className="mt-2.5 flex w-full cursor-pointer items-center justify-center gap-1.5 border-2 border-mint-400 bg-mint-400/15 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-mint-400 transition-colors hover:bg-mint-400/25 focus-visible:bg-mint-400/25 focus-visible:outline-none disabled:cursor-progress disabled:opacity-60"
               >
                 <MonitorDown className="h-3.5 w-3.5" aria-hidden />
-                装到桌面
+                {pending ? '正在唤起安装…' : note === 'blocked' ? '再试一次' : '装到桌面'}
               </button>
+              {note === 'blocked' && (
+                <div className="mt-2.5 border-t-2 border-ink-700 pt-2.5">
+                  <GuideSteps guide={guide} />
+                </div>
+              )}
             </div>
           ) : (
             <div className="px-3 pb-2.5 pt-3">
-              <p className="font-display text-[14px] font-semibold leading-tight text-mist-100">
-                {guide.heading}
-              </p>
-              <ol className="mt-2 space-y-1.5">
-                {guide.steps.map((step, index) => (
-                  <li key={step} className="flex gap-2">
-                    <span
-                      aria-hidden
-                      className="mt-px shrink-0 font-mono text-[9px] tabular-nums text-mint-400/80"
-                    >
-                      {String(index + 1).padStart(2, '0')}
-                    </span>
-                    <span className="text-[10px] leading-relaxed text-mist-300">{step}</span>
-                  </li>
-                ))}
-              </ol>
-              <p className="mt-2 border-l-2 border-ink-600 pl-2 text-[9px] leading-relaxed text-mist-400">
-                {guide.shortcut}
-              </p>
+              {/* 取消一次之后 Chromium 会收回这次的安装信号：说清楚为什么换成了手动步骤 */}
+              {note === 'cancelled' && (
+                <p role="status" className="mb-2 border-l-2 border-amber-400/60 pl-2 text-[9px] leading-relaxed text-amber-400">
+                  已取消安装。想再装可以按下面的步骤添加。
+                </p>
+              )}
+              <GuideSteps guide={guide} />
             </div>
           )}
 

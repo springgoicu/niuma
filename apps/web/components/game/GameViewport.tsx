@@ -13,9 +13,11 @@ import {
 import { BadgeCard } from '@/components/BadgeCard';
 import { BulletinModal } from '@/components/BulletinModal';
 import { RemoteArchiveDialog } from '@/components/badge/RemoteArchiveDialog';
+import { reloadForStaleAssets } from '@/lib/build-version';
 import { parseSpeciesParam } from '@/lib/creator-seed';
 import { useGameUi } from '@/lib/game-ui';
 import { loadDanmakuPrefs, saveDanmakuPrefs } from '@/lib/danmaku-prefs';
+import { isAtlasVersionMismatch } from '@/lib/game/atlas-errors';
 import { loadAttendance, startAttendanceClock, useAttendance } from '@/lib/game/attendance';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from '@/lib/game/danmaku-prefs';
 import type { PlayerBadge } from '@/lib/game/badge';
@@ -43,7 +45,14 @@ import {
 import { ActionBar } from './ActionBar';
 import type { BadgeSavePayload } from './BadgeEditor';
 import { ChatDock } from './ChatDock';
-import { ConnectionBanner, OnlineBadge, SfxToggle } from './Hud';
+import {
+  ConnectionBanner,
+  HudDivider,
+  HudDock,
+  HudStatus,
+  SfxToggle,
+  hudButtonClassName,
+} from './Hud';
 import { InstallAppButton } from './InstallAppButton';
 import { JoinGate } from './JoinGate';
 import { LeaderboardDialog } from './LeaderboardDialog';
@@ -359,6 +368,12 @@ export function GameViewport({
       })
       .catch((error: unknown) => {
         console.error('[game] session failed', error);
+        // 素材版本错配不是渲染器缺陷：换一张匹配的页面比红条正确；
+        // 守卫拦下（已经刷过一次）时才退化成玩家可读的提示。
+        if (isAtlasVersionMismatch(error)) {
+          if (!reloadForStaleAssets()) setStatus('error', '园区刚更新过，请刷新页面');
+          return;
+        }
         setStatus('error', '渲染器初始化失败');
       });
     return () => {
@@ -492,6 +507,56 @@ export function GameViewport({
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }, []);
 
+  /**
+   * 右上角工具栏的三组按钮。
+   *
+   * 全部方形等距、只共享外层一圈边框（`HudDock`），不再有文字胶囊：
+   * 悬停 / 展开态由 `hudButtonClassName` 统一，语义靠 `aria-label` + `title`。
+   */
+  const hudToolButtons = (
+    <>
+      <NoticeBoard compact={isTouch} />
+      <InstallAppButton compact={isTouch} />
+      <SfxToggle compact={isTouch} />
+      {/* 手机端唯一全屏入口：只有这里的手动点击才会收起浏览器界面 */}
+      {isTouch && immersive.supported && (
+        <button
+          type="button"
+          onClick={immersive.toggle}
+          aria-pressed={immersive.active}
+          aria-label={immersive.active ? '退出全屏' : '全屏游戏'}
+          title={immersive.active ? '退出全屏' : '全屏游戏'}
+          className={hudButtonClassName({ compact: isTouch, active: immersive.active })}
+        >
+          {immersive.active ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+        </button>
+      )}
+    </>
+  );
+
+  /** 多园区部署才有切换入口；单园区把它整段藏掉，不留一条空分隔线 */
+  const hudSwitchButton = canSwitchPark ? (
+    <Link
+      href="/enter?from=play"
+      aria-label="切换园区"
+      title={`切换园区（当前在${parkName}）`}
+      className={hudButtonClassName({ compact: isTouch })}
+    >
+      <Shuffle className="h-4 w-4" />
+    </Link>
+  ) : null;
+
+  const hudLogoutButton = (
+    <Link
+      href="/"
+      aria-label="打卡下班"
+      title="打卡下班"
+      className={hudButtonClassName({ compact: isTouch, danger: true })}
+    >
+      <LogOut className="h-4 w-4" />
+    </Link>
+  );
+
   return (
     <div
       className="no-callout relative h-dvh w-full touch-none select-none overflow-hidden bg-ink-950"
@@ -536,9 +601,8 @@ export function GameViewport({
               isTouch ? 'game-safe' : 'p-4'
             }`}
           >
-            {/* 手机端横向顶栏：左侧折叠工牌、右侧控件；竖屏时右侧再拆成
-                「在线徽标 + 2×2 图标格」两行，390px 宽也不会横向溢出。
-                对齐用 items-start，工牌展开时只向下长，右侧控件不跟着跳。 */}
+            {/* 顶栏：左侧工牌、右侧系统工具栏。对齐用 items-start，
+                工牌展开时只向下长，右侧工具栏不跟着跳。 */}
             <div className="flex items-start justify-between gap-3">
               {/* 竖屏里展开的工牌会碰到右上的导览卡：把工牌抬到导览卡之上，展开时以工牌为准 */}
               <div
@@ -570,57 +634,35 @@ export function GameViewport({
                   </div>
                 )}
               </div>
-              {/* 竖屏横向只有 360–390px：右列改两行（在线徽标 / 2×2 图标格），
-                  下班入口收成图标，左侧工牌才保得住可读宽度 */}
-              <div className={`flex shrink-0 ${isTouch && !portrait ? 'items-center gap-2' : 'flex-col items-end gap-2'}`}>
-                <OnlineBadge compact={isTouch} />
-                {/* 桌面端窄视口（768–900px）五个控件会顶到左上工牌：允许换行而不是溢出 */}
-                <div
-                  className={
-                    portrait ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap items-center justify-end gap-2'
-                  }
-                >
-                  <NoticeBoard compact={isTouch} />
-                  <InstallAppButton compact={isTouch} />
-                  <SfxToggle compact={isTouch} />
-                  {/* 手机端唯一全屏入口：只有这里的手动点击才会收起浏览器界面 */}
-                  {isTouch && immersive.supported && (
-                    <button
-                      type="button"
-                      onClick={immersive.toggle}
-                      aria-pressed={immersive.active}
-                      aria-label={immersive.active ? '退出全屏' : '全屏游戏'}
-                      title={immersive.active ? '退出全屏' : '全屏游戏'}
-                      className="pointer-events-auto grid h-9 w-9 place-items-center border-2 border-ink-600 bg-ink-900/92 text-mist-500 backdrop-blur-sm transition-colors hover:border-mint-400/60 hover:text-mint-400 focus-visible:border-mint-400 focus-visible:outline-none"
-                    >
-                      {immersive.active ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-                    </button>
-                  )}
-                  {canSwitchPark && (
-                    <Link
-                      href="/enter?from=play"
-                      aria-label="切换园区"
-                      title={`切换园区（当前在${parkName}）`}
-                      className={`pointer-events-auto flex min-h-9 items-center border-2 border-ink-600 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-mint-400/60 hover:text-mint-400 ${
-                        portrait ? 'w-9 justify-center px-0' : 'gap-1.5 px-2 py-1.5'
-                      }`}
-                    >
-                      <Shuffle className="h-3 w-3" />
-                      {!portrait && '切换园区'}
-                    </Link>
-                  )}
-                  <Link
-                    href="/"
-                    aria-label="打卡下班"
-                    title="打卡下班"
-                    className={`pointer-events-auto flex min-h-9 items-center border-2 border-ink-600 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500 backdrop-blur-sm transition-colors hover:border-signal-500/60 hover:text-signal-500 ${
-                      portrait ? 'w-9 justify-center px-0' : 'gap-1.5 px-2 py-1.5'
-                    }`}
-                  >
-                    <LogOut className="h-3 w-3" />
-                    {!portrait && '打卡下班'}
-                  </Link>
-                </div>
+              {/* 右上角系统工具栏：状态段 + 工具段 + 导航段 + 危险段，只共享一圈外框。
+                  横屏是一条横栏；竖屏横向只有 360–390px，收成「状态行 + 两列方钮格」，
+                  左侧工牌才保得住 200px 的可读宽度。 */}
+              <div className="flex shrink-0 items-start">
+                {portrait ? (
+                  <div className="pointer-events-auto flex flex-col border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm">
+                    <HudStatus compact />
+                    <span aria-hidden className="h-px w-full bg-ink-700" />
+                    <div className="grid grid-cols-2 gap-1 p-1">
+                      {hudToolButtons}
+                      {hudSwitchButton}
+                      {hudLogoutButton}
+                    </div>
+                  </div>
+                ) : (
+                  <HudDock>
+                    <HudStatus compact={isTouch} />
+                    <HudDivider />
+                    {hudToolButtons}
+                    {hudSwitchButton && (
+                      <>
+                        <HudDivider />
+                        {hudSwitchButton}
+                      </>
+                    )}
+                    <HudDivider />
+                    {hudLogoutButton}
+                  </HudDock>
+                )}
               </div>
             </div>
 

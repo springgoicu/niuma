@@ -11,18 +11,18 @@ import {
   stepGroundCritter,
   type GroundCritter,
 } from '../critter-motion';
+import { FRAME_GRAZE, FRAME_IDLE, FRAME_SIT_B, FRAME_WALK_A, FRAME_WALK_B } from '../critter-art';
 import { seeded } from '../seeded';
 
 const ALWAYS = () => true;
 const NEVER = () => false;
 
-function critterAt(x: number, y: number, species = 0): GroundCritter {
+function critterAt(x: number, y: number): GroundCritter {
   return createGroundCritter({
     x,
     y,
     homeX: x,
     homeY: y,
-    species,
     variant: 0,
     dirX: 1,
     dirY: 0,
@@ -38,6 +38,31 @@ function advance(c: GroundCritter, ms: number, canStand = ALWAYS): void {
 }
 
 describe('地面小动物行为', () => {
+  it('待机帧始终是坐姿：抬头 / 抖耳眨眼 / 低头啃草轮转', () => {
+    const c = critterAt(1000, 1000);
+    const seen = new Set<number>();
+    for (let elapsed = 0; elapsed < 8000; elapsed += 16) {
+      stepGroundCritter(c, 16, -100000, -100000, seeded(elapsed), ALWAYS);
+      if (c.state === CRITTER_IDLE) {
+        expect([FRAME_IDLE, FRAME_SIT_B, FRAME_GRAZE]).toContain(c.frame);
+        seen.add(c.frame);
+      }
+    }
+    expect(seen.size).toBe(3);
+  });
+
+  it('行走 / 逃跑只用站立行走帧', () => {
+    const c = critterAt(1000, 1000);
+    c.state = CRITTER_WANDER;
+    c.stateLeftMs = 5000;
+    c.frame = FRAME_WALK_A;
+    c.frameLeftMs = 1;
+    for (let elapsed = 0; elapsed < 1200; elapsed += 16) {
+      stepGroundCritter(c, 16, -100000, -100000, seeded(elapsed), ALWAYS);
+      if (c.state !== CRITTER_IDLE) expect([FRAME_WALK_A, FRAME_WALK_B]).toContain(c.frame);
+    }
+  });
+
   it('待机超时后进入游走，游走中会真的位移', () => {
     const c = critterAt(1000, 1000);
     expect(c.state).toBe(CRITTER_IDLE);

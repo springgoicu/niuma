@@ -83,17 +83,17 @@ function drawTreeDots(
 
 /** 小地图只画布局，不采样主视图：形状少、4Hz，绘制成本可以忽略 */
 function drawTerrain(ctx: MiniMapContext, camX: number, camY: number): void {
-  // 整块画布先铺海：岛外的视野就是海，不能再露出 HUD 底色
-  ctx.fillStyle = M.sea;
+  // 整块画布先铺密林：边界外的视野就是林墙，不能再露出 HUD 底色（ADR-0064）
+  ctx.fillStyle = M.wild;
   ctx.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
+  // 陆地是矩形：直接描四条边，沙色描边就是边界沙带
+  const { x, y, w, h } = ISLAND.bounds;
   ctx.fillStyle = M.ground;
-  traceWorldPolygon(ctx, ISLAND.points, camX, camY);
-  ctx.fill();
+  fillWorldRect(ctx, { x, y, w, h }, camX, camY);
   ctx.strokeStyle = M.shore;
   ctx.lineWidth = 2;
-  traceWorldPolygon(ctx, ISLAND.points, camX, camY);
-  ctx.stroke();
+  ctx.strokeRect(screenX(x, camX), screenY(y, camY), span(w), span(h));
   ctx.lineWidth = 1;
 
   // 树丛只铺一小片柔和底色，不再画整块「加班林」矩形

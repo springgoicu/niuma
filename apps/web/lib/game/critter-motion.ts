@@ -6,6 +6,7 @@ import {
   CRITTER_VIEW_UP,
   FRAME_GRAZE,
   FRAME_IDLE,
+  FRAME_SIT_B,
   FRAME_WALK_A,
   FRAME_WALK_B,
 } from './critter-art';
@@ -24,12 +25,10 @@ export const CRITTER_IDLE = 0;
 export const CRITTER_WANDER = 1;
 export const CRITTER_FLEE = 2;
 
-/** 游走速度（px/s），按物种：兔轻快、猫散漫、狗最欢 */
-const WALK_SPEED = [42, 38, 54] as const;
-/** 逃跑速度（px/s） */
-const RUN_SPEED = [120, 110, 130] as const;
-/** 受惊半径（px）：兔最警觉、猫次之、狗最迟钝 */
-const SCARE_RADIUS = [96, 88, 104] as const;
+/** 地面动物只保留兔子：轻快的游走、警觉的受惊半径 */
+const WALK_SPEED = 42;
+const RUN_SPEED = 120;
+const SCARE_RADIUS = 96;
 /** 离巢牵引半径：超出就朝巢点偏转，避免越逛越远最后卡在地图角落 */
 const HOME_RANGE = 220;
 /** 碰撞探测节流：100ms 一次，配合前瞻距离足以避免贴脸撞墙 */
@@ -44,8 +43,7 @@ export interface GroundCritter {
   homeY: number;
   dirX: number;
   dirY: number;
-  /** 0 兔 / 1 猫 / 2 狗 */
-  species: number;
+  /** 兔子配色：0 奶油白 / 1 燕麦灰 / 2 焦糖棕 */
   variant: number;
   /** 0 正面 / 1 侧面 / 2 背面 */
   view: number;
@@ -86,7 +84,6 @@ export function createGroundCritter(spawn: GroundSpawn): GroundCritter {
     homeY: spawn.homeY,
     dirX: spawn.dirX,
     dirY: spawn.dirY,
-    species: spawn.species,
     variant: spawn.variant,
     view: CRITTER_VIEW_DOWN,
     flip: false,
@@ -249,9 +246,11 @@ function animate(c: GroundCritter, dtMs: number, random: () => number): void {
   c.frameLeftMs -= dtMs;
   if (c.frameLeftMs > 0) return;
   if (c.state === CRITTER_IDLE) {
-    // 站立与低头吃草交替：比走路的节拍慢得多，才像在觅食而不是原地抖
-    c.frame = c.frame === FRAME_GRAZE ? FRAME_IDLE : FRAME_GRAZE;
-    c.frameLeftMs = 700 + random() * 700;
+    // 坐姿小动作循环：抬头 → 抖耳眨眼 → 低头啃草 → 抬头；节拍慢才像在休息
+    if (c.frame === FRAME_IDLE) c.frame = FRAME_SIT_B;
+    else if (c.frame === FRAME_SIT_B) c.frame = FRAME_GRAZE;
+    else c.frame = FRAME_IDLE;
+    c.frameLeftMs = 900 + random() * 600;
     return;
   }
   c.frame = c.frame === FRAME_WALK_A ? FRAME_WALK_B : FRAME_WALK_A;
@@ -275,7 +274,7 @@ export function stepGroundCritter(
   if (c.state !== CRITTER_FLEE && c.cooldownMs === 0) {
     const dx = c.x - playerX;
     const dy = c.y - playerY;
-    const radius = SCARE_RADIUS[c.species] ?? SCARE_RADIUS[0]!;
+    const radius = SCARE_RADIUS;
     if (dx * dx + dy * dy < radius * radius) {
       beginFlee(c, dx, dy, random);
       c.cooldownMs = FLEE_COOLDOWN_MS;
@@ -285,11 +284,11 @@ export function stepGroundCritter(
   c.stateLeftMs -= dtMs;
   switch (c.state) {
     case CRITTER_WANDER:
-      advance(c, dtMs, WALK_SPEED[c.species] ?? WALK_SPEED[0]!, random, canStand);
+      advance(c, dtMs, WALK_SPEED, random, canStand);
       if (c.stateLeftMs <= 0) beginIdle(c, random);
       break;
     case CRITTER_FLEE:
-      advance(c, dtMs, RUN_SPEED[c.species] ?? RUN_SPEED[0]!, random, canStand);
+      advance(c, dtMs, RUN_SPEED, random, canStand);
       if (c.stateLeftMs <= 0) beginIdle(c, random, 700, 500);
       break;
     default:

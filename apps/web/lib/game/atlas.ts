@@ -1,6 +1,8 @@
 'use client';
 
 import { Assets, Rectangle, Texture, type TextureSource } from 'pixi.js';
+import { withRetry } from './async-retry';
+import { AtlasLoadError } from './atlas-errors';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 
 export interface SpriteClip {
@@ -54,19 +56,59 @@ const COLUMNS = SPRITE_LAYOUT.frame.columns;
 const ROWS = SPRITE_LAYOUT.frame.rows;
 const FRAME_COUNT = COLUMNS * ROWS;
 
+const MANIFEST_URL = '/sprites/manifest.json';
+/** 冷启动只多试一次：弱网下 250ms 足够躲过最常见的瞬时断流，再久就该让用户看到真实失败 */
+const LOAD_ATTEMPTS = 2;
+const LOAD_RETRY_BASE_MS = 250;
+const LOAD_RETRY_JITTER = 0.4;
+
+/**
+ * Pixi 的 Assets 会按 URL 记住加载中的 Promise；失败后不清掉的话，
+ * 下一次 `Assets.load` 会立刻拿到同一个 rejection，重试就成了空转。
+ * best-effort：资产还没进缓存时 unload 会失败，不影响后续尝试。
+ */
+async function evictAsset(url: string): Promise<void> {
+  try {
+    await Assets.unload(url);
+  } catch {
+    // 清不掉就让下一次加载自己再试；这里不改变原始错误
+  }
+}
+
+async function fetchManifest(): Promise<SpriteManifest> {
+  try {
+    return await withRetry(
+      async () => {
+        const response = await fetch(MANIFEST_URL);
+        if (!response.ok) {
+          throw new AtlasLoadError('manifest', `图集清单请求失败（${response.status}）`, true);
+        }
+        return (await response.json()) as SpriteManifest;
+      },
+      { attempts: LOAD_ATTEMPTS, baseDelayMs: LOAD_RETRY_BASE_MS, jitterRatio: LOAD_RETRY_JITTER },
+    );
+  } catch (error) {
+    // 已经是分类错误（含版本错配）就原样抛，避免把可判别的 code 包掉
+    if (error instanceof AtlasLoadError) throw error;
+    throw new AtlasLoadError('manifest', '图集清单加载失败', true, { cause: error });
+  }
+}
+
 async function buildAtlas(): Promise<Atlas> {
-  const response = await fetch('/sprites/manifest.json');
-  if (!response.ok) throw new Error(`manifest ${response.status}`);
-  const manifest = (await response.json()) as SpriteManifest;
+  const manifest = await fetchManifest();
 
   if (manifest.version !== SPRITE_LAYOUT.version) {
-    throw new Error(
-      `图集版本 ${manifest.version} 与客户端布局 v${SPRITE_LAYOUT.version} 不一致，请重跑 pnpm assets`,
+    throw new AtlasLoadError(
+      'version-mismatch',
+      `图集版本 ${manifest.version} 与客户端布局 v${SPRITE_LAYOUT.version} 不一致`,
+      false,
     );
   }
   if (manifest.frame.columns !== COLUMNS || manifest.frame.rows !== ROWS) {
-    throw new Error(
-      `图集为 ${manifest.frame.columns}x${manifest.frame.rows}，客户端期望 ${COLUMNS}x${ROWS}，请重跑 pnpm assets`,
+    throw new AtlasLoadError(
+      'version-mismatch',
+      `图集为 ${manifest.frame.columns}x${manifest.frame.rows}，客户端期望 ${COLUMNS}x${ROWS}`,
+      false,
     );
   }
 
@@ -78,7 +120,24 @@ async function buildAtlas(): Promise<Atlas> {
   async function texture(path: string): Promise<Texture> {
     const cached = textureCache.get(path);
     if (cached) return cached;
-    const loaded = await Assets.load<Texture>(`/sprites/${path}`);
+    const url = `/sprites/${path}`;
+    let loaded: Texture;
+    try {
+      loaded = await withRetry(
+        async () => {
+          try {
+            return await Assets.load<Texture>(url);
+          } catch (error) {
+            // 先把失败的 Promise 从 Assets 里摘掉，下一次才能真的重新发请求
+            await evictAsset(url);
+            throw error;
+          }
+        },
+        { attempts: LOAD_ATTEMPTS, baseDelayMs: LOAD_RETRY_BASE_MS, jitterRatio: LOAD_RETRY_JITTER },
+      );
+    } catch (error) {
+      throw new AtlasLoadError('texture', `贴图加载失败：${path}`, true, { cause: error });
+    }
     loaded.source.scaleMode = 'nearest';
     textureCache.set(path, loaded);
     return loaded;
@@ -112,7 +171,14 @@ async function buildAtlas(): Promise<Atlas> {
 let pending: Promise<Atlas> | null = null;
 
 export function loadAtlas(): Promise<Atlas> {
-  if (!pending) pending = buildAtlas();
+  if (!pending) {
+    // 失败不把 promise 钉死：角色视图重试、主线程回退都还会再调一次，
+    // 缓存一个 rejected promise 等于让一次瞬时故障污染整个页面生命周期。
+    pending = buildAtlas().catch((error: unknown) => {
+      pending = null;
+      throw error;
+    });
+  }
   return pending;
 }
 

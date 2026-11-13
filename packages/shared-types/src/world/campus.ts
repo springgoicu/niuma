@@ -18,17 +18,30 @@ import type { WorldRect } from './geometry';
 
 /**
  * 座位种类：
- * - `chair` 工位椅 / 会议椅，`toilet` 马桶，`stool` 凳子，`sofa` 沙发：入座即坐姿；
+ * - `chair` 工位椅 / 会议椅，`toilet` 马桶，`stool` 凳子，`sofa` 单人沙发：入座即坐姿；
+ * - `couch` 双人沙发的一侧：左右两半各画一张，两张座位拼成一张 124px 长沙发；
+ * - `cinema` 影厅座椅：几何复用椅子的座面契约，只换配色；
+ * - `bench` 户外长椅：外观继续走道具管线，座位只提供坐点；
  * - `bed` 单人床：入座即躺姿（ADR-0020 的「座位上不能躺」在此按种类放开）。
  *
  * 上下铺不新增种类：每个铺位就是一张 `bed` 座位，两层各一张，见下方的 LOUNGE_SEATS。
  */
-export type SeatKind = 'chair' | 'toilet' | 'stool' | 'sofa' | 'bed' | 'drum';
+export type SeatKind = 'chair' | 'toilet' | 'stool' | 'sofa' | 'couch' | 'cinema' | 'bench' | 'bed' | 'drum';
+
+/**
+ * 长椅坐点相对长椅底座的偏移（像素）：坐点在椅面正前方 12px。
+ *
+ * 长椅本体保留 40×16 的碰撞，坐点必须落在碰撞盒外（玩家半径 9），
+ * 因此不能直接取底座中心；12px 是「贴前沿坐下」与「不压自身碰撞」的折中。
+ * `apps/web/lib/game/seat-art.ts` 用同一个偏移推导座面接触高度。
+ */
+export const BENCH_SEAT_OFFSET = 12;
 
 /**
  * 座位锚点：入座后角色的世界坐标。`id` 从 1 开始，0 保留为「无座位」。
  * `facing` 是入座后面朝的方向（工位朝向桌子，马桶朝向墙，床朝床尾）。
  * `desk` 指向 WORLD_LAYOUT.desks 的下标，没有桌子时为 -1，用于显示屏点亮。
+ * `variant` 只给需要左右拼装的家具用（`couch` 0 = 左半、1 = 右半）。
  */
 export interface SeatInstance {
   id: number;
@@ -37,6 +50,7 @@ export interface SeatInstance {
   facing: Direction;
   kind: SeatKind;
   desk: number;
+  variant?: number;
 }
 
 /**
@@ -88,6 +102,8 @@ export type PropKind =
   | 'cooler'
   | 'coffee'
   | 'sideTable'
+  /** 客厅茶几：矮桌，只挡桌面下方那一截 */
+  | 'coffeeTable'
   | 'hedge'
   | 'ladder'
   | 'logo'
@@ -149,6 +165,8 @@ const PROP_FOOTPRINT: Partial<Record<PropKind, { w: number; h: number }>> = {
   coffee: { w: 22, h: 24 },
   bench: { w: 40, h: 16 },
   table: { w: 40, h: 28 },
+  // 客厅茶几：48×24 的矮桌，碰撞只取桌面下方的 44×12
+  coffeeTable: { w: 44, h: 12 },
   bike: { w: 38, h: 14 },
   // 竹丛的碰撞只取根部一窄条：竹竿之间有缝，整丛挡人会像一道墙
   bamboo: { w: 22, h: 10 },
@@ -182,7 +200,7 @@ export interface DoorSpec {
 export interface BuildingSpec {
   name: string;
   rect: WorldRect;
-  floor: 'wood' | 'tile' | 'carpet';
+  floor: 'wood' | 'tile' | 'carpet' | 'cinema' | 'rubber';
 }
 
 /** 房间统一尺寸：四角各一间，贴院落四角 */
@@ -225,6 +243,42 @@ export const RESTROOM: WorldRect = {
  */
 export const SOUTH_YARD: WorldRect = { x: 3336, y: 5140, w: 1520, h: 560 };
 export const SOUTH_YARD_PAVING: WorldRect = { x: 3376, y: 5160, w: 1440, h: 520 };
+
+/* ------------------------------------------------------------------ *
+ * 家庭影音室（本轮新增）
+ *
+ * 落在校园与南侧庭院之间的草地：北缘离 CAMPUS_RECT 南沿 74px，
+ * 南缘离 SOUTH_YARD 北沿 30px，东墙外 200px 就是南向主路。
+ * 门开在东墙，进门后是东侧走道，三排座椅面朝北墙的大屏幕。
+ * ------------------------------------------------------------------ */
+
+export const HOME_THEATER: WorldRect = { x: 3380, y: 4790, w: 460, h: 320 };
+/** 东墙门洞：与南向主路接出来的支路同一条 y（4950） */
+export const HOME_THEATER_DOOR: DoorSpec = { side: 'east', from: 4920, to: 4980 };
+/** 门前铺装：从墙外接到 120px，再交给支路 */
+export const HOME_THEATER_DOOR_PAVING: WorldRect = { x: 3840, y: 4920, w: 120, h: 60 };
+
+/** 北墙大屏幕：260×60，居中压在三排座位上 */
+export const THEATER_SCREEN = { x: 3442, y: 4792, w: 260, h: 60 } as const;
+
+/**
+ * 四只环绕音箱：前左 / 前右 / 后左 / 后右。
+ * 只描述挂点（中心），具体像素画由 `interior-art.ts` 决定。
+ */
+export const THEATER_SPEAKERS: ReadonlyArray<{ x: number; y: number }> = [
+  { x: HOME_THEATER.x + 22, y: 4840 },
+  { x: HOME_THEATER.x + 438, y: 4840 },
+  { x: HOME_THEATER.x + 22, y: 5070 },
+  { x: HOME_THEATER.x + 438, y: 5070 },
+];
+
+/** 三排 × 五列影厅座椅：全部面朝北墙屏幕（Up），列距 56、排距 60 */
+const THEATER_SEAT_XS = [3460, 3516, 3572, 3628, 3684] as const;
+const THEATER_ROW_YS = [4900, 4960, 5020] as const;
+
+export const THEATER_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = THEATER_ROW_YS.flatMap((y) =>
+  THEATER_SEAT_XS.map((x) => ({ x, y, facing: DIRECTION.Up, kind: 'cinema' as const })),
+);
 
 /**
  * 导览目标的到达点（ADR-0040）：进门后的可站立空地。
@@ -350,6 +404,7 @@ function roomWalls(rect: WorldRect, door: DoorSpec): SolidRect[] {
 const meetingSolids = roomWalls(MEETING_ROOM, MEETING_DOOR);
 const restroomSolids = roomWalls(RESTROOM, RESTROOM_DOOR);
 const loungeSolids = roomWalls(LOUNGE, LOUNGE_DOOR);
+const theaterSolids = roomWalls(HOME_THEATER, HOME_THEATER_DOOR);
 
 /**
  * 卫生间三区（自西向东）：男 140 / 洗手池 140 / 女 140。
@@ -502,8 +557,15 @@ export const WORKSTATIONS: ReadonlyArray<Workstation> = [
 ];
 
 /**
- * 宿舍区的七个座位：两组上下铺（每组上下两张床，共 4 个铺位）+
- * 一张沙发 + 两张凳子。上下两层相距 44px：既读得出「下铺在更近的前景」，
+ * 宿舍区客厅：两组上下铺（4 个铺位）+ 双人沙发的左半 + 两张面朝茶几的凳子。
+ *
+ * 双人沙发由两个 62px 的半座拼成（variant 0 = 左半、1 = 右半），
+ * 两半的中缝在 x+341 对齐，合起来是一张 124px 的长沙发。
+ * 右半单独放在 `LOUNGE_COUCH_SECOND` 里、追加到座位表末尾，
+ * 这样既有的工位 / 会议 / 马桶 / 上下铺 / 石鼓凳 id 不会整体后移
+ * （浏览器 localStorage 的 `niuma:session:v1` 里存着 seatId）。
+ *
+ * 上下两层相距 44px：既读得出「下铺在更近的前景」，
  * 又满足座位表「两两间距 > 40」的既有断言。
  */
 export const LOUNGE_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
@@ -511,10 +573,19 @@ export const LOUNGE_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
   { x: LOUNGE.x + 110, y: LOUNGE.y + 184, facing: DIRECTION.Right, kind: 'bed' },
   { x: LOUNGE.x + 110, y: LOUNGE.y + 254, facing: DIRECTION.Right, kind: 'bed' },
   { x: LOUNGE.x + 110, y: LOUNGE.y + 298, facing: DIRECTION.Right, kind: 'bed' },
-  { x: LOUNGE.x + 304, y: LOUNGE.y + 74, facing: DIRECTION.Down, kind: 'sofa' },
-  { x: LOUNGE.x + 264, y: LOUNGE.y + 174, facing: DIRECTION.Down, kind: 'stool' },
-  { x: LOUNGE.x + 344, y: LOUNGE.y + 174, facing: DIRECTION.Down, kind: 'stool' },
+  { x: LOUNGE.x + 310, y: LOUNGE.y + 64, facing: DIRECTION.Down, kind: 'couch', variant: 0 },
+  { x: LOUNGE.x + 310, y: LOUNGE.y + 174, facing: DIRECTION.Up, kind: 'stool' },
+  { x: LOUNGE.x + 372, y: LOUNGE.y + 174, facing: DIRECTION.Up, kind: 'stool' },
 ];
+
+/** 双人沙发的右半：追加到座位表末尾，保持既有座位 id 不漂移 */
+export const LOUNGE_COUCH_SECOND: Omit<SeatInstance, 'id' | 'desk'> = {
+  x: LOUNGE.x + 372,
+  y: LOUNGE.y + 64,
+  facing: DIRECTION.Down,
+  kind: 'couch',
+  variant: 1,
+};
 
 /** 四区门口的 logo 立牌：variant 与渲染端的四个图标一一对应，不参与碰撞 */
 export const AREA_LOGOS: PropInstance[] = [
@@ -572,20 +643,22 @@ export const WORK_PROPS: PropInstance[] = [
   { kind: 'bin', x: WORKROOM.x + 16, y: WORKROOM.y + 334 },
 ];
 
-/** 宿舍区陈设：两组上下铺各配一架爬梯，靠东一侧沙发 + 床头几 + 两张凳子 */
+/** 宿舍区陈设：两组上下铺各配一架爬梯，沙发前一张低茶几，靠东一侧绿植与垃圾桶 */
 export const LOUNGE_PROPS: PropInstance[] = [
   { kind: 'ladder', x: LOUNGE.x + 170, y: LOUNGE.y + 190 },
   { kind: 'ladder', x: LOUNGE.x + 170, y: LOUNGE.y + 304 },
-  { kind: 'sideTable', x: LOUNGE.x + 304, y: LOUNGE.y + 214 },
+  // 茶几落在沙发与凳子之间：北缘离沙发 38px、南缘离凳子 40px，两人并排坐下不顶膝盖
+  { kind: 'coffeeTable', x: LOUNGE.x + 341, y: LOUNGE.y + 134 },
   { kind: 'plant', x: LOUNGE.x + 404, y: LOUNGE.y + 324 },
   { kind: 'bin', x: LOUNGE.x + 404, y: LOUNGE.y + 34 },
 ];
 
-/** 三个有门房间的门前铺装：把门洞接到草地，贴花不进入 */
+/** 有门房间的门前铺装：把门洞接到草地，贴花不进入 */
 export const DOOR_PAVING: WorldRect[] = [
   { x: MEETING_ROOM.x + 326, y: MEETING_ROOM.y + 360, w: 68, h: 36 },
   { x: LOUNGE.x + 196, y: LOUNGE.y - 36, w: 68, h: 36 },
   { x: RESTROOM.x + 196, y: RESTROOM.y - 36, w: 68, h: 36 },
+  HOME_THEATER_DOOR_PAVING,
 ];
 
 export const CAMPUS_BUILDINGS: BuildingSpec[] = [
@@ -593,16 +666,18 @@ export const CAMPUS_BUILDINGS: BuildingSpec[] = [
   { name: '会议室', rect: MEETING_ROOM, floor: 'wood' },
   { name: '宿舍区', rect: LOUNGE, floor: 'carpet' },
   { name: '卫生间', rect: RESTROOM, floor: 'tile' },
+  { name: '家庭影音室', rect: HOME_THEATER, floor: 'cinema' },
 ];
 
 /**
- * 三间有墙房间的墙体，加上卫生间两道内隔墙、四片坑位隔断与会议桌。
- * 工作区按需求不加墙，因此这里没有它的任何碰撞矩形。
+ * 有墙房间的墙体（含家庭影音室），加上卫生间两道内隔墙、
+ * 四片坑位隔断与会议桌。工作区按需求不加墙，因此这里没有它的碰撞矩形。
  */
 export const CAMPUS_SOLIDS: SolidRect[] = [
   ...meetingSolids,
   ...restroomSolids,
   ...loungeSolids,
+  ...theaterSolids,
   ...restroomDividers,
   ...stallPartitions,
   MEETING_TABLE,

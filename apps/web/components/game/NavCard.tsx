@@ -5,6 +5,7 @@ import { ArrowUp, ChevronDown, Compass } from 'lucide-react';
 import { SPAWN_CENTER, regionAt, type NavTargetId } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { nearestReading, navReadings, OCTANT_NAMES } from '@/lib/game/nav';
+import { HUD_DOCK_PORTRAIT_REM } from './Hud';
 
 /** 触摸端：离开北门口袋超过这个距离就自动收起，把画面还给摇杆与动作盘 */
 const LEASH = 260;
@@ -83,11 +84,11 @@ export function NavCard({
       className={`pointer-events-none absolute z-20 ${
         compact ? 'right-3 top-[100px]' : 'bottom-4 right-4 lg:bottom-[248px]'
       }`}
-      // 竖屏右上是「在线徽标 + 2 列图标格」：公告 / 存到桌面 / 静音 / 全屏 / 切换园区 /
-      // 下班六个控件排满三行（约 174px），导览卡压到它下面并让开刘海
+      // 竖屏右上是「状态行 + 两列方钮格」的系统工具栏：高度由 hud.ts 的
+      // HUD_DOCK_PORTRAIT_REM 统一给出，导览卡顺延到它下面并让开刘海
       style={
         compact && portrait
-          ? { top: 'calc(max(0.75rem, env(safe-area-inset-top)) + 11.5rem)' }
+          ? { top: `calc(max(0.75rem, env(safe-area-inset-top)) + ${HUD_DOCK_PORTRAIT_REM})` }
           : undefined
       }
     >

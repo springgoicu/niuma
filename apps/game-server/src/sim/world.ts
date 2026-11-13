@@ -132,6 +132,12 @@ export class Player {
   stunUntil = 0;
   /** 当前占用的座位 id，0 表示站立或地面坐 */
   seat = 0;
+  /** 正在滑的滑梯 id（0 = 不在滑行）；状态只活在进程内存里 */
+  rideSlide = 0;
+  /** 滑行结束时刻（毫秒）；`now < rideEndsAt` 即正在滑行 */
+  rideEndsAt = 0;
+  /** 上一次滑行开始时刻：两次滑行之间的冷却闸门 */
+  lastSlideAt = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
   known = new Set<number>();
   /** 每人一个可复用发送缓冲，避免每 Tick 新建 */
@@ -218,6 +224,9 @@ export class Player {
     this.jump = false;
     this.wave = false;
     this.seat = 0;
+    this.rideSlide = 0;
+    this.rideEndsAt = 0;
+    this.lastSlideAt = 0;
     this.dirty = false;
     this.needsViewRefresh = false;
     this.lastBroadcastQx = -1;

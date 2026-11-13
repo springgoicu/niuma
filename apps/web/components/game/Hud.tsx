@@ -1,11 +1,99 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Users, Volume2, VolumeX } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Volume2, VolumeX } from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
 import { sfx } from '@/lib/game/sfx';
 
 const SFX_STORAGE_KEY = 'niuma:sfx:muted';
+
+/**
+ * 竖屏工具栏的总高（含 2px 外框）：状态行 + 分隔线 + 两列三行方钮。
+ *
+ * 导览卡要顺延到它下面，所以高度必须是可引用的常量而不是各处估的魔法值；
+ * 改按钮尺寸时只改这里，NavCard 的 `top` 会跟着动。
+ */
+export const HUD_DOCK_PORTRAIT_REM = '12.75rem';
+
+/**
+ * 右上角工具栏按钮的唯一尺寸/状态来源。
+ *
+ * 桌面 36×36、触屏 44×44（触屏最小命中区），全部方形等距、只在外层画一圈边框：
+ * 六个入口因此天然对齐，不会再因为文字长短参差或折行而散成一堆小盒子。
+ */
+export function hudButtonClassName({
+  compact = false,
+  active = false,
+  danger = false,
+}: {
+  compact?: boolean;
+  active?: boolean;
+  danger?: boolean;
+} = {}): string {
+  const size = compact ? 'h-11 w-11' : 'h-9 w-9';
+  const tone = danger
+    ? active
+      ? 'bg-signal-500/15 text-signal-500'
+      : 'text-mist-500 hover:bg-signal-500/10 hover:text-signal-500 focus-visible:bg-signal-500/10 focus-visible:text-signal-500'
+    : active
+      ? 'bg-mint-400/10 text-mint-400'
+      : 'text-mist-500 hover:bg-mint-400/10 hover:text-mint-400 focus-visible:bg-mint-400/10 focus-visible:text-mint-400';
+  return `pointer-events-auto grid ${size} shrink-0 cursor-pointer place-items-center transition-colors focus-visible:outline-none ${tone}`;
+}
+
+/** 工具栏外框：整条只有这一层 2px 边框，内部按钮共享底色与背板 */
+export function HudDock({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`pointer-events-auto flex items-stretch border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** 横栏里的竖分隔线：把「状态 / 工具 / 导航 / 危险」四段分开 */
+export function HudDivider() {
+  return <span aria-hidden className="w-px shrink-0 self-stretch bg-ink-700" />;
+}
+
+/**
+ * 工具栏最左端的状态段：在线灯 + 视野人数，单行、不可点。
+ *
+ * 只保留玩家真正会看的两件事；`aoi 900px`、连接状态明细这类调试信息
+ * 留在断线横幅里，不占常驻 HUD。
+ */
+export function HudStatus({ compact = false }: { compact?: boolean }) {
+  const nearby = useGameUi((state) => state.nearby);
+  const status = useGameUi((state) => state.status);
+  const online = status === 'online';
+
+  // 刻意不用 role="status"：人数每 2 秒变一次，做成 live region 会让读屏
+  // 反复打断玩家；可见文本本身已经可读，这里只补一条悬停说明
+  return (
+    <div
+      title={online ? `视野内 ${nearby} 头牛马` : '正在接入园区'}
+      className={`pointer-events-none flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] ${
+        compact ? 'h-11 px-2.5' : 'h-9 px-2.5'
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`${compact ? 'h-1.5 w-1.5' : 'h-2 w-2'} shrink-0 ${
+          online ? 'animate-blink bg-mint-400' : 'bg-amber-400'
+        }`}
+      />
+      <span className="shrink-0 text-mist-500">视野</span>
+      <span className="shrink-0 tabular-nums text-mist-300">{nearby}</span>
+    </div>
+  );
+}
 
 /**
  * 游戏音效静音开关：发泄 / 咀嚼 / 设施互动共用同一条 master 总线（ADR-0048）。
@@ -34,9 +122,7 @@ export function SfxToggle({ compact = false }: { compact?: boolean }) {
       aria-pressed={muted}
       aria-label={muted ? '开启游戏音效' : '关闭游戏音效'}
       title={muted ? '游戏音效已关闭' : '游戏音效已开启'}
-      className={`pointer-events-auto grid place-items-center border-2 border-ink-600 bg-ink-900/92 text-mist-500 backdrop-blur-sm transition-colors hover:border-mint-400/60 hover:text-mint-400 focus-visible:border-mint-400 focus-visible:outline-none ${
-        compact ? 'h-9 w-9' : 'h-11 w-11'
-      }`}
+      className={hudButtonClassName({ compact, active: muted })}
     >
       {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
     </button>
@@ -52,38 +138,7 @@ export function SpeciesTag({ species, dense = false }: { species: string; dense?
   );
 }
 
-export function OnlineBadge({ compact = false }: { compact?: boolean }) {
-  const nearby = useGameUi((state) => state.nearby);
-  const status = useGameUi((state) => state.status);
-  const detail = useGameUi((state) => state.detail);
-
-  return (
-    <div
-      className={`pointer-events-auto flex items-center border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm ${
-        compact ? 'gap-1.5 px-2 py-1.5' : 'gap-3 px-3 py-2'
-      }`}
-    >
-      <span
-        className={`${compact ? 'h-1.5 w-1.5' : 'h-2 w-2'} ${status === 'online' ? 'animate-blink bg-mint-400' : 'bg-amber-400'}`}
-        aria-hidden
-      />
-      <span
-        className={`flex items-center font-mono uppercase text-mist-300 ${
-          compact ? 'gap-1 text-[9px] tracking-[0.14em]' : 'gap-1.5 text-[10px] tracking-[0.18em]'
-        }`}
-      >
-        <Users className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
-        视野内 {nearby}
-      </span>
-      {!compact && (
-        <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-mist-500">
-          {status === 'online' ? 'aoi 900px' : detail || status}
-        </span>
-      )}
-    </div>
-  );
-}
-
+/** 断线 / 重连横幅：右上角在线状态已并入工具栏，见 `HudStatus` */
 export function ConnectionBanner() {
   const status = useGameUi((state) => state.status);
   const detail = useGameUi((state) => state.detail);

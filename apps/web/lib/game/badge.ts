@@ -82,6 +82,9 @@ export function seatLabel(seatKind: SeatKind | null): string {
   if (seatKind === 'stool') return '凳子';
   if (seatKind === 'drum') return '石鼓凳';
   if (seatKind === 'sofa') return '沙发';
+  if (seatKind === 'couch') return '双人沙发';
+  if (seatKind === 'cinema') return '影厅座椅';
+  if (seatKind === 'bench') return '长椅';
   return '马桶';
 }
 

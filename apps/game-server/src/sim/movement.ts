@@ -76,6 +76,16 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
   }
 
   /**
+   * 滑行中（本轮新增）：位置与坐姿由 `sim/ride.ts` 每 Tick 推进，
+   * 客户端上报一律不采信；姿态钉在坐姿，防止伪造包把人从滑道上拽下来。
+   */
+  if (player.rideSlide !== 0 && now < player.rideEndsAt) {
+    player.applyState(player.direction, POSE.Sit, false);
+    player.markDirtyIfChanged();
+    return RESULT;
+  }
+
+  /**
    * 倒地硬直（ADR-0051）：被创飞的 1.5 秒内不采信客户端的姿态与位移。
    *
    * 只拦上报、不改 `lastMoveAt`：硬直结束时时间窗会被 MAX_WINDOW_MS 封顶，

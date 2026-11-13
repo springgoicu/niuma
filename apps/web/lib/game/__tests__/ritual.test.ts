@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { SHRINE_ALTAR, TEA_STATION, WORLD_LAYOUT } from '@niuma/shared-types';
 import { MAX_LIGHTS } from '../lighting/light-registry';
 import { FIXED_LANTERNS, LANTERN_HEIGHT, lanternLights } from '../lighting/lanterns';
+import { festivalDecorPlan, festivalLights, FESTIVAL_LIGHT_COUNT } from '../festival-decor';
 import { propLights } from '../lighting/scene-lights';
 import { bowTexelsAt, BOW_DURATION_MS } from '../pony-motion';
 import { isNearShrine, isNearTeaStation, SHRINE_INTERACT_RANGE, TEA_INTERACT_RANGE } from '../interactions';
@@ -87,10 +88,12 @@ describe('宫灯光源表', () => {
     expect(LANTERN_HEIGHT).toBeGreaterThanOrEqual(20);
   });
 
-  it('外景光源 + 摸鱼亭四角 + 固定宫灯 + 供案两盏仍在 64 盏预算内', () => {
+  it('外景光源 + 摸鱼亭四角 + 固定宫灯 + 供案两盏 + 节日彩旗仍在 64 盏预算内', () => {
     // 超限时 `LightRegistry.add` 会静默返回 -1，灯就凭空消失了，必须在这里钉死
     const outdoor = propLights(WORLD_LAYOUT.props).length;
-    const fixed = outdoor + FIXED_LANTERNS.length + 4 + 2;
+    const festival = festivalLights(festivalDecorPlan()).length;
+    expect(festival).toBe(FESTIVAL_LIGHT_COUNT);
+    const fixed = outdoor + FIXED_LANTERNS.length + 4 + 2 + festival;
     // 再留 8 盏给室内（interior-art 现场收集，数量随房间陈设变化）
     expect(fixed + 8).toBeLessThanOrEqual(MAX_LIGHTS);
   });

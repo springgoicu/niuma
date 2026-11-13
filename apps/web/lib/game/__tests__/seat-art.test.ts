@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { DIRECTION, type Direction, type SeatKind } from '@niuma/shared-types';
+import { BENCH_SEAT_OFFSET, DIRECTION, type Direction, type SeatKind } from '@niuma/shared-types';
 import { SEAT_TOP, chairArtFor } from '../chair-art';
-import { SIT_HIP_Y, seatArtFor, seatLift } from '../seat-art';
+import { BENCH_ART, SIT_HIP_Y, seatArtFor, seatLift } from '../seat-art';
 
 const FACINGS: Array<{ facing: Direction; name: string }> = [
   { facing: DIRECTION.Up, name: '人坐桌南、面朝北' },
@@ -51,6 +51,40 @@ describe('座位接触契约（ADR-0032）', () => {
         expect({ kind, contactY: seatArtFor(kind, facing).contactY }).toEqual({ kind, contactY: null });
         expect({ kind, lift: seatLift(kind, facing) }).toEqual({ kind, lift: 0 });
       }
+    }
+  });
+
+  it('双人沙发的两半有座面契约：臀底落在座垫上，四向一致', () => {
+    for (const { facing, name } of FACINGS) {
+      const art = seatArtFor('couch', facing);
+      expect({ facing: name, frame: art.frame }).toEqual({ facing: name, frame: { w: 62, h: 40 } });
+      expect({ facing: name, contactY: art.contactY }).toEqual({ facing: name, contactY: -16 });
+      expect(seatLift('couch', facing)).toBe(15);
+    }
+  });
+
+  it('长椅：40×18、坐点在椅前 12px，臀底落在座面顶', () => {
+    for (const { facing, name } of FACINGS) {
+      const seat = seatArtFor('bench', facing);
+      const lift = seatLift('bench', facing);
+      expect({ facing: name, frame: seat.frame }).toEqual({ facing: name, frame: BENCH_ART.frame });
+      // 座面顶在帧内 y=8，坐点前移 12px：相对锚点 -(18-8)-12
+      expect({ facing: name, contactY: seat.contactY }).toEqual({
+        facing: name,
+        contactY: -(BENCH_ART.frame.h - BENCH_ART.seatTop) - BENCH_SEAT_OFFSET,
+      });
+      expect({ facing: name, lift }).toEqual({ facing: name, lift: 21 });
+      expect(SIT_HIP_Y - lift).toBe(seat.contactY);
+    }
+  });
+
+  it('影厅座椅复用椅子的座面契约，只换配色', () => {
+    for (const { facing, name } of FACINGS) {
+      expect({ facing: name, cinema: seatArtFor('cinema', facing) }).toEqual({
+        facing: name,
+        cinema: seatArtFor('chair', facing),
+      });
+      expect(seatLift('cinema', facing)).toBe(seatLift('chair', facing));
     }
   });
 

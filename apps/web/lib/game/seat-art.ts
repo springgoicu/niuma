@@ -1,6 +1,6 @@
 'use client';
 
-import type { Direction, SeatKind } from '@niuma/shared-types';
+import { BENCH_SEAT_OFFSET, type Direction, type SeatKind } from '@niuma/shared-types';
 import { chairArtFor } from './chair-art';
 
 /**
@@ -31,21 +31,45 @@ export const SIT_HIP_Y = -1;
 
 const CHAIR_SINK = 6;
 
-const OTHER_SEATS: Record<Exclude<SeatKind, 'chair'>, { w: number; h: number; sink: number }> = {
+/**
+ * 户外长椅的视觉几何：渲染层（`props.ts`）与座位接触契约共用这一份。
+ * 精灵锚点在底边中心，座面顶在帧内 `seatTop`。
+ */
+export const BENCH_ART = {
+  frame: { w: 40, h: 18 },
+  seatTop: 8,
+} as const;
+
+const OTHER_SEATS: Record<Exclude<SeatKind, 'chair' | 'cinema'>, { w: number; h: number; sink: number }> = {
   toilet: { w: 22, h: 28, sink: 6 },
   stool: { w: 18, h: 22, sink: 4 },
   // 石鼓凳（ADR-0061）：鼓身比木凳矮胖一圈，座面下沉 5 纹素
   drum: { w: 20, h: 22, sink: 5 },
   sofa: { w: 58, h: 30, sink: 8 },
+  // 双人沙发的一侧：左右两半各 62×40，两半拼成 124px 的长沙发
+  couch: { w: 62, h: 40, sink: 8 },
+  // 户外长椅：外观仍由道具管线绘制，座位只提供坐点
+  bench: { w: BENCH_ART.frame.w, h: BENCH_ART.frame.h, sink: 0 },
   bed: { w: 64, h: 42, sink: 16 },
 };
 
 /**
- * 座位几何。椅子的座面顶由 `chair-art.ts` 的帧内 `seat.y` 推出：
+ * 有座面契约的非椅子座位（相对座位锚点）：
+ * - 沙发：座垫顶面在帧内 y=16，世界高度 = 锚点 + 8 - (40 - 16) = 锚点 - 16；
+ * - 长椅：坐点在椅前 `BENCH_SEAT_OFFSET`，座面顶世界 y = 底座 y - (18 - 8)，
+ *   因此相对坐点锚点为 -(帧高 - 座面顶) - 坐点偏移。
+ */
+const OTHER_CONTACT: Partial<Record<SeatKind, number>> = {
+  couch: 8 - 40 + 16,
+  bench: -(BENCH_ART.frame.h - BENCH_ART.seatTop) - BENCH_SEAT_OFFSET,
+};
+
+/**
+ * 座位几何。椅子与影厅座椅的座面顶由 `chair-art.ts` 的帧内 `seat.y` 推出：
  * 帧底 = 座位锚点 + sink，帧内 y 换算到世界坐标要减去帧高。
  */
 export function seatArtFor(kind: SeatKind, facing: Direction): SeatArt {
-  if (kind === 'chair') {
+  if (kind === 'chair' || kind === 'cinema') {
     const art = chairArtFor(facing);
     return {
       frame: art.frame,
@@ -54,14 +78,14 @@ export function seatArtFor(kind: SeatKind, facing: Direction): SeatArt {
     };
   }
   const { w, h, sink } = OTHER_SEATS[kind];
-  return { frame: { w, h }, sink, contactY: null };
+  return { frame: { w, h }, sink, contactY: OTHER_CONTACT[kind] ?? null };
 }
 
 /**
- * 角色坐上该座位时的抬升纹素。地面坐姿（无座位）与非椅子的座位返回 0：
- * 马桶 / 沙发 / 床 / 凳子的贴合不在本轮范围，契约留在这里，后续按同样方式登记即可。
+ * 角色坐上该座位时的抬升纹素。没有座面契约的座位返回 0；
+ * 椅子 / 影厅椅 / 沙发 / 长椅已经登记 contactY，其余座位保持地面坐姿高度。
  *
- * 帧循环每个可见实体每帧都会读一次，结果按 `kind:facing` 缓存（至多 5×4 种），
+ * 帧循环每个可见实体每帧都会读一次，结果按 `kind:facing` 缓存（至多 9×4 种），
  * 稳态下只剩一次 Map 查询，不再每帧构造几何对象。
  */
 const LIFT_CACHE = new Map<string, number>();

@@ -1,4 +1,5 @@
-import { playTeaGulp, playTempleBell } from '../ritual-audio';
+import { playSlideLanding, playSlideWhoosh, playTeaGulp, playTempleBell } from '../ritual-audio';
+import { attenuationFor } from '../spatial-audio';
 import { sfx } from '../sfx';
 import type { AudioEvent } from './engine-env';
 
@@ -30,5 +31,12 @@ export function applyAudioEvent(event: AudioEvent, listenerX: number, listenerY:
     case 'tea':
       playTeaGulp();
       return;
+    case 'slide': {
+      // 滑梯音不进 Voice 池：一段下滑扫频 + 落地低频，长不过 0.5s
+      const gain = event.local ? 1 : attenuationFor(event.x - listenerX, event.y - listenerY);
+      if (event.phase === 0) playSlideWhoosh(gain);
+      else playSlideLanding(gain);
+      return;
+    }
   }
 }
