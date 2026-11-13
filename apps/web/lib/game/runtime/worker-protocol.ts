@@ -9,6 +9,7 @@ import type {
   Pose,
   QueueStatusPacket,
   ResumeState,
+  RingPacket,
   SeatKind,
 } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
@@ -105,6 +106,8 @@ export type WorkerToMain =
   | { t: 'boardOpen' }
   /** 在放假告示板旁按 F / 点击牌面：主线程展开软木看板（ADR-0059） */
   | { t: 'bulletinOpen' }
+  /** 擂台快照：低频事件（阶段变化 / 扣血 / 1Hz 心跳），`receivedAt` 供 HUD 本地递减 */
+  | { t: 'ring'; packet: RingPacket | null; receivedAt: number }
   /** 牛马榜快照：一个指标一条，主线程按 metric 归并 */
   | { t: 'board'; packet: BoardPacket }
   /** 工牌点赞变化：主线程更新工牌与已赞集合 */

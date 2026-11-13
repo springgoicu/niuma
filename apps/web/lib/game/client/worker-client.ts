@@ -557,6 +557,9 @@ export class WorkerGameClient implements GameClient {
       case 'like':
         callbacks.onLike?.(message.packet);
         return;
+      case 'ring':
+        callbacks.onRing?.(message.packet, message.receivedAt);
+        return;
       case 'audio':
         applyAudioEvent(message.event, message.listenerX, message.listenerY);
         return;

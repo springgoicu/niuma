@@ -75,6 +75,10 @@ export interface BadgeArchive {
     /** 今日成功击倒他人的次数 */
     knockdownCount: number;
     overtimeCount: number;
+    /** 今日擂台冠 / 亚 / 季军（ADR-0073） */
+    ringGold: number;
+    ringSilver: number;
+    ringBronze: number;
   };
   board: BoardEntry[];
   rank: number | null;
@@ -173,6 +177,9 @@ export function buildSelfArchive(input: SelfArchiveInput): BadgeArchive {
       ventedCount: clampCount(day.ventedCount),
       knockdownCount: clampCount(day.knockdownCount),
       overtimeCount: clampCount(day.overtimeCount),
+      ringGold: clampCount(day.ringGold),
+      ringSilver: clampCount(day.ringSilver),
+      ringBronze: clampCount(day.ringBronze),
     },
     board: input.board,
     rank: input.rank,
@@ -230,6 +237,9 @@ export function buildRemoteArchive(badge: PlayerBadge, _now = Date.now()): Badge
       ventedCount: clampCount(effective.todayVented),
       knockdownCount: clampCount(effective.todayKnockdown),
       overtimeCount: clampCount(effective.todayOvertime),
+      ringGold: clampCount(effective.ringGold),
+      ringSilver: clampCount(effective.ringSilver),
+      ringBronze: clampCount(effective.ringBronze),
     },
     board: badge.board,
     rank: badge.rank,

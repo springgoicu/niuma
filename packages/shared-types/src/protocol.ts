@@ -3,12 +3,14 @@ import {
   CAREER_FIXED_BYTES,
   CAREER_FIXED_BYTES_LEGACY,
   CAREER_FIXED_BYTES_V2,
+  CAREER_FIXED_BYTES_V3,
   CAREER_MAX_BYTES,
   CAREER_MIN_BYTES,
   CAREER_SEGMENT_MAX_BYTES,
   CAREER_VERSION,
   CAREER_VERSION_LEGACY,
   CAREER_VERSION_V2,
+  CAREER_VERSION_V3,
   dateToEpochDays,
   epochDaysToDate,
   sanitizeCareer,
@@ -49,6 +51,7 @@ import {
   SESSION_EXTENSION_MAGIC,
   STATUS_EXTENSION_MAGIC,
   BOSS_PACKET_BYTES,
+  JAIL_PACKET_BYTES,
   SYNC_CAPABILITY_MAGIC,
   SYNC_ENTRY_BYTES,
   SYNC_ENTRY_BYTES_COMPACT,
@@ -56,6 +59,7 @@ import {
   SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
   VENT_PACKET_BYTES,
+  VENT_PACKET_WITH_FLAGS_BYTES,
   WELCOME_SESSION_BYTES,
   WELCOME_SESSION_MAGIC,
   type SyncFormat,
@@ -79,19 +83,31 @@ import type {
   BossPacket,
   ChatPacket,
   ChatSendPacket,
+  JailPacket,
   EntitySnapshot,
   LimitKind,
   MovePacket,
   QueueRejectedPacket,
   QueueStatusPacket,
   ResumeState,
+  RingPacket,
   SpawnPacket,
   SystemNoticePacket,
   VentEventPacket,
   WelcomePacket,
 } from './types';
-import { BOSS_FLAG_DIED, BOSS_FLAG_RESET, OpCode, QUEUE_REJECT_REASON } from './types';
+import {
+  BOSS_FLAG_DIED,
+  BOSS_FLAG_RESET,
+  JAIL_FLAG_SELF,
+  JAIL_PHASE,
+  OpCode,
+  QUEUE_REJECT_REASON,
+  RING_VENT_FLAG_ELIMINATED,
+  RING_VENT_FLAG_HIT,
+} from './types';
 import { BOSS_MAX_HP } from './world/boss';
+import { RING_CAPACITY, RING_MAX_HP, RING_PHASE } from './world/ring';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -483,14 +499,15 @@ export function decodeSync(
 // ---------------------------------------------------------------------------
 
 /**
- * 考勤摘要 payload（`CAREER_FIXED_BYTES` 为 v3 不含省份的定长部分）：
+ * 考勤摘要 payload（`CAREER_FIXED_BYTES` 为 v4 不含省份的定长部分）：
  *
  * `[version u8][firstJoinDays u16][todayMinutes u16][todayToiletMinutes u16]
  *  [todaySteps u32][todayKnockdown u16][todayVented u16][todayOvertime u16]
+ *  [ringGold u16][ringSilver u16][ringBronze u16]
  *  [provinceLen u8][province nB]`
  *
  * 全部小端；日期用距 2000-01-01 的天数，0 表示未上报。
- * 只编码今天：历史累计不再进入协议，旧解码器看到 version=3 会整段丢弃。
+ * 只编码今天：历史累计不再进入协议；v4 解码器仍能解 v3 的 18 字节旧包。
  */
 export function encodeCareer(career: CareerSummary): Uint8Array {
   const safe = sanitizeCareer(career);
@@ -512,6 +529,12 @@ export function encodeCareer(career: CareerSummary): Uint8Array {
   view.setUint16(at, safe.todayVented, true);
   at += 2;
   view.setUint16(at, safe.todayOvertime, true);
+  at += 2;
+  view.setUint16(at, safe.ringGold, true);
+  at += 2;
+  view.setUint16(at, safe.ringSilver, true);
+  at += 2;
+  view.setUint16(at, safe.ringBronze, true);
   at += 2;
   out[at++] = provinceBytes.length;
   out.set(provinceBytes, at);
@@ -540,6 +563,7 @@ export function decodeCareer(
   const version = data[offset]!;
   if (
     version !== CAREER_VERSION &&
+    version !== CAREER_VERSION_V3 &&
     version !== CAREER_VERSION_V2 &&
     version !== CAREER_VERSION_LEGACY
   ) {
@@ -548,15 +572,17 @@ export function decodeCareer(
   const fixedBytes =
     version === CAREER_VERSION
       ? CAREER_FIXED_BYTES
-      : version === CAREER_VERSION_V2
-        ? CAREER_FIXED_BYTES_V2
-        : CAREER_FIXED_BYTES_LEGACY;
+      : version === CAREER_VERSION_V3
+        ? CAREER_FIXED_BYTES_V3
+        : version === CAREER_VERSION_V2
+          ? CAREER_FIXED_BYTES_V2
+          : CAREER_FIXED_BYTES_LEGACY;
   if (length < fixedBytes) return undefined;
 
   const view = new DataView(data.buffer, data.byteOffset + offset, length);
   const firstJoinDays = view.getUint16(1, true);
 
-  if (version !== CAREER_VERSION) {
+  if (version !== CAREER_VERSION && version !== CAREER_VERSION_V3) {
     const todayMinutes = view.getUint16(9, true);
     const provinceLengthAt = version === CAREER_VERSION_V2 ? 35 : 33;
     const provinceLength = data[offset + provinceLengthAt] ?? 0;
@@ -579,9 +605,13 @@ export function decodeCareer(
   const todayKnockdown = view.getUint16(11, true);
   const todayVented = view.getUint16(13, true);
   const todayOvertime = view.getUint16(15, true);
+  const isV4 = version === CAREER_VERSION;
+  const ringGold = isV4 ? view.getUint16(17, true) : 0;
+  const ringSilver = isV4 ? view.getUint16(19, true) : 0;
+  const ringBronze = isV4 ? view.getUint16(21, true) : 0;
 
-  const provinceLength = data[offset + 17] ?? 0;
-  const provinceAt = offset + 18;
+  const provinceLength = data[offset + (isV4 ? 23 : 17)] ?? 0;
+  const provinceAt = offset + (isV4 ? 24 : 18);
   const available = Math.max(0, offset + length - provinceAt);
   const province =
     provinceLength > 0 && provinceLength <= available
@@ -595,6 +625,9 @@ export function decodeCareer(
     todayKnockdown,
     todayVented,
     todayOvertime,
+    ringGold,
+    ringSilver,
+    ringBronze,
     province,
   });
 }
@@ -893,21 +926,47 @@ export function decodeGraze(data: Uint8Array): number {
  * 与 `encodeGraze` 同属一次性事件通道，但多带「谁打到谁」与受害者的权威坐标：
  * 前者让旁观者能把倒地归因到具体的人（音效、台词、镜头都有对象），
  * 后者让受害者本人越过 128px 的本地和解阈值，直接贴到服务端算出的落点上。
+ *
+ * 擂台命中在末尾追加 `flags u8`：bit0 = 擂台命中，bit1 = 目标淘汰。
+ * 普通发泄仍写 9 字节，旧客户端读到 9 字节时天然不认识这一位。
  */
-export function encodeVent(attackerId: number, targetId: number, x: number, y: number): Uint8Array {
-  const writer = new ByteWriter(VENT_PACKET_BYTES);
+export function encodeVent(
+  attackerId: number,
+  targetId: number,
+  x: number,
+  y: number,
+  flags = 0,
+): Uint8Array {
+  const size = flags === 0 ? VENT_PACKET_BYTES : VENT_PACKET_WITH_FLAGS_BYTES;
+  const writer = new ByteWriter(size);
   writer.u8(OpCode.S2C_VENT).u16(attackerId).u16(targetId).u16(x).u16(y);
+  if (flags !== 0) writer.u8(flags);
   return writer.finish();
 }
 
 export function decodeVent(data: Uint8Array): VentEventPacket {
-  if (data.byteLength !== VENT_PACKET_BYTES) {
-    throw new Error(`vent packet must be ${VENT_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  if (data.byteLength !== VENT_PACKET_BYTES && data.byteLength !== VENT_PACKET_WITH_FLAGS_BYTES) {
+    throw new Error(
+      `vent packet must be ${VENT_PACKET_BYTES} or ${VENT_PACKET_WITH_FLAGS_BYTES} bytes, got ${data.byteLength}`,
+    );
   }
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_VENT) throw new Error('not a vent packet');
+  const attackerId = reader.u16();
+  const targetId = reader.u16();
   // 坐标保持量化口径：调用方用 dequantizeCoord 还原成世界像素，与移动包同一把尺子
-  return { attackerId: reader.u16(), targetId: reader.u16(), x: reader.u16(), y: reader.u16() };
+  const x = reader.u16();
+  const y = reader.u16();
+  if (reader.remaining === 0) return { attackerId, targetId, x, y };
+  const flags = reader.u8();
+  return {
+    attackerId,
+    targetId,
+    x,
+    y,
+    ringHit: (flags & RING_VENT_FLAG_HIT) !== 0,
+    eliminated: (flags & RING_VENT_FLAG_ELIMINATED) !== 0,
+  };
 }
 
 /**
@@ -938,6 +997,138 @@ export function decodeBoss(data: Uint8Array): BossPacket {
     attackerId,
     died: (flags & BOSS_FLAG_DIED) !== 0,
     reset: (flags & BOSS_FLAG_RESET) !== 0,
+  };
+}
+
+/**
+ * 小黑屋处置：`[op][entityId u16][phase u8][flags u8][seconds u16][guardId u16]`，9 字节定长。
+ *
+ * 只表达「谁、到了哪个阶段、跟着哪个保安」，不传坐标：押送位移继续走 20Hz Tick，
+ * 避免为一次执法事件新开一条高频包。`seconds` 字段保留，当前恒为 0（无禁足时长）。
+ */
+export function encodeJail(packet: JailPacket): Uint8Array {
+  if (packet.phase < JAIL_PHASE.Warn || packet.phase > JAIL_PHASE.Released) {
+    throw new Error(`jail phase out of range: ${packet.phase}`);
+  }
+  const flags = packet.self ? JAIL_FLAG_SELF : 0;
+  const writer = new ByteWriter(JAIL_PACKET_BYTES);
+  writer
+    .u8(OpCode.S2C_JAIL)
+    .u16(Math.max(0, Math.min(0xffff, packet.entityId)))
+    .u8(packet.phase)
+    .u8(flags)
+    .u16(Math.max(0, Math.min(0xffff, packet.seconds)))
+    .u16(Math.max(0, Math.min(0xffff, packet.guardId)));
+  return writer.finish();
+}
+
+export function decodeJail(data: Uint8Array): JailPacket {
+  if (data.byteLength !== JAIL_PACKET_BYTES) {
+    throw new Error(`jail packet must be ${JAIL_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_JAIL) throw new Error('not a jail packet');
+  const entityId = reader.u16();
+  const phase = reader.u8();
+  if (phase < JAIL_PHASE.Warn || phase > JAIL_PHASE.Released) {
+    throw new Error(`jail phase out of range: ${phase}`);
+  }
+  const flags = reader.u8();
+  const seconds = reader.u16();
+  const guardId = reader.u16();
+  return { entityId, phase, self: (flags & JAIL_FLAG_SELF) !== 0, seconds, guardId };
+}
+
+/** 报名/取消都是单字节 opcode，服务端用靠近与阶段做二次裁决。 */
+export function encodeRingEnter(): Uint8Array {
+  return Uint8Array.of(OpCode.C2S_RING_ENTER);
+}
+
+export function encodeRingLeave(): Uint8Array {
+  return Uint8Array.of(OpCode.C2S_RING_LEAVE);
+}
+
+/** 擂台包头部：op(1) + phase(1) + matchId(2) + remainingMs(4) + count(1) */
+const RING_HEADER_BYTES = 9;
+/** 每个席位定长部分：id(2) + slot(1) + hp(1) + flags(1) + rank(1) + nameLen(1) */
+const RING_MEMBER_FIXED_BYTES = 7;
+
+/**
+ * 擂台快照：`[op][phase u8][matchId u16][remainingMs u32][count u8]`
+ * + count × `[id u16][slot u8][hp u8][flags u8][rank u8][nameLen u8][name utf8]`。
+ *
+ * 名字直接随包下发，避免 HUD 还要去实体名字表里查已经离场的参赛者；
+ * 名字已按昵称协议截断，最多 3 个席位，包长有硬上限。
+ */
+export function encodeRing(packet: RingPacket): Uint8Array {
+  if (packet.members.length > RING_CAPACITY) {
+    throw new Error(`ring packet supports ${RING_CAPACITY} members, got ${packet.members.length}`);
+  }
+  const names = packet.members.map((member) => truncateName(member.name));
+  let size = RING_HEADER_BYTES;
+  for (const name of names) size += RING_MEMBER_FIXED_BYTES + textEncoder.encode(name).length;
+  const writer = new ByteWriter(size);
+  writer
+    .u8(OpCode.S2C_RING)
+    .u8(packet.phase)
+    .u16(packet.matchId)
+    .u32(Math.max(0, packet.remainingMs))
+    .u8(packet.members.length);
+  packet.members.forEach((member, index) => {
+    const name = names[index]!;
+    const flags = member.eliminated ? 1 : 0;
+    writer
+      .u16(member.id)
+      .u8(Math.min(Math.max(0, member.slot ?? index), RING_CAPACITY - 1))
+      .u8(Math.min(member.hp, RING_MAX_HP))
+      .u8(flags)
+      .u8(member.rank)
+      .u8(textEncoder.encode(name).length)
+      .raw(textEncoder.encode(name));
+  });
+  return writer.finish();
+}
+
+export function decodeRing(data: Uint8Array): RingPacket {
+  if (data.byteLength < RING_HEADER_BYTES) {
+    throw new Error(`ring packet too short: ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_RING) throw new Error('not a ring packet');
+  const phase = reader.u8();
+  if (phase > RING_PHASE.Award) throw new Error(`ring phase out of range: ${phase}`);
+  const matchId = reader.u16();
+  const remainingMs = reader.u32();
+  const count = reader.u8();
+  if (count > RING_CAPACITY) throw new Error(`ring member count out of range: ${count}`);
+  const members: RingPacket['members'] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < RING_MEMBER_FIXED_BYTES) throw new Error('ring member truncated');
+    const id = reader.u16();
+    const slot = reader.u8();
+    if (slot >= RING_CAPACITY) throw new Error(`ring slot out of range: ${slot}`);
+    const hp = Math.min(reader.u8(), RING_MAX_HP);
+    const flags = reader.u8();
+    const rank = reader.u8();
+    const nameLength = reader.u8();
+    if (nameLength > MAX_NAME_BYTES || nameLength > reader.remaining) {
+      throw new Error(`ring name length out of range: ${nameLength}`);
+    }
+    members.push({
+      id,
+      slot,
+      name: reader.utf8(nameLength),
+      hp,
+      eliminated: (flags & 1) !== 0,
+      rank,
+    });
+  }
+  if (reader.remaining !== 0) throw new Error(`ring packet has ${reader.remaining} trailing bytes`);
+  return {
+    phase: phase as RingPacket['phase'],
+    matchId,
+    remainingMs,
+    members,
   };
 }
 

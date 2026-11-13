@@ -21,6 +21,8 @@ export const SYSTEM_NOTICE_KIND = {
   OnDuty: 3,
   /** 园区公告（装修 / 活动）：入场后本地播一条，只有自己看得到 */
   Renovation: 4,
+  /** 保安执法：附近有人被请进小黑屋（ADR-0072） */
+  Detained: 5,
 } as const;
 
 export type SystemNoticeKind = (typeof SYSTEM_NOTICE_KIND)[keyof typeof SYSTEM_NOTICE_KIND];
@@ -47,6 +49,9 @@ const TEMPLATES: Readonly<Record<number, NoticeTemplate>> = {
     minutes && minutes > 0 ? `你已经在岗 ${formatDuration(minutes)}，起来走动两步。` : null,
   [SYSTEM_NOTICE_KIND.Renovation]: () =>
     '园区重装修完成：北门内四角新院已启用，工作区 / 会议室 / 宿舍区 / 卫生间已归位。',
+  // 「不许色色」是这条提示的固定落点，名字只换主语，文案不随阶段变
+  [SYSTEM_NOTICE_KIND.Detained]: ({ name }) =>
+    name ? `${name} 被保安请进了小黑屋：园区内不许色色。` : null,
 };
 
 /**

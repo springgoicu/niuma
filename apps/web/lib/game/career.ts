@@ -39,6 +39,10 @@ export interface CareerDayStats {
   knockdownCount: number;
   /** 今日加班次数（0 或 1） */
   overtimeCount: number;
+  /** 今日擂台冠 / 亚 / 季军次数（ADR-0073） */
+  ringGold: number;
+  ringSilver: number;
+  ringBronze: number;
 }
 
 export interface CareerStats {
@@ -51,6 +55,9 @@ export const EMPTY_CAREER_DAY: CareerDayStats = {
   ventedCount: 0,
   knockdownCount: 0,
   overtimeCount: 0,
+  ringGold: 0,
+  ringSilver: 0,
+  ringBronze: 0,
 };
 
 export const EMPTY_CAREER_STATS: CareerStats = { daily: {} };
@@ -74,6 +81,9 @@ function sanitizeDay(raw: unknown): CareerDayStats | null {
     ventedCount: clampCount(finiteOr(value.ventedCount, 0)),
     knockdownCount: clampCount(finiteOr(value.knockdownCount, 0)),
     overtimeCount: clampCount(finiteOr(value.overtimeCount, 0), 1),
+    ringGold: clampCount(finiteOr(value.ringGold, 0)),
+    ringSilver: clampCount(finiteOr(value.ringSilver, 0)),
+    ringBronze: clampCount(finiteOr(value.ringBronze, 0)),
   };
 }
 
@@ -113,6 +123,9 @@ export function saveCareerStats(
       ventedCount: clampCount(day.ventedCount),
       knockdownCount: clampCount(day.knockdownCount),
       overtimeCount: clampCount(day.overtimeCount, 1),
+      ringGold: clampCount(day.ringGold),
+      ringSilver: clampCount(day.ringSilver),
+      ringBronze: clampCount(day.ringBronze),
     };
   }
   writeJson(storage, CAREER_STORAGE_KEY, { daily });
@@ -181,6 +194,19 @@ export class CareerTracker {
     this.mutateDay(now, (day) => ({ ...day, knockdownCount: clampCount(day.knockdownCount + 1) }));
   }
 
+  /**
+   * 擂台名次入账：一局只记一次，按 matchId 去重由调用方保证。
+   * 只有冠亚季军会走到这里，第四名及以后不存在（容量就是 3）。
+   */
+  recordRingMedal(rank: 1 | 2 | 3, now: number = Date.now()): void {
+    if (this.disposed) return;
+    this.mutateDay(now, (day) => {
+      if (rank === 1) return { ...day, ringGold: clampCount(day.ringGold + 1) };
+      if (rank === 2) return { ...day, ringSilver: clampCount(day.ringSilver + 1) };
+      return { ...day, ringBronze: clampCount(day.ringBronze + 1) };
+    });
+  }
+
   /** 21:00 之后仍在岗，每天最多记一次。 */
   recordOvertime(now = Date.now()): void {
     if (this.disposed) return;
@@ -245,6 +271,7 @@ export interface CareerClock {
   recordSlack(now?: number): void;
   recordVented(now?: number): void;
   recordKnockdown(now?: number): void;
+  recordRingMedal(rank: 1 | 2 | 3, now?: number): void;
   recordOvertime(now?: number): void;
   snapshot(): CareerStats;
   dispose(): void;
@@ -258,6 +285,7 @@ const NOOP_CLOCK: CareerClock = {
   recordSlack: () => {},
   recordVented: () => {},
   recordKnockdown: () => {},
+  recordRingMedal: () => {},
   recordOvertime: () => {},
   snapshot: () => ({ ...EMPTY_CAREER_STATS }),
   dispose: () => {},
@@ -276,6 +304,7 @@ export function startCareerClock(): CareerClock {
     recordSlack: (now) => activeTracker?.recordSlack(now),
     recordVented: (now) => activeTracker?.recordVented(now),
     recordKnockdown: (now) => activeTracker?.recordKnockdown(now),
+    recordRingMedal: (rank, now) => activeTracker?.recordRingMedal(rank, now),
     recordOvertime: (now) => activeTracker?.recordOvertime(now),
     snapshot: () => activeTracker?.snapshot() ?? { ...EMPTY_CAREER_STATS },
     dispose: () => {
@@ -316,6 +345,9 @@ export function buildCareerSummary(
     todayKnockdown: clampCount(day.knockdownCount),
     todayVented: clampCount(day.ventedCount),
     todayOvertime: clampCount(day.overtimeCount, 1),
+    ringGold: clampCount(day.ringGold),
+    ringSilver: clampCount(day.ringSilver),
+    ringBronze: clampCount(day.ringBronze),
     province: province.trim(),
   };
 }

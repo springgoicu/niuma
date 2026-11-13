@@ -32,6 +32,12 @@ import {
   SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
   VENT_PACKET_BYTES,
+  RING_PHASE,
+  JAIL_PACKET_BYTES,
+  JAIL_PHASE,
+  RING_VENT_FLAG_ELIMINATED,
+  RING_VENT_FLAG_HIT,
+  VENT_PACKET_WITH_FLAGS_BYTES,
   DEFAULT_APPEARANCE,
   decodeAppearance,
   decodeAppearanceBroadcast,
@@ -47,6 +53,7 @@ import {
   decodeDespawn,
   decodeGraze,
   decodeHello,
+  decodeJail,
   decodeMove,
   decodeNameBroadcast,
   decodeSpawn,
@@ -55,6 +62,7 @@ import {
   decodeStatusBroadcast,
   decodeSystemNotice,
   decodeSync,
+  decodeRing,
   decodeVent,
   decodeWelcome,
   dequantizeCoord,
@@ -74,11 +82,13 @@ import {
   encodeDespawn,
   encodeGraze,
   encodeHello,
+  encodeJail,
   encodeMove,
   encodeNameBroadcast,
   encodeQueueRejected,
   encodeQueueStatus,
   encodeSpawn,
+  encodeRing,
   encodeSpawnInto,
   encodeSetName,
   encodeSetStatus,
@@ -388,9 +398,127 @@ describe('发泄结算包', () => {
     expect(decodeVent(encodeVent(7, 0, 0, 0))).toEqual({ attackerId: 7, targetId: 0, x: 0, y: 0 });
   });
 
+  it('擂台命中追加 flags，普通命中仍保持 9 字节', () => {
+    const plain = encodeVent(7, 8, 100, 200);
+    expect(plain.byteLength).toBe(VENT_PACKET_BYTES);
+
+    const ring = encodeVent(7, 8, 100, 200, RING_VENT_FLAG_HIT | RING_VENT_FLAG_ELIMINATED);
+    expect(ring.byteLength).toBe(VENT_PACKET_WITH_FLAGS_BYTES);
+    expect(decodeVent(ring)).toEqual({
+      attackerId: 7,
+      targetId: 8,
+      x: 100,
+      y: 200,
+      ringHit: true,
+      eliminated: true,
+    });
+  });
+
   it('拒绝错误 opcode 与错误长度', () => {
-    expect(() => decodeVent(encodeGraze(1))).toThrow(/must be 9 bytes/);
-    expect(() => decodeVent(encodeVent(1, 1, 1, 1).subarray(0, 8))).toThrow(/must be 9 bytes/);
+    expect(() => decodeVent(encodeGraze(1))).toThrow(/must be 9 or 10 bytes/);
+    expect(() => decodeVent(encodeVent(1, 1, 1, 1).subarray(0, 8))).toThrow(/must be 9 or 10 bytes/);
+  });
+});
+
+describe('擂台快照包', () => {
+  it('round-trip 阶段、对局、剩余时间与三个席位', () => {
+    const packet = encodeRing({
+      phase: RING_PHASE.Award,
+      matchId: 7,
+      remainingMs: 0,
+      members: [
+        { id: 1, name: '甲', hp: 6, eliminated: false, rank: 1 },
+        { id: 2, name: '乙', hp: 0, eliminated: true, rank: 2 },
+        { id: 3, name: '丙', hp: 0, eliminated: true, rank: 3 },
+      ],
+    });
+    expect(packet[0]).toBe(OpCode.S2C_RING);
+    expect(decodeRing(packet)).toEqual({
+      phase: RING_PHASE.Award,
+      matchId: 7,
+      remainingMs: 0,
+      members: [
+        { id: 1, slot: 0, name: '甲', hp: 6, eliminated: false, rank: 1 },
+        { id: 2, slot: 1, name: '乙', hp: 0, eliminated: true, rank: 2 },
+        { id: 3, slot: 2, name: '丙', hp: 0, eliminated: true, rank: 3 },
+      ],
+    });
+  });
+
+  it('空擂台只有 9 字节头部', () => {
+    expect(encodeRing({ phase: RING_PHASE.Idle, matchId: 0, remainingMs: 0, members: [] }).byteLength).toBe(9);
+  });
+
+  it('拒绝超容量、非法阶段与截断名字', () => {
+    expect(() =>
+      encodeRing({
+        phase: RING_PHASE.Running,
+        matchId: 1,
+        remainingMs: 1,
+        members: Array.from({ length: 4 }, (_, i) => ({
+          id: i + 1,
+          name: '牛',
+          hp: 10,
+          eliminated: false,
+          rank: 0,
+        })),
+      }),
+    ).toThrow(/supports 3 members/);
+
+    const packet = encodeRing({
+      phase: RING_PHASE.Running,
+      matchId: 1,
+      remainingMs: 1,
+      members: [{ id: 1, name: '牛', hp: 10, eliminated: false, rank: 0 }],
+    });
+    const badPhase = packet.slice();
+    badPhase[1] = 9;
+    expect(() => decodeRing(badPhase)).toThrow(/phase out of range/);
+    expect(() => decodeRing(packet.subarray(0, packet.byteLength - 2))).toThrow(/name length out of range/);
+  });
+});
+
+describe('小黑屋处置包', () => {
+  it('9 字节定长，五个阶段都能 round-trip', () => {
+    const packet = encodeJail({
+      entityId: 42,
+      phase: JAIL_PHASE.Escort,
+      self: true,
+      seconds: 25,
+      guardId: 3,
+    });
+    expect(packet.byteLength).toBe(JAIL_PACKET_BYTES);
+    expect(packet.byteLength).toBe(9);
+    expect(packet[0]).toBe(OpCode.S2C_JAIL);
+    expect(decodeJail(packet)).toEqual({
+      entityId: 42,
+      phase: JAIL_PHASE.Escort,
+      self: true,
+      seconds: 25,
+      guardId: 3,
+    });
+    for (const phase of Object.values(JAIL_PHASE)) {
+      expect(decodeJail(encodeJail({ entityId: 7, phase, self: false, seconds: 0, guardId: 0 }).slice())).toEqual({
+        entityId: 7,
+        phase,
+        self: false,
+        seconds: 0,
+        guardId: 0,
+      });
+    }
+  });
+
+  it('拒绝越界阶段、错误长度与错误 opcode', () => {
+    expect(() => encodeJail({ entityId: 1, phase: 0, self: true, seconds: 0, guardId: 0 })).toThrow(
+      /phase out of range/,
+    );
+    expect(() => encodeJail({ entityId: 1, phase: 9, self: true, seconds: 0, guardId: 0 })).toThrow(
+      /phase out of range/,
+    );
+    const badPhase = encodeJail({ entityId: 1, phase: JAIL_PHASE.Warn, self: true, seconds: 0, guardId: 0 }).slice();
+    badPhase[3] = 9;
+    expect(() => decodeJail(badPhase)).toThrow(/phase out of range/);
+    expect(() => decodeJail(new Uint8Array(8))).toThrow(/must be 9 bytes/);
   });
 });
 
@@ -686,6 +814,9 @@ describe('spawn / despawn / chat / hello', () => {
     todayKnockdown: 21,
     todayVented: 13,
     todayOvertime: 1,
+    ringGold: 3,
+    ringSilver: 1,
+    ringBronze: 2,
     province: '浙江',
   };
 
@@ -811,7 +942,7 @@ describe('spawn / despawn / chat / hello', () => {
     expect(decodeCareer(wrongVersion)).toBeUndefined();
     expect(decodeCareer(new Uint8Array(CAREER_MAX_BYTES + 1))).toBeUndefined();
     expect(payload.byteLength).toBeLessThanOrEqual(CAREER_MAX_BYTES);
-    expect(payload[0]).toBe(3);
+    expect(payload[0]).toBe(4);
     expect(encodeSpawn({
       id: 1,
       x: 0,
@@ -1373,6 +1504,9 @@ describe('会话续算段（ADR-0060）', () => {
     todayKnockdown: 0,
     todayVented: 0,
     todayOvertime: 0,
+    ringGold: 0,
+    ringSilver: 0,
+    ringBronze: 0,
     province: '',
   };
 

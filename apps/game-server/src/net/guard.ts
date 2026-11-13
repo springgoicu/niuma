@@ -68,6 +68,9 @@ defineExact(OpCode.C2S_LIKE, 3); // [op][targetId u16]
 defineExact(OpCode.C2S_BOARD, 2); // [op][metric u8]
 defineExact(OpCode.C2S_CHAT_HISTORY, 4); // [op][beforeMsgId u16][limit u8]
 defineExact(OpCode.C2S_SET_APPEARANCE, 1 + APPEARANCE_BYTES);
+// 擂台报名/取消都是单字节 opcode；容量、阶段与靠近由 sim/ring 二次裁决
+defineExact(OpCode.C2S_RING_ENTER, 1);
+defineExact(OpCode.C2S_RING_LEAVE, 1);
 
 // ---- 变长包：头部 + 声明长度 ----
 // HELLO 没有长度字段：昵称长度 + 固定外观段是下限，尾部各扩展段按魔数自解析。

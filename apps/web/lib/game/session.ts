@@ -8,9 +8,16 @@ import {
   CHAT_REJECT_REASON,
   DEFAULT_APPEARANCE,
   GRAZE_COOLDOWN_MS,
+  JAIL_ANCHORS,
+  JAIL_PHASE,
   MOVE_SPEED,
   NAV_TARGETS,
   QUEUE_REJECT_REASON,
+  RING_CAPACITY,
+  RING_EXIT,
+  RING_PHASE,
+  RING_PODIUM_SLOTS,
+  RING_START_SLOTS,
   SHRINE_ALTAR,
   SIT_RANGE,
   STATE_BITS,
@@ -20,10 +27,13 @@ import {
   VENT_STUN_MS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
+  clampToRing,
   dequantizeCoord,
   directionFromVector,
   findNearestSeat,
   formatSystemNotice,
+  isInRing,
+  isNearRing,
   packState,
   quantizeCoord,
   readSync,
@@ -43,11 +53,13 @@ import {
   type ChatPacket,
   type DanmakuMode,
   type Direction,
+  type JailPacket,
   type MotionTarget,
   type NavTargetId,
   type Pose,
   type QueueStatusPacket,
   type ResumeState,
+  type RingPacket,
   type SeatInstance,
   type SeatKind,
   type SeatStateEntry,
@@ -125,6 +137,8 @@ export interface ChatEntry {
 }
 
 export interface SessionStats {
+  /** 本地玩家实体 id：HUD 用它把「你」标在擂台席位 / 排名板上 */
+  selfId: number;
   fps: number;
   ping: number;
   x: number;
@@ -180,6 +194,11 @@ export interface SessionCallbacks {
   onBoard?(packet: BoardPacket): void;
   /** 工牌点赞变化：目标、计数与「是不是你点的」，宿主据此刷新档案弹窗 */
   onLike?(packet: LikePacket): void;
+  /**
+   * 擂台快照：`receivedAt` 是收到包的本机时刻，HUD 用它把 `remainingMs` 本地递减。
+   * `null` 表示离开擂台世界（重连 / 换园区），宿主应清空 HUD。
+   */
+  onRing?(packet: RingPacket | null, receivedAt: number): void;
 }
 
 /** 一次会话绑定的园区：构造后不再变化，重连与落盘都以它为准 */
@@ -308,9 +327,18 @@ export class GameSession {
   private ventLockUntil = 0;
   /** 被创飞后的硬直截止时刻：期间位移被冻结，姿态钉在躺姿（ADR-0051） */
   private stunUntil = 0;
+  /**
+   * 押送锁定：保安抓到人起生效，`JAIL_PHASE.Released` 收到即解除。
+   * 这是「跟着服务端阶段走」的开关而不是计时——进小黑屋不再有禁足时长，
+   * 松手那一刻就能自由移动（ADR-0072）。
+   */
+  private escortLocked = false;
   /** 躺床计时：lieAt 是躺下时刻，snoreAt 是上一次「Zzz…」 */
   private lieAt = 0;
   private snoreAt = 0;
+  /** 最近一次擂台快照（idle 时清空）与收到时刻：HUD 倒计时与本地冻结都读它 */
+  private ring: RingPacket | null = null;
+  private ringReceivedAt = 0;
   /** 上次上报给 UI 的本地姿态与入座状态，用来去重 */
   private localPose = -1;
   private localSeated = false;
@@ -471,7 +499,9 @@ export class GameSession {
       onSeatState: (entries) => this.handleSeatState(entries),
       onGraze: (id) => this.handleGraze(id),
       onVent: (packet) => this.handleVent(packet),
+      onJail: (packet) => this.handleJail(packet),
       onBoss: (packet) => this.handleBoss(packet),
+      onRing: (packet) => this.handleRing(packet),
       onPing: (rtt) => {
         this.ping = rtt;
         this.jitter.onRtt(rtt);
@@ -789,6 +819,13 @@ export class GameSession {
     const y = dequantizeCoord(qy);
 
     if (id === this.localId) {
+      // 被保安拖着走时不跑本地预测：位置完全由服务端一帧一帧写，
+      // 否则客户端会照着「自己没动」的预测把画面留在原地。
+      if (this.escortLocked) {
+        Position.x[eid] = x;
+        Position.y[eid] = y;
+        return;
+      }
       const dx = x - Position.x[eid]!;
       const dy = y - Position.y[eid]!;
       // 移动中以本地预测为准，只在偏差超过合法延迟上限时一次性对齐（ADR-0021）。
@@ -952,10 +989,13 @@ export class GameSession {
       const x = Position.x[eid]!;
       const y = Position.y[eid]!;
       const direction = Motion.direction[eid]! as Direction;
-      this.contextHint = selectContextHint(x, y, direction, {
-        isFreeSeat: (id) => !this.seatOwner.has(id),
-        propOut: this.interactTarget,
-      });
+      // 擂台提示独立于设施优先级：场边只有这一条路能进去，不能被别的感应圈顶掉
+      this.contextHint = isNearRing(x, y)
+        ? this.ringHint()
+        : selectContextHint(x, y, direction, {
+            isFreeSeat: (id) => !this.seatOwner.has(id),
+            propOut: this.interactTarget,
+          });
     }
     this.publishHint();
   }
@@ -1136,10 +1176,15 @@ export class GameSession {
     this.lieAt = 0;
     this.snoreAt = 0;
     this.prayAt = -1;
-    // 换连接后旧的硬直 / 出招窗口都失去意义：新角色从站立开始
+    // 换连接后旧的硬直 / 出招窗口 / 押送锁都失去意义：新角色从站立开始
     this.stunUntil = 0;
+    this.escortLocked = false;
     this.ventLockUntil = 0;
     this.ventAt = 0;
+    this.ring = null;
+    this.ringReceivedAt = 0;
+    this.renderer.setRing(null);
+    this.callbacks.onRing?.(null, 0);
     this.localId = 0;
     this.localPose = -1;
     this.localSeated = false;
@@ -1243,7 +1288,9 @@ export class GameSession {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
     // 倒地硬直期间不接受任何动作：起身只能等硬直结束（ADR-0051）
-    if (this.elapsed < this.stunUntil) return;
+    if (this.elapsed < this.stunUntil || this.escortLocked) return;
+    // 颁奖阶段参赛者被冻结：站位与名次都由服务端定格，任何动作都会破坏画面
+    if (this.ringAwardFrozen()) return;
     // 任何动作都先夺回控制权：坐着 / 躺着 / 跳跃 / 互动都不该被自动寻路拽着走
     this.cancelNavigation();
     this.applyIntent(eid, resolveInteraction(action, this.interactionState(eid)));
@@ -1378,6 +1425,11 @@ export class GameSession {
     if (this.elapsed < this.interactAt) return;
     const x = Position.x[eid]!;
     const y = Position.y[eid]!;
+    // 擂台在发泄区西侧，与告示板 / 牛马榜都不相邻；放最前是为了不让设施感应圈抢走 F
+    if (isNearRing(x, y)) {
+      this.interactRing();
+      return;
+    }
     if (isNearBulletin(x, y)) {
       this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
       this.callbacks.onBulletinOpen?.();
@@ -1506,6 +1558,112 @@ export class GameSession {
   }
 
   /**
+   * 擂台快照（服务端权威）。
+   *
+   * 客户端只做三件确定性的事：
+   * 1. 参赛状态切换时把本人落到服务端刚传送的坐标（进入 = 起跑位，颁奖 = 领奖台，出场 = 场边）；
+   * 2. 把快照与收到时刻交给 HUD，让倒计时本地递减；
+   * 3. 刷新提示与渲染层的擂台状态。
+   */
+  private handleRing(packet: RingPacket): void {
+    const receivedAt = Date.now();
+    const previous = this.ring;
+    const previousSlot = this.ringSlotOf(previous);
+    const nextSlot = this.ringSlotOf(packet);
+    this.ring = packet.phase === RING_PHASE.Idle ? null : packet;
+    this.ringReceivedAt = receivedAt;
+
+    if (nextSlot >= 0 && previousSlot < 0) {
+      this.teleportLocal(RING_START_SLOTS[Math.min(nextSlot, RING_START_SLOTS.length - 1)]!);
+    } else if (nextSlot >= 0 && packet.phase === RING_PHASE.Award && previous?.phase !== RING_PHASE.Award) {
+      const rank = packet.members.find((member) => member.id === this.localId)?.rank ?? 1;
+      this.teleportLocal(RING_PODIUM_SLOTS[Math.min(Math.max(rank - 1, 0), RING_PODIUM_SLOTS.length - 1)]!);
+    } else if (previousSlot >= 0 && nextSlot < 0) {
+      this.teleportLocal(RING_EXIT);
+    }
+
+    this.renderer.setRing(this.ring);
+    this.callbacks.onRing?.(this.ring, receivedAt);
+    // 状态切换后提示可能整句都变了：下一帧立刻重算，不等 150ms 的座位扫描节拍
+    this.seatHintAt = 0;
+    const eid = this.ecs.get(this.localId);
+    if (eid) this.updateSeatHint(eid);
+  }
+
+  /** 本地在擂台里的起跑位序号；-1 表示不是参赛者 */
+  private ringSlotOf(packet: RingPacket | null): number {
+    if (!packet) return -1;
+    const member = packet.members.find((entry) => entry.id === this.localId);
+    return member ? (member.slot ?? 0) : -1;
+  }
+
+  /** 颁奖阶段：参赛者被冻结移动与出招，和场内的获奖站位一起静止 */
+  private ringAwardFrozen(): boolean {
+    return this.ring?.phase === RING_PHASE.Award && this.ringSlotOf(this.ring) >= 0;
+  }
+
+  /** 淘汰者要躺到本局结束：本地按快照剩余时间估算，至少保留一个普通硬直 */
+  private ringStunRemainMs(): number {
+    const remaining =
+      this.ring?.phase === RING_PHASE.Running
+        ? this.ring.remainingMs - (Date.now() - this.ringReceivedAt)
+        : 0;
+    return Math.max(VENT_STUN_MS, remaining + 500);
+  }
+
+  /** 服务端刚把本人传送走：本地镜像同一坐标，并清掉导航 / 硬直 / 出招窗口 */
+  private teleportLocal(point: { x: number; y: number }): void {
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    this.cancelNavigation();
+    Position.x[eid] = point.x;
+    Position.y[eid] = point.y;
+    Motion.moving[eid] = 0;
+    this.stunUntil = 0;
+    this.ventLockUntil = 0;
+    this.renderer.updateCamera(point.x, point.y);
+  }
+
+  /** 擂台旁的 F 提示：报名 / 取消 / 已满 / 进行中 / 颁奖中 */
+  private ringHint(): string | null {
+    if (this.ringSlotOf(this.ring) >= 0) {
+      if (this.ring?.phase === RING_PHASE.Waiting) return HINT.ringLeave;
+      if (this.ring?.phase === RING_PHASE.Running) return HINT.ringFighting;
+      return HINT.ringAward;
+    }
+    if (!this.ring) return HINT.ringJoin;
+    if (this.ring.phase === RING_PHASE.Award) return HINT.ringAward;
+    if (this.ring.members.length >= RING_CAPACITY) return HINT.ringFull;
+    return HINT.ringJoin;
+  }
+
+  /** 报名 / 取消：服务端做容量与阶段的最终裁决，本地只发意图并给一句回执 */
+  private interactRing(): void {
+    this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+    if (this.ringSlotOf(this.ring) >= 0) {
+      if (this.ring?.phase === RING_PHASE.Waiting) {
+        this.net?.sendRingLeave();
+        this.showHint('已取消报名，回到场边');
+        return;
+      }
+      this.showHint('比赛已经开始，等这局结束就能出去');
+      return;
+    }
+    if (this.ring) {
+      if (this.ring.phase === RING_PHASE.Award) {
+        this.showHint(HINT.ringAward);
+        return;
+      }
+      if (this.ring.members.length >= RING_CAPACITY) {
+        this.showHint(HINT.ringFull);
+        return;
+      }
+    }
+    this.net?.sendRingEnter();
+    this.showHint(this.ring && this.ring.members.length > 0 ? '已报名，等待第 2 位挑战者' : '已报名，正在传送入场');
+  }
+
+  /**
    * 发泄结算（ADR-0051）：服务端裁定「谁打到了谁、对方落在哪」。
    *
    * 这条包不能省，因为本地玩家的姿态是客户端预测的——Tick 里的 state 对自己不生效，
@@ -1516,10 +1674,13 @@ export class GameSession {
     if (packet.targetId === 0) return;
     const x = dequantizeCoord(packet.x);
     const y = dequantizeCoord(packet.y);
-    // 行为统计只认服务端归因：被击倒记「被喷」，成功击倒他人记「击倒」
-    const outcome = ventOutcome(packet, this.localId);
-    if (outcome === 'hit') this.callbacks.onVentHit?.(true);
-    if (outcome === 'dealt') this.callbacks.onVentDealt?.();
+    // 行为统计只认服务端归因：被击倒记「被喷」，成功击倒他人记「击倒」。
+    // 擂台伤害单独结算，不混进普通考勤（ADR-0073）
+    if (!packet.ringHit) {
+      const outcome = ventOutcome(packet, this.localId);
+      if (outcome === 'hit') this.callbacks.onVentHit?.(true);
+      if (outcome === 'dealt') this.callbacks.onVentDealt?.();
+    }
     const targetEid = this.ecs.get(packet.targetId);
     // 钝击音挂在这条包上：谁被打都该听到「砰」，声源取服务端给的落点
     this.emitAudio({
@@ -1531,6 +1692,7 @@ export class GameSession {
     });
     this.renderer.showBubble(packet.targetId, pickVentVictimLine(packet.targetId));
     this.renderer.setStun(packet.targetId, VENT_STUN_MS);
+    if (packet.ringHit) this.renderer.showRingDamage(packet.targetId, packet.eliminated === true);
     if (!targetEid) return;
 
     if (packet.targetId === this.localId) {
@@ -1542,7 +1704,9 @@ export class GameSession {
       this.clearOverlays(targetEid);
       // 本地硬直从「收到」开始算：比服务端的起始晚半个 RTT，所以客户端永远不会
       // 提前把输入发出去被服务端拒掉
-      this.stunUntil = this.elapsed + VENT_STUN_MS;
+      // 擂台里被淘汰的人必须躺到本局结束：服务端把硬直延到结算，本地镜像同样的时长
+      this.stunUntil =
+        this.elapsed + (packet.eliminated ? this.ringStunRemainMs() : VENT_STUN_MS);
       this.ventLockUntil = 0;
       if (this.localSeat !== 0) {
         // 被创飞即失去座位：服务端那边已经释放，本地镜像跟上，免得起身后还占着椅子
@@ -1556,6 +1720,99 @@ export class GameSession {
     // 旁观者：坐标与躺姿随 Tick 到达，这里只把这一帧的踏步状态收掉，
     // 免得远端在倒地那一帧还挂着走路循环
     Motion.moving[targetEid] = 0;
+  }
+
+  /**
+   * 小黑屋处置（ADR-0072）。
+   *
+   * 服务端只表达阶段：警告 → 派保安 → 抓到拖走 → 松手。押送期间本地锁输入、
+   * 位置完全跟随服务端；松手那一刻解除锁并落回站姿，**没有任何禁足倒计时**。
+   */
+  private handleJail(packet: JailPacket): void {
+    if (!packet.self) {
+      // 旁人只看到被拖者头顶的抗议气泡，不锁自己的输入
+      if (packet.phase === JAIL_PHASE.Escort) {
+        this.renderer.showBubble(packet.entityId, '不许色色！');
+      }
+      return;
+    }
+
+    switch (packet.phase) {
+      case JAIL_PHASE.Warn:
+        this.showHint('保安盯上你了：别在别人旁边反复坐下站起');
+        return;
+      case JAIL_PHASE.Dispatch:
+        this.showHint('保安正朝你走过来…');
+        return;
+      case JAIL_PHASE.Escort:
+        this.beginEscort();
+        return;
+      case JAIL_PHASE.Released:
+        this.endEscort();
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** 被按肩：放弃座位、钉成躺姿，输入交给服务端直到松手 */
+  private beginEscort(): void {
+    this.escortLocked = true;
+    this.cancelNavigation();
+    this.ventLockUntil = 0;
+    this.stunUntil = 0;
+    this.localSeat = 0;
+    this.entitySeat.delete(this.localId);
+    this.seatIntent = false;
+    this.lieAt = 0;
+    this.snoreAt = this.elapsed;
+    const eid = this.ecs.get(this.localId);
+    if (eid) {
+      this.setLocalPose(eid, POSE.Lie);
+      this.clearOverlays(eid);
+      Motion.moving[eid] = 0;
+    }
+    this.showHint('被保安按住了，正押往小黑屋…');
+  }
+
+  /** 松手：解除锁、回到站姿，地点已经由 Tick 对齐，下一秒就能自己走 */
+  private endEscort(): void {
+    if (!this.escortLocked) return;
+    this.escortLocked = false;
+    const eid = this.ecs.get(this.localId);
+    if (eid) {
+      this.snapToJailAnchor(eid);
+      this.setLocalPose(eid, POSE.Idle);
+      this.clearOverlays(eid);
+      Motion.moving[eid] = 0;
+    }
+    this.showHint('保安松手了，可以自由活动');
+  }
+
+  /**
+   * 到位后把脚下对齐到最近的反省点：服务端本身也写在这个点上，
+   * 这里只是抹掉 20Hz 同步留下的几十像素误差。80px 半径仍在屋内，
+   * 超出去一律不动——半路中止时人在屋外，任何吸附都成了传送。
+   */
+  private snapToJailAnchor(eid: number): void {
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    const limitSq = 80 * 80;
+    let best = -1;
+    let bestSq = limitSq;
+    for (let index = 0; index < JAIL_ANCHORS.length; index += 1) {
+      const anchor = JAIL_ANCHORS[index]!;
+      const dx = anchor.x - x;
+      const dy = anchor.y - y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq <= bestSq) {
+        best = index;
+        bestSq = distanceSq;
+      }
+    }
+    if (best < 0) return;
+    Position.x[eid] = JAIL_ANCHORS[best]!.x;
+    Position.y[eid] = JAIL_ANCHORS[best]!.y;
   }
 
   /**
@@ -1630,8 +1887,12 @@ export class GameSession {
     this.expireLocalOverlays(eid);
 
     // 倒地硬直与出招窗口都要冻结位移：前者是「躺在地上动不了」，
-    // 后者是「正在头槌，脚不该还在地上滑」（ADR-0051）
-    const frozen = this.elapsed < this.stunUntil || this.elapsed < this.ventLockUntil;
+    // 后者是「正在头槌，脚不该还在地上滑」（ADR-0051）；颁奖阶段一起定格
+    const frozen =
+      this.escortLocked ||
+      this.elapsed < this.stunUntil ||
+      this.elapsed < this.ventLockUntil ||
+      this.ringAwardFrozen();
 
     // 本帧手按方向：tick 里已经解算好，这里只读复用槽位
     const manual = this.manual;
@@ -1660,6 +1921,15 @@ export class GameSession {
       const nextY = clamp(prevY + vy * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
       // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
       resolveMotionInto(this.motion, prevX, prevY, nextX, nextY);
+      // 擂台边界与服务端逐字一致：参赛者向内夹取，非参赛者不靠移动跨进围绳
+      if (this.ringSlotOf(this.ring) >= 0) {
+        const inside = clampToRing(this.motion.x, this.motion.y);
+        this.motion.x = inside.x;
+        this.motion.y = inside.y;
+      } else if (isInRing(this.motion.x, this.motion.y)) {
+        this.motion.x = prevX;
+        this.motion.y = prevY;
+      }
       const advanced = Math.abs(this.motion.x - prevX) + Math.abs(this.motion.y - prevY) > 0.01;
       Position.x[eid] = this.motion.x;
       Position.y[eid] = this.motion.y;
@@ -1871,6 +2141,7 @@ export class GameSession {
       this.statsAt = now;
       this.ensureBoard(now);
       this.callbacks.onStats({
+        selfId: this.localId,
         fps: this.fps,
         ping: this.ping,
         x: localEid ? Math.round(Position.x[localEid]!) : 0,

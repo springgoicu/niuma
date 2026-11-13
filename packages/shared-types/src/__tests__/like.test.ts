@@ -20,6 +20,9 @@ const CAREER: CareerSummary = {
   todayKnockdown: 4,
   todayVented: 2,
   todayOvertime: 1,
+  ringGold: 0,
+  ringSilver: 0,
+  ringBronze: 0,
   province: '浙江',
 };
 

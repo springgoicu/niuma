@@ -5,8 +5,11 @@ import { HINT, hintButton, resolveVisibleHint, touchHint } from '../hint-copy';
 const TOUCH_BUTTONS = ['跳', '招手', '发泄', '吃草', '坐下', '躺平', '互动', '起身'];
 
 describe('触屏提示文案', () => {
+  /** 只有「能按」的提示才需要换成按钮说法；纯状态/劝阻文案两端同文 */
+  const KEY_HINTS = Object.values(HINT).filter((copy) => hintButton(copy) !== null);
+
   it('每条带按键的提示都有触屏说法，且不再出现「按 」', () => {
-    for (const copy of Object.values(HINT)) {
+    for (const copy of KEY_HINTS) {
       const touch = touchHint(copy);
       expect(touch).not.toBe(copy);
       expect(touch.includes('按 ')).toBe(false);
@@ -14,7 +17,7 @@ describe('触屏提示文案', () => {
   });
 
   it('触屏说法引用的按钮名与动作盘标签一致', () => {
-    for (const copy of Object.values(HINT)) {
+    for (const copy of KEY_HINTS) {
       const button = touchHint(copy).match(/「([^」]+)」/)?.[1];
       expect(button).toBeDefined();
       expect(TOUCH_BUTTONS).toContain(button!);
@@ -25,6 +28,12 @@ describe('触屏提示文案', () => {
     expect(touchHint('移动即可起身')).toBe('移动即可起身');
     expect(touchHint('已到达食堂')).toBe('已到达食堂');
     expect(touchHint('附近没有可互动的设施')).toBe('附近没有可互动的设施');
+  });
+
+  it('擂台状态提示是纯文本，两端说法一致', () => {
+    for (const copy of [HINT.ringFull, HINT.ringFighting, HINT.ringAward]) {
+      expect(touchHint(copy)).toBe(copy);
+    }
   });
 });
 
@@ -46,6 +55,8 @@ describe('设施提示按钮映射', () => {
     [HINT.interact, 'interact', '互动', 'F'],
     [HINT.shrine, 'interact', '上香祈福', 'F'],
     [HINT.tea, 'interact', '续杯养生茶', 'F'],
+    [HINT.ringJoin, 'interact', '报名擂台', 'F'],
+    [HINT.ringLeave, 'interact', '取消报名', 'F'],
   ] as const;
 
   it('每条可互动提示都映射到动作、动作名与键帽', () => {
@@ -66,7 +77,14 @@ describe('设施提示按钮映射', () => {
   });
 
   it('劝阻文案保持纯文本，不映射成按钮', () => {
-    for (const copy of [HINT.lieOnSeat, HINT.sitOnBed, HINT.bedOnly]) {
+    for (const copy of [
+      HINT.lieOnSeat,
+      HINT.sitOnBed,
+      HINT.bedOnly,
+      HINT.ringFull,
+      HINT.ringFighting,
+      HINT.ringAward,
+    ]) {
       expect(hintButton(copy)).toBeNull();
     }
   });

@@ -2,6 +2,7 @@
 
 import { Container, Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
 import {
+  JAIL_ANCHOR,
   RESTROOM_STALLS,
   THEATER_SCREEN,
   THEATER_SEATS,
@@ -656,12 +657,14 @@ export class InteriorArt {
     const lounge = roomOf('宿舍区');
     const restroom = roomOf('卫生间');
     const theater = roomOf('家庭影音室');
+    const cell = roomOf('小黑屋');
 
     if (work) this.decorateWorkroom(flat, work);
     if (meeting) this.decorateMeeting(flat, meeting);
     if (lounge) this.decorateLounge(flat, lounge);
     if (restroom) this.decorateRestroom(flat, restroom);
     if (theater) this.decorateTheater(flat, theater);
+    if (cell) this.decorateCell(flat, cell);
     base.addChild(flat);
 
     if (work) this.furnishWorkroom(depth, renderer, work);
@@ -674,6 +677,80 @@ export class InteriorArt {
   destroy(): void {
     for (const texture of this.textures) texture.destroy(true);
     this.textures.length = 0;
+  }
+
+  /* ---------------- 小黑屋：水泥地、吊灯、铁窗、反省凳（ADR-0072） ---------------- */
+
+  /**
+   * 小球房只有四件东西：一盏晃的吊灯、一扇铁窗、一张红叉桃心海报、一只反省凳。
+   * 海报不写文字——「不许色色」由 HUD 卡片负责，地图上只用红叉和色块，缩到最小地图也认得出。
+   */
+  private decorateCell(g: Graphics, room: Room): void {
+    const { x, y, w, h } = room.rect;
+    const t = room.wall;
+    const innerX = x + t;
+    const innerY = y + t;
+
+    // 北墙铁窗：窗框 + 三根竖栅，压住墙顶
+    const winX = innerX + 48;
+    rect(g, winX, y + 2, 104, t - 3, 0x40464f);
+    rect(g, winX + 3, y + 3, 98, t - 5, 0x1e2228);
+    for (let i = 0; i < 4; i += 1) rect(g, winX + 16 + i * 24, y + 3, 3, t - 5, 0x6c737e);
+
+    // 红叉桃心海报：贴在门对面的北墙上，文字交给 UI
+    const posterX = innerX + 196;
+    const posterY = innerY + 5;
+    rect(g, posterX - 2, posterY - 2, 78, 50, 0x3e434a);
+    rect(g, posterX, posterY, 74, 46, 0xe9e3d4);
+    rect(g, posterX, posterY, 74, 2, 0xbeb6a4);
+    // 桃心：两瓣 + 下尖，故意画得笨一点，像保安手绘
+    rect(g, posterX + 20, posterY + 11, 14, 7, 0xb83b47);
+    rect(g, posterX + 38, posterY + 11, 14, 7, 0xb83b47);
+    rect(g, posterX + 18, posterY + 18, 38, 9, 0xb83b47);
+    rect(g, posterX + 24, posterY + 27, 26, 7, 0xb83b47);
+    rect(g, posterX + 32, posterY + 33, 10, 3, 0x8e2b35);
+    // 红叉：两道 2px 斜线压过桃心
+    for (let i = 0; i < 34; i += 1) {
+      rect(g, posterX + 20 + i, posterY + 9 + i, 2, 2, 0xd13f3f);
+      rect(g, posterX + 53 - i, posterY + 9 + i, 2, 2, 0xd13f3f);
+    }
+    // 海报下沿的两条「标语」横线，暗示有字但不真的画字
+    rect(g, posterX + 6, posterY + 39, 62, 1, 0x8d8577);
+    rect(g, posterX + 16, posterY + 42, 42, 1, 0xb0a795);
+
+    // 吊灯：一根线、一只搪瓷罩、一圈暖光；光位交给灯光模块，不在这里画光锥
+    const bulbX = innerX + (w - t * 2) / 2;
+    rect(g, bulbX, innerY, 1, 34, 0x4b4f57);
+    rect(g, bulbX - 8, innerY + 34, 17, 3, 0x2c3037);
+    rect(g, bulbX - 5, innerY + 37, 11, 3, 0xffe3a3);
+    rect(g, bulbX - 6, innerY + 37, 1, 3, 0xfff3cc);
+    this.lights.push({
+      x: bulbX,
+      y: innerY + 38,
+      radius: 92,
+      color: 0xffd79a,
+      intensity: 0.5,
+      flicker: 0.12,
+    });
+
+    // 反省凳：低矮木板条 + 四条铁腿，坐上去时正好被角色压住
+    const sx = JAIL_ANCHOR.x;
+    const sy = JAIL_ANCHOR.y + 7;
+    rect(g, sx - 15, sy - 7, 31, 7, 0x8b6b4a);
+    rect(g, sx - 15, sy - 7, 31, 1, 0xb18b63);
+    for (let i = 0; i < 3; i += 1) rect(g, sx - 13 + i * 10, sy - 6, 1, 6, 0x6a5038);
+    rect(g, sx - 13, sy, 2, 9, 0x5d6167);
+    rect(g, sx + 12, sy, 2, 9, 0x5d6167);
+
+    // 凳子后面的地上：两圈拖拽过的鞋印，让空房有一点「有人来过」的证据
+    rect(g, sx - 34, sy + 20, 10, 1, 0x5b5e63);
+    rect(g, sx + 26, sy + 26, 12, 1, 0x5b5e63);
+
+    // 北墙上的两个铁环：押送时挂人用的，纯装饰
+    rect(g, sx - 30, innerY + 2, 9, 7, 0x40464f);
+    rect(g, sx + 22, innerY + 2, 9, 7, 0x40464f);
+    rect(g, sx - 28, innerY + 4, 5, 4, 0x0f1116);
+    rect(g, sx + 24, innerY + 4, 5, 4, 0x0f1116);
   }
 
   /* ---------------- 工作区：开放木地板，无墙 ---------------- */

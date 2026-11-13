@@ -1,6 +1,13 @@
 'use client';
 
-import { POSE, type NavTargetId, type Pose, type QueueStatusPacket, type SeatKind } from '@niuma/shared-types';
+import {
+  POSE,
+  type NavTargetId,
+  type Pose,
+  type QueueStatusPacket,
+  type RingPacket,
+  type SeatKind,
+} from '@niuma/shared-types';
 import { create } from 'zustand';
 import { loadChatOpen, saveChatOpen } from './chat-prefs';
 import type { BoardEntry } from './game/badge';
@@ -10,6 +17,8 @@ export type ConnectionStatus = 'idle' | 'connecting' | 'queued' | 'online' | 'of
 
 interface GameUiState {
   status: ConnectionStatus;
+  /** 本地玩家实体 id（0 = 尚未入场），擂台 HUD 用它标识「你」 */
+  selfId: number;
   detail: string;
   backend: string;
   fps: number;
@@ -63,7 +72,15 @@ interface GameUiState {
   hint: string | null;
   /** 正在自动前往的导览目标；null 表示没有导航 */
   navTarget: { id: NavTargetId; name: string } | null;
+  /**
+   * 擂台快照与收到时刻。
+   *
+   * 服务端只在阶段变化 / 扣血 / 1Hz 心跳时广播，倒计时靠 `receivedAt + remainingMs`
+   * 本地递减，所以 HUD 必须拿到这两个值，不能只存 remainingMs。
+   */
+  ring: { packet: RingPacket; receivedAt: number } | null;
   setLocalState: (state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }) => void;
+  setRing: (packet: RingPacket | null, receivedAt: number) => void;
   setHint: (hint: string | null) => void;
   setNavTarget: (nav: { id: NavTargetId; name: string } | null) => void;
   setStatus: (status: ConnectionStatus, detail?: string) => void;
@@ -111,6 +128,7 @@ function oldestChatMsgId(messages: readonly ChatEntry[]): number {
 
 const INITIAL = {
   status: 'idle' as ConnectionStatus,
+  selfId: 0,
   detail: '',
   backend: 'initializing',
   fps: 0,
@@ -137,12 +155,15 @@ const INITIAL = {
   seatKind: null as SeatKind | null,
   hint: null,
   navTarget: null as { id: NavTargetId; name: string } | null,
+  ring: null as { packet: RingPacket; receivedAt: number } | null,
 };
 
 export const useGameUi = create<GameUiState>((set) => ({
   ...INITIAL,
 
   setLocalState: ({ pose, seated, seatKind }) => set({ localPose: pose, seated, seatKind }),
+
+  setRing: (packet, receivedAt) => set({ ring: packet ? { packet, receivedAt } : null }),
 
   setHint: (hint) => set({ hint }),
 
@@ -152,6 +173,7 @@ export const useGameUi = create<GameUiState>((set) => ({
 
   setStats: (stats) =>
     set({
+      selfId: stats.selfId,
       fps: stats.fps,
       ping: stats.ping,
       x: stats.x,

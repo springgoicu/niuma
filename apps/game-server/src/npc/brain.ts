@@ -21,11 +21,40 @@ import { pickWaypoint, type NpcSpot } from './spots';
  */
 export type NpcPhase = 'walk' | 'pause';
 
+/**
+ * 一次押送任务：追击 → 按肩 → 拖行。
+ *
+ * 任务只活在 `NpcAgent` 上，不写进 `Player`；目标断线、无路可走或超时都会
+ * 由 `npc/escort` 回报中止，保安停在原地继续巡逻，绝不传送（ADR-0061）。
+ */
+export type EscortStage = 'chase' | 'hold' | 'drag';
+
+export interface EscortTask {
+  targetId: number;
+  stage: EscortStage;
+  /** 本阶段结束时刻（目前只有按肩停顿用到） */
+  stageUntil: number;
+  /** 当前这一段的路线点，首点通常是保安当前位置 */
+  path: NpcSpot[];
+  index: number;
+  /** 下一次允许重算路线的时刻（追击时限流 400ms） */
+  replanAt: number;
+  lastTargetX: number;
+  lastTargetY: number;
+  /** 本阶段开始时刻：追击 / 拖行各自计时，超时即中止 */
+  startedAt: number;
+  /** 拖行时目标在保安身后的方向（单位向量） */
+  towX: number;
+  towY: number;
+}
+
 export interface NpcAgent {
   readonly player: Player;
   /** 像素/秒：MOVE_SPEED × speedFactor */
   readonly speed: number;
   phase: NpcPhase;
+  /** 正在执行的押送任务；null 表示正常巡逻 */
+  escort: EscortTask | null;
   target: NpcSpot;
   /** 本次停顿的结束时刻 */
   pauseUntil: number;
@@ -92,6 +121,7 @@ export function createAgent(
     player,
     speed: MOVE_SPEED * speedFactor,
     phase: 'pause',
+    escort: null,
     target: pickWaypoint(rng, { x: player.x, y: player.y }),
     // 出生后先站一会儿：五个人同时起步会像列队
     pauseUntil: now + rng.int(400, 2_400),

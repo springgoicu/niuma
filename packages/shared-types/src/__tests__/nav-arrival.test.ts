@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LOUNGE, MEETING_ROOM, RESTROOM, WORKROOM } from '../world/campus';
+import { LOUNGE, MEETING_ROOM, RESTROOM, SOUTH_YARD_PAVING, WORKROOM } from '../world/campus';
+import { BOSS_ARENA } from '../world/boss';
 import { isBlocked, PLAYER_RADIUS } from '../world/collision';
 import { isOnLand, isWaterAt, NAV_TARGETS, type NavTargetId } from '../world/layout';
 import { rectContains } from '../world/geometry';
@@ -17,16 +18,18 @@ const OUTDOOR: NavTargetId[] = [
   'park',
   'southYard',
   'theater',
+  'jail',
   'pavilion',
   'lakeMoping',
   'lakeChensi',
   'lakeLianyi',
+  'bossArena',
 ];
 
 describe('园区导览到达点（ADR-0040 / ADR-0067）', () => {
-  it('11 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
-    expect(NAV_TARGETS).toHaveLength(11);
-    expect(new Set(NAV_TARGETS.map((target) => target.id)).size).toBe(11);
+  it('13 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
+    expect(NAV_TARGETS).toHaveLength(13);
+    expect(new Set(NAV_TARGETS.map((target) => target.id)).size).toBe(13);
     for (const target of NAV_TARGETS) {
       expect(target.name.length).toBeGreaterThan(0);
       expect(isOnLand(target.arrive.x, target.arrive.y, PLAYER_RADIUS)).toBe(true);
@@ -54,5 +57,15 @@ describe('园区导览到达点（ADR-0040 / ADR-0067）', () => {
       if (!target) throw new Error(`缺少导览目标：${id}`);
       expect(isWaterAt(target.arrive.x, target.arrive.y)).toBe(false);
     }
+  });
+
+  it('发泄区搬进研发园：到达点在垫内，研发园目标不抢垫子', () => {
+    const bossArena = NAV_TARGETS.find((item) => item.id === 'bossArena');
+    const southYard = NAV_TARGETS.find((item) => item.id === 'southYard');
+    if (!bossArena || !southYard) throw new Error('缺少泄区或研发园导览目标');
+    expect(rectContains(BOSS_ARENA, bossArena.arrive.x, bossArena.arrive.y)).toBe(true);
+    expect(rectContains(SOUTH_YARD_PAVING, bossArena.arrive.x, bossArena.arrive.y)).toBe(true);
+    // 两个目标都在研发园里，但「研发园」必须落在垫外，避免两行都指向同一块垫子
+    expect(rectContains(BOSS_ARENA, southYard.arrive.x, southYard.arrive.y)).toBe(false);
   });
 });

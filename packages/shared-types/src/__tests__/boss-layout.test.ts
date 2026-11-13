@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SOUTH_YARD, SOUTH_YARD_PAVING } from '../world/campus';
 import {
   BOSS,
   BOSS_ARENA,
@@ -64,11 +65,24 @@ describe('发泄区地面', () => {
     }
   });
 
-  it('发泄区退到四角院落南墙之外，也不压南侧庭院', () => {
-    // 卫生间南墙 4716，发泄区北沿 4800：老板的头顶仍落在院墙以南
-    expect(BOSS_ARENA.y - 4716).toBe(84);
-    // 庭院铺装 5160，发泄区南沿 5120：留 40px 草缘
-    expect(5160 - (BOSS_ARENA.y + BOSS_ARENA.h)).toBe(40);
+  it('嵌在研发园铺装中央，四边留出铺装余量', () => {
+    // 垫子整体落在研发园（含铺装）内，四边至少留 40px 铺装，不贴草坪
+    const corners: Array<[number, number]> = [
+      [BOSS_ARENA.x, BOSS_ARENA.y],
+      [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y],
+      [BOSS_ARENA.x, BOSS_ARENA.y + BOSS_ARENA.h],
+      [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y + BOSS_ARENA.h],
+    ];
+    for (const [x, y] of corners) {
+      expect(rectContains(SOUTH_YARD, x, y)).toBe(true);
+      expect(rectContains(SOUTH_YARD_PAVING, x, y)).toBe(true);
+    }
+    expect(BOSS_ARENA.x - SOUTH_YARD_PAVING.x).toBeGreaterThanOrEqual(40);
+    expect(SOUTH_YARD_PAVING.x + SOUTH_YARD_PAVING.w - (BOSS_ARENA.x + BOSS_ARENA.w)).toBeGreaterThanOrEqual(40);
+    expect(BOSS_ARENA.y - SOUTH_YARD_PAVING.y).toBeGreaterThanOrEqual(40);
+    expect(SOUTH_YARD_PAVING.y + SOUTH_YARD_PAVING.h - (BOSS_ARENA.y + BOSS_ARENA.h)).toBeGreaterThanOrEqual(40);
+    // 北缘留 140px：从南向主路进院先走两步再上垫，不是一脚踩空
+    expect(BOSS_ARENA.y - SOUTH_YARD_PAVING.y).toBeGreaterThanOrEqual(120);
   });
 });
 

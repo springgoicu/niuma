@@ -3,7 +3,9 @@ import {
   POSE,
   clampWorldX,
   clampWorldY,
+  clampToRing,
   dequantizeCoord,
+  isInRing,
   resolveMotionInto,
   seatById,
   seatPose,
@@ -15,6 +17,7 @@ import {
 } from '@niuma/shared-types';
 import type { Player } from './world';
 import type { SeatRegistry } from './seats';
+import type { RingRuntime } from './ring';
 
 /** 允许的时间窗下限，避免同一毫秒内连发被误判 */
 const MIN_WINDOW_MS = 8;
@@ -60,7 +63,13 @@ export interface MoveResult {
  *
  * 座位规则：入座后位置由座位锁定；上报的姿态不再是坐姿即视为起身，随后按正常移动处理。
  */
-export function applyMove(player: Player, packet: MovePacket, now: number, seats?: SeatRegistry): MoveResult {
+export function applyMove(
+  player: Player,
+  packet: MovePacket,
+  now: number,
+  seats?: SeatRegistry,
+  ring?: RingRuntime,
+): MoveResult {
   // packet.id 仅用于协议完整性与日志，服务端一律以连接绑定的实体为准
 
   RELEASED.length = 0;
@@ -73,6 +82,13 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
   if (packet.clientSequence !== undefined) {
     if (packet.clientSequence <= player.lastClientMoveSequence) return RESULT;
     player.lastClientMoveSequence = packet.clientSequence;
+  }
+
+  // 颁奖阶段冻结参赛者：忽略客户端位移与姿态，直接落回站姿
+  if (ring?.isFrozen(player.id)) {
+    player.applyState(player.direction, POSE.Idle, false);
+    player.markDirtyIfChanged();
+    return RESULT;
   }
 
   /**
@@ -121,6 +137,24 @@ export function applyMove(player: Player, packet: MovePacket, now: number, seats
   const nextX = clampWorldX(player.x + dx * scale);
   const nextY = clampWorldY(player.y + dy * scale);
   resolveMotionInto(MOTION, player.x, player.y, nextX, nextY);
+
+  /**
+   * 擂台边界：参赛者向内夹取；非参赛者不允许靠移动跨进围绳。
+   * 唯一入场路径是报名后的服务端传送，避免“从绳子缝里挤进去”。
+   */
+  if (ring) {
+    if (ring.has(player.id)) {
+      const clampedPoint = clampToRing(MOTION.x, MOTION.y);
+      if (clampedPoint.x !== MOTION.x || clampedPoint.y !== MOTION.y) RESULT.clamped = true;
+      MOTION.x = clampedPoint.x;
+      MOTION.y = clampedPoint.y;
+    } else if (isInRing(MOTION.x, MOTION.y)) {
+      MOTION.x = player.x;
+      MOTION.y = player.y;
+      RESULT.clamped = true;
+    }
+  }
+
   player.x = MOTION.x;
   player.y = MOTION.y;
   player.lastMoveAt = now;

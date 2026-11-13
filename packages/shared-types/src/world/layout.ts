@@ -37,6 +37,10 @@ import {
   CAMPUS_SOLIDS,
   DOOR_PAVING,
   HOME_THEATER,
+  JAIL,
+  JAIL_ANCHOR,
+  JAIL_ANCHORS,
+  JAIL_DOOR_PAVING,
   LOUNGE_COUCH_SECOND,
   MEETING_PROPS,
   MEETING_ROOM,
@@ -79,6 +83,10 @@ export {
   DESK_H,
   DESK_W,
   HOME_THEATER,
+  JAIL,
+  JAIL_ANCHOR,
+  JAIL_ANCHORS,
+  JAIL_DOOR_PAVING,
   RESTROOM_STALLS,
   THEATER_SCREEN,
   THEATER_SEATS,
@@ -685,6 +693,14 @@ const PATHS: PathShape[] = [
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
+  // 小黑屋支路：南向主路 → 西门前铺装（与影厅支路东西镜像，同一条 y）
+  buildPath(
+    [
+      [4096, 4950],
+      [4250, 4950],
+    ],
+    PATH_BRANCH_HALF_WIDTH,
+  ),
 ];
 
 /** 岸线宽度：只影响渲染，碰撞边界仍是水面轮廓 */
@@ -760,10 +776,10 @@ const LAKES: LakeShape[] = [MOPING_LAKE_POINTS, CHENSI_POND_POINTS, LIANYI_LAKE_
 /* ------------------------------------------------------------------ *
  * 园区导览目标（ADR-0036 / ADR-0067）
  *
- * 从四间房扩展到 11 处地标：四角房 + 游乐园 / 研发园 / 家庭影音室 /
- * 摸鱼亭 + 三处景观湖。`x` / `y` 是区域几何中心，只用于方位、距离与
- * 步行秒数；`arrive` 才是自动寻路的真正终点，必须落在可站立的陆地或
- * 室内空地，绝不压建筑、水面与器械底座。
+ * 从四间房扩展到 12 处地标：四角房 + 游乐园 / 研发园 / 家庭影音室 /
+ * 摸鱼亭 + 三处景观湖 + 发泄区。`x` / `y` 是区域几何中心，只用于方位、
+ * 距离与步行秒数；`arrive` 才是自动寻路的真正终点，必须落在可站立的
+ * 陆地或室内空地，绝不压建筑、水面与器械底座。
  * ------------------------------------------------------------------ */
 
 export type NavTargetId =
@@ -774,15 +790,17 @@ export type NavTargetId =
   | 'park'
   | 'southYard'
   | 'theater'
+  | 'jail'
   | 'pavilion'
   | 'lakeMoping'
   | 'lakeChensi'
-  | 'lakeLianyi';
+  | 'lakeLianyi'
+  | 'bossArena';
 
 export interface NavTarget {
   readonly id: NavTargetId;
   readonly name: string;
-  /** 室内 / 园区：HUD 卡按这个分组，避免 11 行平铺 */
+  /** 室内 / 园区：HUD 卡按这个分组，避免 13 行平铺 */
   readonly area: 'indoor' | 'grounds';
   /** 区域几何中心：方位、距离与步行秒数都按它算 */
   readonly x: number;
@@ -806,16 +824,20 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   workroom: { x: WORKROOM.x + 230, y: WORKROOM.y + 294 },
   // 东门内侧橡胶垫：进门两步就是空地，避开滑梯塔楼底座与垃圾桶
   park: { x: 3262, y: 5600 },
-  // 南庭院铺装中央空地
-  southYard: { x: 4200, y: 5300 },
+  // 研发园西侧休息区：避开中央发泄垫与北入口树篱
+  southYard: { x: 3600, y: 5480 },
   // 影厅东门内侧走道：三排座椅以东，音箱之间
   theater: { x: 3780, y: 4950 },
+  // 小黑屋西门内侧：门洞进来两步，避开反省凳
+  jail: { x: JAIL.x + 70, y: 4950 },
   // 亭底南沿外 50px 的陆地
   pavilion: { x: 5790, y: 5260 },
   // 三湖各自的岸边陆地，取包围盒东/南侧外 30–40px
   lakeMoping: { x: 5770, y: 5565 },
   lakeChensi: { x: 5530, y: 2910 },
   lakeLianyi: { x: 2740, y: 5215 },
+  // 发泄区垫内左下角：老板左脚外侧，离脚底碰撞 80px / 20px，站过去就能出招
+  bossArena: { x: BOSS_ARENA.x + 50, y: BOSS_ARENA.y + BOSS_ARENA.h - 20 },
 };
 
 const NAV_SOURCES: ReadonlyArray<{
@@ -831,7 +853,9 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'lounge', name: '宿舍区', area: 'indoor', ...rectCenter(LOUNGE) },
   { id: 'park', name: '游乐园', area: 'grounds', ...rectCenter(AMUSEMENT_PARK) },
   { id: 'southYard', name: '研发园', area: 'grounds', ...rectCenter(SOUTH_YARD) },
+  { id: 'bossArena', name: '发泄区', area: 'grounds', ...rectCenter(BOSS_ARENA) },
   { id: 'theater', name: '家庭影音室', area: 'grounds', ...rectCenter(HOME_THEATER) },
+  { id: 'jail', name: '小黑屋', area: 'grounds', ...rectCenter(JAIL) },
   { id: 'pavilion', name: '摸鱼亭', area: 'grounds', ...PAVILION_CENTER },
   { id: 'lakeMoping', name: '摸鱼湖', area: 'grounds', ...rectCenter(LAKES[0]!.rect) },
   { id: 'lakeChensi', name: '沉思浅塘', area: 'grounds', ...rectCenter(LAKES[1]!.rect) },
@@ -912,7 +936,9 @@ const REGIONS: RegionSpec[] = [
   { name: '卫生间', rect: RESTROOM },
   // 校园与庭院之间的独立影厅（本轮新增）
   { name: '家庭影音室', rect: HOME_THEATER },
-  // 发泄区（ADR-0070）：必须排在广场扩展带之前，否则北半区会显示成广场
+  // 影厅对面：保安押送不当行为者的反省房（ADR-0072）
+  { name: '小黑屋', rect: JAIL },
+  // 发泄区（ADR-0070）：嵌在研发园内部，必须排在研发园之前才会显示成「发泄区」
   { name: '发泄区', rect: BOSS_ARENA },
   // 圆庭外缘 120px 的迎宾带：拱门、四向导览牌与四向路口都算广场
   { name: '中央迎宾广场', rect: rectExpanded(PLAZA, 120) },
@@ -1010,7 +1036,7 @@ function isPlantable(x: number, y: number): boolean {
   // 竹林留白：这两片交给竹子，普通树不再混长进来（ADR-0061 的「替换部分普通树木」）
   for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
   if (rectContains(rectExpanded(SOUTH_YARD, 40), x, y)) return false;
-  // 发泄区地面与老板占地内不长树（ADR-0070）
+  // 发泄区地面与老板占地内不长树（ADR-0070）；研发园整块已排除，这里是兜底
   if (rectContains(rectExpanded(BOSS_ARENA, 8), x, y)) return false;
   for (const paving of DOOR_PAVING) if (rectContains(rectExpanded(paving, 40), x, y)) return false;
   for (const path of PATHS) {

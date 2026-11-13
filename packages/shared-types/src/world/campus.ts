@@ -200,7 +200,7 @@ export interface DoorSpec {
 export interface BuildingSpec {
   name: string;
   rect: WorldRect;
-  floor: 'wood' | 'tile' | 'carpet' | 'cinema' | 'rubber';
+  floor: 'wood' | 'tile' | 'carpet' | 'cinema' | 'rubber' | 'concrete';
 }
 
 /** 房间统一尺寸：四角各一间，贴院落四角 */
@@ -280,6 +280,28 @@ export const THEATER_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = THEATER_R
   THEATER_SEAT_XS.map((x) => ({ x, y, facing: DIRECTION.Up, kind: 'cinema' as const })),
 );
 
+/* ------------------------------------------------------------------ *
+ * 小黑屋（ADR-0072）
+ *
+ * 与家庭影音室隔南向主路东西对称：北缘离四角院落 74px，南缘离南侧
+ * 庭院 30px，西门接一条和影厅支路同高的支路。进门是一间水泥房，
+ * 没有座位、没有出口以外的互动，只留一个反省点让被押来的人坐下。
+ * ------------------------------------------------------------------ */
+
+export const JAIL: WorldRect = { x: 4320, y: 4790, w: 460, h: 320 };
+/** 西墙门洞：与南向主路接出来的支路同一条 y（4950） */
+export const JAIL_DOOR: DoorSpec = { side: 'west', from: 4920, to: 4980 };
+/** 门前铺装：从墙外接到支路末端的 80px */
+export const JAIL_DOOR_PAVING: WorldRect = { x: 4250, y: 4920, w: 80, h: 60 };
+
+/** 反省凳锚点：被押送者坐在这里，面朝北墙的警示海报 */
+export const JAIL_ANCHOR = { x: 4590, y: 4980 } as const;
+/** 同时关 3 人时的左右空位：以反省点为中心各让 48px */
+export const JAIL_ANCHORS: ReadonlyArray<{ x: number; y: number }> = [
+  { x: JAIL_ANCHOR.x - 48, y: JAIL_ANCHOR.y },
+  JAIL_ANCHOR,
+  { x: JAIL_ANCHOR.x + 48, y: JAIL_ANCHOR.y },
+];
 
 /** 墙厚：碰撞与视觉共用，玩家半径 9 贴墙时不会穿过 10px 墙体 */
 export const WALL_THICKNESS = 10;
@@ -392,6 +414,7 @@ const meetingSolids = roomWalls(MEETING_ROOM, MEETING_DOOR);
 const restroomSolids = roomWalls(RESTROOM, RESTROOM_DOOR);
 const loungeSolids = roomWalls(LOUNGE, LOUNGE_DOOR);
 const theaterSolids = roomWalls(HOME_THEATER, HOME_THEATER_DOOR);
+const jailSolids = roomWalls(JAIL, JAIL_DOOR);
 
 /**
  * 卫生间三区（自西向东）：男 140 / 洗手池 140 / 女 140。
@@ -584,6 +607,7 @@ export const AREA_LOGOS: PropInstance[] = [
 
 /**
  * 南侧休息庭院：灯柱四面、绿植四角、长椅与野餐桌沿边、单车与指路牌点缀。
+ * 中央一块 420×320 的橡胶垫留给发泄区（ADR-0070），桌椅沿边让位。
  * 原先会议室/卫生间的陈设随房间搬走，这里只保留户外高频家具。
  */
 export const SOUTH_YARD_PROPS: PropInstance[] = [
@@ -597,12 +621,13 @@ export const SOUTH_YARD_PROPS: PropInstance[] = [
   { kind: 'plant', x: 4690, y: 5600 },
   { kind: 'bench', x: 3700, y: 5620 },
   { kind: 'bench', x: 4490, y: 5620 },
-  { kind: 'bench', x: 4096, y: 5480 },
+  // 中央长椅让位给发泄垫，挪到东侧花境旁；只改坐标，保持 bench 顺序与 seatId 稳定
+  { kind: 'bench', x: 4620, y: 5420 },
   { kind: 'table', x: 3800, y: 5320 },
   { kind: 'table', x: 4400, y: 5320 },
   { kind: 'bike', x: 4740, y: 5600 },
   { kind: 'sign', x: 4250, y: 5190 },
-  { kind: 'bin', x: 3540, y: 5400 },
+  { kind: 'bin', x: 3416, y: 5480 },
 ];
 
 /**
@@ -646,6 +671,7 @@ export const DOOR_PAVING: WorldRect[] = [
   { x: LOUNGE.x + 196, y: LOUNGE.y - 36, w: 68, h: 36 },
   { x: RESTROOM.x + 196, y: RESTROOM.y - 36, w: 68, h: 36 },
   HOME_THEATER_DOOR_PAVING,
+  JAIL_DOOR_PAVING,
 ];
 
 export const CAMPUS_BUILDINGS: BuildingSpec[] = [
@@ -654,6 +680,7 @@ export const CAMPUS_BUILDINGS: BuildingSpec[] = [
   { name: '宿舍区', rect: LOUNGE, floor: 'carpet' },
   { name: '卫生间', rect: RESTROOM, floor: 'tile' },
   { name: '家庭影音室', rect: HOME_THEATER, floor: 'cinema' },
+  { name: '小黑屋', rect: JAIL, floor: 'concrete' },
 ];
 
 /**
@@ -665,6 +692,7 @@ export const CAMPUS_SOLIDS: SolidRect[] = [
   ...restroomSolids,
   ...loungeSolids,
   ...theaterSolids,
+  ...jailSolids,
   ...restroomDividers,
   ...stallPartitions,
   MEETING_TABLE,

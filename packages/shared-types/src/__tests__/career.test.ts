@@ -66,6 +66,9 @@ describe('career summary', () => {
       todayKnockdown: 21,
       todayVented: 13,
       todayOvertime: 1,
+      ringGold: 3,
+      ringSilver: 1,
+      ringBronze: 2,
       province: '浙江',
     };
     expect(decodeCareer(encodeCareer(career))).toEqual(career);

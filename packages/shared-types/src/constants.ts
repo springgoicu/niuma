@@ -164,8 +164,13 @@ export const RESUME_BYTES = 8;
 export const QUEUE_STATUS_BYTES = 16;
 /** 发泄结算：op(1) + attackerId(2) + targetId(2) + x(2) + y(2) */
 export const VENT_PACKET_BYTES = 9;
+/** 擂台命中追加 flags：普通发泄保持 9 字节，旧客户端无需理解这一字节 */
+export const VENT_PACKET_WITH_FLAGS_BYTES = 10;
 /** 老板血量：op(1) + hp(2) + attackerId(2) + flags(1) */
 export const BOSS_PACKET_BYTES = 6;
+
+/** 小黑屋处置包：op(1) + entityId(2) + phase(1) + flags(1) + seconds(2) + guardId(2) */
+export const JAIL_PACKET_BYTES = 9;
 /** 排队拒绝：op(1) + reason(1) */
 export const QUEUE_REJECT_BYTES = 2;
 /** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */

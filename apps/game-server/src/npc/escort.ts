@@ -1,0 +1,271 @@
+import {
+  DIRECTION,
+  JAIL_ANCHOR,
+  JAIL_DOOR_PAVING,
+  POSE,
+  TICK_MS,
+  resolveMotionInto,
+  type MotionTarget,
+} from '@niuma/shared-types';
+import type { Player, World } from '../sim/world';
+import type { EscortEvent } from '../sim/detention';
+import { directionOf, type NpcAgent, type EscortTask } from './brain';
+import { findEscortPath } from './escort-path';
+
+/**
+ * 保安押送：`sim/detention` 只管「派给谁 / 抓到没有 / 送到了没有」，
+ * 怎么走、什么时候按肩、拖在身后多少像素全部收在这里。
+ *
+ * 速度按保安基础速度乘系数，不使用传送；任何一步算不出路线就中止并原地松手。
+ */
+
+export const ESCORT = {
+  /** 追击速度：1.3 倍基础速度，约 214px/s */
+  CHASE_SPEED_FACTOR: 1.3,
+  /** 拖行速度：0.85 倍基础速度 */
+  DRAG_SPEED_FACTOR: 0.85,
+  /** 抓取距离：目标进入这个半径就伸脚 */
+  GRAB_RANGE_PX: 26,
+  /** 按肩停顿：先站住 0.6s，再开始拖 */
+  GRAB_HOLD_MS: 600,
+  /** 被拖者在保安身后的距离 */
+  TOW_OFFSET_PX: 22,
+  /** 追击超过这个时间还没摸到人：证据不足，放人 */
+  CHASE_TIMEOUT_MS: 12_000,
+  /** 拖行超过这个时间：算卡死，原地松手 */
+  DRAG_TIMEOUT_MS: 15_000,
+  /** 追击重算路线的最短间隔 */
+  REPLAN_MS: 400,
+  /** 目标位移超过这个距离才值得重算 */
+  REPLAN_PX: 48,
+  /** 送到反省点后的原地停顿 */
+  PAUSE_AFTER_MS: 2_000,
+} as const;
+
+const DT_SEC = TICK_MS / 1000;
+const MOTION: MotionTarget = { x: 0, y: 0 };
+
+/** 门外铺装中心：强制保安从门口进屋，不从墙外“判定到达” */
+const DOOR_OUTSIDE = {
+  x: JAIL_DOOR_PAVING.x + JAIL_DOOR_PAVING.w / 2,
+  y: JAIL_DOOR_PAVING.y + JAIL_DOOR_PAVING.h / 2,
+};
+/** 松手点：反省点东北 36px，保安不占被押者的格子 */
+const DROP_POINT = { x: JAIL_ANCHOR.x + 36, y: JAIL_ANCHOR.y - 36 };
+
+const DIRECTION_VECTOR: Record<number, { x: number; y: number }> = {
+  [DIRECTION.Down]: { x: 0, y: 1 },
+  [DIRECTION.Up]: { x: 0, y: -1 },
+  [DIRECTION.Left]: { x: -1, y: 0 },
+  [DIRECTION.Right]: { x: 1, y: 0 },
+};
+
+/**
+ * 推进一帧押送。返回 null 表示还在路上；返回事件表示本帧发生了
+ * 抓取 / 到达 / 中止，由 director 转交给 detention 与客户端。
+ */
+export function stepEscort(
+  agent: NpcAgent,
+  task: EscortTask,
+  world: World,
+  now: number,
+): EscortEvent | null {
+  const guard = agent.player;
+
+  // 被发泄踹倒：任务保留，躺到硬直结束；与 updateAgent 一样先站起来再继续
+  if (now < guard.stunUntil) return null;
+  if (guard.pose === POSE.Lie) {
+    guard.applyState(guard.direction, POSE.Idle, false);
+    guard.markDirtyIfChanged();
+    return null;
+  }
+
+  const target = world.get(task.targetId);
+  if (!target || target.isNpc || target.wsId === 0) return abort(guard, task, now, 'missing');
+
+  if (task.stage === 'hold') {
+    faceToward(agent, target);
+    if (now < task.stageUntil) return null;
+    beginDrag(agent, task, now);
+    if (task.path.length === 0) return abort(guard, task, now, 'stuck');
+    return null;
+  }
+
+  if (task.stage === 'chase') {
+    if (now - task.startedAt >= ESCORT.CHASE_TIMEOUT_MS) {
+      return abort(guard, task, now, 'timeout');
+    }
+
+    if (distance(guard, target) <= ESCORT.GRAB_RANGE_PX) {
+      grab(agent, task, target, now);
+      return { kind: 'grab', guardId: guard.id, targetId: target.id, now };
+    }
+
+    if (needReplan(task, target, now)) {
+      const path = findEscortPath({ x: guard.x, y: guard.y }, { x: target.x, y: target.y });
+      if (!path) return abort(guard, task, now, 'stuck');
+      task.path = path;
+      task.index = 0;
+      task.replanAt = now + ESCORT.REPLAN_MS;
+      task.lastTargetX = target.x;
+      task.lastTargetY = target.y;
+    }
+
+    walkPath(agent, task, agent.speed * ESCORT.CHASE_SPEED_FACTOR);
+
+    if (distance(guard, target) <= ESCORT.GRAB_RANGE_PX) {
+      grab(agent, task, target, now);
+      return { kind: 'grab', guardId: guard.id, targetId: target.id, now };
+    }
+    return null;
+  }
+
+  // 拖行：路线一次性算好（保安不可能被目标卡住），走到松手点就结束
+  if (now - task.startedAt >= ESCORT.DRAG_TIMEOUT_MS) {
+    return abort(guard, task, now, 'timeout');
+  }
+
+  const moved = walkPath(agent, task, agent.speed * ESCORT.DRAG_SPEED_FACTOR);
+  if (moved.x !== 0 || moved.y !== 0) {
+    const length = Math.hypot(moved.x, moved.y);
+    task.towX = moved.x / length;
+    task.towY = moved.y / length;
+  }
+  placeTargetBehind(guard, task, target, now);
+
+  if (task.index >= task.path.length) {
+    return { kind: 'arrive', guardId: guard.id, targetId: target.id, now };
+  }
+  return null;
+}
+
+function distance(a: Player, b: Player): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function abort(
+  guard: Player,
+  task: EscortTask,
+  now: number,
+  reason: 'timeout' | 'missing' | 'stuck',
+): EscortEvent {
+  return { kind: 'abort', guardId: guard.id, targetId: task.targetId, now, reason };
+}
+
+/** 抓到：站住、面朝目标，目标交给 detention 锁成躺姿；0.6s 后开始拖 */
+function grab(agent: NpcAgent, task: EscortTask, target: Player, now: number): void {
+  const guard = agent.player;
+  const direction = directionOf(target.x - guard.x, target.y - guard.y, guard.direction);
+  guard.applyState(direction, POSE.Idle, false);
+  guard.markDirtyIfChanged();
+
+  target.applyState(directionOf(guard.x - target.x, guard.y - target.y, target.direction), POSE.Lie, false);
+  // 拖行硬直上限；detention 会在到达 / 中止时清零，这不是禁足时长
+  target.stunUntil = now + 45_000;
+  target.markDirtyIfChanged();
+
+  task.stage = 'hold';
+  task.stageUntil = now + ESCORT.GRAB_HOLD_MS;
+}
+
+/** 停在目标身边时只转头，不移动 */
+function faceToward(agent: NpcAgent, target: Player): void {
+  const guard = agent.player;
+  const direction = directionOf(target.x - guard.x, target.y - guard.y, guard.direction);
+  if (direction === guard.direction) return;
+  guard.applyState(direction, POSE.Idle, false);
+  guard.markDirtyIfChanged();
+}
+
+/** 拖行开始：先到门外，再从门口走到松手点，保证镜头里真的“进了屋” */
+function beginDrag(agent: NpcAgent, task: EscortTask, now: number): void {
+  const guard = agent.player;
+  const toDoor = findEscortPath({ x: guard.x, y: guard.y }, DOOR_OUTSIDE);
+  const toDrop = findEscortPath(DOOR_OUTSIDE, DROP_POINT);
+  if (!toDoor || !toDrop) {
+    task.path = [];
+    return;
+  }
+  // 两段路的接缝点只保留一份，避免在门口原地“点一下头”
+  task.path = [...toDoor, ...toDrop.slice(1)];
+  task.index = 0;
+  task.startedAt = now;
+  const vector = DIRECTION_VECTOR[guard.direction] ?? DIRECTION_VECTOR[DIRECTION.Down]!;
+  task.towX = vector.x;
+  task.towY = vector.y;
+}
+
+/** 追击重算：路线走完先等 throttle，目标位移超过 48px 才值得再算一次 */
+function needReplan(task: EscortTask, target: Player, now: number): boolean {
+  if (now < task.replanAt) return false;
+  if (task.index >= task.path.length && task.path.length > 0) return true;
+  if (task.path.length === 0) return true;
+  return Math.hypot(target.x - task.lastTargetX, target.y - task.lastTargetY) > ESCORT.REPLAN_PX;
+}
+
+/**
+ * 沿路线推进一帧，返回本帧实际位移。
+ *
+ * 用法与真人移动同一个 `resolveMotionInto`：4px 子步、单轴滑动，不会穿墙；
+ * 被挤住时最多原地等下一次重算，不会在墙里抖。
+ */
+function walkPath(agent: NpcAgent, task: EscortTask, speed: number): { x: number; y: number } {
+  const guard = agent.player;
+  let remaining = speed * DT_SEC;
+  let movedX = 0;
+  let movedY = 0;
+
+  while (remaining > 0 && task.index < task.path.length) {
+    const point = task.path[task.index]!;
+    const dx = point.x - guard.x;
+    const dy = point.y - guard.y;
+    const segment = Math.hypot(dx, dy);
+    if (segment <= 1e-3) {
+      task.index += 1;
+      continue;
+    }
+
+    const step = Math.min(remaining, segment);
+    const targetX = guard.x + (dx / segment) * step;
+    const targetY = guard.y + (dy / segment) * step;
+    resolveMotionInto(MOTION, guard.x, guard.y, targetX, targetY);
+    const realX = MOTION.x - guard.x;
+    const realY = MOTION.y - guard.y;
+    const realLength = Math.hypot(realX, realY);
+
+    guard.x = MOTION.x;
+    guard.y = MOTION.y;
+    movedX += realX;
+    movedY += realY;
+    remaining -= step;
+
+    if (step >= segment - 0.01) {
+      task.index += 1;
+    } else if (realLength < 0.5) {
+      // 被墙角卡住：本帧到此为止，追击会在 400ms 后重算，拖行由 15s 超时兜底
+      break;
+    }
+  }
+
+  if (movedX !== 0 || movedY !== 0) {
+    const direction = directionOf(movedX, movedY, guard.direction);
+    guard.applyState(direction, POSE.Walk, true);
+  } else {
+    guard.applyState(guard.direction, POSE.Idle, false);
+  }
+  guard.markDirtyIfChanged();
+  return { x: movedX, y: movedY };
+}
+
+/** 被拖者始终在保安身后 22px，位置由服务端直接写，客户端只看 Tick 同步 */
+function placeTargetBehind(guard: Player, task: EscortTask, target: Player, now: number): void {
+  target.x = guard.x - task.towX * ESCORT.TOW_OFFSET_PX;
+  target.y = guard.y - task.towY * ESCORT.TOW_OFFSET_PX;
+  target.lastMoveAt = now;
+  target.applyState(
+    directionOf(guard.x - target.x, guard.y - target.y, target.direction),
+    POSE.Lie,
+    false,
+  );
+  target.markDirtyIfChanged();
+}

@@ -6,6 +6,7 @@ import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
 import {
   BOARD_METRIC,
   CAREER_REPORT_INTERVAL_MS,
+  RING_PHASE,
   type BoardMetric,
   type BoardPacket,
   type ChatSendPacket,
@@ -70,6 +71,7 @@ import { MiniMap } from './MiniMap';
 import { NavCard } from './NavCard';
 import { NoticeBoard } from './NoticeBoard';
 import { QueueGate } from './QueueGate';
+import { RingHud } from './RingHud';
 import { WelcomeBanner } from './WelcomeBanner';
 import { Joystick, TouchActions } from './TouchControls';
 import { useImmersiveStage, useIsPortrait, useIsTouch, useVisualViewportSize } from '@/lib/use-touch-stage';
@@ -139,6 +141,13 @@ export function GameViewport({
   /** 上一次入座状态：只在「未坐 → 坐」的边沿记一次摸鱼 */
   const lastSeatedRef = useRef(false);
   /**
+   * 已经入账过的擂台 matchId。
+   *
+   * 颁奖包按 1Hz 重复下发，而奖牌只该加一次；matchId 由服务端每局递增，
+   * 用它做幂等键比自己数「第几次收到 award」可靠。
+   */
+  const awardedMatchRef = useRef<number | null>(null);
+  /**
    * 入场兜底的告知条：首选园区探活失败、被顶替到另一座时要让玩家知道
    * 自己去的不是原本那座，而不是安静地换一个世界。几秒后自行消失。
    */
@@ -169,6 +178,7 @@ export function GameViewport({
   const setHint = useGameUi((state) => state.setHint);
   const setLocalState = useGameUi((state) => state.setLocalState);
   const setNavTarget = useGameUi((state) => state.setNavTarget);
+  const setRing = useGameUi((state) => state.setRing);
   const hint = useGameUi((state) => state.hint);
   const status = useGameUi((state) => state.status);
 
@@ -379,6 +389,18 @@ export function GameViewport({
           lastSeatedRef.current = state.seated;
         },
         onNav: (nav) => setNavTarget(nav),
+        onRing: (packet, receivedAt) => {
+          setRing(packet, receivedAt);
+          // 奖牌只认「本人 + 前三」；同一局只入账一次，重发包与心跳包不会叠加
+          if (!packet || packet.phase !== RING_PHASE.Award) return;
+          const self = packet.members.find(
+            (entry) => entry.id === useGameUi.getState().selfId,
+          );
+          if (!self || self.rank < 1 || self.rank > 3) return;
+          if (awardedMatchRef.current === packet.matchId) return;
+          awardedMatchRef.current = packet.matchId;
+          careerClockRef.current?.recordRingMedal(self.rank as 1 | 2 | 3);
+        },
         onVentHit: (local) => {
           if (local) careerClockRef.current?.recordVented();
         },
@@ -659,6 +681,9 @@ export function GameViewport({
               isTouch ? 'game-safe' : 'p-4'
             }`}
           >
+            {/* 擂台 HUD 挂在顶栏之上：靠近擂台或本人参赛时才出现，
+                不与工牌/工具栏抢左右两侧的位置 */}
+            <RingHud touch={isTouch} />
             {/* 顶栏：左侧工牌、右侧系统工具栏。对齐用 items-start，
                 工牌展开时只向下长，右侧工具栏不跟着跳。 */}
             <div className="flex items-start justify-between gap-3">

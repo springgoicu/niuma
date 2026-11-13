@@ -36,6 +36,7 @@ import {
   encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
+  encodeRing,
   encodeSeatState,
   encodeStatusBroadcast,
   encodeWelcome,
@@ -59,9 +60,11 @@ import { handleLike } from './sim/like';
 import { ChatHistory, type ChatPage } from './sim/history';
 import { loadModerationFilter } from './sim/moderation';
 import { resolveRename } from './sim/name';
-import { createNpcDirector } from './npc';
+import { createNpcDirector, warmEscortGrid } from './npc';
+import { Detention } from './sim/detention';
 import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
+import { broadcastRing } from './sim/ring';
 import { resolveSpawn } from './sim/resume';
 import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
@@ -172,6 +175,27 @@ export function startGameServer(config: ServerConfig) {
   }
 
   /**
+   * 小黑屋执法：只在有保安时启用；没有保安就没有人能押送，判定只会永远排队。
+   * 没有任何计时器——押到反省点就放人，屋子保留为普通空房。
+   */
+  const detention =
+    config.jail.enabled && npcs.guardCount > 0
+      ? new Detention({
+          world,
+          grid,
+          transport,
+          escort: { dispatch: npcs.dispatchEscort, cancel: npcs.cancelEscort },
+          releaseSeat: (player) => broadcastSeats(seats.release(player)),
+        })
+      : null;
+  npcs.setEscortListener((event) => detention?.handleEscort(event));
+  if (detention) {
+    // 28k 格一次建好，别把第一次执法的寻路开销塞进某个 50ms Tick
+    warmEscortGrid();
+    console.log(`[jail] enabled guards=${npcs.guardCount}`);
+  }
+
+  /**
    * 历史页只发给本人：补发与上翻都不走 `handleChat`，
    * 既不占 5s/3 条的发送窗口，也不会触发头顶气泡。
    * 空页照发——客户端靠 `Replace` 清掉上一个会话残留的消息。
@@ -267,6 +291,8 @@ export function startGameServer(config: ServerConfig) {
     // 入场补发老板当前血量：新玩家不必等到下一次有人出招才知道血条位置。
     // 这里不调 syncDay，跨日重置只由 Tick 广播，避免入场者把 reset 事件吞掉。
     ws.send(encodeBoss({ hp: world.boss.hp, attackerId: 0, died: false, reset: false }));
+    // 入场补发擂台当前快照：中途加入/围观的人不必等下一次 1Hz 心跳
+    ws.send(encodeRing(world.ring.snapshot(now, world)));
     const occupied = seats.snapshot();
     if (occupied.length > 0) ws.send(encodeSeatState(occupied));
     // 历史必须早于 refreshView：known 一旦建立，实时聊天才可能到达这个 socket；
@@ -380,7 +406,7 @@ export function startGameServer(config: ServerConfig) {
         return;
       }
       const packet = decodeMove(data, MOVE_SCRATCH);
-      const result = applyMove(player, packet, now, seats);
+      const result = applyMove(player, packet, now, seats, world.ring);
       if (result.released.length > 0) broadcastSeats(result.released);
       if (!result.accepted) return;
       if (result.clamped) moveSampler.push(1);
@@ -389,6 +415,8 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_ACTION) {
+      // 被押送时的输入硬直：坐 / 躺 / 起身 / 咀嚼全部拒绝，聊天仍走下面的频道
+      if (now < player.stunUntil) return;
       const { action } = decodeAction(data);
       // 咀嚼是一次性事件：state 字节已满，不能挤进同步条目，限频后按视野定向广播（ADR-0048）
       if (action === ACTION.Graze) {
@@ -539,6 +567,27 @@ export function startGameServer(config: ServerConfig) {
       return;
     }
 
+    if (op === OpCode.C2S_RING_ENTER) {
+      // 容量/阶段/靠近先做一次只读裁决，避免“站起来了却报不上名”
+      if (world.ring.canEnter(player) !== true) return;
+      broadcastSeats(seats.stand(player));
+      const result = world.ring.enter(player, now);
+      if (!result.ok) return;
+      grid.update(player.id, player.x, player.y);
+      player.needsViewRefresh = true;
+      // 开赛/中途补入都由同一个快照包收口，客户端不需要推导阶段
+      broadcastRing(world, transport, now);
+      return;
+    }
+
+    if (op === OpCode.C2S_RING_LEAVE) {
+      if (!world.ring.leave(player, now)) return;
+      grid.update(player.id, player.x, player.y);
+      player.needsViewRefresh = true;
+      broadcastRing(world, transport, now);
+      return;
+    }
+
     if (op === OpCode.C2S_BOARD) {
       // 按需查询：距离门 + 限频都收在 sim/board，dispatch 只负责解码与发送
       if (!canQueryBoard(player, now)) return;
@@ -571,6 +620,8 @@ export function startGameServer(config: ServerConfig) {
     if (!player) return;
     const label = `${player.name}#${player.id}`;
     broadcastSeats(seats.release(player));
+    // 擂台断线清理：先移除名单再广播，剩下的人继续计时，走空则回 idle
+    if (world.ring.removePlayer(player.id, Date.now())) broadcastRing(world, transport, Date.now());
     // 必须在 broadcastDespawn 之前：它内部会清空 known，之后再播报就没人收了
     announceLeave(player, world, transport);
     broadcastDespawn(player, world, transport);
@@ -758,14 +809,30 @@ export function startGameServer(config: ServerConfig) {
       });
     }
 
+    // 擂台计时/结算先于发泄：到点后 phase=award，后续出招会被冻结；
+    // 领奖台传送产生的 moved 列表在同一 Tick 里补空间索引与视野刷新。
+    const ringTick = world.ring.tick(now, world);
+    for (const movedPlayer of ringTick.moved) {
+      if (grid.update(movedPlayer.id, movedPlayer.x, movedPlayer.y)) {
+        movedPlayer.needsViewRefresh = true;
+      }
+    }
+    if (ringTick.changed) broadcastRing(world, transport, now);
+
     // 发泄结算必须跑在 runTick 之前：受害者被推开的坐标与躺姿要赶在同一 Tick 的
     // dirty 广播里发出去。放到 runTick 之后会晚 50ms，旁观者先看到站着、再看到倒下。
     // 入座者免伤（ADR-0065），因此这里不再产生座位释放条目。
     resolveVents(world, grid, transport, now);
 
+    // 先看姿态边沿再派单：保安本 Tick 就能起步，抓取 / 拖行也在同一帧生效
+    detention?.observe(now);
+
     // 同事的行为要跑在 runTick 之前：新坐标与朝向赶在同一 Tick 的 dirty 广播里发出去
     npcs.update(now);
     npcSampler.push(npcs.updateMs);
+
+    // 押送事件已在本 Tick 回传；这里处理排队重试与断线 / 超时兜底
+    detention?.update(now);
 
     const result = runTick(world, grid, transport, tickCount);
     tickSampler.push(result.duration);
@@ -773,6 +840,7 @@ export function startGameServer(config: ServerConfig) {
 
   const stop = (): void => {
     clearInterval(timer);
+    detention?.dispose();
     server.stop(true);
   };
 

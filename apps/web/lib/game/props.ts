@@ -914,6 +914,32 @@ function fillFloorRubber(g: Graphics, r: WorldRect): void {
   rect(g, r.x + r.w - 7, r.y + 4, 3, r.h - 8, 0xfff6e0);
 }
 
+/** 小黑屋：冷灰水泥地，两道固定裂缝 + 中央排水口，和影厅的软地毯形成硬对比 */
+function fillFloorConcrete(g: Graphics, r: WorldRect): void {
+  rect(g, r.x, r.y, r.w, r.h, 0x6a6d72);
+  // 水泥浇筑分块：每 46px 一道浅缝，错缝排布
+  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += 46) {
+    rect(g, r.x, y, r.w, 1, 0x5d6065);
+    const offset = (row % 2) * 23;
+    for (let x = r.x + offset; x < r.x + r.w; x += 46) {
+      rect(g, x, y, 1, 46, 0x5d6065);
+      rect(g, x + 1, y + 1, 45, 1, 0x73767b);
+    }
+  }
+  // 固定裂缝：避开门口与反省凳，只做视觉，不影响碰撞
+  rect(g, r.x + 64, r.y + 58, 1, 34, 0x4f5257);
+  rect(g, r.x + 65, r.y + 58, 3, 1, 0x4f5257);
+  rect(g, r.x + 66, r.y + 59, 1, 17, 0x4f5257);
+  rect(g, r.x + r.w - 96, r.y + r.h - 92, 1, 28, 0x4f5257);
+  rect(g, r.x + r.w - 95, r.y + r.h - 92, 11, 1, 0x4f5257);
+  // 中央排水口：一圈深色格栅
+  const drainX = r.x + r.w / 2 - 12;
+  const drainY = r.y + r.h - 112;
+  rect(g, drainX, drainY, 24, 10, 0x44474c);
+  rect(g, drainX + 1, drainY + 1, 22, 8, 0x55585d);
+  for (let i = 0; i < 5; i += 1) rect(g, drainX + 3 + i * 4, drainY + 2, 1, 6, 0x3d4045);
+}
+
 function fillPaving(g: Graphics, r: WorldRect): void {
   rect(g, r.x, r.y, r.w, r.h, COLOR.paving);
   for (let x = r.x + 40; x < r.x + r.w; x += 40) rect(g, x, r.y, 1, r.h, COLOR.pavingSeam);
@@ -938,6 +964,7 @@ function fillBuildingFloor(g: Graphics, building: BuildingSpec): void {
   else if (building.floor === 'carpet') fillFloorCarpet(g, building.rect);
   else if (building.floor === 'cinema') fillFloorCinema(g, building.rect);
   else if (building.floor === 'rubber') fillFloorRubber(g, building.rect);
+  else if (building.floor === 'concrete') fillFloorConcrete(g, building.rect);
   else fillFloorTile(g, building.rect);
 }
 

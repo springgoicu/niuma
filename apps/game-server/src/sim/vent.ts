@@ -1,10 +1,13 @@
 import {
   POSE,
+  RING_VENT_FLAG_ELIMINATED,
+  RING_VENT_FLAG_HIT,
   VENT_COOLDOWN_MS,
   VENT_FACING,
   VENT_KNOCKBACK_PX,
   VENT_STUN_MS,
   bossHitPoint,
+  clampToRing,
   encodeVent,
   quantizeCoord,
   resolveMotionInto,
@@ -12,6 +15,7 @@ import {
   type MotionTarget,
 } from '@niuma/shared-types';
 import { broadcastBoss } from './boss';
+import { broadcastRing } from './ring';
 import type { SpatialGrid } from '../spatial/grid';
 import type { Player, World } from './world';
 import type { Transport } from './view';
@@ -56,11 +60,16 @@ export function resolveVents(
     if (now - attacker.lastVentAt < VENT_COOLDOWN_MS) continue;
     attacker.lastVentAt = now;
 
-    const target = nearestInCone(world, attacker, now);
+    const attackerInRing = world.ring.has(attacker.id);
+    // 颁奖阶段参赛者被冻结；擂台内的出招只在 running 阶段生效
+    if (attackerInRing && !world.ring.isRunning()) continue;
+
+    const target = nearestInCone(world, attacker, now, attackerInRing);
     if (!target) {
       broadcastVent(world, attacker, 0, 0, 0, transport);
-      // 只有「扇形内没有可命中玩家」才轮到老板；入座者挡刀的那条分支不会走到这里
-      resolveBossHit(world, attacker, now, transport);
+      // 擂台内没有对手就空放，绝不把拳风穿到老板或场外；
+      // 场外只有「扇形内没有可命中玩家」才轮到老板。
+      if (!attackerInRing) resolveBossHit(world, attacker, now, transport);
       continue;
     }
 
@@ -72,6 +81,17 @@ export function resolveVents(
     }
 
     const facing = VENT_FACING[attacker.direction] ?? VENT_FACING[0]!;
+    const ringHit = attackerInRing && world.ring.has(target.id);
+    let flags = 0;
+    let eliminated = false;
+    if (ringHit) {
+      const hit = world.ring.applyHit(attacker, target, now);
+      if (!hit) continue;
+      flags |= RING_VENT_FLAG_HIT;
+      eliminated = hit.eliminated;
+      if (eliminated) flags |= RING_VENT_FLAG_ELIMINATED;
+    }
+
     // 击退走与移动完全相同的碰撞求解器：撞墙时自然衰减，绝不会把人推进墙里
     resolveMotionInto(
       MOTION,
@@ -82,14 +102,23 @@ export function resolveVents(
     );
     target.x = MOTION.x;
     target.y = MOTION.y;
+    if (ringHit) {
+      const clamped = clampToRing(target.x, target.y);
+      target.x = clamped.x;
+      target.y = clamped.y;
+    }
 
     // 强制倒地：姿态由服务端写死，客户端的上报在硬直期内一律不被采信（见 applyMove）
     target.applyState(target.direction, POSE.Lie, false);
-    target.stunUntil = now + VENT_STUN_MS;
+    // 淘汰者躺到本局结束，避免倒地后站起来又参与移动/出招
+    target.stunUntil = eliminated
+      ? Math.max(now + VENT_STUN_MS, world.ring.endsAt)
+      : now + VENT_STUN_MS;
     target.dirty = true;
     if (grid.update(target.id, target.x, target.y)) target.needsViewRefresh = true;
 
-    broadcastVent(world, attacker, target.id, target.x, target.y, transport);
+    broadcastVent(world, attacker, target.id, target.x, target.y, transport, flags);
+    if (ringHit) broadcastRing(world, transport, now);
   }
 }
 
@@ -117,7 +146,12 @@ function resolveBossHit(world: World, attacker: Player, now: number, transport: 
  *
  * 入座的人**不跳过**：他被选中后由调用方判空放，所以坐着的人能挡住身后的人。
  */
-function nearestInCone(world: World, attacker: Player, now: number): Player | null {
+function nearestInCone(
+  world: World,
+  attacker: Player,
+  now: number,
+  attackerInRing: boolean,
+): Player | null {
   let best: Player | null = null;
   let bestDistanceSq = Number.POSITIVE_INFINITY;
   // player.known 就是对称 AOI 集合（已排除自己）：与咀嚼广播同一份可见性口径
@@ -125,6 +159,8 @@ function nearestInCone(world: World, attacker: Player, now: number): Player | nu
     const candidate = world.get(id);
     if (!candidate) continue;
     if (now < candidate.stunUntil) continue;
+    // 擂台是独立战斗域：场内只打场内，场外只打场外，围绳两边互不穿透
+    if (world.ring.has(candidate.id) !== attackerInRing) continue;
     if (!withinVentCone(attacker.x, attacker.y, attacker.direction, candidate.x, candidate.y)) continue;
     const dx = candidate.x - attacker.x;
     const dy = candidate.y - attacker.y;
@@ -150,8 +186,15 @@ function broadcastVent(
   x: number,
   y: number,
   transport: Transport,
+  flags = 0,
 ): void {
-  const packet = encodeVent(attacker.id, targetId, quantizeCoord(x), quantizeCoord(y));
+  const packet = encodeVent(
+    attacker.id,
+    targetId,
+    quantizeCoord(x),
+    quantizeCoord(y),
+    flags,
+  );
   transport.send(attacker.wsId, packet);
   for (const id of attacker.known) {
     const viewer = world.get(id);

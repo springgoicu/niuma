@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   CAREER_FIXED_BYTES,
+  CAREER_FIXED_BYTES_V3,
   CAREER_MAX_BYTES,
   CAREER_VERSION,
+  CAREER_VERSION_V3,
   EMPTY_CAREER,
   MAX_COUNT,
   MAX_DAY_MINUTES,
@@ -26,6 +28,9 @@ function makeCareer(overrides: Partial<CareerSummary> = {}): CareerSummary {
     todayKnockdown: 21,
     todayVented: 13,
     todayOvertime: 1,
+    ringGold: 4,
+    ringSilver: 2,
+    ringBronze: 7,
     ...overrides,
   };
 }
@@ -54,18 +59,37 @@ function encodeV2(todayMinutes: number, province: string): Uint8Array {
   return bytes;
 }
 
-describe('CareerSummary v3', () => {
-  it('只保留今日字段，定长 18 字节', () => {
-    expect(CAREER_VERSION).toBe(3);
-    expect(CAREER_FIXED_BYTES).toBe(18);
+describe('CareerSummary v4', () => {
+  it('保留今日字段与擂台奖牌，定长 24 字节', () => {
+    expect(CAREER_VERSION).toBe(4);
+    expect(CAREER_VERSION_V3).toBe(3);
+    expect(CAREER_FIXED_BYTES).toBe(24);
+    expect(CAREER_FIXED_BYTES_V3).toBe(18);
     const encoded = encodeCareer(makeCareer());
-    expect(encoded[0]).toBe(3);
+    expect(encoded[0]).toBe(4);
     expect(encoded.length).toBe(CAREER_FIXED_BYTES + 6);
   });
 
-  it('round-trip 保留全部今日字段与省份', () => {
+  it('round-trip 保留全部今日字段、擂台奖牌与省份', () => {
     const career = makeCareer();
     expect(decodeCareer(encodeCareer(career))).toEqual(career);
+  });
+
+  it('兼容 v3 旧包：擂台三个字段补零，其余字段与省份不丢', () => {
+    const career = makeCareer();
+    const v4 = encodeCareer(career);
+    const v3 = new Uint8Array(CAREER_FIXED_BYTES_V3 + encoder.encode(career.province).length);
+    v3.set(v4.subarray(0, 17), 0);
+    v3[17] = v4[23]!;
+    v3.set(v4.subarray(24), 18);
+    v3[0] = 3;
+
+    expect(decodeCareer(v3)).toEqual({
+      ...career,
+      ringGold: 0,
+      ringSilver: 0,
+      ringBronze: 0,
+    });
   });
 
   it('钳制工时、如厕子集、步数与计数上限', () => {

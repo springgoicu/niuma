@@ -14,6 +14,7 @@ import {
   isWadingAt,
   seatById,
   type CharacterAppearance,
+  type RingPacket,
 } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
 import { BossView } from './boss';
@@ -26,6 +27,7 @@ import { readFestivalEnabled } from './festival-decor';
 import { ParkView } from './park';
 import { PavilionView } from './pavilion';
 import { PlaqueView } from './plaques';
+import { RingView } from './ring';
 import { RitualFx } from './ritual-fx';
 import { ShrineView } from './shrine';
 import { TeaStationView } from './tea-station';
@@ -720,6 +722,10 @@ export class GameRenderer {
   private tea?: TeaStationView;
   /** 发泄区胖老板：地面垫子、200×256 本体、血条与倒地纸板（ADR-0070） */
   private boss?: BossView;
+  /** 三人擂台：垫子、角柱、领奖台、奖杯与彩带（ADR-0073） */
+  private ring?: RingView;
+  /** 擂台覆盖层：领奖台与彩带必须压在排序层之后，才不会被角色吃掉 */
+  private readonly ringOverlay = new Container();
   /** 门头牌匾与对联：三座自建牌坊（ADR-0061） */
   private plaques?: PlaqueView;
   /** 游乐园：入口门头、滑梯、秋千、跷跷板、旋转木马与灯串 */
@@ -964,6 +970,10 @@ export class GameRenderer {
     this.boss = new BossView(this.app.renderer, this.metrics.devicePxPerTexel);
     this.boss.build(this.sortLayer, this.props.base, this.labels);
 
+    // 三人擂台（ADR-0073）：垫子与角柱在地面/排序层，领奖台与彩带进覆盖层
+    this.ring = new RingView(this.app.renderer, this.metrics.devicePxPerTexel);
+    this.ring.build(this.sortLayer, this.props.base, this.ringOverlay);
+
     // 门头牌匾（ADR-0061）：墙体是平铺色带没有立面，所以每处门头自带一座牌坊
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
@@ -990,6 +1000,9 @@ export class GameRenderer {
     this.world.addChild(this.waterFx.container);
 
     this.world.addChild(this.sortLayer.container);
+
+    // 擂台的领奖台与彩带压在 y 排序层之后：角色站在台上时不该把台面盖住
+    this.world.addChild(this.ringOverlay);
 
     // 仪式反馈压在 y 排序层之后：金色飘字从头顶升起，不能被树冠或角色吃掉
     this.ritual = new RitualFx(this.app.renderer, this.metrics.devicePxPerTexel);
@@ -1241,6 +1254,23 @@ export class GameRenderer {
     this.stunStars.set(id, performance.now() + durationMs);
   }
 
+  /** 擂台快照：阶段变化时驱动领奖台升降与彩带，其余情况只更新内部阶段（ADR-0073） */
+  setRing(packet: RingPacket | null): void {
+    this.ring?.setState(packet);
+  }
+
+  /**
+   * 擂台命中飘字：服务端只给「是否淘汰」，伤害固定 1 点，
+   * 所以这里不猜血量，只把结果画在受害者头顶。
+   */
+  showRingDamage(id: number, eliminated: boolean): void {
+    const view = this.views.get(id);
+    if (!view) return;
+    const x = view.root.position.x;
+    const y = view.root.position.y - 56;
+    this.ritual?.floatText(x, y, eliminated ? '-1 淘汰' : '-1', performance.now());
+  }
+
   /** 上香成功：财神像闪一道金色微光（ADR-0061） */
   flashShrine(): void {
     this.shrine?.flash();
@@ -1311,6 +1341,7 @@ export class GameRenderer {
     this.shrine?.update(dtMs);
     this.tea?.update(dtMs);
     this.boss?.update(dtMs);
+    this.ring?.update(dtMs);
     this.ritual?.update(now);
     if (this.auraEid !== 0) {
       const auraView = this.views.get(this.auraEid);
@@ -1480,6 +1511,7 @@ export class GameRenderer {
     this.plaques?.setTextResolution(next.devicePxPerTexel);
     this.park?.setTextResolution(next.devicePxPerTexel);
     this.boss?.setTextResolution(next.devicePxPerTexel);
+    this.ring?.setTextResolution(next.devicePxPerTexel);
   }
 
   get entityCount(): number {
@@ -1549,6 +1581,7 @@ export class GameRenderer {
     this.shrine?.destroy();
     this.tea?.destroy();
     this.boss?.destroy();
+    this.ring?.destroy();
     this.plaques?.destroy();
     this.park?.destroy();
     this.ritual?.destroy();

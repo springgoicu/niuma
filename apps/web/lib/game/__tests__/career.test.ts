@@ -54,6 +54,9 @@ describe('career storage', () => {
           ventedCount: 2,
           knockdownCount: 4,
           overtimeCount: 1,
+          ringGold: 0,
+          ringSilver: 0,
+          ringBronze: 0,
         },
       },
     });
@@ -91,6 +94,9 @@ describe('career storage', () => {
           ventedCount: 0,
           knockdownCount: 0,
           overtimeCount: 1,
+          ringGold: 0,
+          ringSilver: 0,
+          ringBronze: 0,
         },
       },
     });
@@ -203,6 +209,9 @@ describe('career summary', () => {
       todayKnockdown: 5,
       todayVented: 3,
       todayOvertime: 1,
+      ringGold: 0,
+      ringSilver: 0,
+      ringBronze: 0,
       province: '浙江',
     });
   });
@@ -228,5 +237,45 @@ describe('career summary', () => {
     expect(summary.todayToiletMinutes).toBe(0);
     expect(summary.firstJoinDate).toBe('');
     expect(summary.province).toBe('');
+    expect(summary.ringGold).toBe(0);
+    expect(summary.ringSilver).toBe(0);
+    expect(summary.ringBronze).toBe(0);
+  });
+});
+
+describe('擂台奖牌入账', () => {
+  const noon = new Date(2026, 3, 1, 12, 0, 0).getTime();
+
+  it('按名次分别记金银铜，同日累加且不串到击倒数', () => {
+    const tracker = new CareerTracker(memoryStorage());
+    tracker.recordRingMedal(1, noon);
+    tracker.recordRingMedal(1, noon);
+    tracker.recordRingMedal(2, noon);
+    tracker.recordRingMedal(3, noon);
+    const stats = tracker.snapshot().daily[dayKey(noon)]!;
+    expect(stats.ringGold).toBe(2);
+    expect(stats.ringSilver).toBe(1);
+    expect(stats.ringBronze).toBe(1);
+    expect(stats.knockdownCount).toBe(0);
+  });
+
+  it('摘要把三个奖牌数一起上报', () => {
+    const summary = buildCareerSummary(
+      null,
+      { daily: { [dayKey(noon)]: day({ ringGold: 1, ringSilver: 2, ringBronze: 0 }) } },
+      '',
+      noon,
+    );
+    expect(summary.ringGold).toBe(1);
+    expect(summary.ringSilver).toBe(2);
+    expect(summary.ringBronze).toBe(0);
+  });
+
+  it('落盘后重读仍是同一组奖牌', () => {
+    const storage = memoryStorage();
+    const tracker = new CareerTracker(storage);
+    tracker.recordRingMedal(2, noon);
+    tracker.flush();
+    expect(loadCareerStats(storage)!.daily[dayKey(noon)]!.ringSilver).toBe(1);
   });
 });

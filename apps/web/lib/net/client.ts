@@ -12,11 +12,13 @@ import {
   decodeChatRejected,
   decodeDespawn,
   decodeGraze,
+  decodeJail,
   decodeLike,
   decodeNameBroadcast,
   decodePong,
   decodeQueueRejected,
   decodeQueueStatus,
+  decodeRing,
   decodeSeatState,
   decodeSpawn,
   decodeStatusBroadcast,
@@ -31,6 +33,8 @@ import {
   encodeLikeRequest,
   encodeMoveInto,
   encodePing,
+  encodeRingEnter,
+  encodeRingLeave,
   encodeSetAppearance,
   encodeSetName,
   encodeSetStatus,
@@ -45,10 +49,12 @@ import {
   type ChatHistoryPacket,
   type ChatPacket,
   type ChatSendPacket,
+  type JailPacket,
   type LikePacket,
   type MovePacket,
   type QueueStatusPacket,
   type ResumeState,
+  type RingPacket,
   type SeatStateEntry,
   type SpawnPacket,
   type SyncFormat,
@@ -102,6 +108,10 @@ export interface NetHandlers {
   onVent(packet: VentEventPacket): void;
   /** 老板血量：入场快照、每次发泄结算与跨日重置都走这一条（ADR-0070） */
   onBoss(packet: BossPacket): void;
+  /** 小黑屋处置：警告 / 保安出动 / 押送 / 入狱 / 释放（ADR-0072） */
+  onJail(packet: JailPacket): void;
+  /** 擂台快照：阶段变化 / 扣血 / 1Hz 心跳都会广播，客户端按 receivedAt 本地递减倒计时 */
+  onRing(packet: RingPacket): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -338,6 +348,12 @@ export class NetClient {
       case OpCode.S2C_BOSS:
         this.handlers.onBoss(decodeBoss(data));
         break;
+      case OpCode.S2C_JAIL:
+        this.handlers.onJail(decodeJail(data));
+        break;
+      case OpCode.S2C_RING:
+        this.handlers.onRing(decodeRing(data));
+        break;
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));
         break;
@@ -443,6 +459,18 @@ export class NetClient {
   sendLike(targetId: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeLikeRequest(targetId));
+  }
+
+  /** 擂台报名：服务端按容量 / 阶段 / 距离二次裁决 */
+  sendRingEnter(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeRingEnter());
+  }
+
+  /** 取消报名：只允许在等待第 2 人阶段生效 */
+  sendRingLeave(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeRingLeave());
   }
 
   /** 牛马榜查询：默认一次拉全部指标；服务端按指标各回一条 */

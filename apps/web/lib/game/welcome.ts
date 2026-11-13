@@ -143,8 +143,9 @@ function drawArrow(g: Graphics, cx: number, cy: number, octant: number): void {
 /**
  * 指路牌：一根木柱上叠五块纸牌，箭头方向由 NAV_TARGETS 的真实方位决定。
  * 牌面只列园区级目的地（游乐园 / 研发园 / 影音室 / 摸鱼亭 / 湖区），
- * 室内四间与三湖的细分交给 HUD 导览卡，牌面就不会随目标增加而爆掉。
- * 画布仍锁 96×92：五块牌压到 13px 行距，靠箭头与分隔线维持可读性。
+ * 室内四间、三湖细分与发泄区这类后加目标都交给 HUD 导览卡，
+ * 牌面就不会随目标增加而爆掉。画布仍锁 96×92：五块牌压到 13px 行距，
+ * 靠箭头与分隔线维持可读性。
  */
 function drawSignpost(g: Graphics, w: number, h: number, arrows: readonly number[]): void {
   const plateX = Math.round((w - 72) / 2);

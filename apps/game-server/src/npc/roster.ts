@@ -335,6 +335,9 @@ export function buildNpcCareer(rng: Rng, now: number): CareerSummary {
     todayKnockdown: rng.int(0, 5),
     todayVented: rng.int(0, 20),
     todayOvertime: rng.int(0, 1),
+    ringGold: rng.int(0, 1),
+    ringSilver: rng.int(0, 2),
+    ringBronze: rng.int(0, 2),
     province: rng.pick(PROVINCE_POOL),
   };
 }

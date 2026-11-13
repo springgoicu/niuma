@@ -2,12 +2,14 @@ import { PLAYER_RADIUS, POSE, WORLD_CENTER, findFreePoint } from '@niuma/shared-
 import type { Transport } from '../sim/view';
 import type { World } from '../sim/world';
 import type { SpatialGrid } from '../spatial/grid';
-import { createAgent, updateAgent, type NpcAgent } from './brain';
+import { createAgent, directionOf, updateAgent, type NpcAgent } from './brain';
 import type { NpcConfig } from './config';
+import { ESCORT, stepEscort } from './escort';
 import { createRng } from './rng';
 import { GUARD_COUNT, NPC_ROLE_GUARD, buildNpcRoster } from './roster';
 import { pickSpawnPoint, type NpcSpot } from './spots';
 import { updateSocial, type NpcSocialContext } from './social';
+import type { EscortEvent } from '../sim/detention';
 
 /**
  * NPC 门面：服务器只认识 `spawn / update / count / guardCount / updateMs`。
@@ -23,6 +25,15 @@ export interface NpcDirector {
   readonly guardCount: number;
   /** 最近一帧 update 的耗时（毫秒）：只用于 /health 观测，不参与准入判定 */
   readonly updateMs: number;
+  /**
+   * 小黑屋派单：返回接单保安的实体 id，0 表示所有保安都在忙。
+   * 只挑最近的空闲保安，每人同时最多一个任务。
+   */
+  dispatchEscort(targetId: number, now: number): number;
+  /** 目标已释放 / 断线：清掉对应任务，保安原地停半秒后继续巡逻 */
+  cancelEscort(targetId: number): void;
+  /** 押送事件出口：server 用它转给 sim/detention，不让 NPC 层认识 Detention */
+  setEscortListener(listener: ((event: EscortEvent) => void) | null): void;
 }
 
 export interface NpcDirectorOptions {
@@ -38,8 +49,72 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
   const agents = new Map<number, NpcAgent>();
   let guardCount = 0;
   let updateMs = 0;
+  let escortListener: ((event: EscortEvent) => void) | null = null;
 
   const social: NpcSocialContext = { world, config, rng };
+
+  /** 任务结束：清空任务、站定，给下一次巡逻一个自然的过渡 */
+  function finishEscort(agent: NpcAgent, now: number, pauseMs: number): void {
+    agent.escort = null;
+    agent.phase = 'pause';
+    agent.pauseMs = pauseMs;
+    agent.pauseUntil = now + pauseMs;
+    agent.lookAt = now + 600;
+    agent.player.applyState(agent.player.direction, POSE.Idle, false);
+    agent.player.markDirtyIfChanged();
+  }
+
+  function dispatchEscort(targetId: number, now: number): number {
+    const target = world.get(targetId);
+    if (!target || target.isNpc || target.wsId === 0) return 0;
+
+    let best: NpcAgent | null = null;
+    let bestDistanceSq = Number.POSITIVE_INFINITY;
+    for (const agent of agents.values()) {
+      if (agent.escort) continue;
+      if (agent.player.role !== NPC_ROLE_GUARD) continue;
+      // 被发泄踹倒的保安不接单；站起来再说
+      if (now < agent.player.stunUntil) continue;
+      const dx = agent.player.x - target.x;
+      const dy = agent.player.y - target.y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        best = agent;
+      }
+    }
+    if (!best) return 0;
+
+    const guard = best.player;
+    best.escort = {
+      targetId,
+      stage: 'chase',
+      stageUntil: 0,
+      path: [],
+      index: 0,
+      replanAt: now,
+      lastTargetX: target.x,
+      lastTargetY: target.y,
+      startedAt: now,
+      towX: 0,
+      towY: 0,
+    };
+    guard.applyState(
+      directionOf(target.x - guard.x, target.y - guard.y, guard.direction),
+      POSE.Walk,
+      true,
+    );
+    guard.markDirtyIfChanged();
+    return guard.id;
+  }
+
+  function cancelEscort(targetId: number): void {
+    const now = Date.now();
+    for (const agent of agents.values()) {
+      if (agent.escort?.targetId !== targetId) continue;
+      finishEscort(agent, now, 600);
+    }
+  }
 
   /**
    * 迎宾位：第 1 位同事与第 1 位保安从广场出发，玩家一进场就能看到人。
@@ -91,7 +166,24 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     }
     const started = performance.now();
     for (const agent of agents.values()) {
-      updateAgent(agent, rng, config, now);
+      const escortTargetId = agent.escort?.targetId;
+      if (agent.escort) {
+        const event = stepEscort(agent, agent.escort, world, now);
+        if (event) {
+          escortListener?.(event);
+          // 抓取后还有按肩 / 拖行，任务继续；到达与中止才收尾
+          if (event.kind !== 'grab') finishEscort(agent, now, ESCORT.PAUSE_AFTER_MS);
+        }
+
+        // 被拖者由 escort 直接写坐标：跟着保安一起重算格子与视野
+        if (agent.escort && escortTargetId !== undefined) {
+          const target = world.get(escortTargetId);
+          if (target && grid.update(target.id, target.x, target.y)) target.needsViewRefresh = true;
+        }
+      } else {
+        updateAgent(agent, rng, config, now);
+      }
+
       const player = agent.player;
 
       // 单个实体异常不能拖垮 Tick：坐标非有限时就近拉回可站立点
@@ -105,7 +197,8 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
 
       // 跨格才重算视野：与真人的 AOI 维护同一条路径
       if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
-      updateSocial(agent, social, now);
+      // 押送中不做招手 / 让路，避免把保安拉回停顿态
+      if (!agent.escort) updateSocial(agent, social, now);
     }
     updateMs = performance.now() - started;
   }
@@ -121,6 +214,11 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     },
     get updateMs() {
       return updateMs;
+    },
+    dispatchEscort,
+    cancelEscort,
+    setEscortListener(listener) {
+      escortListener = listener;
     },
   };
 }

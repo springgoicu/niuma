@@ -15,9 +15,11 @@ import { SESSION_CARRY_MAX_SEC } from './constants';
  *
  * v1 → v2：在 `ventedCount` 后插入 `knockdownCount u16`，后续字段整体后移 2 字节。
  * v2 → v3：删除历史累计 / 周 / 连续 / 上报基线，只保留今日字段，定长从 36 收到 18。
- * 旧解码器看到 v3 会整段丢弃，不会把今日字段读成历史累计。
+ * v3 → v4：在今日字段后、省份长度前追加擂台金/银/铜三个 u16，定长 18 → 24。
+ * 旧解码器看到 v3 会整段丢弃，不会把今日字段读成历史累计；v4 解码器仍能解 v3。
  */
-export const CAREER_VERSION = 3;
+export const CAREER_VERSION = 4;
+export const CAREER_VERSION_V3 = 3;
 export const CAREER_VERSION_V2 = 2;
 export const CAREER_VERSION_LEGACY = 1;
 
@@ -60,6 +62,12 @@ export interface CareerSummary {
   todayVented: number;
   /** 今日加班次数（0 或 1） */
   todayOvertime: number;
+  /** 今日擂台冠军次数 */
+  ringGold: number;
+  /** 今日擂台亚军次数 */
+  ringSilver: number;
+  /** 今日擂台季军次数 */
+  ringBronze: number;
   /** 只到省；空串表示未上报 */
   province: string;
 }
@@ -72,6 +80,9 @@ export const EMPTY_CAREER: CareerSummary = {
   todayKnockdown: 0,
   todayVented: 0,
   todayOvertime: 0,
+  ringGold: 0,
+  ringSilver: 0,
+  ringBronze: 0,
   province: '',
 };
 
@@ -80,9 +91,11 @@ export const CAREER_FIXED_BYTES_LEGACY = 34;
 /** v2 定长部分：多一个 knockdownCount u16 = 36 字节 */
 export const CAREER_FIXED_BYTES_V2 = 36;
 /** v3 定长部分：version + 7 个今日数值 + provinceLen = 18 字节 */
-export const CAREER_FIXED_BYTES = 18;
+export const CAREER_FIXED_BYTES_V3 = 18;
+/** v4 定长部分：v3 + 擂台金/银/铜三个 u16 = 24 字节 */
+export const CAREER_FIXED_BYTES = 24;
 /** 信封层长度下限：v3 是最小的一版，26 字节的旧包也由版本分支自己检查 */
-export const CAREER_MIN_BYTES = CAREER_FIXED_BYTES;
+export const CAREER_MIN_BYTES = CAREER_FIXED_BYTES_V3;
 /** 单条摘要的最大长度：取最大版本定长 + 省份上限；长度字节 u8 必须放得下 */
 export const CAREER_MAX_BYTES = CAREER_FIXED_BYTES_V2 + MAX_PROVINCE_BYTES;
 /** 尾部段：魔数 + 长度 + payload */
@@ -167,6 +180,9 @@ export function sanitizeCareer(raw: unknown): CareerSummary {
     todayKnockdown: clampInt(value.todayKnockdown, 0, MAX_COUNT),
     todayVented: clampInt(value.todayVented, 0, MAX_COUNT),
     todayOvertime: clampInt(value.todayOvertime, 0, 1),
+    ringGold: clampInt(value.ringGold, 0, MAX_COUNT),
+    ringSilver: clampInt(value.ringSilver, 0, MAX_COUNT),
+    ringBronze: clampInt(value.ringBronze, 0, MAX_COUNT),
     province: truncateProvince(value.province),
   };
 }

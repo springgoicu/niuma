@@ -6,6 +6,7 @@
 import type { CareerSummary } from './career';
 import type { Direction, Pose, SyncFormat } from './constants';
 import type { DanmakuMode } from './danmaku';
+import type { RingPhase } from './world/ring';
 
 export type Species = 'cow' | 'horse';
 
@@ -155,11 +156,59 @@ export const OpCode = {
    * 空挥不发包；同 Tick 多人命中按服务端裁决顺序各发一条。
    */
   S2C_BOSS: 0x2c,
+  /** 擂台报名：`[op]`，服务端校验靠近、容量、阶段后传送入场 */
+  C2S_RING_ENTER: 0x2d,
+  /** 擂台取消：`[op]`，仅在等待开赛阶段有效 */
+  C2S_RING_LEAVE: 0x2e,
+  /** 擂台快照：阶段/对局/剩余时间 + 最多 3 个席位 */
+  S2C_RING: 0x2f,
+  /**
+   * 小黑屋处置：`[op][entityId u16][phase u8][flags u8][seconds u16][guardId u16]`，
+   * 9 字节定长。押送坐标本身走 Tick，这条包只表达「谁被警告 / 被带走 / 被松手」。
+   * 旧客户端走 default 静默忽略（ADR-0072）。
+   */
+  S2C_JAIL: 0x30,
 } as const;
 
 /** 老板血量包：flags bit0 = 本次归零，bit1 = 跨日重置 */
 export const BOSS_FLAG_DIED = 1;
 export const BOSS_FLAG_RESET = 1 << 1;
+
+/**
+ * 小黑屋阶段（ADR-0072）：
+ * 1 警告（只发本人）、2 保安出动、3 押送中、4 预留（不发送）、5 松手放人。
+ *
+ * 没有禁足时长：押到反省点即发 5，移动 / 动作立刻恢复。
+ */
+export const JAIL_PHASE = {
+  Warn: 1,
+  Dispatch: 2,
+  Escort: 3,
+  Jailed: 4,
+  Released: 5,
+} as const;
+export type JailPhase = (typeof JAIL_PHASE)[keyof typeof JAIL_PHASE];
+
+/** 小黑屋包 flags：bit0 表示接收者就是被处置者本人 */
+export const JAIL_FLAG_SELF = 1;
+
+/**
+ * 小黑屋处置包（`S2C_JAIL`）。
+ *
+ * `seconds` 保留字段：当前所有阶段都填 0（没有禁足倒计时）。`guardId = 0`
+ * 表示这次事件没有保安参与（例如只警告）。
+ */
+export interface JailPacket {
+  entityId: number;
+  phase: number;
+  self: boolean;
+  seconds: number;
+  guardId: number;
+}
+
+/** 擂台命中 flags：bit0 表示这一击来自擂台，bit1 表示目标因此淘汰 */
+export const RING_VENT_FLAG_HIT = 1;
+export const RING_VENT_FLAG_ELIMINATED = 1 << 1;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
 
@@ -290,6 +339,10 @@ export interface VentEventPacket {
   targetId: number;
   x: number;
   y: number;
+  /** 这一击是否发生在擂台内：擂台伤害不写普通考勤、不喷奶 */
+  ringHit?: boolean;
+  /** 目标是否因这一击血量归零；仅擂台包会带 */
+  eliminated?: boolean;
 }
 
 /**
@@ -304,6 +357,33 @@ export interface BossPacket {
   attackerId: number;
   died: boolean;
   reset: boolean;
+}
+
+/**
+ * 擂台席位快照。
+ *
+ * `rank` 在等待/进行阶段为 0，颁奖阶段为 1..n；`eliminated` 与 hp=0 同义，
+ * 但独立下发可以让 HUD 在扣血包到达前就展示倒地状态。
+ */
+export interface RingSlot {
+  id: number;
+  /**
+   * 起跑位序号 0..2。客户端据此把本人落到服务端传送的同一坐标；
+   * 旧包缺省时按成员顺序推算（服务端现在总会填）。
+   */
+  slot?: number;
+  name: string;
+  hp: number;
+  eliminated: boolean;
+  rank: number;
+}
+
+/** 擂台快照（`S2C_RING`）：只下行，阶段变化/血量变化/1Hz 心跳时广播。 */
+export interface RingPacket {
+  phase: RingPhase;
+  matchId: number;
+  remainingMs: number;
+  members: RingSlot[];
 }
 
 /**

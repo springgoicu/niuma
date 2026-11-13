@@ -67,6 +67,10 @@ export interface ServerConfig {
   chatHistory: ChatHistoryConfig;
   /** 园区 NPC：数量、种子、节奏与区域权重；count=0 即完整回滚 */
   npc: NpcConfig;
+  /** 小黑屋执法：关闭后不判定、不派单、不发包，屋子仍是普通空房 */
+  jail: {
+    enabled: boolean;
+  };
   /** 反渗透：Origin 白名单、移动包频率、聊天冷却 */
   security: SecurityConfig;
 }
@@ -149,6 +153,10 @@ export function loadConfig(): ServerConfig {
     },
     // NPC 的降级与钳制全部收在 npc/config：文件坏了也只告警，不阻断开服
     npc: loadNpcConfig(),
+    jail: {
+      // 只留一个开关：关闭后退回「没有执法」的园区，不需要迁移任何状态
+      enabled: readBool(process.env.GAME_JAIL_ENABLED, true),
+    },
     security: {
       // 留空走 guard 里的默认值（主站两个域名），避免配置漏填就变成「谁都能连」
       allowedOrigins: process.env.GAME_ALLOWED_ORIGINS ?? '',

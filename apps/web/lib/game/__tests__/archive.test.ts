@@ -29,7 +29,13 @@ function selfInput() {
     },
     stats: {
       daily: {
-        '2026-04-01': { ...EMPTY_CAREER_DAY, distancePx: 2_500, knockdownCount: 9, ventedCount: 3 },
+        '2026-04-01': {
+          ...EMPTY_CAREER_DAY,
+          distancePx: 2_500,
+          knockdownCount: 9,
+          ventedCount: 3,
+          ringGold: 1,
+        },
       },
     },
     pose: POSE.Sit,
@@ -63,6 +69,9 @@ function remoteBadge(overrides: Partial<PlayerBadge> = {}): PlayerBadge {
       todayKnockdown: 6,
       todayVented: 2,
       todayOvertime: 1,
+      ringGold: 2,
+      ringSilver: 1,
+      ringBronze: 0,
       province: '江苏',
     },
     board: [{ id: 7, name: '夜班实习生', todayMinutes: 60, self: false }],
@@ -88,6 +97,8 @@ describe('self archive', () => {
     expect(archive.activity.distanceM).toBe(100);
     expect(archive.activity.steps).toBe(156);
     expect(archive.activity.knockdownCount).toBe(9);
+    expect(archive.activity.ringGold).toBe(1);
+    expect(archive.activity.ringSilver).toBe(0);
     expect(archive.pose).toBe('入座摸鱼');
     expect(archive.seat).toBe('工位椅');
     expect(archive.employeeNo).toMatch(/^#NM-\d{5}$/);
@@ -108,6 +119,8 @@ describe('remote archive', () => {
     expect(archive.todayToiletMinutes).toBe(15);
     expect(archive.firstJoinDate).toBe('2026-03-01');
     expect(archive.activity.knockdownCount).toBe(6);
+    expect(archive.activity.ringGold).toBe(2);
+    expect(archive.activity.ringSilver).toBe(1);
     expect(archive.rank).toBe(1);
     expect(archive.stamp).toBe('卷王之王');
     expect(archive.board).toHaveLength(1);

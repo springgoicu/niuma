@@ -112,6 +112,7 @@ export function runWorkerHost(scope: WorkerScope): void {
         onBulletinOpen: () => post({ t: 'bulletinOpen' }),
         onBoard: (packet) => post({ t: 'board', packet }),
         onLike: (packet) => post({ t: 'like', packet }),
+        onRing: (packet, receivedAt) => post({ t: 'ring', packet, receivedAt }),
       },
       env,
       { wsUrl: message.wsUrl, parkId: message.parkId },

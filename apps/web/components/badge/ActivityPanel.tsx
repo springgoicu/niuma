@@ -27,6 +27,17 @@ function ActivityGrid({ archive }: { archive: BadgeArchive }) {
         <StatCell label="被创" value={value(activity.ventedCount, '次')} />
         <StatCell label="加班" value={value(activity.overtimeCount, '次')} />
         <StatCell
+          label="擂台"
+          value={
+            archive.hasCareer
+              ? `金 ${activity.ringGold} · 银 ${activity.ringSilver} · 铜 ${activity.ringBronze}`
+              : '未上报'
+          }
+          hint="今日冠亚季军"
+          accent={activity.ringGold > 0}
+          className="col-span-3"
+        />
+        <StatCell
           label="名次"
           value={archive.rank ? `第 ${archive.rank} 名` : '未上榜'}
           hint="今日工时 · 视野内"

@@ -6,3 +6,4 @@
  */
 export { createNpcDirector, type NpcDirector, type NpcDirectorOptions } from './director';
 export { DEFAULT_NPC_CONFIG, MAX_NPC_COUNT, loadNpcConfig, parseNpcConfig, type NpcConfig } from './config';
+export { warmEscortGrid } from './escort-path';

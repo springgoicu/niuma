@@ -27,10 +27,10 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(bearingDegOf(0, 0)).toBe(0);
   });
 
-  it('出生点 11 个导览目标全部可读，顺序与 NAV_TARGETS 一致', () => {
+  it('出生点 13 个导览目标全部可读，顺序与 NAV_TARGETS 一致', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     expect(readings.map((reading) => reading.target.id)).toEqual(NAV_TARGETS.map((target) => target.id));
-    expect(readings).toHaveLength(11);
+    expect(readings).toHaveLength(13);
     for (const reading of readings) {
       expect(reading.distance).toBeGreaterThan(0);
       expect(reading.seconds).toBe(Math.max(1, Math.round(reading.distance / MOVE_SPEED)));
@@ -63,13 +63,15 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(Math.max(...distances) - Math.min(...distances)).toBeLessThan(1);
   });
 
-  it('户外 7 个目标都朝向岛外方向，不会指回出生点脚下', () => {
+  it('户外 9 个目标都朝向岛外方向，不会指回出生点脚下', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     const outdoor = readings.filter((reading) => reading.target.area === 'grounds');
     expect(outdoor.map((reading) => reading.target.id)).toEqual([
       'park',
       'southYard',
+      'bossArena',
       'theater',
+      'jail',
       'pavilion',
       'lakeMoping',
       'lakeChensi',
