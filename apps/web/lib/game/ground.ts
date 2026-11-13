@@ -1,6 +1,6 @@
 'use client';
 
-import { ISLAND, WORLD_LAYOUT, isOnPlaza, isWaterAt, pointInPolygon, rectContains } from '@niuma/shared-types';
+import { WORLD_LAYOUT, isOnLand, isOnPlaza, isWaterAt, pointInPolygon, rectContains } from '@niuma/shared-types';
 
 /**
  * 「户外可行走地面」的唯一判定：草地贴花撒点与小动物撒点共用这一份。
@@ -14,7 +14,8 @@ import { ISLAND, WORLD_LAYOUT, isOnPlaza, isWaterAt, pointInPolygon, rectContain
  */
 export function isOutdoorGround(x: number, y: number): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-  if (!pointInPolygon(x, y, ISLAND.points)) return false;
+  // ADR-0064：陆地就是矩形，直接判边界，不再做多边形扫描
+  if (!isOnLand(x, y)) return false;
   if (isOnPlaza(x, y)) return false;
   for (const path of WORLD_LAYOUT.paths) {
     if (rectContains(path.rect, x, y) && pointInPolygon(x, y, path.polygon)) return false;

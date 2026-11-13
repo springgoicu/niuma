@@ -5,7 +5,6 @@ import {
   BAMBOO_SHOOT_ZONES,
   ISLAND,
   ISLAND_SAND,
-  ISLAND_SHALLOW,
   LAKE_SHORE,
   WORLD_HEIGHT,
   WORLD_LAYOUT,
@@ -26,6 +25,7 @@ import {
   traceContour,
   type ContourPoint,
 } from './autotile';
+import { buildBorderForest } from './border-forest';
 import {
   LEAF_KINDS,
   SHOOT_KINDS,
@@ -58,11 +58,11 @@ import {
   makePropShadowTexture,
   makeReedTexture,
   makeRockTexture,
-  makeSeaTexture,
   makeSnowTexture,
   makeStoneTexture,
   makeTreeTextures,
   makeWaterTexture,
+  makeWildTexture,
   type DecalAtlas,
   type TreeTextures,
 } from './terrain-textures';
@@ -81,14 +81,14 @@ type TextureFactory = Application['renderer'];
 
 /** 必须与 makeWaterTexture 的 size 一致：回绕模数用错，水面每隔几秒会跳一下 */
 const WATER_TILE = 96;
-/** 必须与 makeSeaTexture 的 size 一致 */
-const SEA_TILE = 96;
+/** 必须与 makeWildTexture 的 size 一致 */
+const WILD_TILE = 96;
 /** 必须与 makeDirtTexture 的 size 一致 */
 const DIRT_TILE = 128;
 /** 必须与 makeStoneTexture 的 size 一致 */
 const STONE_TILE = 128;
-/** 海面平铺超出世界矩形的余量：超宽视口贴到岛边也不会看到硬边 */
-const SEA_EXTENT = 2048;
+/** 边界外林地平铺超出世界矩形的余量：贴边走到尽头也不会看到硬边（ADR-0064） */
+const WILD_EXTENT = 2048;
 /** 水面滚动的最小时间片：湖慢河快靠 `every` 区分 */
 const WATER_TICK_MS = 140;
 /** 花海花朵密度：普通草地 0.12，花海要密到看得出「一片」 */
@@ -107,13 +107,18 @@ const CANOPY_TOP = TREE_H;
 const CANOPY_BOTTOM = 26;
 /** 树冠网格索引的单元边长 */
 const OCCLUSION_CELL = 128;
+/** 边界密林近排着色：只压一点明度，保留树冠的层次 */
+const BORDER_NEAR_TINT = 0xc8d8c0;
+/** 边界密林远排着色：压到一半明度，与林下深色底纹接住，读成一堵暗墙 */
+const BORDER_FAR_TINT = 0x7d9678;
 
 interface TerrainTextures {
   grass: Texture;
   dirt: Texture;
   stone: Texture;
   water: Texture;
-  sea: Texture;
+  /** 边界外林地地面（ADR-0064）：四边密林脚下的深色底 */
+  wild: Texture;
   trees: TreeTextures[];
   rock: Texture;
   reed: Texture;
@@ -130,7 +135,7 @@ interface EdgeJob {
   self: MaterialId;
   other: MaterialId;
   contour: ContourPoint[];
-  /** 是否画内缘暗边；岸沙带这类「以海岸线为中线」的带状材质没有内侧边 */
+  /** 是否画内缘暗边；边界沙带这类两侧都要接住的带状材质没有内侧边 */
   rim: boolean;
   /** 强制齿的生长方向；缺省由「对面是不是草」推断 */
   grow?: 'in' | 'out';
@@ -142,7 +147,7 @@ interface WaterSurface {
   axis: 'x' | 'y';
   /** 每 N 个时间片滚动 1px */
   every: number;
-  /** 平铺周期；水面与海面尺寸不同，回绕必须各用各的 */
+  /** 平铺周期；湖面与其它平铺材质的尺寸不同，回绕必须各用各的 */
   tile: number;
 }
 
@@ -189,11 +194,6 @@ function flattenPoints(points: ReadonlyArray<Point>): number[] {
   return flat;
 }
 
-/** 海岸线折线展开成 Pixi 需要的扁平数组 */
-function islandPolygon(): number[] {
-  return flattenPoints(ISLAND.points);
-}
-
 /** 128px 单元的空间哈希键：坐标恒为正，直接位拼 */
 function cellKey(x: number, y: number): number {
   return (Math.floor(x / OCCLUSION_CELL) << 16) ^ Math.floor(y / OCCLUSION_CELL);
@@ -203,7 +203,7 @@ function cellKey(x: number, y: number): number {
  * 地形视图：本项目的 MapRenderer。
  *
  * 三层结构（与 ADR-0013 的图层纪律一致）：
- * - `base`：材质底色与轮廓遮罩（海 → 浅滩 → 草 → 沙 → 林下 → 花海 → 石砖圆庭 → 土路 → 三湖）；
+ * - `base`：材质底色与轮廓遮罩（林地 → 草 → 边界沙带 → 密林围边 → 林下 → 花海 → 石砖圆庭 → 土路 → 三湖）；
  * - `edge`：位掩码驱动的边缘层，等所有底色画完才统一生成，草缘永远最后压上；
  * - `decals`：程序化贴花，压在地面之上、尘土与角色之下。
  *
@@ -244,7 +244,7 @@ export class TerrainView {
       dirt: makeDirtTexture(renderer),
       stone: makeStoneTexture(renderer),
       water: makeWaterTexture(renderer, this.winter),
-      sea: makeSeaTexture(renderer, this.winter),
+      wild: makeWildTexture(renderer, this.winter),
       trees: makeTreeTextures(renderer, this.winter),
       rock: makeRockTexture(renderer),
       reed: makeReedTexture(renderer),
@@ -262,10 +262,10 @@ export class TerrainView {
   /** `depth` 负责按脚底 y 把树与道具放进正确的深度层 */
   build(depth: DepthSink): void {
     this.depth = depth;
-    this.addSea();
-    this.addShoreShelf();
+    this.addWild();
     this.addGrass();
-    this.addShoreSand();
+    this.addSandBand();
+    this.addBorderForest();
     this.addGroveFloor();
     this.addFlowerMeadow();
     // 覆雪压在草地/林下/花海之上、路缘与土路之下：
@@ -282,73 +282,89 @@ export class TerrainView {
     this.addPlanters(depth);
   }
 
-  /** 深海铺在最底层，外扩一圈：任何视口都不会露出世界外的黑色 */
-  private addSea(): void {
-    const sea = new TilingSprite({
-      texture: this.textures.sea,
-      width: WORLD_WIDTH + SEA_EXTENT * 2,
-      height: WORLD_HEIGHT + SEA_EXTENT * 2,
+  /**
+   * 边界外林地：铺在最底层并向外扩一圈，任何视口贴到地图边缘都不会露出黑边。
+   * ADR-0064：原来的深海换成一片静止的深色林下地面，林墙（`addBorderForest`）压在上面。
+   */
+  private addWild(): void {
+    const wild = new TilingSprite({
+      texture: this.textures.wild,
+      width: WORLD_WIDTH + WILD_EXTENT * 2,
+      height: WORLD_HEIGHT + WILD_EXTENT * 2,
     });
-    sea.position.set(-SEA_EXTENT, -SEA_EXTENT);
-    this.base.addChild(sea);
-    // 海面比湖面慢：每 10 个时间片滚 1px
-    this.surfaces.push({ sprite: sea, axis: 'x', every: 10, tile: SEA_TILE });
-  }
-
-  /** 浅滩：中心线两侧各 72px，内侧随后被草地盖住，只留外海一侧的浅水 */
-  private addShoreShelf(): void {
-    const shelf = new Graphics();
-    // bevel：海岸线是直角折线，miter 会在海湾拐角扎出上百像素的长刺
-    shelf.poly(islandPolygon()).stroke({ width: ISLAND_SHALLOW * 2, color: C.shoreShallow, join: 'bevel' });
-    this.base.addChild(shelf);
+    wild.position.set(-WILD_EXTENT, -WILD_EXTENT);
+    this.base.addChild(wild);
   }
 
   /**
-   * 沙滩：压在海陆交界线上，一半在水里一半在陆地。
-   * 沙滩没有自己的矩形，它的两条边都在同一条海岸线上——内缘朝草地、外缘朝浅滩，
-   * 各自偏移 26px 后单独登记边缘，草才会从陆地一侧长进沙里。
+   * 沙滩装饰带：矩形边界内侧一条 `ISLAND_SAND` 宽的环。
+   *
+   * 玩家碰撞线就是这条带的外沿（`isOnLand` 的内缩矩形），
+   * 沙 / 草交界仍走材质网格的齿状边缘：草从内侧压进沙里，
+   * 外沿再补一条湿沙暗边，与外侧林地接住。
    */
-  private addShoreSand(): void {
+  private addSandBand(): void {
+    const { x, y, w, h } = ISLAND.bounds;
+    const band = ISLAND_SAND;
     const sand = new Graphics();
-    sand.poly(islandPolygon()).stroke({ width: ISLAND_SAND * 2, color: C.sand, join: 'bevel' });
+    sand.rect(x, y, w, band).fill(C.sand);
+    sand.rect(x, y + h - band, w, band).fill(C.sand);
+    sand.rect(x, y + band, band, h - band * 2).fill(C.sand);
+    sand.rect(x + w - band, y + band, band, h - band * 2).fill(C.sand);
     this.base.addChild(sand);
 
     if (!this.edgeEnabled) return;
-    // 用未倒角的原始海岸线做偏移：圆角半径 12 < 沙带宽 26，
-    // 先倒角再内缩会让圆弧上的每个点各走各的法线，在角上收成一个结
-    const ring: ContourPoint[] = ISLAND.points.map(([x, y]) => ({ x, y }));
-    // 陆地侧：草压着沙长。沙在轮廓外侧、草在内侧，齿必须朝外才是「盖进沙里」；
+    // 内缘：草压着沙长。沙在轮廓外侧、草在内侧，齿必须朝外才是「盖进沙里」；
     // 沙的暗边会落在草上，所以这条线不画内缘
     this.edges.push({
       self: MATERIAL.sand,
       other: MATERIAL.grass,
-      contour: offsetContour(ring, -ISLAND_SAND),
+      contour: roundedRectContour({ x: x + band, y: y + band, w: w - band * 2, h: h - band * 2 }, 0),
       rim: false,
       grow: 'out',
       seed: 0x5a4d31,
     });
-    // 海侧：沙探进浅滩，补一条湿沙暗边
+    // 外缘：沙探进林地，补一条湿沙暗边
     this.edges.push({
       self: MATERIAL.sand,
-      other: MATERIAL.shallow,
-      contour: offsetContour(ring, ISLAND_SAND),
+      other: MATERIAL.outside,
+      contour: roundedRectContour({ x, y, w, h }, 0),
       rim: true,
       seed: 0x6b5e42,
     });
   }
 
-  /** 草地按海岸线裁成岛：铺满世界矩形，再用多边形遮罩切掉海面 */
+  /** 草地：矩形陆地直接铺满，不再需要多边形遮罩 */
   private addGrass(): void {
-    const grass = new TilingSprite({
-      texture: this.textures.grass,
-      width: WORLD_WIDTH,
-      height: WORLD_HEIGHT,
-    });
-    const mask = new Graphics();
-    mask.poly(islandPolygon()).fill(0xffffff);
-    this.base.addChild(mask);
-    grass.mask = mask;
+    const { x, y, w, h } = ISLAND.bounds;
+    const grass = new TilingSprite({ texture: this.textures.grass, width: w, height: h });
+    grass.position.set(x, y);
     this.base.addChild(grass);
+  }
+
+  /**
+   * 四边密林：矩形外两排树影，只画不碰（ADR-0064）。
+   *
+   * 近排贴在沙带外沿、远排压暗并垫在更外面，两排错开半格连成一堵林墙。
+   * 树影不进深度层：玩家永远走不到这一带，压在地形底色之上就够，
+   * 也不需要树冠遮挡与底座投影。
+   */
+  private addBorderForest(): void {
+    const trees = buildBorderForest(ISLAND.bounds);
+    const canopies = this.textures.trees.map((parts) => parts.canopy);
+    const near = new Container();
+    const far = new Container();
+    for (const tree of trees) {
+      const sprite = new Sprite(canopies[tree.variant % canopies.length]!);
+      sprite.anchor.set(0.5, 1);
+      sprite.position.set(tree.x, tree.y);
+      sprite.tint = tree.depth === 0 ? BORDER_NEAR_TINT : BORDER_FAR_TINT;
+      (tree.depth === 0 ? near : far).addChild(sprite);
+      // 树冠向上长到 108px、向两边各探 36px，裁剪范围要覆盖到
+      this.cullables.push({ sprite, x: tree.x, y: tree.y, padX: 36, padY: 112 });
+    }
+    // 先远后近：近排永远压在远排之上
+    this.base.addChild(far, near);
   }
 
   /**
@@ -395,12 +411,11 @@ export class TerrainView {
   /**
    * 覆雪层：一张平铺 + 一块遮罩，覆盖草地、林地、花海与广场。
    *
-   * 遮罩取「海岸线内缩 ISLAND_SAND」：沙带是以海岸线为中线的 52px 描边，
-   * 内缩 26px 正好接住它的内缘，雪不会盖到沙滩上——
+   * 遮罩取「矩形边界内缩 ISLAND_SAND」：沙带是边界内侧 26px 的环，
+   * 内缩一整条沙带宽，雪正好止在沙带内缘——
    * 岸边该是雪化了的湿沙，而不是又一层白。
    *
-   * 不复用 `addGrass` 的原始海岸线遮罩：那份会盖住沙带一半，
-   * 沙与雪之间也没有过渡；雪缘的过渡交给 `flushEdges` 的冬季齿色。
+   * 沙与雪之间没有过渡；雪缘的过渡交给 `flushEdges` 的冬季齿色。
    */
   private addSnowCover(): void {
     const texture = this.textures.snow;
@@ -418,9 +433,12 @@ export class TerrainView {
       return;
     }
 
-    const ring = ISLAND.points.map(([x, y]) => ({ x, y }));
+    const { x, y, w, h } = ISLAND.bounds;
     const mask = new Graphics();
-    traceContour(mask, offsetContour(ring, -ISLAND_SAND));
+    traceContour(
+      mask,
+      roundedRectContour({ x: x + ISLAND_SAND, y: y + ISLAND_SAND, w: w - ISLAND_SAND * 2, h: h - ISLAND_SAND * 2 }, 0),
+    );
     mask.fill(0xffffff);
     this.base.addChild(mask);
     snow.mask = mask;
@@ -908,7 +926,7 @@ export class TerrainView {
     this.textures.grass.destroy(true);
     this.textures.dirt.destroy(true);
     this.textures.water.destroy(true);
-    this.textures.sea.destroy(true);
+    this.textures.wild.destroy(true);
     this.textures.rock.destroy(true);
     this.textures.reed.destroy(true);
     this.textures.planter.destroy(true);

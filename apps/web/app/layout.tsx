@@ -1,11 +1,15 @@
 import type { Metadata, Viewport } from 'next';
 import { BuildWatcher } from '@/components/BuildWatcher';
+import { InstallBoot } from '@/components/InstallBoot';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: '牛马 NIOMA — 永不下班的像素办公园区',
   description:
     '《牛马》是一座 2D 像素多人在线办公园区。选一头牛或一匹马，走进工位、打字聊天、坐下躺平。20Hz 权威同步，WebGPU 渲染，8 字节移动包。',
+  // 显式声明：右上角「存到桌面」依赖浏览器识别本站为可安装应用，
+  // 路由级 metadata 覆盖时也不能丢这条链
+  manifest: '/manifest.webmanifest',
   icons: {
     // 同一份 16×16 位图按整数倍导出（pnpm assets），标签页在 1x/2x/3x 屏上各取所需
     icon: [
@@ -49,6 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <BuildWatcher />
+        <InstallBoot />
         {children}
       </body>
     </html>

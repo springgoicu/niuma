@@ -9,9 +9,9 @@ import {
   isBlocked,
   packState,
   seatById,
+  seatPose,
   unpackState,
   type MovePacket,
-  type SeatStateEntry,
 } from '@niuma/shared-types';
 import { SpatialGrid } from '../spatial/grid';
 import { applyMove } from './movement';
@@ -60,11 +60,11 @@ function arena(
 }
 
 function ventTick(
-  env: { world: World; grid: SpatialGrid; seats: SeatRegistry },
+  env: { world: World; grid: SpatialGrid },
   transport: Transport,
   now: number,
-): SeatStateEntry[] {
-  return resolveVents(env.world, env.grid, env.seats, transport, now);
+): void {
+  resolveVents(env.world, env.grid, transport, now);
 }
 
 describe('发泄命中结算', () => {
@@ -147,26 +147,82 @@ describe('发泄命中结算', () => {
     expect(behind.pose).toBe(POSE.Idle);
   });
 
-  it('坐在椅子上被创飞：先释放座位，落点条目交给调用方广播', () => {
-    const seat = WORLD_LAYOUT.seats[0]!;
+  it('入座即免伤：工位椅、床位、马桶、凳子上的人都不会被创飞', () => {
+    for (const kind of ['chair', 'bed', 'toilet', 'stool'] as const) {
+      const seat = WORLD_LAYOUT.seats.find((item) => item.kind === kind);
+      expect(seat).toBeDefined();
+      if (!seat) continue;
+
+      const world = new World();
+      const grid = new SpatialGrid();
+      const seats = new SeatRegistry();
+      const victim = world.create('乙', DEFAULT_APPEARANCE.cow, 12, seat.x, seat.y)!;
+      const attacker = world.create('甲', DEFAULT_APPEARANCE.cow, 11, seat.x - 24, seat.y)!;
+      attacker.applyState(DIRECTION.Right, POSE.Idle, false, true);
+      attacker.known.add(victim.id);
+      victim.known.add(attacker.id);
+      grid.insert(attacker.id, attacker.x, attacker.y);
+      grid.insert(victim.id, victim.x, victim.y);
+      seats.occupy(victim, seatById(seat.id)!, 1000, []);
+
+      const { sent, transport } = recorder();
+      ventTick({ world, grid }, transport, 10_000);
+
+      // 座位不释放、姿态不变、位置不动、不进硬直
+      expect(victim.seat).toBe(seat.id);
+      expect(victim.pose).toBe(seatPose(kind));
+      expect(victim.x).toBe(seat.x);
+      expect(victim.y).toBe(seat.y);
+      expect(victim.stunUntil).toBe(0);
+      // 打到入座者按空放发：targetId 为 0
+      expect(sent.length).toBeGreaterThan(0);
+      for (const item of sent) {
+        expect(item.data[3]).toBe(0);
+        expect(item.data[4]).toBe(0);
+      }
+    }
+  });
+
+  it('最近的人入座时判空放：不会穿透去打他身后的人', () => {
+    const seat = WORLD_LAYOUT.seats.find((item) => item.kind === 'chair')!;
     const world = new World();
     const grid = new SpatialGrid();
     const seats = new SeatRegistry();
-    const victim = world.create('乙', DEFAULT_APPEARANCE.cow, 12, seat.x, seat.y)!;
+    const sitter = world.create('乙', DEFAULT_APPEARANCE.cow, 12, seat.x, seat.y)!;
+    const behind = world.create('丙', DEFAULT_APPEARANCE.cow, 13, seat.x + 24, seat.y)!;
     const attacker = world.create('甲', DEFAULT_APPEARANCE.cow, 11, seat.x - 24, seat.y)!;
     attacker.applyState(DIRECTION.Right, POSE.Idle, false, true);
-    attacker.known.add(victim.id);
-    victim.known.add(attacker.id);
+    for (const target of [sitter, behind]) {
+      attacker.known.add(target.id);
+      target.known.add(attacker.id);
+      grid.insert(target.id, target.x, target.y);
+    }
     grid.insert(attacker.id, attacker.x, attacker.y);
-    grid.insert(victim.id, victim.x, victim.y);
-    seats.occupy(victim, seatById(seat.id)!, 1000, []);
+    seats.occupy(sitter, seatById(seat.id)!, 1000, []);
 
+    const { sent, transport } = recorder();
+    ventTick({ world, grid }, transport, 10_000);
+
+    expect(sitter.seat).toBe(seat.id);
+    expect(behind.pose).toBe(POSE.Idle);
+    expect(behind.stunUntil).toBe(0);
+    expect(behind.x).toBe(seat.x + 24);
+    for (const item of sent) {
+      expect(item.data[3]).toBe(0);
+      expect(item.data[4]).toBe(0);
+    }
+  });
+
+  it('席地而坐没有座位，不算入座：照样会被创飞', () => {
+    const env = arena();
     const { transport } = recorder();
-    const released = ventTick({ world, grid, seats }, transport, 10_000);
+    env.b.applyState(DIRECTION.Right, POSE.Sit, false);
 
-    expect(released).toEqual([{ seatId: seat.id, occupant: 0 }]);
-    expect(victim.seat).toBe(0);
-    expect(victim.pose).toBe(POSE.Lie);
+    ventTick(env, transport, 10_000);
+
+    expect(env.b.seat).toBe(0);
+    expect(env.b.pose).toBe(POSE.Lie);
+    expect(env.b.stunUntil).toBe(10_000 + VENT_STUN_MS);
   });
 });
 

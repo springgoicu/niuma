@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BENCH_SEAT_OFFSET,
   CHAIR_GAP,
   DESK_H,
   DESK_W,
@@ -63,6 +64,25 @@ describe('座位布局', () => {
     }
   });
 
+  it('每张长椅都有可坐的 bench 座位：坐点在椅前、面朝镜头、追加在末尾', () => {
+    const benches = props.filter((prop) => prop.kind === 'bench');
+    const benchSeats = seats.filter((seat) => seat.kind === 'bench');
+    expect(benches.length).toBeGreaterThan(0);
+    expect(benchSeats.length).toBe(benches.length);
+    // 追加在座位表末尾：既有工位 / 床 / 马桶 / 影厅座位的 id 不会后移
+    expect(seats.slice(-benchSeats.length).every((seat) => seat.kind === 'bench')).toBe(true);
+
+    for (const prop of benches) {
+      const seat = benchSeats.find((item) => item.x === prop.x && item.y === prop.y + BENCH_SEAT_OFFSET);
+      expect(seat).toBeDefined();
+      expect(seat!.facing).toBe(DIRECTION.Down);
+      expect(seat!.desk).toBe(-1);
+      expect(seatPose(seat!.kind)).toBe(POSE.Sit);
+      // 坐点必须在长椅自身 40×16 碰撞盒之外，否则入座后会被判成卡在障碍里
+      expect(isBlocked(seat!.x, seat!.y, PLAYER_RADIUS)).toBe(false);
+    }
+  });
+
   it('工位椅引用的桌子存在且与椅子一一对应', () => {
     const chairs = seats.filter((seat) => seat.kind === 'chair' && seat.desk >= 0);
     expect(chairs.length).toBe(desks.length);
@@ -93,11 +113,13 @@ describe('座位布局', () => {
     }
   });
 
-  it('床位只能躺、凳子与沙发只能坐', () => {
+  it('床位只能躺、凳子 / 沙发 / 影厅座椅只能坐', () => {
     const beds = seats.filter((seat) => seat.kind === 'bed');
     expect(beds.length).toBeGreaterThanOrEqual(3);
     expect(seats.filter((seat) => seat.kind === 'stool').length).toBeGreaterThanOrEqual(2);
-    expect(seats.filter((seat) => seat.kind === 'sofa').length).toBeGreaterThanOrEqual(1);
+    // 双人沙发由左右两半组成：两半都是独立座位，拼起来才坐得下两个人
+    expect(seats.filter((seat) => seat.kind === 'couch').length).toBe(2);
+    expect(seats.filter((seat) => seat.kind === 'cinema').length).toBeGreaterThanOrEqual(12);
 
     for (const seat of beds) expect(seatPose(seat.kind)).toBe(POSE.Lie);
     for (const seat of seats.filter((item) => item.kind !== 'bed')) {
@@ -199,13 +221,20 @@ describe('座位朝向与家具一致', () => {
     expect([DIRECTION.Left, DIRECTION.Right]).toContain(beds[0]!.facing as Direction);
   });
 
-  it('宿舍区的凳子面朝南侧茶几，而不是朝向随机', () => {
+  it('宿舍区的两张凳子面朝沙发前的茶几，而不是朝向随机', () => {
     const stools = seats.filter((seat) => seat.kind === 'stool');
     expect(stools.length).toBeGreaterThanOrEqual(2);
-    const tables = props.filter((prop) => prop.kind === 'sideTable');
+    const tables = props.filter((prop) => prop.kind === 'coffeeTable');
+    expect(tables).toHaveLength(1);
     for (const stool of stools) {
-      expect(stool.facing).toBe(DIRECTION.Down);
-      expect(tables.some((table) => table.y > stool.y && Math.abs(table.x - stool.x) <= SIT_RANGE)).toBe(true);
+      const table = tables.find((item) => Math.hypot(item.x - stool.x, item.y - stool.y) <= SIT_RANGE);
+      expect(table).toBeDefined();
+      // 朝向与「凳子 → 茶几」同向：坐下时是面对茶几，而不是背对它
+      const dir = FACING_VECTOR[stool.facing];
+      const dx = table!.x - stool.x;
+      const dy = table!.y - stool.y;
+      const length = Math.hypot(dx, dy) || 1;
+      expect((dir.x * dx + dir.y * dy) / length).toBeGreaterThan(0.4);
     }
   });
 });

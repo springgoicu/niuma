@@ -6,7 +6,7 @@ import type {
   NavTargetId,
   ResumeState,
 } from '@niuma/shared-types';
-import { requestBuildCheck } from '../../build-version';
+import { reloadForStaleAssets, requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
 import { readIncenseDay, writeIncenseDay } from '../incense-day';
@@ -14,6 +14,7 @@ import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
 import { MINIMAP_SIZE } from '../minimap-draw';
 import { applyAudioEvent } from '../runtime/audio-sink';
+import { classifyBootMessage } from '../runtime/boot-gate';
 import { createControlWriter, type ControlWriter, type SnapshotPatch } from '../runtime/control-channel';
 import type { SessionProfile } from '../runtime/engine-env';
 import { markRenderFallback } from '../runtime/render-mode';
@@ -25,6 +26,10 @@ import type { GameClient, GameClientOptions } from './game-client';
 const PERSIST_INTERVAL_MS = 2000;
 /** 启动闸门：Worker 脚本已下载但一直不回消息时，不能让用户无限等下去 */
 const WORKER_BOOT_TIMEOUT_MS = 10_000;
+/** 已经收到 progress（connecting）后的初始化预算：冷启动要拉图集与字体，比纯脚本加载慢 */
+const WORKER_INIT_TIMEOUT_MS = 20_000;
+/** 素材版本错配的玩家可读提示：受控重载被守卫拦下时才显示 */
+const STALE_ASSET_HINT = '园区刚更新过，请刷新页面';
 
 /** Worker 内部未捕获异常上报（见 workers/game.worker.ts），不属于业务消息协议 */
 interface WorkerFatalMessage {
@@ -59,6 +64,8 @@ export class WorkerGameClient implements GameClient {
   /** 启动失败后接管全部方法的门面；本对象继续保留，React 侧的 ref 无需重建 */
   private delegate: GameClient | null = null;
   private lastFatal = '';
+  /** 启动期发现图集版本不一致：本次不回退主线程，直接换图 */
+  private staleAssets = false;
   private writer: ControlWriter | null = null;
   private keyboard: KeyboardInput | null = null;
   private canvas: HTMLCanvasElement | null = null;
@@ -81,6 +88,8 @@ export class WorkerGameClient implements GameClient {
   async start(host: HTMLElement, profile: SessionProfile, resume?: ResumeState): Promise<void> {
     // 已经回退过：后续 start 直接交给主线程实现，不再碰 Worker
     if (this.delegate) return this.delegate.start(host, profile, resume);
+    this.lastFatal = '';
+    this.staleAssets = false;
 
     // 每次会话新建画布：`transferControlToOffscreen()` 是一次性的，
     // StrictMode 双挂载时必须换一块，不能复用已经移交过的画布。
@@ -104,8 +113,11 @@ export class WorkerGameClient implements GameClient {
     this.worker = worker;
 
     // 启动闸门：Worker 脚本可能被 COEP/CSP 拦掉（此时 onerror.message 是空的），
-    // 也可能加载成功但内部初始化抛错、或干脆一直不回消息。只有收到第一条业务
-    // 消息才算真正活着；其余情况一律销毁并回退主线程，绝不把状态挂死在 error。
+    // 也可能加载成功但内部初始化抛错、或干脆一直不回消息。
+    //
+    // 注意 `GameSession.start()` 在 `await renderer.init()` 之前就同步发 connecting：
+    // 它只说明 Worker 活着，不代表渲染器启动成功。真正的成功信号是 ready 或其后
+    // 才可能出现的业务消息；初始化失败走 fallbackToMain()，不再把红条甩给玩家。
     let settleBoot: (alive: boolean) => void = () => {};
     const booted = new Promise<boolean>((resolve) => {
       let settled = false;
@@ -116,10 +128,14 @@ export class WorkerGameClient implements GameClient {
         if (timer !== undefined) window.clearTimeout(timer);
         resolve(alive);
       };
-      timer = window.setTimeout(() => {
-        this.lastFatal = `渲染线程 ${WORKER_BOOT_TIMEOUT_MS / 1000}s 内没有响应`;
-        finish(false);
-      }, WORKER_BOOT_TIMEOUT_MS);
+      const arm = (budgetMs: number) => {
+        if (timer !== undefined) window.clearTimeout(timer);
+        timer = window.setTimeout(() => {
+          this.lastFatal = `渲染线程 ${Math.round(budgetMs / 1000)}s 内没有完成初始化`;
+          finish(false);
+        }, budgetMs);
+      };
+      arm(WORKER_BOOT_TIMEOUT_MS);
       settleBoot = finish;
 
       worker.onmessage = (event: MessageEvent<WorkerToMain | WorkerFatalMessage>) => {
@@ -130,7 +146,26 @@ export class WorkerGameClient implements GameClient {
           else finish(false);
           return;
         }
-        finish(true);
+        if (!settled) {
+          // 素材版本错配不是渲染线程坏了，而是页面已过期：换图比回退主线程正确，
+          // 也不该把本次会话永久降级到主线程。
+          if (data.t === 'status' && data.code === 'atlas-version') {
+            this.staleAssets = true;
+            this.lastFatal = data.detail || '图集版本不一致';
+            finish(false);
+            return;
+          }
+          const verdict = classifyBootMessage(data);
+          if (verdict === 'failed') {
+            this.lastFatal =
+              data.t === 'status' ? data.detail || '渲染线程初始化失败' : '渲染线程初始化失败';
+            finish(false);
+            return;
+          }
+          if (verdict === 'alive') finish(true);
+          // progress：Worker 活着但初始化未完成，给冷启动续一段更宽的预算
+          else arm(WORKER_INIT_TIMEOUT_MS);
+        }
         this.handle(data);
       };
       worker.onerror = (event) => {
@@ -172,6 +207,12 @@ export class WorkerGameClient implements GameClient {
     const alive = await booted;
     if (this.stopped) return;
     if (!alive) {
+      if (this.staleAssets) {
+        // 页面素材已过期：销毁 Worker 并受控换图；被重载守卫拦下才提示玩家手动刷新
+        this.teardownWorker();
+        if (!reloadForStaleAssets()) this.options.callbacks.onStatus('error', STALE_ASSET_HINT);
+        return;
+      }
       await this.fallbackToMain(host, profile, resume);
       return;
     }
@@ -433,6 +474,11 @@ export class WorkerGameClient implements GameClient {
       case 'ready':
         return;
       case 'status':
+        // 运行期才发现素材过期：同样走受控换图，不把开发者文案铺成红条
+        if (message.code === 'atlas-version') {
+          if (!reloadForStaleAssets()) callbacks.onStatus('error', STALE_ASSET_HINT);
+          return;
+        }
         callbacks.onStatus(message.status, message.detail);
         return;
       case 'queue':

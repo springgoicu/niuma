@@ -163,7 +163,7 @@ function overlaps(blocker: Blocker, x: number, y: number, radius: number): boole
 /** 该点是否与地形相交；非有限坐标视为被挡，避免 NaN 污染权威状态 */
 export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return true;
-  // 海即边界：先判陆地，再查家具与树。湖面可涉水，不再进障碍列表（ADR-0030）
+  // 矩形边界即墙：先判陆地，再查家具与树。湖面可涉水，不再进障碍列表（ADR-0030 / ADR-0064）
   if (!isOnLand(x, y, radius)) return true;
   const list = gather(x, y, radius);
   for (const index of list) {
@@ -176,7 +176,7 @@ function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
 }
 
-/** 陆地边界；世界矩形只是坐标上限，海才是真正的墙 */
+/** 陆地边界；世界矩形只是坐标上限，四边密林围出的矩形才是真正的墙（ADR-0064） */
 function insideWorld(x: number, y: number, radius: number): boolean {
   return isOnLand(x, y, radius);
 }

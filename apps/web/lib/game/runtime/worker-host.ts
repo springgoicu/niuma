@@ -1,3 +1,4 @@
+import { atlasErrorCodeOf } from '../atlas-errors';
 import { GameSession, type ChatEntry } from '../session';
 import { drawMiniMap, prepareMiniMap, type MiniMapContext } from '../minimap-draw';
 import { ControlBlock } from './control-channel';
@@ -122,11 +123,14 @@ export function runWorkerHost(scope: WorkerScope): void {
         drawMinimap();
       })
       .catch((error: unknown) => {
-        post({
-          t: 'status',
-          status: 'error',
-          detail: error instanceof Error ? error.message : '渲染线程初始化失败',
-        });
+        const detail = error instanceof Error ? error.message : '渲染线程初始化失败';
+        // 图集版本错配 = 页面已过期，不是渲染线程坏了：打上 code 让主线程换图，
+        // 而不是把「请重跑 pnpm assets」这种开发者文案直接铺到玩家脸上。
+        if (atlasErrorCodeOf(error) === 'version-mismatch') {
+          post({ t: 'status', status: 'error', detail, code: 'atlas-version' });
+          return;
+        }
+        post({ t: 'status', status: 'error', detail });
       });
 
     timer = setInterval(slowFrame, SLOW_FRAME_MS);

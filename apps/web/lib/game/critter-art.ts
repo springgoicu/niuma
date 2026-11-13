@@ -7,8 +7,8 @@ import { bake } from './terrain-textures';
  * 园区小动物与蝴蝶的像素图集。
  *
  * 为什么不用玩家那套 `packages/pixel-assets`：角色图集是 64×64 帧、34 列、九层灰度 tint，
- * 为的是换色与配件；小动物只需要「一眼认出物种 + 换三套配色」，走那套管线等于
- * 让 `pnpm assets` 重新生成一整个 manifest、还要双端重发版（ADR-0042）。
+ * 为的是换色与配件；园区地面动物只保留兔子，只需要「一眼认出兔子 + 换三套配色」，
+ * 走那套管线等于让 `pnpm assets` 重新生成一整个 manifest、还要双端重发版（ADR-0042）。
  *
  * 纪律与地形/道具一致（ADR-0005 / ADR-0013）：
  * - 一张图集、一次 `generateTexture`，运行期不再生成纹理；
@@ -23,7 +23,11 @@ export const CRITTER_CELL = 32;
 /** 脚底线：帧内像素坐标。28 是最后一排脚掌像素，29 预留 1px 给接触阴影的下沿 */
 export const CRITTER_FEET = 29;
 export const CRITTER_COLUMNS = 12;
-export const CRITTER_ROWS = 10;
+/**
+ * 地面动物只保留兔子：3 配色 × 3 视图 × 5 帧 = 45 格，
+ * 加蝴蝶 6 + 小鱼 6 = 57 格；12×5=60 格，留 3 格空位。
+ */
+export const CRITTER_ROWS = 5;
 const COLUMNS = CRITTER_COLUMNS;
 const ROWS = CRITTER_ROWS;
 const SHEET_W = COLUMNS * CRITTER_CELL;
@@ -35,30 +39,33 @@ export const CRITTER_VIEW_SIDE = 1;
 export const CRITTER_VIEW_UP = 2;
 export const GROUND_VIEWS = 3;
 
-/** 0 站立 / 1 低头吃草 / 2 走 A / 3 走 B */
+/**
+ * 0 坐姿抬头 / 1 坐姿抖耳眨眼 / 2 坐姿低头啃草 / 3 走 A / 4 走 B。
+ * 兔子待机时全部用坐姿帧，行走 / 逃跑才切站立行走帧。
+ */
 export const FRAME_IDLE = 0;
-export const FRAME_GRAZE = 1;
-export const FRAME_WALK_A = 2;
-export const FRAME_WALK_B = 3;
-export const GROUND_FRAMES = 4;
+export const FRAME_SIT_B = 1;
+export const FRAME_GRAZE = 2;
+export const FRAME_WALK_A = 3;
+export const FRAME_WALK_B = 4;
+export const GROUND_FRAMES = 5;
 
-const SPECIES = 3;
 const VARIANTS = 3;
-const GROUND_CELLS = SPECIES * VARIANTS * GROUND_VIEWS * GROUND_FRAMES;
+const GROUND_CELLS = VARIANTS * GROUND_VIEWS * GROUND_FRAMES;
 const BUTTERFLY_BASE = GROUND_CELLS;
 export const BUTTERFLY_VARIANTS = 3;
 export const BUTTERFLY_FRAMES = 2;
 /**
- * 小鱼（ADR-0045）：只占图集最后 6 格（114–119），1 物种 × 3 配色 × 2 帧。
- * 3 配色共用一张剪影，靠镜像转向；图集因此刚好画满 12×10。
+ * 小鱼（ADR-0045）：只占图集最后 6 格（51–56），1 物种 × 3 配色 × 2 帧。
+ * 3 配色共用一张剪影，靠镜像转向。
  */
 const FISH_BASE = BUTTERFLY_BASE + BUTTERFLY_VARIANTS * BUTTERFLY_FRAMES;
 export const FISH_VARIANTS = 3;
 export const FISH_FRAMES = 2;
 
-/** 图集格号：物种 × 配色 × 视图 × 帧，顺序即布局，两端只认这一份常量 */
-export function groundCell(species: number, variant: number, view: number, frame: number): number {
-  return ((species * VARIANTS + variant) * GROUND_VIEWS + view) * GROUND_FRAMES + frame;
+/** 图集格号：配色 × 视图 × 帧，顺序即布局，两端只认这一份常量 */
+export function groundCell(variant: number, view: number, frame: number): number {
+  return (variant * GROUND_VIEWS + view) * GROUND_FRAMES + frame;
 }
 
 export function butterflyCell(variant: number, frame: number): number {
@@ -83,26 +90,11 @@ interface Coat {
   inner: number;
 }
 
-/** 每个物种三套配色：同一套剪影，只换调色板，保持合批 */
-const COATS: readonly (readonly Coat[])[] = [
-  // 兔：奶油白 / 燕麦灰 / 焦糖棕
-  [
-    { body: 0xfdf7ee, shade: 0xded1c0, light: 0xffffff, inner: 0xf3b0b8 },
-    { body: 0xd8d3c6, shade: 0xb0a99a, light: 0xeae6dc, inner: 0xefa9b3 },
-    { body: 0xc79463, shade: 0x9d7045, light: 0xe4b98c, inner: 0xe8a0a8 },
-  ],
-  // 猫：橘虎斑 / 灰狸花 / 墨靛
-  [
-    { body: 0xf0a75c, shade: 0xcd7d38, light: 0xffe3bd, inner: 0xf7c6a0 },
-    { body: 0xa9a9b6, shade: 0x7f7f8d, light: 0xd4d4de, inner: 0xe0b7c2 },
-    { body: 0x5c6079, shade: 0x424559, light: 0x8b90ab, inner: 0xb9a2c6 },
-  ],
-  // 狗：柴黄 / 奶白 / 深棕
-  [
-    { body: 0xe8bb72, shade: 0xc59850, light: 0xfdf0d8, inner: 0xd9a35f },
-    { body: 0xf7f1e3, shade: 0xd1c7b2, light: 0xffffff, inner: 0xe3c9c0 },
-    { body: 0x8a6247, shade: 0x684632, light: 0xb08a6c, inner: 0xc79c86 },
-  ],
+/** 兔子三套配色：奶油白 / 燕麦灰 / 焦糖棕；同一套剪影，只换调色板，保持合批 */
+const COATS: readonly Coat[] = [
+  { body: 0xfdf7ee, shade: 0xded1c0, light: 0xffffff, inner: 0xf3b0b8 },
+  { body: 0xd8d3c6, shade: 0xb0a99a, light: 0xeae6dc, inner: 0xefa9b3 },
+  { body: 0xc79463, shade: 0x9d7045, light: 0xe4b98c, inner: 0xe8a0a8 },
 ];
 
 /** 蝴蝶三套：鹅黄 / 樱粉 / 天蓝，一深一浅两种翅膀色 */
@@ -129,21 +121,18 @@ export interface CritterArt {
  * 验证每一笔都落在自己的 32px 格里——越界会在图集里糊到相邻帧上，是最难肉眼定位的错。
  */
 export function paintCritterSheet(g: Graphics): void {
-  for (let species = 0; species < SPECIES; species += 1) {
-    for (let variant = 0; variant < VARIANTS; variant += 1) {
-      for (let view = 0; view < GROUND_VIEWS; view += 1) {
-        for (let frame = 0; frame < GROUND_FRAMES; frame += 1) {
-          const cell = groundCell(species, variant, view, frame);
-          drawGround(
-            g,
-            (cell % COLUMNS) * CRITTER_CELL,
-            ((cell / COLUMNS) | 0) * CRITTER_CELL,
-            species,
-            COATS[species]![variant]!,
-            view,
-            frame,
-          );
-        }
+  for (let variant = 0; variant < VARIANTS; variant += 1) {
+    for (let view = 0; view < GROUND_VIEWS; view += 1) {
+      for (let frame = 0; frame < GROUND_FRAMES; frame += 1) {
+        const cell = groundCell(variant, view, frame);
+        drawGround(
+          g,
+          (cell % COLUMNS) * CRITTER_CELL,
+          ((cell / COLUMNS) | 0) * CRITTER_CELL,
+          COATS[variant]!,
+          view,
+          frame,
+        );
       }
     }
   }
@@ -275,321 +264,226 @@ function contactShadow(g: Graphics, ox: number, oy: number, cx: number, halfW: n
   }
 }
 
-/** 两段式剪影：先铺两圈描边，再铺两块本体，重叠处的内描边被后画的填充盖掉 */
-function outlinedPair(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  a: { cx: number; cy: number; rx: number; ry: number },
-  b: { cx: number; cy: number; rx: number; ry: number },
-  coat: Coat,
-): void {
-  blob(g, ox, oy, a.cx, a.cy, a.rx + 1, a.ry + 1, INK);
-  blob(g, ox, oy, b.cx, b.cy, b.rx + 1, b.ry + 1, INK);
-  blob(g, ox, oy, a.cx, a.cy, a.rx, a.ry, coat.body);
-  blob(g, ox, oy, b.cx, b.cy, b.rx, b.ry, coat.body);
-  rim(g, ox, oy, a.cx, a.cy, a.rx, a.ry, coat.shade);
-  rim(g, ox, oy, b.cx, b.cy, b.rx, b.ry, coat.shade);
-}
-
 // ---------------------------------------------------------------------------
-// 地面动物
+// 地面动物：只保留兔子
 // ---------------------------------------------------------------------------
 
-interface SideSpec {
-  bodyCx: number;
-  bodyCy: number;
-  bodyRx: number;
-  bodyRy: number;
-  headCx: number;
-  headCy: number;
-  headR: number;
-  /** 躯干底边：腿从这里长到脚底线 */
-  legTop: number;
-  backLegX: number;
-  frontLegX: number;
-  legW: number;
-  tail: 'puff' | 'curl' | 'stub';
-  ear: 'long' | 'tri' | 'flop';
+interface BlobSpec {
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
 }
 
-const SIDE: readonly SideSpec[] = [
-  // 兔：团身、竖长耳、圆尾
-  { bodyCx: 14, bodyCy: 22, bodyRx: 5, bodyRy: 4, headCx: 21, headCy: 19, headR: 3, legTop: 26, backLegX: 11, frontLegX: 16, legW: 2, tail: 'puff', ear: 'long' },
-  // 猫：长身、短腿、尖耳、上翘尾
-  { bodyCx: 14, bodyCy: 23, bodyRx: 6, bodyRy: 3, headCx: 22, headCy: 20, headR: 3, legTop: 26, backLegX: 10, frontLegX: 17, legW: 2, tail: 'curl', ear: 'tri' },
-  // 狗：宽身、方头、垂耳、短尾
-  { bodyCx: 14, bodyCy: 22, bodyRx: 7, bodyRy: 4, headCx: 23, headCy: 19, headR: 4, legTop: 26, backLegX: 9, frontLegX: 18, legW: 2, tail: 'stub', ear: 'flop' },
-];
-
-interface FrontSpec {
-  bodyCx: number;
-  bodyCy: number;
-  bodyRx: number;
-  bodyRy: number;
-  headCx: number;
-  headCy: number;
-  headR: number;
-  legTop: number;
-  legInset: number;
-  legW: number;
-  /** 耳形与尾形直接写死，不要从半径反推——改一次体型就会把物种特征改错 */
-  ear: 'long' | 'tri' | 'flop';
-  tail: 'puff' | 'curl' | 'stub';
+/**
+ * 多块圆斑的并集轮廓：先整体描边，再按「后块覆盖前块」的顺序填充与压暗。
+ * 兔子的臀 / 胸 / 头三块必须读成一个剪影，逐块描边会在接缝留下内部暗边。
+ */
+function outlinedBlobs(g: Graphics, ox: number, oy: number, blobs: readonly BlobSpec[], coat: Coat): void {
+  for (const b of blobs) blob(g, ox, oy, b.cx, b.cy, b.rx + 1, b.ry + 1, INK);
+  for (const b of blobs) {
+    blob(g, ox, oy, b.cx, b.cy, b.rx, b.ry, coat.body);
+    rim(g, ox, oy, b.cx, b.cy, b.rx, b.ry, coat.shade);
+  }
 }
 
-const FRONT: readonly FrontSpec[] = [
-  { bodyCx: 16, bodyCy: 22, bodyRx: 5, bodyRy: 4, headCx: 16, headCy: 18, headR: 4, legTop: 26, legInset: 3, legW: 2, ear: 'long', tail: 'puff' },
-  { bodyCx: 16, bodyCy: 23, bodyRx: 6, bodyRy: 3, headCx: 16, headCy: 19, headR: 3, legTop: 26, legInset: 4, legW: 2, ear: 'tri', tail: 'curl' },
-  { bodyCx: 16, bodyCy: 22, bodyRx: 6, bodyRy: 4, headCx: 16, headCy: 18, headR: 4, legTop: 26, legInset: 4, legW: 2, ear: 'flop', tail: 'stub' },
-];
-
-function drawGround(
+/** 兔耳：2px 宽、带 1px 描边与一条耳内色；`tilt` 让耳尖向右偏一格 */
+function rabbitEar(
   g: Graphics,
   ox: number,
   oy: number,
-  species: number,
+  x: number,
+  y: number,
+  h: number,
+  inner: number,
   coat: Coat,
-  view: number,
-  frame: number,
+  tilt = false,
 ): void {
-  const shadowHalf = species === 1 ? 8 : 7;
-  contactShadow(g, ox, oy, 16, shadowHalf);
-  if (view === CRITTER_VIEW_SIDE) drawSide(g, ox, oy, species, coat, frame);
-  else drawFront(g, ox, oy, species, coat, view === CRITTER_VIEW_UP, frame);
+  rect(g, ox, oy, x - 1, y - 1, 4, h + 2, INK);
+  rect(g, ox, oy, x, y, 2, h, coat.body);
+  if (tilt) rect(g, ox, oy, x + 1, y, 2, 1, coat.body);
+  rect(g, ox, oy, x + 1, y + 1, 1, Math.max(1, h - 2), inner);
 }
 
-function drawSide(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  species: number,
-  coat: Coat,
-  frame: number,
-): void {
-  const spec = SIDE[species]!;
+const RABBIT_HEAD_R = 4;
+
+function drawGround(g: Graphics, ox: number, oy: number, coat: Coat, view: number, frame: number): void {
+  // 兔子比旧猫狗略圆，接触阴影固定 8px 半宽
+  contactShadow(g, ox, oy, 16, 8);
+  if (view === CRITTER_VIEW_SIDE) drawSide(g, ox, oy, coat, frame);
+  else drawFront(g, ox, oy, coat, view === CRITTER_VIEW_UP, frame);
+}
+
+/** 侧视：头朝右，臀在后、胸在前、前爪并拢；坐姿与行走共用头 / 耳 / 尾 */
+function drawSide(g: Graphics, ox: number, oy: number, coat: Coat, frame: number): void {
+  const sitting = frame <= FRAME_GRAZE;
   const graze = frame === FRAME_GRAZE;
-  const walking = frame >= FRAME_WALK_A;
-  // 走路第二帧整体抬 1px：脚不动、躯干起伏，比给耳朵加缩放便宜也更像像素动画
+  const twitch = frame === FRAME_SIT_B;
   const bob = frame === FRAME_WALK_B ? -1 : 0;
-  const bodyCy = spec.bodyCy + bob;
-  const headCy = spec.headCy + bob + (graze ? 2 : 0);
-  const legTop = spec.legTop + bob;
+  const headCy = 17 + bob + (graze ? 3 : 0);
+  const bodyCy = (sitting ? 23 : 22) + bob;
+  const haunchCy = 24 + bob;
 
-  drawTail(g, ox, oy, spec, coat, bodyCy);
-  drawSideLegs(g, ox, oy, spec, coat, legTop, walking ? frame : -1);
-  outlinedPair(
-    g,
-    ox,
-    oy,
-    { cx: spec.bodyCx, cy: bodyCy, rx: spec.bodyRx, ry: spec.bodyRy },
-    { cx: spec.headCx, cy: headCy, rx: spec.headR, ry: spec.headR },
-    coat,
-  );
-  drawSideEar(g, ox, oy, spec, coat, headCy);
-  // 侧视只露一只眼；吃草时眼睛跟着头下沉
-  dot(g, ox, oy, spec.headCx + 1, headCy - 1, INK);
-  dot(g, ox, oy, spec.headCx + spec.headR, headCy + 1, coat.inner);
-  // 腹部高光：让深色配色也能读出体块
-  rect(g, ox, oy, spec.bodyCx - spec.bodyRx + 2, bodyCy + spec.bodyRy - 1, spec.bodyRx * 2 - 3, 1, coat.light);
+  // 尾巴先画，压在臀部后面
+  const tailX = sitting ? 5 : 6;
+  const tailY = bodyCy - 1;
+  blob(g, ox, oy, tailX, tailY, 2, 2, INK);
+  blob(g, ox, oy, tailX, tailY, 1, 1, coat.light);
+
+  // 耳朵在头后面：低头 / 抖耳时高度与倾角变化
+  const earTop = headCy - RABBIT_HEAD_R - 6 + (graze ? 2 : 0);
+  const earH = graze ? 4 : 6;
+  rabbitEar(g, ox, oy, 19, earTop, earH, coat.inner, coat, twitch);
+  rabbitEar(g, ox, oy, 25, earTop + 1, earH - (graze ? 0 : 1), coat.inner, coat, !twitch);
+
+  if (!sitting) {
+    // 行走：先画腿，躯干盖住腿根
+    drawSideLegs(g, ox, oy, coat, frame, bob);
+  }
+
+  const blobs: BlobSpec[] = sitting
+    ? [
+        { cx: 12, cy: haunchCy, rx: 6, ry: 4 },
+        { cx: 17, cy: bodyCy - 1, rx: 4, ry: 4 },
+        { cx: 23, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
+      ]
+    : [
+        { cx: 14, cy: bodyCy, rx: 6, ry: 4 },
+        { cx: 23, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
+      ];
+  outlinedBlobs(g, ox, oy, blobs, coat);
+
+  if (sitting) {
+    // 前爪并拢撑在胸前：两列，外侧一列压暗
+    const pawTop = bodyCy;
+    for (const x of [18, 21]) {
+      rect(g, ox, oy, x, pawTop, 2, CRITTER_FEET - pawTop, coat.body);
+      rect(g, ox, oy, x + 1, pawTop, 1, CRITTER_FEET - pawTop, coat.shade);
+    }
+    // 臀底一道亮边：把「整块后躯坐在地上」读出来
+    rect(g, ox, oy, 8, haunchCy + 3, 8, 1, coat.light);
+  }
+
+  // 眼睛：抖耳帧眨眼；高光让深色配色也有神
+  const eyeX = 25;
+  const eyeY = headCy - 1;
+  if (twitch) {
+    rect(g, ox, oy, eyeX - 1, eyeY, 2, 1, INK);
+  } else {
+    dot(g, ox, oy, eyeX, eyeY, INK);
+    dot(g, ox, oy, eyeX, eyeY - 1, coat.light);
+  }
+  dot(g, ox, oy, 27, headCy + 1, coat.inner); // 鼻头
+  dot(g, ox, oy, 26, headCy + 2, coat.shade); // W 嘴的一角
 }
 
-function drawSideLegs(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  spec: SideSpec,
-  coat: Coat,
-  legTop: number,
-  walkFrame: number,
-): void {
-  const backLift = walkFrame === FRAME_WALK_A ? 1 : 0;
-  const frontLift = walkFrame === FRAME_WALK_B ? 1 : 0;
+function drawSideLegs(g: Graphics, ox: number, oy: number, coat: Coat, frame: number, bob: number): void {
+  const backLift = frame === FRAME_WALK_A ? 1 : 0;
+  const frontLift = frame === FRAME_WALK_B ? 1 : 0;
   for (const [x, lift] of [
-    [spec.backLegX, backLift],
-    [spec.frontLegX, frontLift],
+    [11, backLift],
+    [18, frontLift],
   ] as const) {
-    const top = legTop - 1 + lift;
+    const top = 25 + bob + lift;
     const bottom = CRITTER_FEET - 1 - lift;
-    rect(g, ox, oy, x, top, spec.legW, Math.max(1, bottom - top + 1), coat.body);
-    // 外侧一列压暗，两条腿才不会糊成一根柱子
-    rect(g, ox, oy, x + spec.legW - 1, top, 1, Math.max(1, bottom - top + 1), coat.shade);
+    rect(g, ox, oy, x, top, 2, Math.max(1, bottom - top + 1), coat.body);
+    rect(g, ox, oy, x + 1, top, 1, Math.max(1, bottom - top + 1), coat.shade);
   }
 }
 
-function drawSideEar(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  spec: SideSpec,
-  coat: Coat,
-  headCy: number,
-): void {
-  const top = headCy - spec.headR;
-  if (spec.ear === 'long') {
-    // 兔耳：一前一后错 2px，前耳稍短，避免两根等长像天线
-    rect(g, ox, oy, spec.headCx - 2, top - 4, 2, 5, coat.body);
-    rect(g, ox, oy, spec.headCx + 1, top - 3, 2, 4, coat.body);
-    dot(g, ox, oy, spec.headCx - 2, top - 3, coat.inner);
-    dot(g, ox, oy, spec.headCx + 2, top - 2, coat.shade);
-    return;
-  }
-  if (spec.ear === 'tri') {
-    // 猫耳：三层收尖
-    rect(g, ox, oy, spec.headCx - 3, top - 2, 3, 1, coat.body);
-    rect(g, ox, oy, spec.headCx - 2, top - 3, 2, 1, coat.body);
-    dot(g, ox, oy, spec.headCx - 2, top - 2, coat.inner);
-    rect(g, ox, oy, spec.headCx + 2, top - 2, 3, 1, coat.body);
-    rect(g, ox, oy, spec.headCx + 3, top - 3, 2, 1, coat.body);
-    dot(g, ox, oy, spec.headCx + 3, top - 2, coat.inner);
-    return;
-  }
-  // 狗耳：垂在头两侧，终点比头心低 1px
-  rect(g, ox, oy, spec.headCx - 4, top, 2, 4, coat.body);
-  rect(g, ox, oy, spec.headCx + 3, top + 1, 2, 3, coat.shade);
-}
-
-function drawTail(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  spec: SideSpec,
-  coat: Coat,
-  bodyCy: number,
-): void {
-  const x = spec.bodyCx - spec.bodyRx - 1;
-  if (spec.tail === 'puff') {
-    blob(g, ox, oy, x - 1, bodyCy + 1, 2, 2, INK);
-    blob(g, ox, oy, x - 1, bodyCy + 1, 1, 1, coat.light);
-    return;
-  }
-  if (spec.tail === 'curl') {
-    // 上翘尾：竖一段再向上一格收尖
-    rect(g, ox, oy, x - 1, bodyCy - 4, 2, 5, coat.body);
-    rect(g, ox, oy, x - 2, bodyCy - 6, 2, 2, coat.body);
-    dot(g, ox, oy, x - 1, bodyCy - 3, coat.shade);
-    return;
-  }
-  // 短尾：向后上方翘一格
-  rect(g, ox, oy, x, bodyCy - 1, 3, 2, coat.body);
-  dot(g, ox, oy, x + 2, bodyCy - 2, coat.shade);
-}
-
+/** 正视 / 背视：梨形身体 + 两片竖耳；坐姿时前爪并拢、后爪只露不落地的小鼓包 */
 function drawFront(
   g: Graphics,
   ox: number,
   oy: number,
-  species: number,
   coat: Coat,
   facingUp: boolean,
   frame: number,
 ): void {
-  const spec = FRONT[species]!;
+  const sitting = frame <= FRAME_GRAZE;
   const graze = frame === FRAME_GRAZE;
+  const twitch = frame === FRAME_SIT_B;
   const bob = frame === FRAME_WALK_B ? -1 : 0;
-  const bodyCy = spec.bodyCy + bob;
-  const headCy = spec.headCy + bob + (graze ? 2 : 0);
-  const legTop = spec.legTop + bob;
-  const headR = facingUp ? spec.headR - 1 : spec.headR;
+  const headCy = 16 + bob + (graze ? 2 : 0);
+  const bodyCy = (sitting ? 24 : 23) + bob;
+  const chestCy = (sitting ? 21 : 20) + bob;
 
-  drawFrontLegs(g, ox, oy, spec, coat, legTop, frame, facingUp);
-  if (facingUp) drawFrontTail(g, ox, oy, spec, coat, bodyCy);
-  outlinedPair(
-    g,
-    ox,
-    oy,
-    { cx: spec.bodyCx, cy: bodyCy, rx: spec.bodyRx, ry: spec.bodyRy },
-    { cx: spec.headCx, cy: headCy, rx: headR, ry: headR },
-    coat,
-  );
-  drawFrontEar(g, ox, oy, spec, coat, headCy, headR, facingUp);
+  const earTop = headCy - RABBIT_HEAD_R - 6 + (graze ? 2 : 0);
+  const earH = graze ? 4 : 6;
+  const inner = facingUp ? coat.shade : coat.inner;
+  rabbitEar(g, ox, oy, 11, earTop, earH, inner, coat, twitch);
+  rabbitEar(g, ox, oy, 19, earTop + 1, earH - (graze ? 0 : 1), inner, coat, !twitch);
+
+  if (!sitting) drawFrontLegs(g, ox, oy, coat, frame, bob);
+
+  const blobs: BlobSpec[] = sitting
+    ? [
+        { cx: 16, cy: bodyCy, rx: 6, ry: 4 },
+        { cx: 16, cy: chestCy, rx: 4, ry: 3 },
+        { cx: 16, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
+      ]
+    : [
+        { cx: 16, cy: bodyCy, rx: 6, ry: 4 },
+        { cx: 16, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
+      ];
+  outlinedBlobs(g, ox, oy, blobs, coat);
+
+  if (sitting) {
+    // 前爪并拢；后爪只露 2px，不落地成第三、四条腿
+    for (const x of [14, 18]) {
+      rect(g, ox, oy, x, chestCy + 3, 2, CRITTER_FEET - (chestCy + 3), coat.body);
+      rect(g, ox, oy, x + 1, chestCy + 3, 1, CRITTER_FEET - (chestCy + 3), coat.shade);
+    }
+    for (const x of [10, 21]) {
+      rect(g, ox, oy, x, bodyCy + 2, 2, 2, coat.shade);
+    }
+  }
+
   if (facingUp) {
-    // 背视：只留一条背线，不画脸
-    rect(g, ox, oy, spec.bodyCx - spec.bodyRx + 2, bodyCy - spec.bodyRy + 1, spec.bodyRx * 2 - 3, 1, coat.light);
+    // 背视：只留耳背、背线与绒球尾，不画脸
+    rect(g, ox, oy, 12, bodyCy - 3, 8, 1, coat.light);
+    rect(g, ox, oy, 15, bodyCy + 2, 3, 2, coat.light);
     return;
   }
-  dot(g, ox, oy, spec.headCx - 2, headCy - 1, INK);
-  dot(g, ox, oy, spec.headCx + 2, headCy - 1, INK);
-  rect(g, ox, oy, spec.headCx - 1, headCy + headR - 1, 2, 1, coat.inner);
-  rect(g, ox, oy, spec.bodyCx - spec.bodyRx + 2, bodyCy + spec.bodyRy - 1, spec.bodyRx * 2 - 3, 1, coat.light);
+
+  // 正面：大眼 + 高光、粉鼻、W 嘴与胡须点
+  for (const x of [14, 18]) {
+    if (twitch) {
+      rect(g, ox, oy, x, headCy - 1, 2, 1, INK);
+    } else {
+      dot(g, ox, oy, x, headCy - 1, INK);
+      dot(g, ox, oy, x, headCy - 2, coat.light);
+    }
+  }
+  dot(g, ox, oy, 12, headCy + 1, coat.light); // 左脸颊绒
+  dot(g, ox, oy, 20, headCy + 1, coat.light); // 右脸颊绒
+  rect(g, ox, oy, 15, headCy + 2, 2, 1, coat.inner);
+  dot(g, ox, oy, 14, headCy + 3, coat.shade);
+  dot(g, ox, oy, 17, headCy + 3, coat.shade);
+  rect(g, ox, oy, 12, bodyCy - 3, 8, 1, coat.light);
 }
 
-function drawFrontLegs(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  spec: FrontSpec,
-  coat: Coat,
-  legTop: number,
-  frame: number,
-  facingUp: boolean,
-): void {
+function drawFrontLegs(g: Graphics, ox: number, oy: number, coat: Coat, frame: number, bob: number): void {
   const leftLift = frame === FRAME_WALK_A ? 1 : 0;
   const rightLift = frame === FRAME_WALK_B ? 1 : 0;
-  const xs = [spec.bodyCx - spec.legInset, spec.bodyCx + spec.legInset - spec.legW + 1];
-  for (let i = 0; i < 2; i += 1) {
-    const lift = i === 0 ? leftLift : rightLift;
-    const top = legTop - 1 + lift;
+  for (const [x, lift] of [
+    [14, leftLift],
+    [18, rightLift],
+  ] as const) {
+    const top = 23 + bob + lift;
     const bottom = CRITTER_FEET - 1 - lift;
-    const color = facingUp ? coat.shade : coat.body;
-    rect(g, ox, oy, xs[i]!, top, spec.legW, Math.max(1, bottom - top + 1), color);
+    rect(g, ox, oy, x, top, 2, Math.max(1, bottom - top + 1), coat.body);
+    rect(g, ox, oy, x + 1, top, 1, Math.max(1, bottom - top + 1), coat.shade);
   }
-}
-
-function drawFrontEar(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  spec: FrontSpec,
-  coat: Coat,
-  headCy: number,
-  headR: number,
-  facingUp: boolean,
-): void {
-  const top = headCy - headR;
-  const inner = facingUp ? coat.shade : coat.inner;
-  const left = spec.headCx - headR;
-  const right = spec.headCx + headR - 1;
-  if (spec.ear === 'long') {
-    // 兔耳：竖直两片，耳尖探出头顶 3px
-    rect(g, ox, oy, left, top - 3, 2, 4, coat.body);
-    rect(g, ox, oy, right - 1, top - 3, 2, 4, coat.body);
-    dot(g, ox, oy, left, top - 2, inner);
-    dot(g, ox, oy, right - 1, top - 2, inner);
-    return;
+  // 后爪在身体两侧，行走时只露一小截
+  for (const [x, lift] of [
+    [10, rightLift],
+    [21, leftLift],
+  ] as const) {
+    const top = 25 + bob + lift;
+    const bottom = CRITTER_FEET - 1 - lift;
+    rect(g, ox, oy, x, top, 2, Math.max(1, bottom - top + 1), coat.shade);
   }
-  if (spec.ear === 'flop') {
-    // 狗耳：挂在头两侧、每侧探出轮廓 1px，并且整块压暗——正面看才是「垂耳」而不是圆头
-    rect(g, ox, oy, spec.headCx - headR - 2, top, 2, 4, coat.shade);
-    rect(g, ox, oy, spec.headCx + headR + 1, top, 2, 4, coat.shade);
-    return;
-  }
-  // 猫：三角耳，两层收尖
-  rect(g, ox, oy, left, top - 1, 3, 2, coat.body);
-  dot(g, ox, oy, left + 1, top - 2, coat.body);
-  rect(g, ox, oy, right - 2, top - 1, 3, 2, coat.body);
-  dot(g, ox, oy, right - 1, top - 2, coat.body);
-  dot(g, ox, oy, left + 1, top - 1, inner);
-  dot(g, ox, oy, right - 1, top - 1, inner);
-}
-
-function drawFrontTail(
-  g: Graphics,
-  ox: number,
-  oy: number,
-  spec: FrontSpec,
-  coat: Coat,
-  bodyCy: number,
-): void {
-  const top = bodyCy - spec.bodyRy;
-  if (spec.tail === 'curl') {
-    // 猫：尾巴从体后中线上翘
-    rect(g, ox, oy, spec.bodyCx - 1, top - 4, 2, 4, coat.body);
-    dot(g, ox, oy, spec.bodyCx - 1, top - 5, coat.shade);
-    return;
-  }
-  // 兔的圆尾 / 狗的短尾：只露出一小块高光，背视下不抢头部
-  rect(g, ox, oy, spec.bodyCx - 1, top - 1, 3, 2, spec.tail === 'puff' ? coat.light : coat.shade);
 }
 
 // ---------------------------------------------------------------------------

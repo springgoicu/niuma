@@ -245,7 +245,7 @@ export function makeStoneTexture(renderer: TextureFactory): Texture {
 }
 
 /** 水面色：夏冬两套键名一致，绘制代码只换表不换写法 */
-function waterPalette(winter: boolean): typeof C {
+function seasonPalette(winter: boolean): typeof C {
   return winter ? (W as unknown as typeof C) : C;
 }
 
@@ -255,7 +255,7 @@ function waterPalette(winter: boolean): typeof C {
  */
 export function makeWaterTexture(renderer: TextureFactory, winter = false): Texture {
   const size = 96;
-  const P = waterPalette(winter);
+  const P = seasonPalette(winter);
   return bake(renderer, (g) => {
     g.rect(0, 0, size, size).fill(P.waterDeep);
     const random = seeded(0x37a7c29d);
@@ -288,37 +288,40 @@ export function makeWaterTexture(renderer: TextureFactory, winter = false): Text
 }
 
 /**
- * 深海：96px 平铺，波纹比湖面更稀更慢。
- * 海面只在海岸附近进入视野，密度再高就会抢沙滩的过渡。
+ * 边界外林地：96px 平铺，深绿底 + 疏散的叶簇与短线。
+ *
+ * ADR-0064：地图四边之外是一片密林而不是海。这层只做「林墙脚下」的底色，
+ * 真正的树影由 `border-forest.ts` 的剪影压在上面；颗粒因此压得很低，
+ * 免得抢走林墙的轮廓。
  */
-export function makeSeaTexture(renderer: TextureFactory, winter = false): Texture {
+export function makeWildTexture(renderer: TextureFactory, winter = false): Texture {
   const size = 96;
-  const P = waterPalette(winter);
+  const P = seasonPalette(winter);
   return bake(renderer, (g) => {
-    g.rect(0, 0, size, size).fill(P.seaBase);
-    const random = seeded(0x5ea5a17);
-    // 深海波纹：比湖面更扁更稀的有机色簇，不再有横贯整块的直线
-    for (let i = 0; i < 16; i += 1) {
+    g.rect(0, 0, size, size).fill(P.wildBase);
+    const random = seeded(0x3c1b7a51);
+    // 叶簇：扁平的有机暗块，平铺边界靠 wrappedRect 收口
+    for (let i = 0; i < 22; i += 1) {
       organicBlob(
         g,
         Math.floor(random() * size),
         Math.floor(random() * size),
-        9 + Math.floor(random() * 15),
-        1 + Math.floor(random() * 2),
+        7 + Math.floor(random() * 13),
+        4 + Math.floor(random() * 7),
         size,
-        P.seaMid,
+        P.wildMid,
         random,
       );
     }
-    // 浪脊：4~9px 的短高光，疏到只做点缀
-    for (let i = 0; i < 14; i += 1) {
+    // 枝梢与叶尖：2~5px 的短亮线，疏到只做质感
+    for (let i = 0; i < 26; i += 1) {
       const x = Math.floor(random() * size);
       const y = Math.floor(random() * size);
-      wrappedRect(g, x, y, 4 + Math.floor(random() * 6), 1, size, P.seaCrest);
+      wrappedRect(g, x, y, 2 + Math.floor(random() * 4), 1, size, P.wildCrest);
     }
-    // 泡沫点：海面只在海岸附近进视野，颗粒压到最低
-    for (let i = 0; i < 44; i += 1) {
-      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, P.seaFoam);
+    // 叶隙暗点：把整体明度再压一档，林墙后面才够沉
+    for (let i = 0; i < 40; i += 1) {
+      wrappedRect(g, Math.floor(random() * size), Math.floor(random() * size), 1, 1, size, P.wildBase);
     }
   });
 }

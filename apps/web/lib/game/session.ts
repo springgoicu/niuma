@@ -95,6 +95,14 @@ import { Navigator } from './navigator';
 import { findPath } from './pathfinding';
 import { GameRenderer } from './renderer';
 
+/**
+ * 角色视图贴图加载失败的重试节拍：首次 400ms，第二次 1200ms，之后放弃。
+ * 贴图自身还有一次 250ms 的重试，两层的组合足以躲过最常见的瞬时断流。
+ */
+const ENTITY_VIEW_RETRY_DELAYS_MS = [400, 1200] as const;
+/** 抖动比例：一批 NPC 同时失败时错开重试，不把瞬时故障打成小高峰 */
+const ENTITY_VIEW_RETRY_JITTER = 0.2;
+
 export interface ChatEntry {
   id: number;
   name: string;
@@ -254,6 +262,8 @@ export class GameSession {
   /** 导航方向的复用槽位：与手动输入分开，互不覆盖 */
   private readonly navVector = { x: 0, y: 0 };
   private readonly names = new Map<number, string>();
+  /** netId → 待重试的角色视图定时器：despawn / clearWorld / stop 必须清掉 */
+  private readonly viewRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   /** netId → 物种：工牌与点击详情共用，换装广播时同步 */
   private readonly speciesById = new Map<number, Species>();
   /** netId → 常驻状态；空串表示没设置 */
@@ -524,14 +534,7 @@ export class GameSession {
     Motion.pose[eid] = restored.pose;
     Motion.since[eid] = this.elapsed;
     this.net?.setEntityId(packet.entityId);
-    void this.renderer.addEntity(
-      packet.entityId,
-      this.name,
-      profile.appearance,
-      this.status,
-      x,
-      y,
-    );
+    this.addEntityView(packet.entityId, this.name, profile.appearance, this.status, x, y);
     this.renderer.updateCamera(x, y);
     this.callbacks.onStatus('online', this.renderer.backend);
     // 园区公告（ADR-0044）：入场成功后播一条，只在本机列表里出现，不走协议也不发给别人
@@ -560,10 +563,69 @@ export class GameSession {
     // 先塞一帧快照：回放缓冲有时间戳，不塞的话这个人在延迟窗口内没有数据可采样。
     // 坐标取自 spawn 包，姿态与叠加位则由随后的 sync 校正。
     this.ecs.remote.push(eid, performance.now(), x, y, packet.state);
-    void this.renderer.addEntity(id, name, appearance, status ?? '', x, y);
+    this.addEntityView(id, name, appearance, status ?? '', x, y);
+  }
+
+  /**
+   * 建角色视图。
+   *
+   * 贴图是冷加载的：首次进入要同时拉本机 + 一片 NPC 的多张 PNG，任何一张
+   * 瞬时失败都会让 `addEntity` reject。以前直接用 `void addEntity`，这个 rejection
+   * 会冒到 Worker 的 `unhandledrejection`，被当成渲染线程致命错误、弹红条并要求刷新。
+   * 这里按 netId 做有限退避重试；最终失败只打 error，游戏与其他角色继续跑。
+   */
+  private addEntityView(
+    id: number,
+    name: string,
+    appearance: CharacterAppearance,
+    status: string,
+    x: number,
+    y: number,
+    attempt = 0,
+  ): void {
+    void this.renderer.addEntity(id, name, appearance, status, x, y).catch((error: unknown) => {
+      this.scheduleEntityViewRetry(id, name, appearance, status, x, y, attempt, error);
+    });
+  }
+
+  private scheduleEntityViewRetry(
+    id: number,
+    name: string,
+    appearance: CharacterAppearance,
+    status: string,
+    x: number,
+    y: number,
+    attempt: number,
+    error: unknown,
+  ): void {
+    // 实体已经离场 / 换世界了：不必再补一个幽灵视图
+    if (this.disposed || !this.names.has(id)) return;
+    const delay = ENTITY_VIEW_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) {
+      // 日志只带 netId 与错误：昵称是玩家输入，不进控制台
+      console.error(`[game] 角色视图创建失败（netId ${id}），已重试 ${attempt} 次`, error);
+      return;
+    }
+    const previous = this.viewRetryTimers.get(id);
+    if (previous !== undefined) clearTimeout(previous);
+    const jitter = 1 + ENTITY_VIEW_RETRY_JITTER * (Math.random() * 2 - 1);
+    const timer = setTimeout(() => {
+      this.viewRetryTimers.delete(id);
+      if (this.disposed || !this.names.has(id)) return;
+      this.addEntityView(id, name, appearance, status, x, y, attempt + 1);
+    }, Math.round(delay * jitter));
+    this.viewRetryTimers.set(id, timer);
+  }
+
+  private cancelEntityViewRetry(id: number): void {
+    const timer = this.viewRetryTimers.get(id);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.viewRetryTimers.delete(id);
   }
 
   private handleDespawn(id: number): void {
+    this.cancelEntityViewRetry(id);
     this.names.delete(id);
     this.speciesById.delete(id);
     this.appearanceById.delete(id);
@@ -1073,6 +1135,9 @@ export class GameSession {
   private clearWorld(): void {
     // 重连 / 换世界后旧路径的路点已经失效，必须先停掉导航再清实体
     this.cancelNavigation();
+    // 旧实体的视图重试一并作废：不能把上一座园区的角色补进新世界
+    for (const timer of this.viewRetryTimers.values()) clearTimeout(timer);
+    this.viewRetryTimers.clear();
     // 旧世界的弹幕不该漂进新世界：它们没有实体可归属，留着只会读成「有人在说话」
     this.renderer.clearDanmaku();
     for (const id of this.names.keys()) {
@@ -1878,6 +1943,8 @@ export class GameSession {
   stop(): void {
     this.disposed = true;
     this.cancelNavigation();
+    for (const timer of this.viewRetryTimers.values()) clearTimeout(timer);
+    this.viewRetryTimers.clear();
     // 关页面前的最后一道保险：pagehide 没来得及触发时（路由内跳转）也能落盘
     this.persistNow();
     this.net?.dispose();

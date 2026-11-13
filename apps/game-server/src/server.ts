@@ -753,8 +753,8 @@ export function startGameServer(config: ServerConfig) {
 
     // 发泄结算必须跑在 runTick 之前：受害者被推开的坐标与躺姿要赶在同一 Tick 的
     // dirty 广播里发出去。放到 runTick 之后会晚 50ms，旁观者先看到站着、再看到倒下。
-    const ventSeats = resolveVents(world, grid, seats, transport, now);
-    if (ventSeats.length > 0) broadcastSeats(ventSeats);
+    // 入座者免伤（ADR-0065），因此这里不再产生座位释放条目。
+    resolveVents(world, grid, transport, now);
 
     // 同事的行为要跑在 runTick 之前：新坐标与朝向赶在同一 Tick 的 dirty 广播里发出去
     npcs.update(now);

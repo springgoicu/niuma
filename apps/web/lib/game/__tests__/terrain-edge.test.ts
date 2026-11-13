@@ -26,16 +26,18 @@ describe('材质判定', () => {
     expect(materialAt(GRASS_INSIDE.x, GRASS_INSIDE.y)).toBe(MATERIAL.grass);
   });
 
-  it('海岸三段：岸沙带 → 浅滩 → 海，宽度按 ISLAND_SAND / ISLAND_SHALLOW 收口', () => {
-    // ADR-0028 北岸线收到 y = 1956，向海 0 / 40 / 110 分别落在沙、浅滩、海
-    expect(materialAt(2400, 1956)).toBe(MATERIAL.sand);
-    expect(materialAt(2400, 1916)).toBe(MATERIAL.shallow);
-    expect(materialAt(2400, 1846)).toBe(MATERIAL.sea);
+  it('边界沙带：矩形内侧 ISLAND_SAND 宽是沙，再往内是草，出了矩形就是林地', () => {
+    // ADR-0064：陆地是 x 2146–5951 / y 1956–6168 的矩形，北边界 y = 1956
+    expect(materialAt(2400, 1956 + 8)).toBe(MATERIAL.sand);
+    expect(materialAt(2400, 1956 + 26)).toBe(MATERIAL.sand);
+    expect(materialAt(2400, 1956 + 40)).toBe(MATERIAL.grass);
+    expect(materialAt(2400, 1956 - 1)).toBe(MATERIAL.outside);
+    expect(materialAt(2146 - 10, 3000)).toBe(MATERIAL.outside);
   });
 
-  it('非有限坐标回落到海，不会把 NaN 传进多边形判定', () => {
-    expect(materialAt(Number.NaN, 100)).toBe(MATERIAL.sea);
-    expect(materialAt(100, Number.POSITIVE_INFINITY)).toBe(MATERIAL.sea);
+  it('非有限坐标回落到边界外，不会把 NaN 传进判定', () => {
+    expect(materialAt(Number.NaN, 100)).toBe(MATERIAL.outside);
+    expect(materialAt(100, Number.POSITIVE_INFINITY)).toBe(MATERIAL.outside);
   });
 });
 
@@ -153,7 +155,7 @@ describe('边缘图元', () => {
       seed: 11,
       grid,
     });
-    // 这把矩形落在海面上，两侧都不是草，探针应当把图元全部拦掉
+    // 这把矩形落在边界外的林地上，两侧都不是草，探针应当把图元全部拦掉
     expect(glyphs.length).toBe(0);
   });
 

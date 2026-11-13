@@ -78,7 +78,11 @@ export type MainToWorker =
 
 export type WorkerToMain =
   | { t: 'ready'; backend: string }
-  | { t: 'status'; status: EngineStatus; detail: string }
+  /**
+   * `code` 是给宿主看的机器可读分类，缺省表示普通状态。
+   * `atlas-version`：图集版本与客户端布局不一致，页面已过期，应受控换图。
+   */
+  | { t: 'status'; status: EngineStatus; detail: string; code?: 'atlas-version' }
   | { t: 'queue'; queue: QueueStatusPacket | null }
   | { t: 'rejected'; reason: number }
   | { t: 'stats'; stats: SessionStats }

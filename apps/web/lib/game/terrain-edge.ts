@@ -3,7 +3,6 @@
 import {
   ISLAND,
   ISLAND_SAND,
-  ISLAND_SHALLOW,
   WORLD_HEIGHT,
   WORLD_LAYOUT,
   WORLD_WIDTH,
@@ -28,16 +27,16 @@ import { TERRAIN_COLORS as C, WINTER_COLORS as W } from './terrain-palette';
  */
 
 /** 材质 ID：数值只用于 Uint8Array 存格，不参与渲染顺序 */
-export type MaterialId = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export type MaterialId = 0 | 1 | 2 | 3 | 4 | 5;
 
 export const MATERIAL = {
-  sea: 0,
-  shallow: 1,
-  sand: 2,
-  grass: 3,
-  dirt: 4,
-  water: 5,
-  stone: 6,
+  /** 矩形边界以外：ADR-0064 起是密林地面，不再是海 */
+  outside: 0,
+  sand: 1,
+  grass: 2,
+  dirt: 3,
+  water: 4,
+  stone: 5,
 } as const satisfies Record<string, MaterialId>;
 
 /**
@@ -45,10 +44,10 @@ export const MATERIAL = {
  * 边缘层的绘制顺序与它无关：草缘永远最后压上（见 EDGE_DRAW_ORDER）。
  *
  * ADR-0047：中央 720px 石砖圆庭成为独立材质；土路压石砖，水压土路。
+ * ADR-0064：边界外是密林（`outside`），沙滩带改成边界内侧的一条环。
  */
 export const PAINT_ORDER: readonly MaterialId[] = [
-  MATERIAL.sea,
-  MATERIAL.shallow,
+  MATERIAL.outside,
   MATERIAL.grass,
   MATERIAL.sand,
   MATERIAL.stone,
@@ -69,19 +68,18 @@ export const EDGE_TILE = 32;
 
 const PATHS = WORLD_LAYOUT.paths;
 const LAKES = WORLD_LAYOUT.lakes;
-const ISLAND_POINTS = ISLAND.points;
-const SAND_SQ = ISLAND_SAND * ISLAND_SAND;
-const SHALLOW_SQ = ISLAND_SHALLOW * ISLAND_SHALLOW;
+const BOUNDS = ISLAND.bounds;
 
 /**
  * 某点的材质。顺序即优先级，先命中者胜：
- * 水（三湖）> 土路 > 石砖圆庭 > 岸沙带 > 草地 > 浅滩 > 海。
+ * 水（三湖）> 土路 > 石砖圆庭 > 边界沙带 > 草地 > 边界外密林。
  *
  * ADR-0047：中央石砖广场是独立材质，草缘会从草地一侧压进石缝；
  * 土路从广场边缘穿出时压住石砖，形成「从圆庭走到土路」的连续过渡。
+ * ADR-0064：陆地是矩形，沙带是边界内侧 `ISLAND_SAND` 宽的一条环。
  */
 export function materialAt(x: number, y: number): MaterialId {
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return MATERIAL.sea;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return MATERIAL.outside;
 
   for (const lake of LAKES) {
     // 先过包围盒：湖面判定是 16 点多边形，逐点跑一遍太贵。
@@ -95,12 +93,11 @@ export function materialAt(x: number, y: number): MaterialId {
   }
   if (isOnPlaza(x, y)) return MATERIAL.stone;
 
-  // 岸沙带以海岸线为中线的 26px 带：一半在水里一半在陆地
-  const distance = distanceSqToPolygon(x, y, ISLAND_POINTS);
-  if (distance <= SAND_SQ) return MATERIAL.sand;
-  if (pointInPolygon(x, y, ISLAND_POINTS)) return MATERIAL.grass;
-  if (distance <= SHALLOW_SQ) return MATERIAL.shallow;
-  return MATERIAL.sea;
+  const { x: bx, y: by, w, h } = BOUNDS;
+  if (x <= bx || y <= by || x >= bx + w || y >= by + h) return MATERIAL.outside;
+  // 离最近一条边的距离：沙带贴着边界内侧铺，再往内才是草地
+  const edge = Math.min(x - bx, bx + w - x, y - by, by + h - y);
+  return edge <= ISLAND_SAND ? MATERIAL.sand : MATERIAL.grass;
 }
 
 /* ------------------------------------------------------------------ *
@@ -130,7 +127,7 @@ export function buildMaterialGrid(tile: number = EDGE_TILE): MaterialGrid {
 }
 
 export function gridAt(grid: MaterialGrid, gx: number, gy: number): MaterialId {
-  if (gx < 0 || gy < 0 || gx >= grid.cols || gy >= grid.rows) return MATERIAL.sea;
+  if (gx < 0 || gy < 0 || gx >= grid.cols || gy >= grid.rows) return MATERIAL.outside;
   return grid.cells[gy * grid.cols + gx] as MaterialId;
 }
 
@@ -278,24 +275,14 @@ export interface EdgeStyle {
 }
 
 export const EDGE_STYLE: Record<MaterialId, EdgeStyle> = {
-  [MATERIAL.sea]: {
-    rim: C.waterEdge,
+  // 边界外密林：只在「沙带外沿」这条轮廓上作为对面材质出现，自己不出齿
+  [MATERIAL.outside]: {
+    rim: C.canopyEdge,
     rimWidth: 1,
     tooth: null,
-    toothDeep: C.seaBase,
+    toothDeep: C.wildBase,
     toothLen: [1],
     step: 10,
-    scallop: null,
-    scallopEvery: 0,
-    scallopRadius: 0,
-  },
-  [MATERIAL.shallow]: {
-    rim: C.waterEdge,
-    rimWidth: 1,
-    tooth: C.shoreShallow,
-    toothDeep: C.waterMid,
-    toothLen: [2, 3],
-    step: 9,
     scallop: null,
     scallopEvery: 0,
     scallopRadius: 0,
@@ -415,7 +402,7 @@ export interface EdgeGlyphOptions {
  * 方向规则只有一条：**草往对面的材质里长**。
  * - 对面是草（土路、广场、湖岸、岸沙带）：齿朝轮廓内侧长，草盖住泥/石/水；
  * - 自己是草：齿朝外长；
- * - 其余配对（沙↔浅滩、水↔沙）：齿朝外长，用自己材质的色。
+ * - 其余配对（沙↔林地、水↔沙）：齿朝外长，用自己材质的色。
  */
 export function edgeGlyphs(contour: readonly ContourPoint[], options: EdgeGlyphOptions): EdgeGlyph[] {
   const { self, other } = options;

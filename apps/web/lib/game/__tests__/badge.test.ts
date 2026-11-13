@@ -48,6 +48,7 @@ describe('badge labels', () => {
     expect(seatLabel('chair')).toBe('工位椅');
     expect(seatLabel('stool')).toBe('凳子');
     expect(seatLabel('sofa')).toBe('沙发');
+    expect(seatLabel('bench')).toBe('长椅');
     expect(seatLabel('bed')).toBe('床位');
     expect(seatLabel('toilet')).toBe('马桶');
   });

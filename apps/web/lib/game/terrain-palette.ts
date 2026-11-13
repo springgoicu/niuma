@@ -50,11 +50,10 @@ export const TERRAIN_COLORS = {
   waterFoam: 0xa9e0e8,
   waterEdge: 0x2f6f86,
 
-  seaBase: 0x2f6f86,
-  seaMid: 0x3d8299,
-  seaCrest: 0x55a0b5,
-  seaFoam: 0x74bccd,
-  shoreShallow: 0x5aa3b6,
+  /** 边界外林地（ADR-0064）：比草地压暗两档的深绿，只做四边密林的脚下底色 */
+  wildBase: 0x2b4a34,
+  wildMid: 0x34573c,
+  wildCrest: 0x3f6746,
 
   canopyEdge: 0x24452e,
   canopyDeep: 0x2f5c39,
@@ -135,11 +134,10 @@ export const WINTER_COLORS = {
   waterCrest: 0x9cc9d6,
   waterFoam: 0xc4e0e8,
   waterEdge: 0x356c80,
-  /** 冬季海面：与湖面同族但再压一档，岸边才分得出「湖 / 海」 */
-  seaBase: 0x356c80,
-  seaMid: 0x447d94,
-  seaCrest: 0x5c96ab,
-  seaFoam: 0x7ab5c4,
+  /** 冬季林地：比夏季更冷更暗，雪只落在枝头，林下仍是深色的 */
+  wildBase: 0x273a33,
+  wildMid: 0x2f453c,
+  wildCrest: 0x395347,
 } as const;
 
 /**
@@ -169,7 +167,8 @@ export function cssColor(value: number): string {
  * 这里保持色相一致、只抬明度，暖色体系下不再需要「提亮版」这层补偿。
  */
 export const MINIMAP_COLORS = {
-  sea: cssColor(TERRAIN_COLORS.seaBase),
+  /** 边界外的密林：小地图先铺这层，岛外不再读成「海」 */
+  wild: cssColor(TERRAIN_COLORS.wildBase),
   shore: cssColor(TERRAIN_COLORS.sand),
   ground: cssColor(TERRAIN_COLORS.grassAlt),
   forest: cssColor(TERRAIN_COLORS.forestFloor),

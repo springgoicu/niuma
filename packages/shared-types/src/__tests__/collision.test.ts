@@ -81,7 +81,7 @@ describe('水体', () => {
     expect(raw.rivers).toBeUndefined();
   });
 
-  it('海水仍是世界边界', () => {
+  it('矩形边界之外仍是世界边界', () => {
     expect(isOnLand(100, 100)).toBe(false);
     expect(isBlocked(100, 100)).toBe(true);
     const result = resolveMotion(300, 300, 100, 100);
@@ -235,33 +235,43 @@ describe('树与花箱的脚底碰撞', () => {
   });
 });
 
-describe('海岛边界', () => {
-  it('三个海湾与岛外都不可进入', () => {
-    const samples = [
-      [3950, 2500], // 北湾
-      [5750, 4200], // 东湾
-      [4000, 6050], // 南中湾
-      [1200, 6000], // 岛外（西南侧）
-      [100, 100], // 岛外
-    ] as const;
-    for (const [x, y] of samples) {
+describe('矩形边界', () => {
+  it('原来的三个海湾已填成陆地，矩形之外仍不可进入', () => {
+    // ADR-0064：北湾 / 东湾 / 南中湾都在矩形内，现在是人可以走的草地
+    for (const [x, y] of [
+      [3950, 2500], // 原北湾
+      [5750, 4200], // 原东湾
+      [4000, 6050], // 原南中湾
+    ] as const) {
+      expect(isOnLand(x, y)).toBe(true);
+    }
+    for (const [x, y] of [
+      [1200, 6000], // 西侧边界外
+      [100, 100], // 西北角外
+      [6000, 4200], // 东侧边界外
+      [4000, 1900], // 北侧边界外
+    ] as const) {
       expect(isOnLand(x, y)).toBe(false);
       expect(isBlocked(x, y)).toBe(true);
     }
   });
 
-  it('从岸边向海走会被挡住', () => {
-    const north = resolveMotion(3950, 3300, 3950, 1800);
-    expect(north.y).toBeGreaterThan(3158);
+  it('从陆地走向四边都会被挡住', () => {
+    // 北边界 y = 1956，玩家半径 9：停在边界内侧
+    const north = resolveMotion(3950, 2100, 3950, 1800);
+    expect(north.y).toBeGreaterThan(1956);
 
     const west = resolveMotion(2400, 3900, 2100, 3900);
     expect(west.x).toBeGreaterThan(2146);
 
     const south = resolveMotion(5500, 6100, 5500, 6300);
     expect(south.y).toBeLessThan(6168);
+
+    const east = resolveMotion(5700, 4000, 6100, 4000);
+    expect(east.x).toBeLessThan(5951);
   });
 
-  it('所有静态地形都在岸线以内，且离海至少 24px', () => {
+  it('所有静态地形都在矩形以内，且离边界至少 24px', () => {
     for (const grove of WORLD_LAYOUT.groves) {
       for (const tree of grove.trees) expect(isOnLand(tree.x, tree.y, 24)).toBe(true);
     }
@@ -283,7 +293,7 @@ describe('海岛边界', () => {
     expect(isOnLand(WORLD_LAYOUT.plaza.x + WORLD_LAYOUT.plaza.w, WORLD_LAYOUT.plaza.y + WORLD_LAYOUT.plaza.h, 24)).toBe(true);
   });
 
-  it('岛外输入会被夹回陆地', () => {
+  it('矩形外输入会被夹回陆地', () => {
     const point = findFreePoint(100, 100);
     expect(isOnLand(point.x, point.y)).toBe(true);
     expect(isBlocked(point.x, point.y)).toBe(false);
@@ -299,7 +309,7 @@ describe('海岛边界', () => {
     expect(isWaterAt(allowed.x, allowed.y)).toBe(true);
   });
 
-  it('海岸线包围盒覆盖全部内容', () => {
+  it('陆地包围盒覆盖全部内容', () => {
     expect(ISLAND.bounds.x).toBeLessThan(WORLD_LAYOUT.plaza.x);
     expect(ISLAND.bounds.y).toBeLessThan(WORLD_LAYOUT.plaza.y);
     expect(ISLAND.bounds.x + ISLAND.bounds.w).toBeGreaterThan(WORLD_LAYOUT.plaza.x + WORLD_LAYOUT.plaza.w);

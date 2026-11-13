@@ -35,6 +35,10 @@ const SW_PATH = '/sw.js';
 let deferred: BeforeInstallPromptEvent | null = null;
 let installed = detectStandalone();
 let bound = false;
+/** SW 只注册一次：根级引导与 /play 的 PlayShell 都会调用 initInstallPrompt() */
+let swStarted = false;
+/** 原生安装框正在显示：连点不应再弹第二次 */
+let prompting = false;
 const listeners = new Set<() => void>();
 
 /** 独立窗口 / iOS 主屏：两种来源，iOS 只有 `navigator.standalone` */
@@ -88,18 +92,23 @@ async function unregisterServiceWorkers(): Promise<void> {
 }
 
 /**
- * 进入园区时调用一次（`PlayShell` 挂载）。
- * 先把监听挂好再注册 SW：首次访问装好 SW 后，浏览器下一轮导航才会给出安装信号。
+ * 接管安装链路：根布局的 `InstallBoot` 在首屏调用，`PlayShell` 进园区时再调一次
+ * （幂等，同时负责 `?sw=0` 回滚）。先把监听挂好再注册 SW：首次访问装好 SW 后，
+ * 浏览器下一轮导航才会给出安装信号。
  */
 export function initInstallPrompt(): void {
   if (typeof window === 'undefined') return;
   bind();
 
   if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  // 回滚开关必须在每次进入时都生效，不能被下面的「只注册一次」跳过
   if (swDisabled()) {
     void unregisterServiceWorkers();
     return;
   }
+  // 根布局的 InstallBoot 与 PlayShell 各调一次：注册只做一次，避免重复触发
+  if (swStarted) return;
+  swStarted = true;
 
   navigator.serviceWorker
     .register(SW_PATH, { scope: '/' })
@@ -117,22 +126,31 @@ export function subscribeInstall(listener: () => void): () => void {
   };
 }
 
-/** 弹原生安装框；事件只能消费一次，返回结果后状态会推给订阅者 */
+/**
+ * 弹原生安装框。
+ *
+ * 事件是一次性的，但「弹了」和「用掉了」不是一回事：只有用户真的做出选择
+ * （接受 / 取消）才算消费；`prompt()` 抛错（手势失效、安装准备未完成）时
+ * 必须把事件放回去，否则这一次失败会让整场会话的安装入口永久失效。
+ */
 export async function promptInstall(): Promise<InstallOutcome> {
   const event = deferred;
-  if (!event) return 'unavailable';
-  deferred = null;
+  if (!event || prompting) return 'unavailable';
+  prompting = true;
 
   try {
     await event.prompt();
     const choice = await event.userChoice;
+    deferred = null;
     if (choice.outcome === 'accepted') installed = true;
     emit();
     return choice.outcome;
   } catch {
-    // 手速太快（页面还没完成安装准备）或用户手势已失效：退回引导面板
+    // 事件仍在 deferred 里：用户可以再点一次
     emit();
     return 'unavailable';
+  } finally {
+    prompting = false;
   }
 }
 

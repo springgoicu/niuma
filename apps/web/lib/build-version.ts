@@ -1,6 +1,6 @@
 'use client';
 
-import { readJson, writeJson, type StorageLike } from './storage';
+import { browserStorage, readJson, writeJson, type StorageLike } from './storage';
 
 /** 断线重连等场景触发一次版本检查；BuildWatcher 监听这个事件 */
 export const BUILD_CHECK_EVENT = 'niuma:build-check';
@@ -57,6 +57,44 @@ export function allowReloadForVersion(
   if (tries >= maxTries) return false;
   if (guard?.id === id && now - guard.at < cooldownMs) return false;
   writeJson(storage, RELOAD_GUARD_KEY, { id, at: now, tries: tries + 1 });
+  return true;
+}
+
+/**
+ * 素材过期换图用的固定 pseudo id：只用作缓存失效参数与守卫键，
+ * 不参与真实构建版本比较。
+ */
+export const STALE_ASSET_RELOAD_ID = 'stale-assets';
+
+export interface StaleAssetReloadOptions {
+  /** 测试注入；缺省读 `globalThis.location` */
+  location?: { href: string; replace(url: string): void } | null;
+  /** 测试注入；缺省读 sessionStorage */
+  storage?: StorageLike | null;
+}
+
+/**
+ * 图集版本与客户端布局不一致时的受控换图。
+ *
+ * 贴图重试解决不了「页面 JS 与服务端素材不是同一版」：这时要带着 `__v`
+ * 重新请求一份匹配的 HTML 与 JS。复用强刷守卫，并且同一页面生命周期内
+ * 只允许一次（maxTries = 1），避免把标签页刷成永动机。
+ *
+ * 返回是否真的发起了重载；false 表示被守卫拦下或当前环境没有 location。
+ */
+export function reloadForStaleAssets(
+  now: number = Date.now(),
+  options: StaleAssetReloadOptions = {},
+): boolean {
+  const location =
+    options.location !== undefined
+      ? options.location
+      : (globalThis as { location?: { href: string; replace(url: string): void } }).location;
+  if (!location) return false;
+  const storage =
+    options.storage !== undefined ? options.storage : browserStorage('session');
+  if (!allowReloadForVersion(storage, STALE_ASSET_RELOAD_ID, now, RELOAD_COOLDOWN_MS, 1)) return false;
+  location.replace(reloadUrl(location.href, STALE_ASSET_RELOAD_ID));
   return true;
 }
 

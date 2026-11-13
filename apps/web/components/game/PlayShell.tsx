@@ -50,7 +50,8 @@ export function PlayShell({ parks, parkId, initialName, initialSpecies }: PlaySh
   const [entry, setEntry] = useState<EntryState | null>(null);
 
   /**
-   * 只在园区注册直通 SW（爆炸半径不进首页与捏人页）。
+   * 再确认一次安装链路：根布局的 `InstallBoot` 已经在首屏接管事件，
+   * 这里负责 `?sw=0` 这类「进园区才生效」的回滚开关（调用幂等）。
    * 失败静默：装不上不影响任何玩法，只是「存到桌面」退化成手动引导。
    */
   useEffect(() => {

@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, Megaphone, X } from 'lucide-react';
+import { Megaphone, X } from 'lucide-react';
 import { COMMUNITY } from '@/lib/community';
 import { useGameUi } from '@/lib/game-ui';
+import { hudButtonClassName } from './Hud';
 
 /** 同源压缩代理：线上是 https，直连图床的 http 链接会被浏览器按混合内容拦掉 */
 const QR_SRC = '/api/community/qr';
@@ -120,20 +121,9 @@ export function NoticeBoard({ compact = false }: { compact?: boolean }) {
         aria-label={open ? '收起园区公告栏' : '展开园区公告栏，扫码加入微信群'}
         title="园区公告 · 微信群"
         data-notice-trigger
-        className={`flex cursor-pointer items-center border-2 bg-ink-900/92 font-mono text-[9px] uppercase tracking-[0.16em] backdrop-blur-sm transition-colors focus-visible:border-mint-400 focus-visible:outline-none ${
-          open
-            ? 'border-mint-400/60 text-mint-400'
-            : 'border-ink-600 text-mist-500 hover:border-mint-400/60 hover:text-mint-400'
-        } ${compact ? 'h-9 w-9 justify-center' : 'min-h-9 gap-1.5 px-2 py-1.5'}`}
+        className={hudButtonClassName({ compact, active: open })}
       >
-        <Megaphone className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        {!compact && <span>公告</span>}
-        {!compact && (
-          <ChevronDown
-            className={`h-3 w-3 shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-            aria-hidden
-          />
-        )}
+        <Megaphone className="h-4 w-4" aria-hidden />
       </button>
 
       {open && (

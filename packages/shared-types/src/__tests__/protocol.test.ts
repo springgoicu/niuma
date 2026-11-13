@@ -21,6 +21,9 @@ import {
   QUEUE_REJECT_REASON,
   QUEUE_STATUS_BYTES,
   RESUME_BYTES,
+  SLIDE_EVENT_BYTES,
+  SLIDE_PHASE,
+  SLIDE_REQUEST_BYTES,
   SYNC_ENTRY_BYTES,
   SYNC_ENTRY_BYTES_COMPACT,
   SYNC_FORMAT_COMPACT,
@@ -48,6 +51,8 @@ import {
   decodeSetStatus,
   decodeStatusBroadcast,
   decodeSystemNotice,
+  decodeSlideEvent,
+  decodeSlideRequest,
   decodeSync,
   decodeVent,
   decodeWelcome,
@@ -75,6 +80,8 @@ import {
   encodeSpawnInto,
   encodeSetName,
   encodeSetStatus,
+  encodeSlideEvent,
+  encodeSlideRequest,
   encodeStatusBroadcast,
   encodeSync,
   encodeSystemNotice,
@@ -391,6 +398,34 @@ describe('发泄结算包', () => {
  * 紧凑条目是「静态去脏」之后的成本主项，位表一旦写错不会崩，只会让所有人错位一点点。
  * 因此这里按文档里的位表逐字节断言，而不是拿实现自己算一遍再比。
  */
+describe('滑梯请求与滑行事件', () => {
+  it('请求是 2 字节：op + slideId', () => {
+    const packet = encodeSlideRequest(1);
+    expect(packet.byteLength).toBe(SLIDE_REQUEST_BYTES);
+    expect([...packet]).toEqual([OpCode.C2S_SLIDE, 1]);
+    expect(decodeSlideRequest(packet)).toBe(1);
+  });
+
+  it('事件是 5 字节：op + entityId + slideId + phase，开始与结束都能解', () => {
+    const start = encodeSlideEvent(513, 1, SLIDE_PHASE.Start);
+    expect(start.byteLength).toBe(SLIDE_EVENT_BYTES);
+    expect([...start]).toEqual([OpCode.S2C_SLIDE, 1, 2, 1, SLIDE_PHASE.Start]);
+    expect(decodeSlideEvent(start)).toEqual({ entityId: 513, slideId: 1, phase: SLIDE_PHASE.Start });
+
+    const finish = encodeSlideEvent(513, 1, SLIDE_PHASE.Finish);
+    expect(decodeSlideEvent(finish)).toEqual({ entityId: 513, slideId: 1, phase: SLIDE_PHASE.Finish });
+  });
+
+  it('坏包返回 undefined：0 号实体 / 0 号滑梯 / 未知 phase / 错误长度', () => {
+    expect(decodeSlideRequest(new Uint8Array([OpCode.C2S_SLIDE]))).toBeUndefined();
+    expect(decodeSlideRequest(new Uint8Array([OpCode.C2S_SLIDE, 0]))).toBeUndefined();
+    expect(decodeSlideEvent(new Uint8Array([OpCode.S2C_SLIDE, 0, 0, 1, 0]))).toBeUndefined();
+    expect(decodeSlideEvent(new Uint8Array([OpCode.S2C_SLIDE, 1, 0, 0, 0]))).toBeUndefined();
+    expect(decodeSlideEvent(new Uint8Array([OpCode.S2C_SLIDE, 1, 0, 1, 9]))).toBeUndefined();
+    expect(decodeSlideEvent(encodeSlideEvent(1, 1, 0).subarray(0, 4))).toBeUndefined();
+  });
+});
+
 describe('compact sync entry', () => {
   it('packs id 10bit + x/y 各 15bit(1/4px) + state 8bit 到 6 字节', () => {
     // id=1, x=8(1px), y=16(2px), state=0x25

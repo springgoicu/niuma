@@ -146,6 +146,10 @@ export const OpCode = {
   C2S_SET_NAME: 0x28,
   /** 改名广播：`[op][entityId u16][len u16][utf8]` */
   S2C_NAME: 0x29,
+  /** 滑梯请求：`[op][slideId u8]`，服务端校验距离 / 冷却 / 姿态后把角色送到塔顶 */
+  C2S_SLIDE: 0x2a,
+  /** 滑行事件：`[op][entityId u16][slideId u8][phase u8]`，phase 0=开始、1=结束 */
+  S2C_SLIDE: 0x2b,
 } as const;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
@@ -272,6 +276,25 @@ export interface VentEventPacket {
   targetId: number;
   x: number;
   y: number;
+}
+
+/** 滑行事件的两个阶段：0 = 开始滑行，1 = 结束并落在缓冲区 */
+export const SLIDE_PHASE = {
+  Start: 0,
+  Finish: 1,
+} as const;
+
+/**
+ * 滑行事件（`S2C_SLIDE`）。
+ *
+ * 位置仍然走 20Hz 同步包；这条包只负责两件同步包表达不了的事：
+ * 1) 告诉客户端「这个实体正在滑梯上」，据此把姿态锁成坐姿并播 whoosh；
+ * 2) 结束的那一下给出明确的落地时刻，避免客户端只靠计时器猜。
+ */
+export interface SlideEventPacket {
+  entityId: number;
+  slideId: number;
+  phase: number;
 }
 
 /**

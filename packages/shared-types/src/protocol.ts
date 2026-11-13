@@ -44,6 +44,8 @@ import {
   RESUME_VERSION,
   SESSION_EXTENSION_BYTES,
   SESSION_EXTENSION_MAGIC,
+  SLIDE_EVENT_BYTES,
+  SLIDE_REQUEST_BYTES,
   STATUS_EXTENSION_MAGIC,
   SYNC_CAPABILITY_MAGIC,
   SYNC_ENTRY_BYTES,
@@ -80,12 +82,13 @@ import type {
   QueueRejectedPacket,
   QueueStatusPacket,
   ResumeState,
+  SlideEventPacket,
   SpawnPacket,
   SystemNoticePacket,
   VentEventPacket,
   WelcomePacket,
 } from './types';
-import { OpCode, QUEUE_REJECT_REASON } from './types';
+import { OpCode, QUEUE_REJECT_REASON, SLIDE_PHASE } from './types';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -885,6 +888,42 @@ export function decodeVent(data: Uint8Array): VentEventPacket {
   if (reader.u8() !== OpCode.S2C_VENT) throw new Error('not a vent packet');
   // 坐标保持量化口径：调用方用 dequantizeCoord 还原成世界像素，与移动包同一把尺子
   return { attackerId: reader.u16(), targetId: reader.u16(), x: reader.u16(), y: reader.u16() };
+}
+
+/**
+ * 滑梯请求：`[op][slideId u8]`，2 字节。
+ *
+ * 只上报「我想滑哪座滑梯」，落点与轨迹全由服务端按共享折线决定；
+ * slideId = 0 或长度不符一律返回 undefined，由服务端静默丢弃。
+ */
+export function encodeSlideRequest(slideId: number): Uint8Array {
+  const writer = new ByteWriter(SLIDE_REQUEST_BYTES);
+  writer.u8(OpCode.C2S_SLIDE).u8(slideId & 0xff);
+  return writer.finish();
+}
+
+export function decodeSlideRequest(data: Uint8Array): number | undefined {
+  if (data.byteLength !== SLIDE_REQUEST_BYTES || data[0] !== OpCode.C2S_SLIDE) return undefined;
+  const slideId = data[1]!;
+  return slideId === 0 ? undefined : slideId;
+}
+
+/** 滑行事件：`[op][entityId u16][slideId u8][phase u8]`，5 字节 */
+export function encodeSlideEvent(entityId: number, slideId: number, phase: number): Uint8Array {
+  const writer = new ByteWriter(SLIDE_EVENT_BYTES);
+  writer.u8(OpCode.S2C_SLIDE).u16(entityId & 0xffff).u8(slideId & 0xff).u8(phase & 0xff);
+  return writer.finish();
+}
+
+/** 坏包返回 undefined：未知 phase / 0 号实体都不该被当成「开始滑行」 */
+export function decodeSlideEvent(data: Uint8Array): SlideEventPacket | undefined {
+  if (data.byteLength !== SLIDE_EVENT_BYTES || data[0] !== OpCode.S2C_SLIDE) return undefined;
+  const entityId = data[1]! | (data[2]! << 8);
+  const slideId = data[3]!;
+  const phase = data[4]!;
+  if (entityId === 0 || slideId === 0) return undefined;
+  if (phase !== SLIDE_PHASE.Start && phase !== SLIDE_PHASE.Finish) return undefined;
+  return { entityId, slideId, phase };
 }
 
 /**

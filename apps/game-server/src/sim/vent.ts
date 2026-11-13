@@ -9,15 +9,13 @@ import {
   resolveMotionInto,
   withinVentCone,
   type MotionTarget,
-  type SeatStateEntry,
 } from '@niuma/shared-types';
 import type { SpatialGrid } from '../spatial/grid';
-import type { SeatRegistry } from './seats';
 import type { Player, World } from './world';
 import type { Transport } from './view';
 
 /**
- * 发泄的权威结算（ADR-0051）。
+ * 发泄的权威结算（ADR-0051 / ADR-0065）。
  *
  * 三件事，顺序不能反：
  * 1) **只消费边沿**：客户端把 vent 位保持一整个播放窗口（440ms），逐 Tick 结算会连打九次；
@@ -26,30 +24,25 @@ import type { Transport } from './view';
  *    晚一个 Tick（50ms）就会让旁观者看到「人先站着、下一帧才倒」。
  * 3) **命中只认服务端几何**：客户端只上报「我在出招」，打没打到、打到谁全由这里决定。
  *
+ * 入座的人不会被创飞（ADR-0065）：办公、睡觉、蹲马桶等任何坐着的人都不击退、
+ * 不倒地；他若是扇形内最近的人，整次出招按空放结算。
+ *
  * 稳态成本：每个玩家一次布尔判断；只有真正出招的人才会扫一遍自己的 AOI 集合。
  */
 const MOTION: MotionTarget = { x: 0, y: 0 };
-/**
- * 座位释放条目复用同一块 scratch，与 `MoveResult.released` 同一套约定：
- * 调用方拿到就立刻广播，不能跨 Tick 持有。
- */
-const RELEASED: SeatStateEntry[] = [];
 
 /**
- * 结算本 Tick 的所有发泄，返回需要广播的座位释放条目。
+ * 结算本 Tick 的所有发泄。
  *
- * 空放（前方扇形内没人）同样会广播一条 `targetId = 0` 的事件包：
- * 破空音与「退！退！退！」的台词需要附近每个人都能独立播放。
+ * 空放（前方扇形内没人，或最近的人正坐在座位上）同样会广播一条 `targetId = 0`
+ * 的事件包：破空音与「退！退！退！」的台词需要附近每个人都能独立播放。
  */
 export function resolveVents(
   world: World,
   grid: SpatialGrid,
-  seats: SeatRegistry,
   transport: Transport,
   now: number,
-): SeatStateEntry[] {
-  RELEASED.length = 0;
-
+): void {
   for (const attacker of world.players.values()) {
     if (!attacker.ventPending) continue;
     // 边沿标记只活一次，无论这一下打没打到、有没有被限频吃掉
@@ -67,8 +60,12 @@ export function resolveVents(
       continue;
     }
 
-    // 坐在椅子 / 床上被创飞：先释放座位，再由下面的 applyState 落到躺姿
-    if (target.seat !== 0) seats.stand(target, RELEASED);
+    // 入座即免伤：办公 / 睡觉 / 蹲马桶等任何坐着的人都不击退、不倒地，
+    // 也不穿透去打击他身后的人——这一下按空放处理。
+    if (target.seat !== 0) {
+      broadcastVent(world, attacker, 0, 0, 0, transport);
+      continue;
+    }
 
     const facing = VENT_FACING[attacker.direction] ?? VENT_FACING[0]!;
     // 击退走与移动完全相同的碰撞求解器：撞墙时自然衰减，绝不会把人推进墙里
@@ -90,11 +87,13 @@ export function resolveVents(
 
     broadcastVent(world, attacker, target.id, target.x, target.y, transport);
   }
-
-  return RELEASED;
 }
 
-/** 前方扇形内距离最近的玩家；已经倒地的人跳过，免得一脚把人永久锁在地上 */
+/**
+ * 前方扇形内距离最近的玩家；已经倒地的人跳过，免得一脚把人永久锁在地上。
+ *
+ * 入座的人**不跳过**：他被选中后由调用方判空放，所以坐着的人能挡住身后的人。
+ */
 function nearestInCone(world: World, attacker: Player, now: number): Player | null {
   let best: Player | null = null;
   let bestDistanceSq = Number.POSITIVE_INFINITY;

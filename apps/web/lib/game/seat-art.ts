@@ -1,6 +1,6 @@
 'use client';
 
-import type { Direction, SeatKind } from '@niuma/shared-types';
+import { BENCH_SEAT_OFFSET, type Direction, type SeatKind } from '@niuma/shared-types';
 import { chairArtFor } from './chair-art';
 
 /**
@@ -31,21 +31,36 @@ export const SIT_HIP_Y = -1;
 
 const CHAIR_SINK = 6;
 
-const OTHER_SEATS: Record<Exclude<SeatKind, 'chair'>, { w: number; h: number; sink: number }> = {
+const OTHER_SEATS: Record<Exclude<SeatKind, 'chair' | 'cinema'>, { w: number; h: number; sink: number }> = {
   toilet: { w: 22, h: 28, sink: 6 },
   stool: { w: 18, h: 22, sink: 4 },
   // 石鼓凳（ADR-0061）：鼓身比木凳矮胖一圈，座面下沉 5 纹素
   drum: { w: 20, h: 22, sink: 5 },
   sofa: { w: 58, h: 30, sink: 8 },
+  // 双人沙发的一侧：左右两半各 62×40，两半拼成 124px 的长沙发
+  couch: { w: 62, h: 40, sink: 8 },
+  // 户外长椅：40×18，座面顶在帧内 y=8；外观仍由道具管线绘制
+  bench: { w: 40, h: 18, sink: 0 },
   bed: { w: 64, h: 42, sink: 16 },
 };
 
 /**
- * 座位几何。椅子的座面顶由 `chair-art.ts` 的帧内 `seat.y` 推出：
+ * 有座面契约的非椅子座位（相对座位锚点）：
+ * - 沙发：座垫顶面在帧内 y=16，世界高度 = 锚点 + 8 - (40 - 16) = 锚点 - 16；
+ * - 长椅：坐点在椅前 `BENCH_SEAT_OFFSET`，座面顶世界 y = 底座 y - 10，
+ *   因此相对坐点锚点为 -(18 - 8) - 12 = -22。
+ */
+const OTHER_CONTACT: Partial<Record<SeatKind, number>> = {
+  couch: 8 - 40 + 16,
+  bench: -(18 - 8) - BENCH_SEAT_OFFSET,
+};
+
+/**
+ * 座位几何。椅子与影厅座椅的座面顶由 `chair-art.ts` 的帧内 `seat.y` 推出：
  * 帧底 = 座位锚点 + sink，帧内 y 换算到世界坐标要减去帧高。
  */
 export function seatArtFor(kind: SeatKind, facing: Direction): SeatArt {
-  if (kind === 'chair') {
+  if (kind === 'chair' || kind === 'cinema') {
     const art = chairArtFor(facing);
     return {
       frame: art.frame,
@@ -54,7 +69,7 @@ export function seatArtFor(kind: SeatKind, facing: Direction): SeatArt {
     };
   }
   const { w, h, sink } = OTHER_SEATS[kind];
-  return { frame: { w, h }, sink, contactY: null };
+  return { frame: { w, h }, sink, contactY: OTHER_CONTACT[kind] ?? null };
 }
 
 /**

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { allowReloadForVersion, reloadUrl, shouldReloadForVersion } from '../build-version';
+import {
+  allowReloadForVersion,
+  reloadForStaleAssets,
+  reloadUrl,
+  shouldReloadForVersion,
+  STALE_ASSET_RELOAD_ID,
+} from '../build-version';
 import type { StorageLike } from '../storage';
 
 function memoryStorage(): StorageLike {
@@ -67,5 +73,38 @@ describe('强刷防循环', () => {
   it('存储不可用时不限流，由页面重载自行终止', () => {
     expect(allowReloadForVersion(null, 'v-1', 0)).toBe(true);
     expect(allowReloadForVersion(null, 'v-1', 0)).toBe(true);
+  });
+});
+
+describe('素材过期受控重载', () => {
+  function fakeLocation(href = 'https://niuma.example/play?park=main') {
+    const replaced: string[] = [];
+    return { href, replaced, replace: (url: string) => replaced.push(url) };
+  }
+
+  it('首次放行，保留原查询参数并写入 pseudo 版本号', () => {
+    const storage = memoryStorage();
+    const location = fakeLocation();
+    expect(reloadForStaleAssets(1_000, { location, storage })).toBe(true);
+    expect(location.replaced).toHaveLength(1);
+    const url = new URL(location.replaced[0]!);
+    expect(url.pathname).toBe('/play');
+    expect(url.searchParams.get('park')).toBe('main');
+    expect(url.searchParams.get('__v')).toBe(STALE_ASSET_RELOAD_ID);
+  });
+
+  it('冷却期内与用尽一次机会后都拦截，不刷成永动机', () => {
+    const storage = memoryStorage();
+    const location = fakeLocation();
+    expect(reloadForStaleAssets(1_000, { location, storage })).toBe(true);
+    expect(reloadForStaleAssets(2_000, { location, storage })).toBe(false);
+    expect(reloadForStaleAssets(60_000, { location, storage })).toBe(false);
+    expect(location.replaced).toHaveLength(1);
+  });
+
+  it('没有 location 时不消耗守卫次数', () => {
+    const storage = memoryStorage();
+    expect(reloadForStaleAssets(1_000, { location: null, storage })).toBe(false);
+    expect(reloadForStaleAssets(60_000, { location: fakeLocation(), storage })).toBe(true);
   });
 });

@@ -161,6 +161,8 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   cooler: { w: 20, h: 30 },
   coffee: { w: 22, h: 28 },
   sideTable: { w: 20, h: 18 },
+  /** 客厅茶几：48×24 的矮桌，桌面压一杯热茶与一本杂志 */
+  coffeeTable: { w: 48, h: 24 },
   /** 树篱：一段 32 宽的灌木，沿南侧休息庭院围边（不参与碰撞） */
   hedge: { w: 32, h: 18 },
   /** 上下铺爬梯：两根木轨 + 四根横档，贴在床沿侧面示意上下层（ADR-0044） */
@@ -338,6 +340,23 @@ function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
       g.ellipse(10, 5, 8, 3).fill(COLOR.woodLight);
       box(g, 9, 7, 2, 8, COLOR.woodDark);
       box(g, 4, 14, 12, 3, COLOR.woodDark);
+      return;
+    case 'coffeeTable':
+      // 客厅茶几：矮桌面 + 四条短腿，桌上压一杯热茶与一本摊开的杂志
+      g.ellipse(w / 2, h - 2, 23, 3).fill({ color: COLOR.shadow, alpha: 0.18 });
+      box(g, 2, 6, w - 4, 10, COLOR.woodLight, COLOR.woodDark);
+      rect(g, 4, 7, w - 8, 2, 0xffe0bf);
+      rect(g, 4, 15, w - 8, 1, COLOR.woodSeam);
+      box(g, 5, 16, 3, 7, COLOR.woodDark);
+      box(g, w - 8, 16, 3, 7, COLOR.woodDark);
+      // 热茶：白瓷杯 + 一点薄荷绿茶汤
+      box(g, 12, 1, 8, 8, COLOR.ceramic, COLOR.ceramicEdge);
+      rect(g, 13, 3, 6, 4, COLOR.mint);
+      rect(g, 20, 3, 2, 4, COLOR.ceramicEdge);
+      // 杂志：天蓝封面 + 两道白字块
+      box(g, 28, 2, 12, 8, COLOR.sky, COLOR.skyDark);
+      rect(g, 30, 4, 8, 1, COLOR.ceramic);
+      rect(g, 30, 6, 5, 1, COLOR.ceramic);
       return;
     case 'hedge':
       // 一段修剪过的树篱：左右两团深叶夹一团亮叶，顶面点两粒高光；
@@ -717,7 +736,7 @@ function drawDrumStool(g: Graphics): void {
   rect(g, 5, 19, 10, 2, COLOR.drumStone);
 }
 
-/** 沙发：靠背在上、两个座垫在下，两侧各一只扶手 */
+/** 沙发：靠背在上、两个座垫在下，两侧各一只扶手（保留给旧数据 / 单座沙发） */
 function drawSofa(g: Graphics): void {
   const { w, h } = SOFA_SPRITE;
   shadow(g, w / 2, h - 1, 26, 2.5);
@@ -728,6 +747,56 @@ function drawSofa(g: Graphics): void {
   rect(g, 33, 14, 20, 1, COLOR.ceramic);
   box(g, 0, 10, 5, 12, COLOR.mintDark);
   box(g, w - 5, 10, 5, 12, COLOR.mintDark);
+}
+
+/** 双人沙发的一侧：62×40，两半拼成 124px；座垫顶面在帧内 y=16 */
+const COUCH_HALF = { w: 62, h: 40 };
+
+/**
+ * 双人沙发左右半：靠背连续、座垫各一半、扶手只在外侧。
+ * `side = 0` 是左半（扶手在左），`side = 1` 是右半（扶手在右）。
+ */
+function drawCouchHalf(g: Graphics, side: 0 | 1): void {
+  const { w, h } = COUCH_HALF;
+  shadow(g, w / 2, h - 2, 28, 3);
+  // 靠背：两半共用同一条 16px 高的靠背，拼起来不断层
+  box(g, 0, 0, w, 16, COLOR.sofaBody);
+  rect(g, 1, 2, w - 2, 1, COLOR.sofaSeat);
+  // 座垫：一半一只，中缝只留 2px
+  box(g, side === 0 ? 6 : 2, 16, w - 8, 14, COLOR.sofaSeat);
+  rect(g, side === 0 ? 9 : 5, 18, w - 14, 1, COLOR.ceramic);
+  // 扶手：左半在左、右半在右，拼起来两端各一只
+  if (side === 0) box(g, 0, 10, 6, 20, COLOR.mintDark);
+  else box(g, w - 6, 10, 6, 20, COLOR.mintDark);
+  // 抱枕：靠背前压一只奶油色小方枕
+  const pillowX = side === 0 ? 10 : 36;
+  box(g, pillowX, 8, 14, 8, COLOR.butter, 0xd8a33f);
+  rect(g, pillowX + 2, 10, 8, 1, 0xfff2cc);
+  // 前缘与两只木脚
+  rect(g, 2, 30, w - 4, 1, COLOR.mintDark);
+  box(g, 4, 32, 3, 6, COLOR.woodDark);
+  box(g, w - 7, 32, 3, 6, COLOR.woodDark);
+}
+
+/**
+ * 影厅座椅：几何完全复用椅子的四向座面契约，只把薰衣草软包换成暗红丝绒，
+ * 并在靠背侧加一只金色杯架——「电影院」的读感靠配色与杯架，不靠新尺寸。
+ */
+function drawCinemaSeat(g: Graphics, art: ChairArt, facing: Direction): void {
+  shadow(g, art.shadow.cx, art.shadow.cy, art.shadow.rx, art.shadow.ry);
+  // 深胡桃木底座与立柱
+  box(g, art.base.x, art.base.y, art.base.w, art.base.h, 0x4a3226);
+  box(g, art.stem.x, art.stem.y, art.stem.w, art.stem.h, 0x6b4a35);
+  // 靠背：暗红丝绒 + 顶端一条亮边
+  box(g, art.back.x, art.back.y, art.back.w, art.back.h, 0x8f2f2f, 0x4a1c17);
+  rect(g, art.back.x + 1, art.back.y + 1, Math.max(1, art.back.w - 2), 2, 0xd05a5a);
+  // 座面：比靠背亮一档，坐下时能看出软垫的边缘
+  box(g, art.seat.x, art.seat.y, art.seat.w, art.seat.h, 0xa63a3a, 0x4a1c17);
+  rect(g, art.highlight.x, art.highlight.y, art.highlight.w, art.highlight.h, 0xe07a6a);
+  // 金色杯架：挂在靠背靠近走道的一侧
+  const cupX = facing === DIRECTION.Left ? art.back.x + art.back.w - 2 : art.back.x + 2;
+  const cupY = art.back.y + Math.floor(art.back.h / 2);
+  dot(g, cupX, cupY, 2, COLOR.gold, 0x4a1c17);
 }
 
 /**
@@ -817,6 +886,34 @@ function fillFloorCarpet(g: Graphics, r: WorldRect): void {
   rect(g, r.x + r.w - 5, r.y + 4, 1, r.h - 8, COLOR.carpetSeam);
 }
 
+/** 影音室：深炭色地毯 + 酒红收边，配合屏幕冷光形成暗厅 */
+function fillFloorCinema(g: Graphics, r: WorldRect): void {
+  rect(g, r.x, r.y, r.w, r.h, 0x232833);
+  for (let y = r.y + 8; y < r.y + r.h; y += 16) rect(g, r.x, y, r.w, 1, 0x1b2029);
+  // 一圈酒红地毯收边：暗厅里唯一的暖色底
+  rect(g, r.x + 3, r.y + 3, r.w - 6, 2, 0x4a2a2e);
+  rect(g, r.x + 3, r.y + r.h - 5, r.w - 6, 2, 0x4a2a2e);
+  rect(g, r.x + 3, r.y + 3, 2, r.h - 6, 0x4a2a2e);
+  rect(g, r.x + r.w - 5, r.y + 3, 2, r.h - 6, 0x4a2a2e);
+}
+
+/** 游乐园：薄荷与奶油交替的软垫，边缘压一圈亮白安全线 */
+function fillFloorRubber(g: Graphics, r: WorldRect): void {
+  const tile = 32;
+  rect(g, r.x, r.y, r.w, r.h, 0x9fe6cd);
+  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += tile) {
+    for (let col = 0, x = r.x; x < r.x + r.w; col += 1, x += tile) {
+      if ((row + col) % 2 === 0) rect(g, x, y, tile, tile, 0x8fdcc2);
+    }
+  }
+  for (let y = r.y; y < r.y + r.h; y += tile) rect(g, r.x, y, r.w, 1, 0x7cc9ae);
+  for (let x = r.x; x < r.x + r.w; x += tile) rect(g, x, r.y, 1, r.h, 0x7cc9ae);
+  rect(g, r.x + 4, r.y + 4, r.w - 8, 3, 0xfff6e0);
+  rect(g, r.x + 4, r.y + r.h - 7, r.w - 8, 3, 0xfff6e0);
+  rect(g, r.x + 4, r.y + 4, 3, r.h - 8, 0xfff6e0);
+  rect(g, r.x + r.w - 7, r.y + 4, 3, r.h - 8, 0xfff6e0);
+}
+
 function fillPaving(g: Graphics, r: WorldRect): void {
   rect(g, r.x, r.y, r.w, r.h, COLOR.paving);
   for (let x = r.x + 40; x < r.x + r.w; x += 40) rect(g, x, r.y, 1, r.h, COLOR.pavingSeam);
@@ -839,6 +936,8 @@ function fillSolidFlat(g: Graphics, s: SolidRect): void {
 function fillBuildingFloor(g: Graphics, building: BuildingSpec): void {
   if (building.floor === 'wood') fillFloorWood(g, building.rect);
   else if (building.floor === 'carpet') fillFloorCarpet(g, building.rect);
+  else if (building.floor === 'cinema') fillFloorCinema(g, building.rect);
+  else if (building.floor === 'rubber') fillFloorRubber(g, building.rect);
   else fillFloorTile(g, building.rect);
 }
 
@@ -905,7 +1004,22 @@ export class PropsView {
         bake(renderer, (g) => drawChair(g, art), { frame: frame(art.frame.w, art.frame.h) }),
       );
     }
-    const seatTextures: Record<Exclude<SeatKind, 'chair'>, Texture> = {
+    // 影厅座椅与椅子共用四向几何，只换配色；靠背仍随入座朝向换边
+    const cinemaTextures = new Map<Direction, Texture>();
+    for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
+      const art = chairArtFor(facing);
+      cinemaTextures.set(
+        facing,
+        bake(renderer, (g) => drawCinemaSeat(g, art, facing), { frame: frame(art.frame.w, art.frame.h) }),
+      );
+    }
+    const couchLeft = bake(renderer, (g) => drawCouchHalf(g, 0), {
+      frame: frame(COUCH_HALF.w, COUCH_HALF.h),
+    });
+    const couchRight = bake(renderer, (g) => drawCouchHalf(g, 1), {
+      frame: frame(COUCH_HALF.w, COUCH_HALF.h),
+    });
+    const seatTextures: Record<'toilet' | 'stool' | 'drum' | 'sofa' | 'bed', Texture> = {
       toilet: bake(renderer, drawToilet, { frame: frame(TOILET_SPRITE.w, TOILET_SPRITE.h) }),
       stool: bake(renderer, drawStool, { frame: frame(STOOL_SPRITE.w, STOOL_SPRITE.h) }),
       drum: bake(renderer, drawDrumStool, { frame: frame(DRUM_SPRITE.w, DRUM_SPRITE.h) }),
@@ -913,7 +1027,13 @@ export class PropsView {
       bed: bake(renderer, drawBed, { frame: frame(BED_SPRITE.w, BED_SPRITE.h) }),
     };
     for (const art of deskTextures.values()) this.textures.push(art.idle, art.lit);
-    this.textures.push(...Object.values(seatTextures), ...chairTextures.values());
+    this.textures.push(
+      ...Object.values(seatTextures),
+      ...chairTextures.values(),
+      ...cinemaTextures.values(),
+      couchLeft,
+      couchRight,
+    );
 
     for (const desk of WORLD_LAYOUT.desks) {
       const art = deskTextures.get(desk.facing) ?? deskTextures.get(DIRECTION.Up)!;
@@ -929,12 +1049,21 @@ export class PropsView {
     }
 
     for (const seat of WORLD_LAYOUT.seats) {
+      // 长椅视觉由道具管线绘制（`addProp`），座位只登记坐点；这里跳过以免出现两张长椅
+      if (seat.kind === 'bench') continue;
       // 尺寸、下沉量与接触高度共用座位契约：渲染层不再自己写一份 SEAT_ART（ADR-0032）
       const art = seatArtFor(seat.kind, seat.facing);
-      const texture =
-        seat.kind === 'chair'
-          ? chairTextures.get(seat.facing) ?? chairTextures.get(DIRECTION.Down)!
-          : seatTextures[seat.kind];
+      let texture: Texture;
+      if (seat.kind === 'chair') {
+        texture = chairTextures.get(seat.facing) ?? chairTextures.get(DIRECTION.Down)!;
+      } else if (seat.kind === 'cinema') {
+        texture = cinemaTextures.get(seat.facing) ?? cinemaTextures.get(DIRECTION.Down)!;
+      } else if (seat.kind === 'couch') {
+        // 双人沙发的左右半各画一次，两半拼起来才是一张长沙发
+        texture = seat.variant === 1 ? couchRight : couchLeft;
+      } else {
+        texture = seatTextures[seat.kind];
+      }
       const sprite = new Sprite(texture);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(seat.x, seat.y + art.sink);

@@ -13,6 +13,8 @@ import { BulletinView } from './bulletin';
 import { DanmakuField, type DanmakuMessage } from './danmaku';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
 import { LanternView } from './lighting/lanterns';
+import { FestivalArt } from './festival-art';
+import { readFestivalEnabled } from './festival-decor';
 import { PavilionView } from './pavilion';
 import { PlaqueView } from './plaques';
 import { RitualFx } from './ritual-fx';
@@ -679,6 +681,8 @@ export class GameRenderer {
   /** 冬季雪景（ADR-0046）：非冬季时三个字段都不构造，零开销 */
   private snow?: SnowField;
   private winterArt?: WinterArt;
+  /** 节日装饰（ADR-0063）：`?festival=0` 时整层不构造，构造后只切纹理与 tint */
+  private festival?: FestivalArt;
   /** 屏幕空间弹幕（ADR-0056）：挂在 stage 最顶层，不进 world、不随相机 */
   private danmaku?: DanmakuField;
   /** 弹幕偏好：由宿主注入，`?danmaku=0` 可临时关闭 */
@@ -784,9 +788,10 @@ export class GameRenderer {
       });
       this.lightmap.register(propLights(WORLD_LAYOUT.props));
       this.lightmap.register(this.interior?.lights ?? []);
-      // 从 `buildLayers` 里构造的视图现场收集的光位（摸鱼亭四角 + 拱门/门柱宫灯）
+      // 从 `buildLayers` 里构造的视图现场收集的光位（摸鱼亭四角 + 拱门/门柱宫灯 + 节日彩旗）
       this.lightmap.register(this.pavilion?.lights ?? []);
       this.lightmap.register(this.lanterns?.lights ?? []);
+      this.lightmap.register(this.festival?.lights ?? []);
       this.lightmap.register(this.shrine?.lights ?? []);
       this.app.stage.addChild(this.lightmap.container);
     }
@@ -893,6 +898,14 @@ export class GameRenderer {
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
 
+    // 节日装饰（ADR-0063）：跨路彩旗、门楣挂饰与树梢灯笼；纯装饰、不参与碰撞。
+    // 必须排在牌匾之后入层：门楣彩旗与牌坊同一条深度键，后入者压在横枋之上；
+    // `?festival=0` 时连纹理都不烘，运行时零开销
+    if (readFestivalEnabled(search)) {
+      this.festival = new FestivalArt({ winter: this.season.winter });
+      this.festival.attach(this.sortLayer, this.app.renderer);
+    }
+
     this.shadowTextures = GroundFx.shadowTextures(this.app.renderer);
     this.fx = new GroundFx(this.app.renderer);
     this.world.addChild(this.fx.container);
@@ -950,7 +963,8 @@ export class GameRenderer {
     x = 0,
     y = 0,
   ): Promise<void> {
-    if (!this.ready || this.views.has(id)) return;
+    // 同一实体已有初始化在飞：重复 spawn 没有意义，等这一次完成即可
+    if (!this.ready || this.views.has(id) || this.pendingInit.has(id)) return;
     
     // 为本次初始化分配 generation token 和 abort signal
     const generation = ++this.initGeneration;
@@ -982,12 +996,17 @@ export class GameRenderer {
     
     try {
       await view.init();
-    } catch (e) {
-      // 如果初始化被中止，销毁已创建的资源
-      if (abort.signal.aborted) {
-        view.destroy();
-      }
-      throw e;
+    } catch (error) {
+      // 失败路径必须清掉 pendingInit：否则同一 netId 的后续 spawn / 重试
+      // 会被上面的 `pendingInit.has(id)` 永久挡住。
+      // 只清理属于本次 generation 的条目，避免误删更新一次的初始化。
+      const pending = this.pendingInit.get(id);
+      if (pending && pending.generation === generation) this.pendingInit.delete(id);
+      // 中止（实体已离场 / 换世界）与资源加载失败都销毁半成品，不留幽灵容器
+      view.destroy();
+      // 中止不是错误：调用方已经不需要这个视图了
+      if (abort.signal.aborted) return;
+      throw error;
     }
     
     // 初始化完成后再次校验：Renderer 是否销毁、generation 是否一致、实体是否仍在会话
@@ -1216,6 +1235,8 @@ export class GameRenderer {
     // 弹幕与雪同一层空间：只改 x / alpha，离屏当帧回收
     this.danmaku?.update(dtMs);
     this.winterArt?.update(now);
+    // 节日彩旗两帧飘动 + 30s 一次亮核采样（ADR-0063）
+    this.festival?.update(now);
     // 相机在 session 里先于本方法更新，这里拿到的边界与焦点属于同一帧
     this.critters?.update(dtMs, this.focusX, this.focusY, this.cameraBounds);
     this.fish?.update(dtMs, this.cameraBounds, this.focusX, this.focusY);
@@ -1288,7 +1309,7 @@ export class GameRenderer {
     const { dpr, cssScale } = this.metrics;
     const halfW = screen.width / cssScale / 2;
     const halfH = screen.height / cssScale / 2;
-    // 相机夹在岛屿包围盒内：贴到海岸时角色不在正中，但画面不会露出世界外的黑
+    // 相机夹在陆地包围盒内：贴到边界时角色不在正中，但画面不会露出世界外的黑
     const bounds = ISLAND.bounds;
     // 相机必须与角色用同一个吸附函数（snapTexel = round）：
     // 相机 floor + 角色 round 会让两者每移动 1 世界像素错开 1 纹素，
@@ -1430,6 +1451,7 @@ export class GameRenderer {
     this.bulletin?.destroy();
     this.pavilion?.destroy();
     this.lanterns?.destroy();
+    this.festival?.destroy();
     this.shrine?.destroy();
     this.tea?.destroy();
     this.plaques?.destroy();
