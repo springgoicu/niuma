@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { DEFAULT_APPEARANCE, JAIL, POSE, TICK_MS } from '@niuma/shared-types';
+import { DEFAULT_APPEARANCE, JAIL, MOVE_SPEED, POSE, TICK_MS, isBlocked } from '@niuma/shared-types';
 import type { EscortEvent } from '../sim/detention';
 import { World, type Player } from '../sim/world';
 import { createAgent, type EscortTask } from './brain';
 import { DEFAULT_NPC_CONFIG } from './config';
-import { ESCORT, stepEscort } from './escort';
+import { ESCORT, chaseSpeed, dragDeadline, stepEscort } from './escort';
 import { warmEscortGrid } from './escort-path';
 import { createRng } from './rng';
 
@@ -36,6 +36,7 @@ function setup(): Fixture {
     lastTargetX: target.x,
     lastTargetY: target.y,
     startedAt: NOW,
+    dragDeadlineAt: 0,
     towX: 0,
     towY: 0,
   };
@@ -102,5 +103,72 @@ describe('押送状态机（ADR-0072）', () => {
     expect(event?.kind).toBe('abort');
     expect(guard.x).toBe(4270);
     expect(guard.y).toBe(4950);
+  });
+});
+
+describe('执法链兜底（ADR-0080）', () => {
+  it('最慢的保安追击时也快过玩家常速', () => {
+    const slowest = MOVE_SPEED * DEFAULT_NPC_CONFIG.speed.min;
+    // 裸乘 1.3 时慢保安只有 133px/s，追不上持续移动的玩家
+    expect(slowest * ESCORT.CHASE_SPEED_FACTOR).toBeLessThan(MOVE_SPEED);
+    expect(chaseSpeed(slowest)).toBeGreaterThan(MOVE_SPEED);
+    // 快保安保持原有倍率，不被下限抹平
+    expect(chaseSpeed(MOVE_SPEED)).toBeCloseTo(MOVE_SPEED * ESCORT.CHASE_SPEED_FACTOR);
+  });
+
+  it('拖行截止按路线长度派生：短途保底，长途给足余量', () => {
+    expect(dragDeadline(NOW, 400, 100)).toBe(NOW + ESCORT.DRAG_TIMEOUT_MS);
+
+    // 3000px 的路要 30 秒，固定 15 秒会在半路放人
+    const long = dragDeadline(NOW, 3_000, 100);
+    expect(long).toBeGreaterThan(NOW + 30_000);
+    expect(long).toBeLessThanOrEqual(NOW + ESCORT.DRAG_TIMEOUT_MAX_MS);
+  });
+
+  it('保安被创飞不冻结计时：超时后仍然中止并放人', () => {
+    warmEscortGrid();
+    const { world, guard, agent, task } = setup();
+    guard.stunUntil = NOW + 60_000;
+    task.startedAt = NOW - ESCORT.CHASE_TIMEOUT_MS - 1;
+
+    const event = stepEscort(agent, task, world, NOW + TICK_MS);
+
+    expect(event).toEqual({
+      kind: 'abort',
+      guardId: guard.id,
+      targetId: task.targetId,
+      now: NOW + TICK_MS,
+      reason: 'timeout',
+    });
+  });
+
+  it('拖行落点走碰撞求解，不把被押者写进墙里', () => {
+    warmEscortGrid();
+    const world = new World();
+    // 保安贴着小黑屋西墙（门洞在 y 4920–4980，这里选实墙段），拖行方向朝西，
+    // 被押者默认落在保安东侧 22px，正好穿进墙里
+    const guard = world.createNpc('保安', DEFAULT_APPEARANCE.cow, 4310, 4850)!;
+    const target = world.create('目标', DEFAULT_APPEARANCE.cow, 2, 4300, 4850, '', NOW)!;
+    const agent = createAgent(createRng(7), guard, 1, DEFAULT_NPC_CONFIG, NOW);
+    const task: EscortTask = {
+      targetId: target.id,
+      stage: 'drag',
+      stageUntil: 0,
+      path: [],
+      index: 0,
+      replanAt: 0,
+      lastTargetX: target.x,
+      lastTargetY: target.y,
+      startedAt: NOW,
+      dragDeadlineAt: NOW + 60_000,
+      towX: -1,
+      towY: 0,
+    };
+
+    expect(isBlocked(guard.x - task.towX * ESCORT.TOW_OFFSET_PX, guard.y)).toBe(true);
+
+    stepEscort(agent, task, world, NOW + TICK_MS);
+
+    expect(isBlocked(target.x, target.y)).toBe(false);
   });
 });

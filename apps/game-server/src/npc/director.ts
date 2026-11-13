@@ -96,6 +96,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
       lastTargetX: target.x,
       lastTargetY: target.y,
       startedAt: now,
+      dragDeadlineAt: 0,
       towX: 0,
       towY: 0,
     };

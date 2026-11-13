@@ -1,5 +1,6 @@
 import {
   DIRECTION,
+  ENTITY_ROLE_GUARD,
   JAIL_ANCHORS,
   JAIL_PHASE,
   POSE,
@@ -50,13 +51,19 @@ export const DETENTION = {
   RATE_CYCLES: 4,
   /** 排队等保安的上限；超时按证据不足放人 */
   DISPATCH_TIMEOUT_MS: 12_000,
-  /** 一张案子从确认算起的硬上限，防止任务异常丢失后永远挂着 */
-  CASE_TIMEOUT_MS: 40_000,
-  /** 拖行期间给目标的硬直上限；到达 / 中止时清零，不作为禁足时长 */
-  DRAG_LOCK_MS: 45_000,
+  /**
+   * 一张案子从确认算起的硬上限，防止任务异常丢失后永远挂着。
+   * 覆盖「排队 12s + 追击 12s + 拖行上限 60s」再留 6s 余量（ADR-0080）。
+   */
+  CASE_TIMEOUT_MS: 90_000,
+  /**
+   * 拖行期间给目标的硬直；`npc/escort` 逐帧续期，到达 / 中止时清零。
+   * 短于案子上限，所以任何停摆都会先让被押者恢复行动，而不是躺到案子超时。
+   */
+  DRAG_LOCK_MS: 5_000,
 } as const;
 
-/** 打人触发执法（ADR-0074）：只统计擂台外的真人命中 */
+/** 打人触发执法（ADR-0074）：只统计擂台外的真人命中；袭警单独一轮建案（ADR-0080） */
 export const ASSAULT = {
   /** 滑动窗口：2 分钟内的命中才累计 */
   WINDOW_MS: 120_000,
@@ -151,16 +158,26 @@ export class Detention implements VentHitObserver {
   }
 
   /**
-   * 发泄命中回调（ADR-0074）。
+   * 发泄命中回调（ADR-0074 / ADR-0080）。
    *
-   * 只做一件事：把「攻击者 → 受害者」的命中时刻记进 2 分钟滑动窗口。
+   * 真人之间：把「攻击者 → 受害者」的命中时刻记进 2 分钟滑动窗口。
+   * 袭警：受害者是保安时零容忍，命中一次直接建案（普通同事仍不进执法）。
    * 命中几何、擂台隔离与入座免伤都留在 `sim/vent`；这里只认已经发生的命中。
    */
   onVentHit(attacker: Player, victim: Player, now: number): void {
     if (attacker.isNpc || attacker.wsId === 0) return;
-    if (victim.isNpc || victim.wsId === 0) return;
     // 已在押送流程里的人不再累计：避免刚放出来就立刻被第二张单子带走
     if (this.cases.has(attacker.id)) return;
+
+    if (victim.isNpc) {
+      // 只认保安：普通同事被打不触发执法，保持园区 NPC 的中立身份
+      if (victim.role !== ENTITY_ROLE_GUARD) return;
+      // 建案即清账本：与打人凑满 3 次的处理一致，押送结束后从零累计
+      this.attacks.delete(attacker.id);
+      this.openCase(attacker, now, SYSTEM_NOTICE_KIND.DetainedFight);
+      return;
+    }
+    if (victim.wsId === 0) return;
 
     let perVictim = this.attacks.get(attacker.id);
     if (!perVictim) {

@@ -2,13 +2,14 @@ import {
   DIRECTION,
   JAIL_ANCHOR,
   JAIL_DOOR_PAVING,
+  MOVE_SPEED,
   POSE,
   TICK_MS,
   resolveMotionInto,
   type MotionTarget,
 } from '@niuma/shared-types';
 import type { Player, World } from '../sim/world';
-import type { EscortEvent } from '../sim/detention';
+import { DETENTION, type EscortEvent } from '../sim/detention';
 import { directionOf, type NpcAgent, type EscortTask } from './brain';
 import { findEscortPath } from './escort-path';
 
@@ -40,10 +41,36 @@ export const ESCORT = {
   REPLAN_PX: 48,
   /** 送到反省点后的原地停顿 */
   PAUSE_AFTER_MS: 2_000,
+  /** 追击速度相对玩家常速的下限倍率：慢保安也不能追不上走路的人（ADR-0080） */
+  CHASE_MIN_FACTOR: 1.1,
+  /** 拖行超时上限：按路线长度派生的截止不会超过这里 */
+  DRAG_TIMEOUT_MAX_MS: 60_000,
 } as const;
 
 const DT_SEC = TICK_MS / 1000;
 const MOTION: MotionTarget = { x: 0, y: 0 };
+
+/**
+ * 追击速度的唯一出口：便于单测，也避免两处各写一个倍率。
+ *
+ * 保安基础速度是 `MOVE_SPEED × speedFactor`（0.62–0.95），裸乘 1.3 时最慢只有
+ * 133px/s，追不上持续移动的玩家。这里再压一条「至少比玩家常速快 10%」的下限，
+ * 快保安仍走原来的 1.3 倍，不被下限抹平。
+ */
+export function chaseSpeed(guardSpeed: number): number {
+  return Math.max(guardSpeed * ESCORT.CHASE_SPEED_FACTOR, MOVE_SPEED * ESCORT.CHASE_MIN_FACTOR);
+}
+
+/**
+ * 拖行截止的唯一出口：按实际路线长度与拖行速度派生（ADR-0080）。
+ *
+ * 固定 15 秒只够走 1300–2000px，西北角抓到的人必然半路被放走。这里给
+ * 1.6 倍路程余量，短途仍保底 15 秒，上限 60 秒防止异常路径把案子拖死。
+ */
+export function dragDeadline(now: number, pathLength: number, speed: number): number {
+  const estimate = speed > 0 ? (pathLength / speed) * 1_600 : 0;
+  return now + Math.min(ESCORT.DRAG_TIMEOUT_MAX_MS, Math.max(ESCORT.DRAG_TIMEOUT_MS, estimate));
+}
 
 /** 门外铺装中心：强制保安从门口进屋，不从墙外“判定到达” */
 const DOOR_OUTSIDE = {
@@ -72,6 +99,17 @@ export function stepEscort(
 ): EscortEvent | null {
   const guard = agent.player;
 
+  // 超时只看时间，不看保安当前能不能动（ADR-0080）：被踹倒期间也必须照常计时，
+  // 否则每帧都从这里提前 return，永远走不到下面的超时分支，任务会停摆到案子上限
+  if (task.stage === 'chase' && now - task.startedAt >= ESCORT.CHASE_TIMEOUT_MS) {
+    return abort(guard, task, now, 'timeout');
+  }
+  if (task.stage === 'drag') {
+    // 旧任务对象可能还没有截止时刻：退回固定上限，绝不出现「永不超时」
+    const deadline = task.dragDeadlineAt > 0 ? task.dragDeadlineAt : task.startedAt + ESCORT.DRAG_TIMEOUT_MS;
+    if (now >= deadline) return abort(guard, task, now, 'timeout');
+  }
+
   // 被发泄踹倒：任务保留，躺到硬直结束；与 updateAgent 一样先站起来再继续
   if (now < guard.stunUntil) return null;
   if (guard.pose === POSE.Lie) {
@@ -92,10 +130,6 @@ export function stepEscort(
   }
 
   if (task.stage === 'chase') {
-    if (now - task.startedAt >= ESCORT.CHASE_TIMEOUT_MS) {
-      return abort(guard, task, now, 'timeout');
-    }
-
     if (distance(guard, target) <= ESCORT.GRAB_RANGE_PX) {
       grab(agent, task, target, now);
       return { kind: 'grab', guardId: guard.id, targetId: target.id, now };
@@ -111,7 +145,7 @@ export function stepEscort(
       task.lastTargetY = target.y;
     }
 
-    walkPath(agent, task, agent.speed * ESCORT.CHASE_SPEED_FACTOR);
+    walkPath(agent, task, chaseSpeed(agent.speed));
 
     if (distance(guard, target) <= ESCORT.GRAB_RANGE_PX) {
       grab(agent, task, target, now);
@@ -121,10 +155,6 @@ export function stepEscort(
   }
 
   // 拖行：路线一次性算好（保安不可能被目标卡住），走到松手点就结束
-  if (now - task.startedAt >= ESCORT.DRAG_TIMEOUT_MS) {
-    return abort(guard, task, now, 'timeout');
-  }
-
   const moved = walkPath(agent, task, agent.speed * ESCORT.DRAG_SPEED_FACTOR);
   if (moved.x !== 0 || moved.y !== 0) {
     const length = Math.hypot(moved.x, moved.y);
@@ -132,6 +162,9 @@ export function stepEscort(
     task.towY = moved.y / length;
   }
   placeTargetBehind(guard, task, target, now);
+  // 拖行期间逐帧续期：保安被创飞或路线卡住时，被押者最多 5 秒就能自己站起来，
+  // 不会因为任务停摆而躺到案子上限（ADR-0080）
+  target.stunUntil = now + DETENTION.DRAG_LOCK_MS;
 
   if (task.index >= task.path.length) {
     return { kind: 'arrive', guardId: guard.id, targetId: target.id, now };
@@ -160,8 +193,8 @@ function grab(agent: NpcAgent, task: EscortTask, target: Player, now: number): v
   guard.markDirtyIfChanged();
 
   target.applyState(directionOf(guard.x - target.x, guard.y - target.y, target.direction), POSE.Lie, false);
-  // 拖行硬直上限；detention 会在到达 / 中止时清零，这不是禁足时长
-  target.stunUntil = now + 45_000;
+  // 拖行硬直：拖行中由 stepEscort 逐帧续期，到达 / 中止时由 detention 清零
+  target.stunUntil = now + DETENTION.DRAG_LOCK_MS;
   target.markDirtyIfChanged();
 
   task.stage = 'hold';
@@ -189,6 +222,12 @@ function beginDrag(agent: NpcAgent, task: EscortTask, now: number): void {
   // 两段路的接缝点只保留一份，避免在门口原地“点一下头”
   task.path = [...toDoor, ...toDrop.slice(1)];
   task.index = 0;
+  // 截止按真实路线长度派生：远端抓到的人不会走到一半就被固定 15 秒放掉
+  task.dragDeadlineAt = dragDeadline(
+    now,
+    measurePath(guard, task.path),
+    agent.speed * ESCORT.DRAG_SPEED_FACTOR,
+  );
   // 阶段切换必须放在算到路线之后：算不出路就保持空路径，由调用方 abort('stuck')。
   // 漏掉这一行时每 Tick 都会重新进入 hold 重算路线，保安与被押者会一直原地不动。
   task.stage = 'drag';
@@ -196,6 +235,17 @@ function beginDrag(agent: NpcAgent, task: EscortTask, now: number): void {
   const vector = DIRECTION_VECTOR[guard.direction] ?? DIRECTION_VECTOR[DIRECTION.Down]!;
   task.towX = vector.x;
   task.towY = vector.y;
+}
+
+/** 路线总长：拖行截止按它派生，只在进入拖行时算一次 */
+function measurePath(from: { x: number; y: number }, path: ReadonlyArray<{ x: number; y: number }>): number {
+  let total = 0;
+  let previous = from;
+  for (const point of path) {
+    total += Math.hypot(point.x - previous.x, point.y - previous.y);
+    previous = point;
+  }
+  return total;
 }
 
 /** 追击重算：路线走完先等 throttle，目标位移超过 48px 才值得再算一次 */
@@ -260,10 +310,18 @@ function walkPath(agent: NpcAgent, task: EscortTask, speed: number): { x: number
   return { x: movedX, y: movedY };
 }
 
-/** 被拖者始终在保安身后 22px，位置由服务端直接写，客户端只看 Tick 同步 */
+/** 被拖者始终在保安身后 22px；落点走与保安移动相同的碰撞求解，拐角处不会写进墙里 */
 function placeTargetBehind(guard: Player, task: EscortTask, target: Player, now: number): void {
-  target.x = guard.x - task.towX * ESCORT.TOW_OFFSET_PX;
-  target.y = guard.y - task.towY * ESCORT.TOW_OFFSET_PX;
+  // 从保安脚下起步求解：被挡时会被截停在墙边，宁可贴住保安也不产生非法坐标
+  resolveMotionInto(
+    MOTION,
+    guard.x,
+    guard.y,
+    guard.x - task.towX * ESCORT.TOW_OFFSET_PX,
+    guard.y - task.towY * ESCORT.TOW_OFFSET_PX,
+  );
+  target.x = MOTION.x;
+  target.y = MOTION.y;
   target.lastMoveAt = now;
   target.applyState(
     directionOf(guard.x - target.x, guard.y - target.y, target.direction),

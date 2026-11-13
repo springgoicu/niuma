@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   DEFAULT_APPEARANCE,
   DIRECTION,
+  ENTITY_ROLE_GUARD,
   JAIL_ANCHORS,
   JAIL_PHASE,
   OpCode,
@@ -301,7 +302,7 @@ describe('打人触发执法（ADR-0074）', () => {
     expect(h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.AssaultWarn)).toHaveLength(1);
   });
 
-  it('打 NPC 不计数：只有真人之间才算动手', () => {
+  it('打普通同事不计数：只有真人与保安才进入执法', () => {
     const h = setup();
     const npc = h.world.createNpc('同事', DEFAULT_APPEARANCE.cow, 4_300, 4_300)!;
     hit(h, npc.id, 1_000);
@@ -310,6 +311,51 @@ describe('打人触发执法（ADR-0074）', () => {
 
     expect(h.dispatched).toEqual([]);
     expect(h.notices).toEqual([]);
+  });
+
+  it('袭警：打保安一次立即建案，只通播打人提示，不发打人警告', () => {
+    const h = setup();
+    const guard = h.world.createNpc(
+      '园区保安',
+      DEFAULT_APPEARANCE.cow,
+      4_300,
+      4_300,
+      '',
+      Date.now(),
+      undefined,
+      ENTITY_ROLE_GUARD,
+    )!;
+    expect(guard.role).toBe(ENTITY_ROLE_GUARD);
+
+    hit(h, guard.id, 1_000);
+
+    expect(h.dispatched).toEqual([h.player.id]);
+    expect(phasesOf(h, 11)).toContain(JAIL_PHASE.Dispatch);
+    const fight = h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.DetainedFight);
+    expect(fight.map((entry) => entry.wsId)).toEqual([12]);
+    expect(fight[0]!.packet.text).toContain('不许动手');
+    expect(h.notices.some((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.AssaultWarn)).toBe(false);
+  });
+
+  it('袭警后押送途中再打保安不重复建案', () => {
+    const h = setup();
+    const guard = h.world.createNpc(
+      '园区保安',
+      DEFAULT_APPEARANCE.cow,
+      4_300,
+      4_300,
+      '',
+      Date.now(),
+      undefined,
+      ENTITY_ROLE_GUARD,
+    )!;
+
+    hit(h, guard.id, 1_000);
+    expect(h.dispatched).toHaveLength(1);
+
+    hit(h, guard.id, 2_000);
+
+    expect(h.dispatched).toHaveLength(1);
   });
 
   it('已在押送流程里的人不再重复建案', () => {

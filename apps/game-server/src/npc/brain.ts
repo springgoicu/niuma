@@ -43,6 +43,11 @@ export interface EscortTask {
   lastTargetY: number;
   /** 本阶段开始时刻：追击 / 拖行各自计时，超时即中止 */
   startedAt: number;
+  /**
+   * 拖行截止时刻：`beginDrag` 按实际路线长度与拖行速度派生（ADR-0080）。
+   * 0 表示还没进入拖行，不能当成「立即超时」。
+   */
+  dragDeadlineAt: number;
   /** 拖行时目标在保安身后的方向（单位向量） */
   towX: number;
   towY: number;
