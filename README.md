@@ -16,7 +16,7 @@
 |---|---|
 | Monorepo | pnpm 10 + Turborepo 2 + TypeScript 5（strict） |
 | Web | Next.js 15 App Router · React 19 · Tailwind CSS v4 · Zustand 5 |
-| 渲染 | PixiJS 8（WebGPU 优先，自动回落 WebGL2）· bitecs 0.4（SoA + TypedArray） |
+| 渲染 | PixiJS 8（默认 WebGL2，`?gpu=webgpu` 灰度 WebGPU）· bitecs 0.4（SoA + TypedArray） |
 | 美术 | 程序化生成 64×64 分层像素图集，34 列帧预算（走 6 拍 / 待机呼吸 + 眨眼 / 坐躺 / 跳 / 站坐躺三套发泄 / 站坐躺三套挥手） |
 | 服务 | Bun `Bun.serve` WebSocket（内部即 uWebSockets）· 20Hz 固定 Tick |
 | 协议 | 手写二进制帧，移动包固定 **8 字节**；无 JSON、无轮询 |
@@ -391,7 +391,7 @@ docs/deploy-multi-park.md 多园区部署手册（1…N 台）：角色分配、
   `SharedArrayBuffer`（零消息），否则退化成定长消息，引擎侧读写代码不变
 - 低频事件才走消息：stats 2Hz、工牌 2Hz（小地图仍 4Hz）、落点回执 2s；聊天、状态、提示都是事件驱动
 - 灰度开关：`?render=main` 强制回主线程（跑同一份引擎）、`?render=worker` 强制 Worker；
-  `?gpu=webgl` 跳过 WebGPU 首选项，用于定位 Worker 内的后端回归
+  `?gpu=webgpu` 打开 WebGPU（默认 WebGL2，理由与回滚路径见 ADR-0071）
 
 **走路**
 

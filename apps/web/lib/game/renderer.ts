@@ -72,6 +72,10 @@ import {
   worldCssPerTexel,
   type PixelMetrics,
 } from './pixel-scale';
+import {
+  resolveGpuPreference,
+  type GpuPreference,
+} from './runtime/render-mode';
 import { SortLayer } from './sort-layer';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
@@ -576,8 +580,8 @@ export interface RendererInit {
   search: string;
   /** 字体就绪后再烘文字纹理：主线程等 `document.fonts`，Worker 等自己注册的 FontFace */
   fontsReady(): Promise<void>;
-  /** 强制渲染后端：`?gpu=webgl` 用于线上定位 WebGPU 回归 */
-  gpu?: 'webgpu' | 'webgl';
+  /** 宿主注入的后端：缺省按查询串解析，最终落到 `webgl`（ADR-0071） */
+  gpu?: GpuPreference;
   /** 弹幕偏好：宿主从 localStorage 读出后注入，渲染线程自己碰不到存储 */
   danmaku?: DanmakuPrefs;
 }
@@ -793,8 +797,8 @@ export class GameRenderer {
     const dpr = normalizeDpr(options.dpr);
     const params = new URLSearchParams(options.search);
     const zoom = readCssPerTexel(options.search);
-    // `?gpu=webgl` 强制走 WebGL2：Worker 内 WebGPU 的回归定位开关
-    const preference = params.get('gpu') === 'webgl' ? 'webgl' : options.gpu ?? 'webgpu';
+    // 后端只判定一次：默认 WebGL2，`?gpu=webgpu` 才开 WebGPU（ADR-0071）
+    const preference = resolveGpuPreference(options.search, options.gpu);
     this.cssPerTexel = zoom.value;
     this.zoomLocked = zoom.overridden;
     this.dpr = dpr;

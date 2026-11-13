@@ -16,6 +16,7 @@ import {
   seatById,
   seatPose,
   unpackState,
+  type Direction,
   type MovePacket,
 } from '@niuma/shared-types';
 import { SpatialGrid } from '../spatial/grid';
@@ -287,7 +288,7 @@ describe('发泄的边沿与限频', () => {
 });
 
 describe('发泄区老板', () => {
-  function bossFight(direction = DIRECTION.Up) {
+  function bossFight(direction: Direction = DIRECTION.Up) {
     const world = new World();
     const grid = new SpatialGrid();
     // 站在老板脚底南侧 12px：贴住脚底碰撞，向上出招正好踢到肚子

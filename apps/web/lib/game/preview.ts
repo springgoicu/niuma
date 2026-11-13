@@ -9,6 +9,7 @@ import { ponyMotion, type PonyPoseName } from './pony-motion';
 import { GroundFx, SHADOW_NORMAL } from './fx';
 import { pixelMetrics, readDpr, type PixelMetrics } from './pixel-scale';
 import { BASE_CSS_PER_TEXEL, layoutPreview } from './preview-layout';
+import { resolveGpuPreference } from './runtime/render-mode';
 
 /**
  * 捏人预览：单角色、整数倍放大，颜色拖动只改 tint，不重建纹理，
@@ -39,8 +40,10 @@ export class CreatorPreview {
 
   async init(host: HTMLElement, appearance: CharacterAppearance): Promise<void> {
     const dpr = readDpr();
+    // 捏人预览与大厅走同一个后端：默认 WebGL2，`?gpu=webgpu` 才开 WebGPU（ADR-0071）
+    const preference = resolveGpuPreference(window.location.search);
     await this.app.init({
-      preference: 'webgpu',
+      preference,
       backgroundAlpha: 0,
       antialias: false,
       roundPixels: true,

@@ -42,7 +42,8 @@ export type AudioEvent =
 export interface EngineEnv {
   /**
    * 页面查询串。`?zoom` / `?flat` / `?light` / `?bands` / `?season` / `?snow` /
-   * `?gpu` 这些灰度开关都从它解析——Worker 里没有 `window.location`。
+   * `?gpu=webgpu` 这些灰度开关都从它解析——Worker 里没有 `window.location`。
+   * 后端默认 WebGL2，WebGPU 只作为显式开关保留（ADR-0071）。
    */
   readonly search: string;
   /** 已经建好的渲染目标：主线程是 `<canvas>`，Worker 是移交进来的 `OffscreenCanvas` */

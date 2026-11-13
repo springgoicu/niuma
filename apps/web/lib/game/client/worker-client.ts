@@ -17,7 +17,7 @@ import { applyAudioEvent } from '../runtime/audio-sink';
 import { classifyBootMessage } from '../runtime/boot-gate';
 import { createControlWriter, type ControlWriter, type SnapshotPatch } from '../runtime/control-channel';
 import type { SessionProfile } from '../runtime/engine-env';
-import { markRenderFallback } from '../runtime/render-mode';
+import { markRenderFallback, reloadForRenderFatal } from '../runtime/render-mode';
 import type { MainToWorker, WorkerToMain } from '../runtime/worker-protocol';
 import { saveSnapshot } from '../snapshot';
 import type { GameClient, GameClientOptions } from './game-client';
@@ -64,6 +64,8 @@ export class WorkerGameClient implements GameClient {
   /** 启动失败后接管全部方法的门面；本对象继续保留，React 侧的 ref 无需重建 */
   private delegate: GameClient | null = null;
   private lastFatal = '';
+  /** fatal 只处理一次：`worker.onerror` 与 fatal 消息可能同帧各来一条 */
+  private fatalHandled = false;
   /** 启动期发现图集版本不一致：本次不回退主线程，直接换图 */
   private staleAssets = false;
   private writer: ControlWriter | null = null;
@@ -89,6 +91,7 @@ export class WorkerGameClient implements GameClient {
     // 已经回退过：后续 start 直接交给主线程实现，不再碰 Worker
     if (this.delegate) return this.delegate.start(host, profile, resume);
     this.lastFatal = '';
+    this.fatalHandled = false;
     this.staleAssets = false;
 
     // 每次会话新建画布：`transferControlToOffscreen()` 是一次性的，
@@ -334,10 +337,29 @@ export class WorkerGameClient implements GameClient {
     }
   }
 
-  /** 运行中崩溃：本次会话记一笔（刷新后直接走主线程），并把真实原因显示出来 */
+  /**
+   * 运行中崩溃：先换后端重载，再退主线程，玩家不需要手动刷新。
+   *
+   * 第一级：带 `gpu=webgl` 受控重载一次（ADR-0071）。多数崩溃是 WebGPU
+   * 上传画布快照失败，换后端重走一遍启动链路就能真的恢复；重载前先把最近
+   * 一次落点落盘，回来后由 `resume` 接着原位站着。
+   *
+   * 第二级：受控重载被守卫拦下（说明 WebGL2 也崩、或环境根本起不来 Worker），
+   * 这时才记一笔「别再用 Worker」，下一次刷新走主线程渲染——至少还能玩。
+   * 反过来在第一次就记，会把本来能救回来的会话白白降级成主线程渲染。
+   */
   private onWorkerFatal(detail: string): void {
-    markRenderFallback();
     console.error('[game] 渲染线程异常', detail);
+    if (this.fatalHandled) return;
+    this.fatalHandled = true;
+    this.persistSnapshot();
+    if (reloadForRenderFatal()) {
+      // 页面马上要换掉，这条提示只是一闪而过的过渡态
+      this.teardownWorker();
+      this.options.callbacks.onStatus('error', '渲染异常，正在切换渲染后端…');
+      return;
+    }
+    markRenderFallback();
     const brief = detail.split('\n')[0]?.slice(0, 120) || '渲染线程异常';
     this.options.callbacks.onStatus('error', `${brief}（刷新后自动改用主线程）`);
   }
