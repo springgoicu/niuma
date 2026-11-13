@@ -189,6 +189,9 @@ function beginDrag(agent: NpcAgent, task: EscortTask, now: number): void {
   // 两段路的接缝点只保留一份，避免在门口原地“点一下头”
   task.path = [...toDoor, ...toDrop.slice(1)];
   task.index = 0;
+  // 阶段切换必须放在算到路线之后：算不出路就保持空路径，由调用方 abort('stuck')。
+  // 漏掉这一行时每 Tick 都会重新进入 hold 重算路线，保安与被押者会一直原地不动。
+  task.stage = 'drag';
   task.startedAt = now;
   const vector = DIRECTION_VECTOR[guard.direction] ?? DIRECTION_VECTOR[DIRECTION.Down]!;
   task.towX = vector.x;
