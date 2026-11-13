@@ -3,26 +3,25 @@ import { ByteReader, ByteWriter } from './protocol';
 import { OpCode } from './types';
 
 /**
- * 牛马榜：中央公告栏的按需快照（ADR-0054）。
+ * 牛马榜：中央公告栏的按需快照（ADR-0054 / 新 ADR 当日化）。
  *
  * 榜单只在玩家靠近公告栏、主动打开面板时拉取，不进 Tick 热路径；
- * 服务端在内存里按六个指标排序后回最多 `BOARD_TOP_N` 条，离线即离榜。
+ * 服务端在内存里按五个「今日」指标排序后回最多 `BOARD_TOP_N` 条，离线即离榜。
+ * 指标编号与旧版 1–6 完全错开：滚动发布期间旧标签绝不会读到新语义。
  * 本文件是双端唯一契约：指标编号、包体形状、上限与编解码都只写这一份。
  */
 
 export const BOARD_METRIC = {
-  /** 本次连续在岗秒数：服务端 joinedAt 口径，不可伪造 */
-  Duty: 1,
-  /** 本周累计工时（分钟）：本人自报 + 本次会话增量 */
-  Week: 2,
-  /** 坐下摸鱼次数：本人自报 */
-  Slack: 3,
-  /** 成功击倒他人次数：本人自报 */
-  Knockdown: 4,
-  /** 累计搬砖步数：本人自报 */
-  Steps: 5,
-  /** 收到的工牌点赞数：服务端内存计数（ADR-0057） */
-  Likes: 6,
+  /** 今日累计在岗分钟：本人浏览器本地考勤 */
+  TodayMinutes: 7,
+  /** 今日坐在马桶座位上的分钟：本人浏览器本地考勤 */
+  TodayToilet: 8,
+  /** 今日成功击倒他人次数：本人自报 */
+  TodayKnockdown: 9,
+  /** 今日被他人击倒次数：本人自报 */
+  TodayVented: 10,
+  /** 今日搬砖步数：本人自报 */
+  TodaySteps: 11,
 } as const;
 
 export type BoardMetric = (typeof BOARD_METRIC)[keyof typeof BOARD_METRIC];
@@ -30,14 +29,13 @@ export type BoardMetric = (typeof BOARD_METRIC)[keyof typeof BOARD_METRIC];
 /** 0 表示一次拉全部指标；其余值对应单个 `BoardMetric` */
 export const BOARD_METRIC_ALL = 0;
 
-/** 六个指标各回一条包，客户端按 metric 归档 */
+/** 五个今日指标各回一条包，客户端按 metric 归档 */
 export const BOARD_METRIC_LIST: readonly BoardMetric[] = [
-  BOARD_METRIC.Duty,
-  BOARD_METRIC.Week,
-  BOARD_METRIC.Slack,
-  BOARD_METRIC.Knockdown,
-  BOARD_METRIC.Steps,
-  BOARD_METRIC.Likes,
+  BOARD_METRIC.TodayMinutes,
+  BOARD_METRIC.TodayToilet,
+  BOARD_METRIC.TodayKnockdown,
+  BOARD_METRIC.TodayVented,
+  BOARD_METRIC.TodaySteps,
 ];
 
 /** 单榜条数上限：前十名足够撑起公告栏，也把单包压在 600 字节以内 */
@@ -88,12 +86,11 @@ export interface BoardPacket {
 
 export function isBoardMetric(value: number): value is BoardMetric {
   return (
-    value === BOARD_METRIC.Duty ||
-    value === BOARD_METRIC.Week ||
-    value === BOARD_METRIC.Slack ||
-    value === BOARD_METRIC.Knockdown ||
-    value === BOARD_METRIC.Steps ||
-    value === BOARD_METRIC.Likes
+    value === BOARD_METRIC.TodayMinutes ||
+    value === BOARD_METRIC.TodayToilet ||
+    value === BOARD_METRIC.TodayKnockdown ||
+    value === BOARD_METRIC.TodayVented ||
+    value === BOARD_METRIC.TodaySteps
   );
 }
 
@@ -112,7 +109,7 @@ export function clampBoardName(name: string): Uint8Array {
   return bytes.subarray(0, end);
 }
 
-/** 查询包：`[op][metric u8]`，metric=0 拉全部六个指标 */
+/** 查询包：`[op][metric u8]`，metric=0 拉全部五个今日指标 */
 export function encodeBoardRequest(metric: BoardMetric | typeof BOARD_METRIC_ALL = BOARD_METRIC_ALL): Uint8Array {
   return new Uint8Array([OpCode.C2S_BOARD, metric & 0xff]);
 }

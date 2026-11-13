@@ -1,42 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight, Boxes, Database, EyeOff, Gauge, MousePointerClick, Network } from 'lucide-react';
-import { CharacterSprite, type SiteSpecies } from './CharacterSprite';
-
-interface SpeciesProfile {
-  key: SiteSpecies;
-  name: string;
-  latin: string;
-  color: string;
-  blurb: string;
-  stats: ReadonlyArray<readonly [string, number]>;
-}
-
-const SPECIES: SpeciesProfile[] = [
-  {
-    key: 'cow',
-    name: '牛',
-    latin: 'BOS TAURUS · 稳定输出型',
-    color: '#f3efe4',
-    blurb: '把稳定当美德。你的产能曲线像心电图一样平，但从不掉线。加班时你会安静地反刍，然后继续。',
-    stats: [
-      ['产能', 92],
-      ['摸鱼', 38],
-      ['咖啡耐受', 88],
-    ] as const,
-  },
-  {
-    key: 'horse',
-    name: '马',
-    latin: 'EQUUS FERUS · 高速迭代型',
-    color: '#a96c3c',
-    blurb: '跑得快，也想得多。你总在赶下一个会，并且真心相信这次能准点下班。鬃毛是你最后的体面。',
-    stats: [
-      ['产能', 76],
-      ['摸鱼', 64],
-      ['咖啡耐受', 55],
-    ] as const,
-  },
-];
+import { CharacterSprite } from './CharacterSprite';
+import { SPECIES } from './species';
 
 const BENEFITS = [
   '免费加班餐',
@@ -101,11 +66,19 @@ export function SpeciesSection() {
 
         <div className="mt-12 grid gap-6 lg:grid-cols-2">
           {SPECIES.map((species) => (
-            <article
+            <Link
               key={species.key}
-              className="panel group relative overflow-hidden p-7 transition-colors duration-150 hover:border-mint-400/60"
+              href={`/create?species=${species.key}`}
+              aria-label={`选择${species.name}，进入捏人界面`}
+              className="panel group relative flex flex-col overflow-hidden p-7 transition-colors duration-150 hover:border-mint-400/60 focus-visible:border-mint-400/60"
             >
-              <div className="flex items-start justify-between gap-6">
+              {/* 悬停时整卡泛起一层极淡的薄荷底：底色变化由 gradient 承担，不能换成纯色 */}
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 bg-mint-400/0 transition-colors duration-150 group-hover:bg-mint-400/[0.035] group-focus-visible:bg-mint-400/[0.035]"
+              />
+
+              <div className="relative flex items-start justify-between gap-6">
                 <div>
                   <span className="tag">{species.latin}</span>
                   <h3 className="mt-4 font-display text-6xl font-bold leading-none text-mist-100">
@@ -114,13 +87,13 @@ export function SpeciesSection() {
                 </div>
                 <div className="relative shrink-0 transition-transform duration-300 group-hover:-translate-y-1">
                   {/* 与首屏同一张图、同一套整数倍放大，只有尺寸不同 */}
-                  <CharacterSprite species={species.key} size={128} alt={`${species.name}的默认外观`} />
+                  <CharacterSprite species={species.key} size={128} alt="" />
                 </div>
               </div>
 
-              <p className="mt-6 max-w-md text-sm leading-relaxed text-mist-300">{species.blurb}</p>
+              <p className="relative mt-6 max-w-md text-sm leading-relaxed text-mist-300">{species.blurb}</p>
 
-              <dl className="mt-7 space-y-3">
+              <dl className="relative mt-7 space-y-3">
                 {species.stats.map(([label, value]) => (
                   <div key={label} className="flex items-center gap-3">
                     <dt className="w-20 shrink-0 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-500">
@@ -139,14 +112,20 @@ export function SpeciesSection() {
                 ))}
               </dl>
 
-              <Link
-                href={`/create?species=${species.key}`}
-                className="mt-8 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-mint-400 transition-colors hover:text-lime-400"
-              >
-                以{species.name}的身份入职
-                <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
-            </article>
+              {/* 卡内不再放第二个链接：整卡就是入口，这里只做提示 */}
+              <div className="relative mt-auto flex items-center justify-between gap-4 pt-8">
+                <span className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-mint-400 transition-colors duration-150 group-hover:text-lime-400 group-focus-visible:text-lime-400">
+                  以{species.name}的身份入职
+                  <ArrowRight
+                    className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-1"
+                    aria-hidden
+                  />
+                </span>
+                <span className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-mist-500 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-hover:text-mint-400 group-focus-visible:opacity-100 group-focus-visible:text-mint-400 sm:block">
+                  进入捏人
+                </span>
+              </div>
+            </Link>
           ))}
         </div>
       </div>

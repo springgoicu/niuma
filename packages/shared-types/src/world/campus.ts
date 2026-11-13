@@ -280,19 +280,6 @@ export const THEATER_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = THEATER_R
   THEATER_SEAT_XS.map((x) => ({ x, y, facing: DIRECTION.Up, kind: 'cinema' as const })),
 );
 
-/**
- * 导览目标的到达点（ADR-0040）：进门后的可站立空地。
- *
- * 四个房间的几何中心分别是工位桌、会议桌、上下铺与洗手池，
- * 不能直接当寻路终点；这里按「房间 + 偏移」手写落点，
- * 由 `nav-arrival` 测试断言不撞任何碰撞体。
- */
-export const NAV_ARRIVALS = {
-  meeting: { x: MEETING_ROOM.x + 360, y: MEETING_ROOM.y + 314 },
-  restroom: { x: RESTROOM.x + 230, y: RESTROOM.y + 70 },
-  lounge: { x: LOUNGE.x + 230, y: LOUNGE.y + 70 },
-  workroom: { x: WORKROOM.x + 230, y: WORKROOM.y + 294 },
-} as const;
 
 /** 墙厚：碰撞与视觉共用，玩家半径 9 贴墙时不会穿过 10px 墙体 */
 export const WALL_THICKNESS = 10;

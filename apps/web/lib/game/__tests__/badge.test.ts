@@ -1,37 +1,15 @@
 import { describe, expect, it } from 'bun:test';
-import { EMPTY_CAREER, POSE } from '@niuma/shared-types';
+import { POSE } from '@niuma/shared-types';
 import {
   PICK_HALF_WIDTH,
   PICK_TOP,
   departmentOf,
-  formatOnline,
+  employeeNumber,
   pickCharacter,
   poseLabel,
   seatLabel,
   shiftOf,
-  withCareerDelta,
 } from '../badge';
-
-describe('online duration formatting', () => {
-  it('pads hours, minutes and seconds', () => {
-    expect(formatOnline(0)).toBe('00:00:00');
-    expect(formatOnline(59)).toBe('00:00:59');
-    expect(formatOnline(3661)).toBe('01:01:01');
-    expect(formatOnline(360000)).toBe('100:00:00');
-  });
-
-  it('clamps negatives and floors fractions', () => {
-    expect(formatOnline(-30)).toBe('00:00:00');
-    expect(formatOnline(61.9)).toBe('00:01:01');
-  });
-
-  it('shows a placeholder instead of pretending to be online', () => {
-    expect(formatOnline(null)).toBe('--:--');
-    expect(formatOnline(undefined)).toBe('--:--');
-    expect(formatOnline(Number.NaN)).toBe('--:--');
-    expect(formatOnline(Number.POSITIVE_INFINITY)).toBe('--:--');
-  });
-});
 
 describe('badge labels', () => {
   it('names the current pose, splitting seated and ground sitting', () => {
@@ -71,26 +49,16 @@ describe('department and shift', () => {
     expect(first.length).toBeGreaterThan(0);
     expect(second.length).toBeGreaterThan(0);
   });
-});
 
-describe('career delta', () => {
-  it('adds only the session minutes after the reported snapshot', () => {
-    const career = {
-      ...EMPTY_CAREER,
-      totalOnlineMinutes: 100,
-      todayMinutes: 20,
-      weekMinutes: 40,
-      reportedOnlineSec: 60,
-    };
-    const next = withCareerDelta(career, 180);
-    expect(next.totalOnlineMinutes).toBe(102);
-    expect(next.todayMinutes).toBe(22);
-    expect(next.weekMinutes).toBe(42);
-  });
+  it('同名保安按实体 id 区分工牌，不传 salt 时保持固定派生', () => {
+    const ids = [1, 2, 3];
+    const numbers = ids.map((id) => employeeNumber('园区保安', id));
+    expect(new Set(numbers).size).toBe(ids.length);
 
-  it('never subtracts when the clock or snapshot is stale', () => {
-    const career = { ...EMPTY_CAREER, weekMinutes: 40, reportedOnlineSec: 120 };
-    expect(withCareerDelta(career, 60)).toBe(career);
+    // 真人不传 salt：同一昵称仍是同一张工牌
+    expect(employeeNumber('夜班实习生')).toBe(employeeNumber('夜班实习生', undefined));
+    expect(departmentOf('夜班实习生')).toBe(departmentOf('夜班实习生', undefined));
+    expect(shiftOf('夜班实习生')).toBe(shiftOf('夜班实习生', undefined));
   });
 });
 

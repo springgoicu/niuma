@@ -6,16 +6,12 @@ import {
   CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
   DEFAULT_APPEARANCE,
-  EMPTY_CAREER,
   GRAZE_COOLDOWN_MS,
   MOVE_SPEED,
   NAV_TARGETS,
-  PARK_SLIDE,
   QUEUE_REJECT_REASON,
   SHRINE_ALTAR,
   SIT_RANGE,
-  SLIDE_COOLDOWN_MS,
-  SLIDE_PHASE,
   STATE_BITS,
   TEA_STATION,
   SYSTEM_NOTICE_KIND,
@@ -35,8 +31,6 @@ import {
   resolveMotionInto,
   seatById,
   seatPose,
-  slideById,
-  slidePointInto,
   unpackState,
   type BoardMetric,
   type BoardPacket,
@@ -55,8 +49,6 @@ import {
   type SeatInstance,
   type SeatKind,
   type SeatStateEntry,
-  type SlideEventPacket,
-  type SlideSpec,
   type SpawnPacket,
   type Species,
   type SyncFormat,
@@ -65,9 +57,8 @@ import {
   type WelcomePacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
-import { withCareerDelta, type BoardEntry, type PlayerBadge } from './badge';
+import { type BoardEntry, type PlayerBadge } from './badge';
 import { ventOutcome } from './vent-outcome';
-import { advanceOnDuty } from './duty';
 import { toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { HINT } from './hint-copy';
@@ -86,9 +77,7 @@ import {
   isNearBulletin,
   isNearRankBoard,
   isNearShrine,
-  isNearSlide,
   isNearTeaStation,
-  isSlideHit,
   nearestInteractivePropInto,
   pickGrazeLine,
   pickLine,
@@ -141,11 +130,9 @@ export interface SessionStats {
   backend: string;
   /** 本地角色所在园区区域名；未入场为空串 */
   region: string;
-  /** 本地会话已在线秒数；未入场为 0，断线时 UI 显示 --:-- */
-  onlineSec: number;
   /** 本地玩家收到的工牌点赞数：本人档案用，随 2Hz 推送 */
   likes: number;
-  /** 视野内本周工时榜（最多 5 条） */
+  /** 视野内今日工时榜（最多 5 条） */
   board: BoardEntry[];
   /** 本地玩家在视野榜里的名次；未上榜为 null */
   rank: number | null;
@@ -277,18 +264,8 @@ export class GameSession {
   private readonly speciesById = new Map<number, Species>();
   /** netId → 常驻状态；空串表示没设置 */
   private readonly statusById = new Map<number, string>();
-  /**
-   * netId → 入场包携带的已在线秒数 + 本地接收时刻。
-   * 用「收到时的秒数 + 本地时钟增量」而不是服务端绝对时间，规避两端时钟偏差。
-   */
-  private readonly onlineById = new Map<number, { sec: number; at: number }>();
-  /** 本地入场成功时刻（performance.now）：自己的在线时长从 WELCOME 起算 */
-  private welcomeAt = 0;
-  /**
-   * 断线那一刻的在岗秒数（ADR-0060）：只在第一次 onClose 取一次，
-   * 重连反复失败时不会把离线时间也累计进去；下次 WELCOME 后归零。
-   */
-  private reconnectCarrySec = 0;
+  /** netId → 实体角色（0 普通 / 1 保安）：同名保安靠 role + id 区分工牌 */
+  private readonly roleById = new Map<number, number>();
   /** 座位占用镜像：seatId → 占用者的 netId，以服务端广播为准 */
   private readonly seatOwner = new Map<number, number>();
   /** 反向镜像：netId → seatId，用于把入座抬升算到正确的角色上（ADR-0032） */
@@ -306,15 +283,6 @@ export class GameSession {
   private interactCount = 0;
   /** 设施查询输出槽：F 键在按键栈里调用，不为一次查询造字面量 */
   private readonly interactTarget: InteractiveTarget = { kind: 'vending', x: 0, y: 0 };
-  /**
-   * 本地滑行状态：服务端 S2C_SLIDE 开始事件到达后才进入，
-   * 本地按同一份折线做 60fps 插值；结束回执或本地计时到点都会落回落点。
-   */
-  private ride: { slideId: number; startedAt: number; endsAt: number } | null = null;
-  /** 滑梯请求冷却：与服务端 SLIDE_COOLDOWN_MS 同一把尺子 */
-  private slideRequestAt = 0;
-  /** 滑行路径的复用输出槽：每帧写一次，不建对象 */
-  private readonly ridePoint = { x: 0, y: 0 };
   /** 咀嚼节流与台词轮转：本地与服务端共用 500ms 口径（ADR-0048） */
   private grazeAt = 0;
   private grazeCount = 0;
@@ -341,8 +309,6 @@ export class GameSession {
   private systemSeq = 0;
   /** 园区公告只播一次：断线重连重建世界时不再重复刷屏 */
   private renovationNoticed = false;
-  /** 下一个该播报的在岗档位下标；每次 WELCOME 归零 */
-  private onDutyCursor = 0;
   /**
    * 当前工牌名：重连后 `handleWelcome` 重建本地角色时要用它。
    * 与状态同理，不能读 `start()` 的 profile 闭包——游戏内改过名字就是旧值。
@@ -369,7 +335,7 @@ export class GameSession {
   private readonly likedTargets = new Set<number>();
   /** 本地玩家收到的赞：随 2Hz stats 推给本人档案 */
   private localLikes = 0;
-  /** 视野内本周工时榜与名次：缓存 2 秒，不在 20Hz / 4Hz 推送里重复排序 */
+  /** 视野内今日工时榜与名次：缓存 2 秒，不在 20Hz / 4Hz 推送里重复排序 */
   private careerBoard: BoardEntry[] = [];
   private readonly rankById = new Map<number, number>();
   private boardAt = 0;
@@ -435,12 +401,6 @@ export class GameSession {
       // 断线时先落盘并刷新 resume：重连后服务端能把人放回断开处，
       // 同时保留最后一份排队快照，面板转为「重连中」而不是把人踢回空白页
       onClose: () => {
-        // 断线续算（ADR-0060）：只在第一次断开时取基准。
-        // 重连反复失败会反复触发 onClose，每次都取的话会把离线时间也算进在岗。
-        if (this.reconnectCarrySec === 0) {
-          this.reconnectCarrySec = this.onlineSecOf(this.localId);
-          this.net?.setSessionSec(this.reconnectCarrySec);
-        }
         this.persistNow();
         this.callbacks.onStatus('offline', '连接中断，正在重连');
         // 部署会重启游戏服：断线即查版本，避免带着旧地图重连后撞上空气墙。
@@ -499,7 +459,6 @@ export class GameSession {
       onSeatState: (entries) => this.handleSeatState(entries),
       onGraze: (id) => this.handleGraze(id),
       onVent: (packet) => this.handleVent(packet),
-      onSlide: (packet) => this.handleSlide(packet),
       onPing: (rtt) => {
         this.ping = rtt;
         this.jitter.onRtt(rtt);
@@ -530,17 +489,6 @@ export class GameSession {
     this.snapshotAt = 0;
     // 换连接后 tick 基准与接收时钟都变了：只清传输偏移，RTT 样本保留（ADR-0048）
     this.jitter.reset();
-    // 会话续算（ADR-0060）：服务端回显它采信的秒数，本地把走秒基准往前挪，
-    // 断线重连后接着算而不是归零；旧服务端不回显时缺席，退化成「重连归零」。
-    const carrySec = Math.max(0, Math.floor(packet.sessionSec ?? 0));
-    this.welcomeAt = performance.now() - carrySec * 1000;
-    // 本地摘要的增量基线必须与服务端写进 career 的值一致，
-    // 否则视野榜会把上一段会话的工时再加一遍。
-    if (this.localCareer) this.localCareer = { ...this.localCareer, reportedOnlineSec: carrySec };
-    // 在岗提醒从续算后的位置继续：重连回来不该把「在岗 8 小时」再播一遍
-    this.onDutyCursor = advanceOnDuty(carrySec, 0).cursor;
-    // 新会话已经开始计时，下一次断线要重新取基准
-    this.reconnectCarrySec = 0;
     this.names.set(packet.entityId, this.name);
     this.speciesById.set(packet.entityId, profile.appearance.species);
     const x = dequantizeCoord(packet.x);
@@ -571,11 +519,10 @@ export class GameSession {
     this.speciesById.set(id, appearance.species);
     this.appearanceById.set(id, appearance);
     this.statusById.set(id, status ?? '');
+    this.roleById.set(id, packet.role ?? 0);
     if (packet.career) this.careerById.set(id, packet.career);
     if (packet.likes !== undefined) this.likesById.set(id, packet.likes);
     this.boardDirty = true;
-    // 旧服务端不带在线秒数：从 0 起算，退化为「首次看到」，不显示假的长时长
-    this.onlineById.set(id, { sec: packet.onlineSec ?? 0, at: performance.now() });
     const x = dequantizeCoord(packet.x);
     const y = dequantizeCoord(packet.y);
     const eid = this.ecs.spawn(id, x, y);
@@ -654,7 +601,7 @@ export class GameSession {
     this.likesById.delete(id);
     this.likedTargets.delete(id);
     this.statusById.delete(id);
-    this.onlineById.delete(id);
+    this.roleById.delete(id);
     this.entitySeat.delete(id);
     this.boardDirty = true;
     this.ecs.despawn(id);
@@ -671,7 +618,8 @@ export class GameSession {
   /**
    * 更新并上报本地考勤摘要。
    *
-   * 宿主在入场后、geo 就绪后与每 60 秒调用一次；服务端会把它转给正在围观的人。
+   * 宿主在入场后、geo 就绪后与每 20 秒调用一次；服务端会把它转给正在围观的人。
+   * 摘要只含今日字段，部署重启后由下一次上报自动重建，不依赖服务端会话。
    */
   updateCareer(career: CareerSummary): void {
     this.localCareer = career;
@@ -715,110 +663,8 @@ export class GameSession {
   }
 
   /**
-   * 请求滑一次滑梯（本轮新增）。
-   *
-   * 只发意图：服务端校验距离 / 冷却 / 站立且未入座之后，才把角色放到塔顶。
-   * 客户端这道先做距离门与 1.2s 冷却，站远了或连点不会白发包。
-   */
-  rideSlide(slideId: number): void {
-    if (this.ride) return;
-    if (this.elapsed < this.slideRequestAt) return;
-    const eid = this.ecs.get(this.localId);
-    if (!eid) return;
-    if (!isNearSlide(Position.x[eid]!, Position.y[eid]!)) {
-      this.showHint('走近一点再滑');
-      return;
-    }
-    this.slideRequestAt = this.elapsed + SLIDE_COOLDOWN_MS;
-    this.net?.sendSlide(slideId);
-  }
-
-  /**
-   * 滑行事件：位置仍然由 20Hz 同步包推进，这条只负责「锁定坐姿 + 音效 + 落点」。
-   * 本人收到开始事件后进入本地插值；结束事件或本地计时到点都会回到站立。
-   */
-  private handleSlide(packet: SlideEventPacket): void {
-    const slide = slideById(packet.slideId);
-    if (!slide) return;
-    const local = packet.entityId === this.localId;
-    if (packet.phase === SLIDE_PHASE.Start) {
-      this.emitAudio({ kind: 'slide', x: slide.top.x, y: slide.top.y, local, phase: SLIDE_PHASE.Start });
-      this.renderer.showBubble(packet.entityId, '咻——');
-      if (local) this.beginRide(slide);
-      return;
-    }
-    if (local) {
-      this.endRide();
-    } else {
-      this.emitAudio({
-        kind: 'slide',
-        x: slide.landing.x,
-        y: slide.landing.y,
-        local: false,
-        phase: SLIDE_PHASE.Finish,
-      });
-    }
-  }
-
-  /** 本地进入滑行：锁输入、吸附塔顶、坐姿，并把上行基准标成「从未发过」 */
-  private beginRide(slide: SlideSpec): void {
-    const eid = this.ecs.get(this.localId);
-    if (!eid || this.ride) return;
-    this.cancelNavigation();
-    this.ride = { slideId: slide.id, startedAt: this.elapsed, endsAt: this.elapsed + slide.rideMs };
-    Position.x[eid] = slide.top.x;
-    Position.y[eid] = slide.top.y;
-    Motion.direction[eid] = slidePointInto(this.ridePoint, slide.id, 0);
-    this.setLocalPose(eid, POSE.Sit);
-    Motion.moving[eid] = 0;
-    this.clearOverlays(eid);
-    this.lastSentMove.x = NEVER_SENT;
-    this.lastSentMove.y = NEVER_SENT;
-    this.lastSentMove.state = NEVER_SENT;
-  }
-
-  /** 每帧沿共享折线推进：与服务端同一份 `slidePointInto`，落点完全一致 */
-  private updateRide(eid: number): void {
-    const ride = this.ride;
-    if (!ride) return;
-    const slide = slideById(ride.slideId);
-    if (!slide || this.elapsed >= ride.endsAt) {
-      this.endRide();
-      return;
-    }
-    const t = (this.elapsed - ride.startedAt) / slide.rideMs;
-    Motion.direction[eid] = slidePointInto(this.ridePoint, ride.slideId, t);
-    Position.x[eid] = this.ridePoint.x;
-    Position.y[eid] = this.ridePoint.y;
-    this.setLocalPose(eid, POSE.Sit);
-    Motion.moving[eid] = 0;
-  }
-
-  /** 结束滑行：落到缓冲区、回站姿，并补一声落地音 */
-  private endRide(): void {
-    const ride = this.ride;
-    if (!ride) return;
-    const slide = slideById(ride.slideId);
-    this.ride = null;
-    const eid = this.ecs.get(this.localId);
-    if (!eid) return;
-    if (slide) {
-      Position.x[eid] = slide.landing.x;
-      Position.y[eid] = slide.landing.y;
-      this.emitAudio({
-        kind: 'slide',
-        x: slide.landing.x,
-        y: slide.landing.y,
-        local: true,
-        phase: SLIDE_PHASE.Finish,
-      });
-    }
-    this.setLocalPose(eid, POSE.Idle);
-    Motion.moving[eid] = 0;
-  }
-
-  /**
-   * 视野内本周工时榜。零持久化下只能统计当前在线且已上报的人；
+   * 视野内今日工时榜。零持久化下只能统计当前在线且已上报的人；
+   * 数值直接取摘要里的今日字段，不再叠加会话增量（那会让工时翻倍）。
    * 缓存 2 秒，避免 2Hz 的工牌推送每次都重新排序。
    */
   private ensureBoard(now = performance.now()): void {
@@ -829,10 +675,9 @@ export class GameSession {
     for (const [id, name] of this.names) {
       const career = id === this.localId ? this.localCareer : this.careerById.get(id);
       if (!career) continue;
-      const effective = withCareerDelta(career, this.onlineSecOf(id));
-      entries.push({ id, name, weekMinutes: effective.weekMinutes, self: id === this.localId });
+      entries.push({ id, name, todayMinutes: career.todayMinutes, self: id === this.localId });
     }
-    entries.sort((a, b) => b.weekMinutes - a.weekMinutes || a.id - b.id);
+    entries.sort((a, b) => b.todayMinutes - a.todayMinutes || a.id - b.id);
     this.rankById.clear();
     for (let index = 0; index < entries.length; index += 1) {
       this.rankById.set(entries[index]!.id, index + 1);
@@ -864,31 +709,10 @@ export class GameSession {
       return null;
     }
 
-    // 点人优先：站在滑梯上的人也应该能点开工牌，而不是被自己的滑梯请求抢走
+    // 点人优先：点谁就开谁的工牌
     const id = this.renderer.pickEntityAt(stageX, stageY);
     if (id !== null && id !== this.localId) return this.badgeOf(id);
-
-    // 滑梯：命中整块精灵矩形；距离不够只提示，不隔空发请求（服务端还会再判一次）
-    if (localEid && point && isSlideHit(point.x, point.y)) {
-      if (isNearSlide(Position.x[localEid]!, Position.y[localEid]!)) {
-        this.rideSlide(PARK_SLIDE.id);
-      } else {
-        this.showHint('走近一点再滑');
-      }
-      return null;
-    }
     return null;
-  }
-
-  /** 会话口径的已在线秒数：本地从 WELCOME 起算，远端在入场包秒数上叠加本地增量 */
-  private onlineSecOf(id: number): number {
-    if (id === this.localId) {
-      if (this.welcomeAt <= 0) return 0;
-      return Math.max(0, Math.floor((performance.now() - this.welcomeAt) / 1000));
-    }
-    const entry = this.onlineById.get(id);
-    if (!entry) return 0;
-    return entry.sec + Math.max(0, Math.floor((performance.now() - entry.at) / 1000));
   }
 
   /**
@@ -913,8 +737,8 @@ export class GameSession {
       species,
       appearance,
       status: local ? this.status : this.statusById.get(id) ?? '',
+      role: local ? 0 : this.roleById.get(id) ?? 0,
       region: regionAt(x, y),
-      onlineSec: this.onlineSecOf(id),
       pose: Motion.pose[eid] as Pose,
       moving: Motion.moving[eid] === 1,
       seated: seat !== undefined,
@@ -952,8 +776,6 @@ export class GameSession {
     const y = dequantizeCoord(qy);
 
     if (id === this.localId) {
-      // 滑行中以本地 60fps 折线为准：服务端同步有 20Hz + 网络延迟，跟它会被拉成锯齿
-      if (this.ride) return;
       const dx = x - Position.x[eid]!;
       const dy = y - Position.y[eid]!;
       // 移动中以本地预测为准，只在偏差超过合法延迟上限时一次性对齐（ADR-0021）。
@@ -1109,13 +931,6 @@ export class GameSession {
    */
   private updateSeatHint(eid: number): void {
     if (this.elapsed < this.hintUntil) return;
-    if (this.ride) {
-      if (this.seatHint !== '滑梯中…') {
-        this.seatHint = '滑梯中…';
-        this.callbacks.onHint('滑梯中…');
-      }
-      return;
-    }
     let hint: string | null = null;
     if (this.localSeat !== 0) {
       hint = '移动即可起身';
@@ -1134,7 +949,6 @@ export class GameSession {
       // 否则会出现「提示说续杯、按下去却在接水」
       else if (isNearShrine(x, y)) hint = HINT.shrine;
       else if (isNearTeaStation(x, y)) hint = HINT.tea;
-      else if (isNearSlide(x, y)) hint = HINT.slide;
       else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = HINT.interact;
     }
     if (hint === this.seatHint) return;
@@ -1240,20 +1054,6 @@ export class GameSession {
   }
 
   /**
-   * 在岗提醒：跟着 500ms 统计节拍检查一次，跨过一档播一条。
-   *
-   * 后台标签页会停掉渲染循环，恢复时可能一次跨过好几档——
-   * 只播最高的那一档，不补发一串过时提醒。
-   */
-  private checkOnDuty(onlineSec: number): void {
-    const tick = advanceOnDuty(onlineSec, this.onDutyCursor);
-    this.onDutyCursor = tick.cursor;
-    if (tick.minutes === 0) return;
-    const text = formatSystemNotice(SYSTEM_NOTICE_KIND.OnDuty, { minutes: tick.minutes });
-    if (text) this.pushSystemNotice(SYSTEM_NOTICE_KIND.OnDuty, text);
-  }
-
-  /**
    * 落盘当前本地状态。
    *
    * 调用点只有三处：2s 节流、页面隐藏 / 卸载、断线重连前。
@@ -1296,11 +1096,10 @@ export class GameSession {
     this.likedTargets.clear();
     this.localLikes = 0;
     this.statusById.clear();
-    this.onlineById.clear();
+    this.roleById.clear();
     this.rankById.clear();
     this.careerBoard = [];
     this.boardDirty = true;
-    this.welcomeAt = 0;
     for (const seatId of this.seatOwner.keys()) this.renderer.setSeatOccupied(seatId, false);
     this.seatOwner.clear();
     this.entitySeat.clear();
@@ -1312,8 +1111,6 @@ export class GameSession {
     this.lieAt = 0;
     this.snoreAt = 0;
     this.prayAt = -1;
-    this.ride = null;
-    this.slideRequestAt = 0;
     // 换连接后旧的硬直 / 出招窗口都失去意义：新角色从站立开始
     this.stunUntil = 0;
     this.ventLockUntil = 0;
@@ -1420,8 +1217,6 @@ export class GameSession {
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
-    // 滑行中不接受动作：位移与坐姿由 updateRide 接管
-    if (this.ride) return;
     // 倒地硬直期间不接受任何动作：起身只能等硬直结束（ADR-0051）
     if (this.elapsed < this.stunUntil) return;
     // 任何动作都先夺回控制权：坐着 / 躺着 / 跳跃 / 互动都不该被自动寻路拽着走
@@ -1577,11 +1372,6 @@ export class GameSession {
     }
     if (isNearTeaStation(x, y)) {
       this.brewTea();
-      return;
-    }
-    // 游乐园入口滑梯：F 与点击共用同一条请求路径
-    if (isNearSlide(x, y)) {
-      this.rideSlide(PARK_SLIDE.id);
       return;
     }
     const target = this.interactTarget;
@@ -1794,12 +1584,6 @@ export class GameSession {
   private stepLocal(eid: number, dt: number): void {
     this.expireLocalOverlays(eid);
 
-    // 滑行中只沿共享折线推进：手动输入、自动寻路与起身都不参与
-    if (this.ride) {
-      this.updateRide(eid);
-      return;
-    }
-
     // 倒地硬直与出招窗口都要冻结位移：前者是「躺在地上动不了」，
     // 后者是「正在头槌，脚不该还在地上滑」（ADR-0051）
     const frozen = this.elapsed < this.stunUntil || this.elapsed < this.ventLockUntil;
@@ -1950,8 +1734,6 @@ export class GameSession {
    * 不再补发积压：服务端速度窗口封顶后，一帧一个最新坐标比补发一串过期坐标更准。
    */
   private sendMove(eid: number): void {
-    // 滑行中不上行：位置由服务端脚本推进，客户端上报只会被 applyMove 丢掉
-    if (this.ride) return;
     const x = quantizeCoord(Position.x[eid]!);
     const y = quantizeCoord(Position.y[eid]!);
     const state = packState(
@@ -2042,7 +1824,6 @@ export class GameSession {
       this.fps = Math.round((this.frames * 1000) / windowMs);
       this.frames = 0;
       this.statsAt = now;
-      const onlineSec = this.onlineSecOf(this.localId);
       this.ensureBoard(now);
       this.callbacks.onStats({
         fps: this.fps,
@@ -2052,13 +1833,10 @@ export class GameSession {
         nearby: this.names.size,
         backend: this.renderer.backend,
         region: localEid ? regionAt(Position.x[localEid]!, Position.y[localEid]!) : '',
-        onlineSec,
         likes: this.localLikes,
         board: this.careerBoard,
         rank: this.rankById.get(this.localId) ?? null,
       });
-      // 在岗提醒跟着统计节拍走：500ms 一次足够准，也不必为它单开一个计时器
-      this.checkOnDuty(onlineSec);
     }
   };
 

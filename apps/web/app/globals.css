@@ -380,6 +380,15 @@
     animation: scan 6s linear infinite;
   }
 
+  /*
+   * 像素待机：两帧阶梯，不是平滑浮动。像素画的呼吸本来就是跳的，
+   * steps(1, end) 让 0 → -4px 变成一次干脆的上抬，不会被读成图片在缩放。
+   * 首屏两名角色错开 0.55s，才不会像同一个动画批量套上去。
+   */
+  .animate-idle-bob {
+    animation: idle-bob 2.8s steps(1, end) infinite;
+  }
+
   /* 入场欢迎条：出现时轻推一下，进度线在 3.6s 内走完（与 WelcomeBanner 的 HOLD_MS 对齐） */
   .animate-welcome-in {
     animation: welcome-in 320ms var(--ease-out-expo);
@@ -402,6 +411,11 @@
   /* 牛马榜：整块面板从下方 4px 落定，像把公告栏拉近到眼前 */
   .animate-board-in {
     animation: board-in 180ms var(--ease-out-expo);
+  }
+
+  /* 设施互动按钮：从下方 6px 落定，换设施时重播一次 */
+  .animate-hint-in {
+    animation: hint-in 180ms var(--ease-out-expo);
   }
 
   /* 放假告示板：软木板从下方 10px 落定，比牛马榜更重一点，像把整块板子搬过来 */
@@ -463,6 +477,16 @@
   }
 }
 
+@keyframes idle-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
 @keyframes queue-roll {
   from {
     transform: translateY(0.28em);
@@ -508,6 +532,17 @@
 @keyframes board-in {
   from {
     transform: translateY(4px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes hint-in {
+  from {
+    transform: translateY(6px);
     opacity: 0;
   }
   to {

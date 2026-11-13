@@ -26,7 +26,6 @@ import {
   decodeSetAppearance,
   decodeSetName,
   decodeSetStatus,
-  decodeSlideRequest,
   encodeAppearanceBroadcast,
   encodeBoard,
   encodeCareerBroadcast,
@@ -41,7 +40,6 @@ import {
   encodeWelcome,
   quantizeCoord,
   sanitizeCareer,
-  SLIDE_PHASE,
   SYNC_FORMAT_LEGACY,
   isAdLikeNickname,
   readOpCode,
@@ -63,7 +61,6 @@ import { resolveRename } from './sim/name';
 import { createNpcDirector } from './npc';
 import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
-import { advanceRides, broadcastSlide, startRide } from './sim/ride';
 import { resolveSpawn } from './sim/resume';
 import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
@@ -309,11 +306,8 @@ export function startGameServer(config: ServerConfig) {
     // 会话续算（ADR-0060）：只采信客户端上报的「断线前在线秒数」，
     // 且按「客户端值 / 一天 / 进程已运行秒数」三方取最小，防止伪造把在岗榜刷爆。
     const sessionSec = clampSessionCarry(hello.sessionSec, (Date.now() - bootedAt) / 1000);
-    // 新会话的在线增量基线：由服务端写成续算秒数，客户端自报的 reportedOnlineSec 不采信。
-    // 必须与 admit 里前移的 joinedAt 用同一个基准，否则工时会被重复计一遍。
-    // 只对「真的上报过摘要」的连接写基线：从未上报的人不该因为续算被拉进工时榜。
+    // 摘要只保留今日字段：客户端自报的今日值原样钳制，不再写任何服务端会话基线。
     const career = sanitizeIncomingCareer(hello.career, ws.data.wsId);
-    career.reportedOnlineSec = career.firstJoinDate.length > 0 ? sessionSec : 0;
     const payload: HelloPayload = {
       name: adLikeName || nameVerdict.verdict === 'reject' ? FALLBACK_NICKNAME : nameVerdict.text,
       appearance: hello.appearance,
@@ -390,8 +384,6 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_ACTION) {
-      // 滑行中不接受坐 / 躺 / 起身 / 咀嚼：位移与坐姿由 sim/ride.ts 接管
-      if (player.rideSlide !== 0 && now < player.rideEndsAt) return;
       const { action } = decodeAction(data);
       // 咀嚼是一次性事件：state 字节已满，不能挤进同步条目，限频后按视野定向广播（ADR-0048）
       if (action === ACTION.Graze) {
@@ -426,16 +418,6 @@ export function startGameServer(config: ServerConfig) {
         broadcastSeats(changes);
         if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
       }
-      return;
-    }
-
-    if (op === OpCode.C2S_SLIDE) {
-      const slideId = decodeSlideRequest(data);
-      if (slideId === undefined) return;
-      // 起滑是脚本化传送：先写坐标，再刷空间索引与视野，最后广播开始事件
-      if (!startRide(player, slideId, now)) return;
-      if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
-      broadcastSlide(world, player, slideId, SLIDE_PHASE.Start, transport);
       return;
     }
 
@@ -535,15 +517,12 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_CAREER) {
-      // 摘要是展示数据：限频只挡伪造包把视野广播当放大器，正常客户端 60s 才报一次
+      // 摘要是展示数据：限频只挡伪造包把视野广播当放大器，正常客户端 20s 才报一次
       if (now - player.lastCareerAt < CAREER_UPDATE_INTERVAL_MS) return;
       const incoming = decodeCareerReport(data);
       if (!incoming) return;
       player.lastCareerAt = now;
       const next = sanitizeIncomingCareer(incoming, player.wsId);
-      // 增量基线由服务端写：客户端报告的 reportedOnlineSec 不可信
-      next.reportedOnlineSec =
-        player.joinedAt > 0 ? Math.max(0, Math.floor((now - player.joinedAt) / 1000)) : 0;
       player.career = next;
       // 入场包里的摘要段与 spawnBody 同一套缓存：补报后必须失效
       player.markCareerDirty();
@@ -563,7 +542,7 @@ export function startGameServer(config: ServerConfig) {
       player.lastBoardAt = now;
       const metrics = requested === BOARD_METRIC_ALL ? BOARD_METRIC_LIST : [requested];
       for (const metric of metrics) {
-        transport.send(player.wsId, encodeBoard(buildBoardSnapshot(world.players.values(), metric, now, player.id)));
+        transport.send(player.wsId, encodeBoard(buildBoardSnapshot(world.players.values(), metric, player.id)));
       }
       return;
     }
@@ -771,9 +750,6 @@ export function startGameServer(config: ServerConfig) {
     // 同事的行为要跑在 runTick 之前：新坐标与朝向赶在同一 Tick 的 dirty 广播里发出去
     npcs.update(now);
     npcSampler.push(npcs.updateMs);
-
-    // 滑梯与发泄同理：位置与坐姿必须在 runTick 之前落盘，否则旁观者会先看到站立再看到瞬移
-    advanceRides(world, grid, transport, now);
 
     const result = runTick(world, grid, transport, tickCount);
     tickSampler.push(result.duration);

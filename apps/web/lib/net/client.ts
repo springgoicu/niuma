@@ -17,7 +17,6 @@ import {
   decodeQueueRejected,
   decodeQueueStatus,
   decodeSeatState,
-  decodeSlideEvent,
   decodeSpawn,
   decodeStatusBroadcast,
   decodeSystemNotice,
@@ -34,7 +33,6 @@ import {
   encodeSetAppearance,
   encodeSetName,
   encodeSetStatus,
-  encodeSlideRequest,
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
@@ -50,7 +48,6 @@ import {
   type QueueStatusPacket,
   type ResumeState,
   type SeatStateEntry,
-  type SlideEventPacket,
   type SpawnPacket,
   type SyncFormat,
   type SystemNoticePacket,
@@ -101,8 +98,6 @@ export interface NetHandlers {
    * 受害者的新坐标与躺姿走 Tick，这条包只负责「归因」与硬直的起点。
    */
   onVent(packet: VentEventPacket): void;
-  /** 滑梯开始 / 结束：位置仍走同步包，这条只负责锁定坐姿与播放音效 */
-  onSlide(packet: SlideEventPacket): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -336,11 +331,6 @@ export class NetClient {
       case OpCode.S2C_VENT:
         this.handlers.onVent(decodeVent(data));
         break;
-      case OpCode.S2C_SLIDE: {
-        const packet = decodeSlideEvent(data);
-        if (packet) this.handlers.onSlide(packet);
-        break;
-      }
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));
         break;
@@ -401,12 +391,6 @@ export class NetClient {
   sendAction(entityId: number, action: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(new Uint8Array([OpCode.C2S_ACTION, entityId & 0xff, (entityId >> 8) & 0xff, action & 0xff]));
-  }
-
-  /** 滑梯请求：只发滑梯 id，轨迹与落点由服务端裁决 */
-  sendSlide(slideId: number): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeSlideRequest(slideId));
   }
 
   /** 发言：颜色索引与飞行模式随包上行（ADR-0056） */

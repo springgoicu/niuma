@@ -2,11 +2,13 @@ import { decodeAppearance, encodeAppearance } from './appearance-codec';
 import {
   CAREER_FIXED_BYTES,
   CAREER_FIXED_BYTES_LEGACY,
+  CAREER_FIXED_BYTES_V2,
   CAREER_MAX_BYTES,
   CAREER_MIN_BYTES,
   CAREER_SEGMENT_MAX_BYTES,
   CAREER_VERSION,
   CAREER_VERSION_LEGACY,
+  CAREER_VERSION_V2,
   dateToEpochDays,
   epochDaysToDate,
   sanitizeCareer,
@@ -45,8 +47,6 @@ import {
   RESUME_VERSION,
   SESSION_EXTENSION_BYTES,
   SESSION_EXTENSION_MAGIC,
-  SLIDE_EVENT_BYTES,
-  SLIDE_REQUEST_BYTES,
   STATUS_EXTENSION_MAGIC,
   SYNC_CAPABILITY_MAGIC,
   SYNC_ENTRY_BYTES,
@@ -83,13 +83,12 @@ import type {
   QueueRejectedPacket,
   QueueStatusPacket,
   ResumeState,
-  SlideEventPacket,
   SpawnPacket,
   SystemNoticePacket,
   VentEventPacket,
   WelcomePacket,
 } from './types';
-import { OpCode, QUEUE_REJECT_REASON, SLIDE_PHASE } from './types';
+import { OpCode, QUEUE_REJECT_REASON } from './types';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -481,15 +480,14 @@ export function decodeSync(
 // ---------------------------------------------------------------------------
 
 /**
- * 考勤摘要 payload（`CAREER_FIXED_BYTES` 为 v2 不含省份的定长部分）：
+ * 考勤摘要 payload（`CAREER_FIXED_BYTES` 为 v3 不含省份的定长部分）：
  *
- * `[version u8][firstJoinDays u16][totalOnlineMinutes u32][activeDays u16]
- *  [todayMinutes u16][weekMinutes u16][streakDays u16][steps u32][distanceM u32]
- *  [slackCount u16][ventedCount u16][knockdownCount u16][overtimeCount u16]
- *  [reportedOnlineSec u32][provinceLen u8][province nB]`
+ * `[version u8][firstJoinDays u16][todayMinutes u16][todayToiletMinutes u16]
+ *  [todaySteps u32][todayKnockdown u16][todayVented u16][todayOvertime u16]
+ *  [provinceLen u8][province nB]`
  *
  * 全部小端；日期用距 2000-01-01 的天数，0 表示未上报。
- * v1 没有 `knockdownCount`，解码时按 0 回退，其余字段偏移不变。
+ * 只编码今天：历史累计不再进入协议，旧解码器看到 version=3 会整段丢弃。
  */
 export function encodeCareer(career: CareerSummary): Uint8Array {
   const safe = sanitizeCareer(career);
@@ -500,30 +498,18 @@ export function encodeCareer(career: CareerSummary): Uint8Array {
   out[at++] = CAREER_VERSION;
   view.setUint16(at, dateToEpochDays(safe.firstJoinDate), true);
   at += 2;
-  view.setUint32(at, safe.totalOnlineMinutes, true);
-  at += 4;
-  view.setUint16(at, safe.activeDays, true);
-  at += 2;
   view.setUint16(at, safe.todayMinutes, true);
   at += 2;
-  view.setUint16(at, safe.weekMinutes, true);
+  view.setUint16(at, safe.todayToiletMinutes, true);
   at += 2;
-  view.setUint16(at, safe.streakDays, true);
-  at += 2;
-  view.setUint32(at, safe.steps, true);
+  view.setUint32(at, safe.todaySteps, true);
   at += 4;
-  view.setUint32(at, safe.distanceM, true);
-  at += 4;
-  view.setUint16(at, safe.slackCount, true);
+  view.setUint16(at, safe.todayKnockdown, true);
   at += 2;
-  view.setUint16(at, safe.ventedCount, true);
+  view.setUint16(at, safe.todayVented, true);
   at += 2;
-  view.setUint16(at, safe.knockdownCount, true);
+  view.setUint16(at, safe.todayOvertime, true);
   at += 2;
-  view.setUint16(at, safe.overtimeCount, true);
-  at += 2;
-  view.setUint32(at, safe.reportedOnlineSec, true);
-  at += 4;
   out[at++] = provinceBytes.length;
   out.set(provinceBytes, at);
   return out;
@@ -532,13 +518,14 @@ export function encodeCareer(career: CareerSummary): Uint8Array {
 /**
  * 解一条摘要。长度不足、版本不认识、省份长度越界都回退 `undefined`：
  * 展示层据此显示「未上报」，而不是拿 0 冒充真实工时。
+ *
+ * v1/v2 只映射今日工时：旧包的 steps/counts 是历史累计，绝不能灌进今日字段。
  */
 export function decodeCareer(
   data: Uint8Array,
   offset = 0,
   length = data.length - offset,
 ): CareerSummary | undefined {
-  // 信封层下限用 v1 的 34：v1 包也要能进来做版本分支
   if (
     length < CAREER_MIN_BYTES ||
     length > CAREER_MAX_BYTES ||
@@ -548,44 +535,50 @@ export function decodeCareer(
     return undefined;
   }
   const version = data[offset]!;
-  if (version !== CAREER_VERSION && version !== CAREER_VERSION_LEGACY) return undefined;
-  const fixedBytes = version === CAREER_VERSION ? CAREER_FIXED_BYTES : CAREER_FIXED_BYTES_LEGACY;
+  if (
+    version !== CAREER_VERSION &&
+    version !== CAREER_VERSION_V2 &&
+    version !== CAREER_VERSION_LEGACY
+  ) {
+    return undefined;
+  }
+  const fixedBytes =
+    version === CAREER_VERSION
+      ? CAREER_FIXED_BYTES
+      : version === CAREER_VERSION_V2
+        ? CAREER_FIXED_BYTES_V2
+        : CAREER_FIXED_BYTES_LEGACY;
   if (length < fixedBytes) return undefined;
 
   const view = new DataView(data.buffer, data.byteOffset + offset, length);
-  let at = 1;
-  const firstJoinDays = view.getUint16(at, true);
-  at += 2;
-  const totalOnlineMinutes = view.getUint32(at, true);
-  at += 4;
-  const activeDays = view.getUint16(at, true);
-  at += 2;
-  const todayMinutes = view.getUint16(at, true);
-  at += 2;
-  const weekMinutes = view.getUint16(at, true);
-  at += 2;
-  const streakDays = view.getUint16(at, true);
-  at += 2;
-  const steps = view.getUint32(at, true);
-  at += 4;
-  const distanceM = view.getUint32(at, true);
-  at += 4;
-  const slackCount = view.getUint16(at, true);
-  at += 2;
-  const ventedCount = view.getUint16(at, true);
-  at += 2;
-  // v1 没有击倒数：按 0 回退，后续偏移与 v2 不同
-  let knockdownCount = 0;
-  if (version === CAREER_VERSION) {
-    knockdownCount = view.getUint16(at, true);
-    at += 2;
+  const firstJoinDays = view.getUint16(1, true);
+
+  if (version !== CAREER_VERSION) {
+    const todayMinutes = view.getUint16(9, true);
+    const provinceLengthAt = version === CAREER_VERSION_V2 ? 35 : 33;
+    const provinceLength = data[offset + provinceLengthAt] ?? 0;
+    const provinceAt = offset + provinceLengthAt + 1;
+    const available = Math.max(0, offset + length - provinceAt);
+    const province =
+      provinceLength > 0 && provinceLength <= available
+        ? textDecoder.decode(data.subarray(provinceAt, provinceAt + provinceLength))
+        : '';
+    return sanitizeCareer({
+      firstJoinDate: epochDaysToDate(firstJoinDays),
+      todayMinutes,
+      province,
+    });
   }
-  const overtimeCount = view.getUint16(at, true);
-  at += 2;
-  const reportedOnlineSec = view.getUint32(at, true);
-  at += 4;
-  const provinceLength = data[offset + at] ?? 0;
-  const provinceAt = offset + at + 1;
+
+  const todayMinutes = view.getUint16(3, true);
+  const todayToiletMinutes = view.getUint16(5, true);
+  const todaySteps = view.getUint32(7, true);
+  const todayKnockdown = view.getUint16(11, true);
+  const todayVented = view.getUint16(13, true);
+  const todayOvertime = view.getUint16(15, true);
+
+  const provinceLength = data[offset + 17] ?? 0;
+  const provinceAt = offset + 18;
   const available = Math.max(0, offset + length - provinceAt);
   const province =
     provinceLength > 0 && provinceLength <= available
@@ -593,19 +586,13 @@ export function decodeCareer(
       : '';
   return sanitizeCareer({
     firstJoinDate: epochDaysToDate(firstJoinDays),
-    totalOnlineMinutes,
-    activeDays,
     todayMinutes,
-    weekMinutes,
-    streakDays,
-    steps,
-    distanceM,
-    slackCount,
-    ventedCount,
-    knockdownCount,
-    overtimeCount,
+    todayToiletMinutes,
+    todaySteps,
+    todayKnockdown,
+    todayVented,
+    todayOvertime,
     province,
-    reportedOnlineSec,
   });
 }
 
@@ -918,42 +905,6 @@ export function decodeVent(data: Uint8Array): VentEventPacket {
   if (reader.u8() !== OpCode.S2C_VENT) throw new Error('not a vent packet');
   // 坐标保持量化口径：调用方用 dequantizeCoord 还原成世界像素，与移动包同一把尺子
   return { attackerId: reader.u16(), targetId: reader.u16(), x: reader.u16(), y: reader.u16() };
-}
-
-/**
- * 滑梯请求：`[op][slideId u8]`，2 字节。
- *
- * 只上报「我想滑哪座滑梯」，落点与轨迹全由服务端按共享折线决定；
- * slideId = 0 或长度不符一律返回 undefined，由服务端静默丢弃。
- */
-export function encodeSlideRequest(slideId: number): Uint8Array {
-  const writer = new ByteWriter(SLIDE_REQUEST_BYTES);
-  writer.u8(OpCode.C2S_SLIDE).u8(slideId & 0xff);
-  return writer.finish();
-}
-
-export function decodeSlideRequest(data: Uint8Array): number | undefined {
-  if (data.byteLength !== SLIDE_REQUEST_BYTES || data[0] !== OpCode.C2S_SLIDE) return undefined;
-  const slideId = data[1]!;
-  return slideId === 0 ? undefined : slideId;
-}
-
-/** 滑行事件：`[op][entityId u16][slideId u8][phase u8]`，5 字节 */
-export function encodeSlideEvent(entityId: number, slideId: number, phase: number): Uint8Array {
-  const writer = new ByteWriter(SLIDE_EVENT_BYTES);
-  writer.u8(OpCode.S2C_SLIDE).u16(entityId & 0xffff).u8(slideId & 0xff).u8(phase & 0xff);
-  return writer.finish();
-}
-
-/** 坏包返回 undefined：未知 phase / 0 号实体都不该被当成「开始滑行」 */
-export function decodeSlideEvent(data: Uint8Array): SlideEventPacket | undefined {
-  if (data.byteLength !== SLIDE_EVENT_BYTES || data[0] !== OpCode.S2C_SLIDE) return undefined;
-  const entityId = data[1]! | (data[2]! << 8);
-  const slideId = data[3]!;
-  const phase = data[4]!;
-  if (entityId === 0 || slideId === 0) return undefined;
-  if (phase !== SLIDE_PHASE.Start && phase !== SLIDE_PHASE.Finish) return undefined;
-  return { entityId, slideId, phase };
 }
 
 /**

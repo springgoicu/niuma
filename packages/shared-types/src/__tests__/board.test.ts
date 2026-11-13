@@ -15,7 +15,7 @@ import {
 
 function packet(overrides: Partial<BoardPacket> = {}): BoardPacket {
   return {
-    metric: BOARD_METRIC.Duty,
+    metric: BOARD_METRIC.TodayMinutes,
     online: 23,
     slacking: 7,
     selfRank: 3,
@@ -30,7 +30,7 @@ function packet(overrides: Partial<BoardPacket> = {}): BoardPacket {
 }
 
 describe('牛马榜请求包', () => {
-  it('0 表示拉全部指标，1–6 各对应一个指标', () => {
+  it('0 表示拉全部指标，7–11 各对应一个今日指标', () => {
     expect(decodeBoardRequest(encodeBoardRequest())).toBe(BOARD_METRIC_ALL);
     for (const metric of Object.values(BOARD_METRIC)) {
       expect(decodeBoardRequest(encodeBoardRequest(metric))).toBe(metric);
@@ -38,7 +38,10 @@ describe('牛马榜请求包', () => {
   });
 
   it('未知指标、错 opcode 与短包一律返回 undefined', () => {
-    expect(decodeBoardRequest(new Uint8Array([0x24, 9]))).toBeUndefined();
+    // 1–6 是旧版在岗/周/摸鱼/击倒/步数/人气，新服务端不再接受，避免旧标签读新语义
+    expect(decodeBoardRequest(new Uint8Array([0x24, 1]))).toBeUndefined();
+    expect(decodeBoardRequest(new Uint8Array([0x24, 6]))).toBeUndefined();
+    expect(decodeBoardRequest(new Uint8Array([0x24, 13]))).toBeUndefined();
     expect(decodeBoardRequest(new Uint8Array([0x25, 0]))).toBeUndefined();
     expect(decodeBoardRequest(new Uint8Array([0x24]))).toBeUndefined();
   });
@@ -96,9 +99,9 @@ describe('牛马榜快照包', () => {
 
   it('未知指标与错 opcode 返回 undefined', () => {
     const encoded = encodeBoard(packet());
-    encoded[1] = 9;
+    encoded[1] = 6;
     expect(decodeBoard(encoded)).toBeUndefined();
-    expect(decodeBoard(new Uint8Array([BOARD_METRIC.Duty]))).toBeUndefined();
+    expect(decodeBoard(new Uint8Array([BOARD_METRIC.TodayMinutes]))).toBeUndefined();
   });
 
   it('名字长度为 0 的条目被拒绝，不显示空工牌', () => {

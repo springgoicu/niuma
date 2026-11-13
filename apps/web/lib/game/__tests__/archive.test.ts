@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { DEFAULT_APPEARANCE, EMPTY_CAREER, POSE } from '@niuma/shared-types';
 import { buildRemoteArchive, buildSelfArchive, toShareCardData } from '../archive';
 import type { PlayerBadge } from '../badge';
+import { EMPTY_CAREER_DAY } from '../career';
 
 const NOW = new Date(2026, 3, 1, 12, 0, 0).getTime();
 const HOUR = 3_600_000;
@@ -16,29 +17,26 @@ function selfInput() {
     geo: { region: '浙江', city: '杭州', isp: '电信' },
     attendance: {
       firstJoinDate: '2026-03-30',
-      totalOnlineMs: 10 * HOUR,
       dailyRecords: {
         '2026-03-30': 2 * HOUR,
         '2026-03-31': 3 * HOUR,
-        '2026-04-01': 1 * HOUR,
+        '2026-04-01': 2 * HOUR,
       },
-      sessionStartTime: NOW - HOUR,
+      dailyToiletRecords: {
+        '2026-03-31': HOUR,
+        '2026-04-01': 30 * 60_000,
+      },
     },
     stats: {
-      distancePx: 2_500,
-      steps: 156,
-      slackCount: 12,
-      ventedCount: 3,
-      knockdownCount: 9,
-      overtimeCount: 2,
-      lastOvertimeDay: '2026-03-31',
+      daily: {
+        '2026-04-01': { ...EMPTY_CAREER_DAY, distancePx: 2_500, knockdownCount: 9, ventedCount: 3 },
+      },
     },
     pose: POSE.Sit,
     seated: true,
     seatKind: 'chair' as const,
-    board: [{ id: 1, name: '夜班实习生', weekMinutes: 360, self: true }],
+    board: [{ id: 1, name: '夜班实习生', todayMinutes: 120, self: true }],
     rank: 1,
-    onlineSec: 3_600,
     likes: 5,
     now: NOW,
   };
@@ -52,7 +50,6 @@ function remoteBadge(overrides: Partial<PlayerBadge> = {}): PlayerBadge {
     appearance: DEFAULT_APPEARANCE.cow,
     status: '摸鱼中',
     region: '工作区',
-    onlineSec: 180,
     pose: POSE.Sit,
     moving: false,
     seated: true,
@@ -60,21 +57,15 @@ function remoteBadge(overrides: Partial<PlayerBadge> = {}): PlayerBadge {
     career: {
       ...EMPTY_CAREER,
       firstJoinDate: '2026-03-01',
-      totalOnlineMinutes: 600,
-      activeDays: 10,
       todayMinutes: 60,
-      weekMinutes: 120,
-      streakDays: 4,
-      steps: 5_000,
-      distanceM: 200,
-      slackCount: 9,
-      ventedCount: 2,
-      knockdownCount: 6,
-      overtimeCount: 1,
+      todayToiletMinutes: 15,
+      todaySteps: 5_000,
+      todayKnockdown: 6,
+      todayVented: 2,
+      todayOvertime: 1,
       province: '江苏',
-      reportedOnlineSec: 60,
     },
-    board: [{ id: 7, name: '夜班实习生', weekMinutes: 180, self: false }],
+    board: [{ id: 7, name: '夜班实习生', todayMinutes: 60, self: false }],
     rank: 1,
     likes: 8,
     liked: true,
@@ -83,18 +74,17 @@ function remoteBadge(overrides: Partial<PlayerBadge> = {}): PlayerBadge {
 }
 
 describe('self archive', () => {
-  it('formats local attendance, activity and full location', () => {
+  it('formats local today attendance, toilet share and activity', () => {
     const archive = buildSelfArchive(selfInput());
     expect(archive.isSelf).toBe(true);
     expect(archive.hasCareer).toBe(true);
     expect(archive.likes).toBe(5);
     expect(archive.liked).toBe(false);
     expect(archive.location).toBe('中国 · 浙江 · 杭州');
-    expect(archive.weekHours).toBe(6);
-    expect(archive.todayDuration).toBe('01:00:00');
-    expect(archive.sessionDuration).toBe('01:00:00');
-    expect(archive.dailyAverageHours).toBe(2);
-    expect(archive.totalHours).toBe('10.0');
+    expect(archive.todayDuration).toBe('02:00');
+    expect(archive.todayToiletMinutes).toBe(30);
+    expect(archive.todayToiletRatio).toBe(0.25);
+    expect(archive.firstJoinDate).toBe('2026-03-30');
     expect(archive.activity.distanceM).toBe(100);
     expect(archive.activity.steps).toBe(156);
     expect(archive.activity.knockdownCount).toBe(9);
@@ -107,22 +97,31 @@ describe('self archive', () => {
 });
 
 describe('remote archive', () => {
-  it('adds only the session delta and hides the city', () => {
+  it('reads today fields only and hides the city', () => {
     const archive = buildRemoteArchive(remoteBadge(), NOW);
     expect(archive.isSelf).toBe(false);
     expect(archive.hasCareer).toBe(true);
     expect(archive.likes).toBe(8);
     expect(archive.liked).toBe(true);
     expect(archive.location).toBe('中国 · 江苏');
-    expect(archive.sessionDuration).toBe('00:03:00');
-    // 上报时 60 分钟 + 2 分钟会话增量（180s - 60s，向下取整到分钟）
-    expect(archive.todayDuration).toBe('01:02:00');
-    expect(archive.weekHours).toBe(2);
+    expect(archive.todayDuration).toBe('01:00');
+    expect(archive.todayToiletMinutes).toBe(15);
     expect(archive.firstJoinDate).toBe('2026-03-01');
     expect(archive.activity.knockdownCount).toBe(6);
     expect(archive.rank).toBe(1);
     expect(archive.stamp).toBe('卷王之王');
     expect(archive.board).toHaveLength(1);
+  });
+
+  it('distinguishes same-named guards by entity id, keeps fixed numbers for players', () => {
+    const guards = [1, 2, 3].map((id) =>
+      buildRemoteArchive(remoteBadge({ name: '园区保安', role: 1, id }), NOW),
+    );
+    expect(new Set(guards.map((archive) => archive.employeeNo)).size).toBe(guards.length);
+
+    const plainA = buildRemoteArchive(remoteBadge({ name: '园区保安', role: 0, id: 1 }), NOW);
+    const plainB = buildRemoteArchive(remoteBadge({ name: '园区保安', id: 2 }), NOW);
+    expect(plainA.employeeNo).toBe(plainB.employeeNo);
   });
 
   it('shows 未上报 instead of zeros when the peer did not report', () => {
@@ -131,19 +130,19 @@ describe('remote archive', () => {
     expect(archive.location).toBe('未上报');
     expect(archive.jobTitle).toBe('未上报');
     expect(archive.todayDuration).toBe('未上报');
-    expect(archive.totalHours).toBe('未上报');
+    expect(archive.todayToiletMinutes).toBe(0);
     expect(archive.firstJoinDate).toBe('未上报');
     expect(archive.stamp).toBe('未上报');
     expect(archive.rank).toBeNull();
-    expect(archive.sessionDuration).toBe('00:03:00');
   });
 });
 
 describe('share data', () => {
-  it('carries the archive identity and 代打 flag', () => {
+  it('carries the archive identity, today toilet and 代打 flag', () => {
     const data = toShareCardData(buildRemoteArchive(remoteBadge(), NOW));
     expect(data.isSelf).toBe(false);
-    expect(data.weekHours).toBe(2);
+    expect(data.todayDuration).toBe('01:00');
+    expect(data.todayToiletMinutes).toBe(15);
     expect(data.department).toBeTruthy();
     expect(data.shift).toBeTruthy();
     expect(data.activity?.steps).toBe(5_000);

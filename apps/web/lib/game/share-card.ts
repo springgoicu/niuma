@@ -36,28 +36,24 @@ export interface ShareCardData {
   appearance: CharacterAppearance;
   /** 形如「中国 · 浙江 · 杭州」；他人工卡只到省 */
   location: string;
-  /** 今日累计在岗，HH:MM:SS */
+  /** 今日工时，HH:MM */
   todayDuration: string;
-  dailyAverageHours: number;
+  /** 今日如厕分钟：工时的一部分，小票单独占一格 */
+  todayToiletMinutes?: number;
   /** 倾斜盖章文案，如「终身免下班」 */
   stamp: string;
-  /** 本周工时（小时），考勤小票模板使用 */
-  weekHours?: number;
-  /** 连续在岗天数 */
-  streakDays?: number;
   /** 部门 / 班次 */
   department?: string;
   shift?: string;
-  /** 行为统计 */
+  /** 今日行为统计 */
   activity?: {
     steps: number;
     distanceM: number;
-    slackCount: number;
     ventedCount: number;
     knockdownCount: number;
     overtimeCount: number;
   };
-  /** 视野内本周工时名次 */
+  /** 视野内今日工时名次 */
   rank?: number | null;
   /** false 表示「为 TA 打印」，卡面要标代打语义 */
   isSelf?: boolean;
@@ -505,11 +501,13 @@ function drawIdentity(ctx: CanvasRenderingContext2D, data: ShareCardData): void 
   ctx.font = `11px ${FONT_MONO}`;
   ctx.fillText(data.employeeNo, 28, 448);
 
-  // 部门 / 班次 / 连续在岗：原来这一行是空白，正好塞下三枚轻量身份标签
+  // 部门 / 班次 / 今日名次：原来这一行是空白，正好塞下三枚轻量身份标签
   const extras = [
     data.department,
     data.shift,
-    data.hasCareer === false ? null : `连续在岗 ${data.streakDays ?? 0} 天`,
+    data.hasCareer === false || data.rank === null || data.rank === undefined
+      ? null
+      : `今日工时第 ${data.rank} 名`,
   ]
     .filter((item): item is string => Boolean(item))
     .join(' · ');
@@ -723,7 +721,7 @@ async function waitForFonts(): Promise<void> {
   ]);
 }
 
-/** 考勤小票：不发立绘，只把本周结算与行为统计排成一张可贴工位的小票。 */
+/** 考勤小票：不发立绘，只把今日结算与行为统计排成一张可贴工位的小票。 */
 function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void {
   drawPaper(ctx, data.employeeNo);
 
@@ -735,7 +733,7 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
   ctx.fillStyle = '#6b5c44';
   ctx.font = `10px ${FONT_SANS}`;
   ctx.fillText(
-    data.isSelf ? '本周考勤结算 · WEEKLY TIMESHEET' : '代打存档 · DATA SELF-REPORTED',
+    data.isSelf ? '今日考勤结算 · DAILY TIMESHEET' : '代打存档 · DATA SELF-REPORTED',
     240,
     68,
   );
@@ -783,13 +781,18 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
     ctx.fillText('代打存档', 65, 191);
   }
 
-  // 2×2 大数字
+  // 2×2 大数字：全部为今日口径
   const reported = data.hasCareer !== false;
+  const toiletMinutes = Math.max(0, Math.floor(data.todayToiletMinutes ?? 0));
   const stats: Array<[string, string, string]> = [
-    ['本周工时', reported ? (data.weekHours ?? 0).toFixed(1) : '未上报', reported ? '小时' : ''],
-    ['今日累计', data.todayDuration, ''],
-    ['日均在线', reported ? data.dailyAverageHours.toFixed(1) : '未上报', reported ? '小时 / 天' : ''],
-    ['连续在岗', reported ? String(data.streakDays ?? 0) : '未上报', reported ? '天' : ''],
+    ['今日工时', data.todayDuration, ''],
+    ['今日如厕', reported ? String(toiletMinutes) : '未上报', reported ? '分钟' : ''],
+    [
+      '今日排名',
+      reported ? (data.rank ? `第 ${data.rank} 名` : '未上榜') : '未上报',
+      '',
+    ],
+    ['今日步数', reported ? (data.activity?.steps ?? 0).toLocaleString('zh-CN') : '未上报', reported ? '步' : ''],
   ];
   stats.forEach(([label, value, unit], index) => {
     const x = 28 + (index % 2) * 220;
@@ -819,17 +822,16 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
   ctx.textAlign = 'left';
   ctx.fillStyle = '#6b5c44';
   ctx.font = `9px ${FONT_MONO}`;
-  ctx.fillText('ACTIVITY / 累计行为', 28, 380);
+  ctx.fillText('ACTIVITY / 今日行为', 28, 380);
   const activity = data.activity;
   const rows: Array<[string, string]> = !reported
     ? [['行为统计', '未上报']]
     : activity
       ? [
-          ['行走步数', `${activity.steps.toLocaleString('zh-CN')} 步`],
+          ['今日步数', `${activity.steps.toLocaleString('zh-CN')} 步`],
           ['搬砖里程', `${activity.distanceM.toLocaleString('zh-CN')} 米`],
-          ['摸鱼次数', `${activity.slackCount} 次`],
           ['击倒次数', `${activity.knockdownCount} 次`],
-          ['被喷次数', `${activity.ventedCount} 次`],
+          ['被创次数', `${activity.ventedCount} 次`],
           ['加班次数', `${activity.overtimeCount} 次`],
         ]
       : [['行为统计', '未上报']];
@@ -866,7 +868,7 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
   ctx.fillStyle = '#7a684c';
   ctx.font = `10px ${FONT_MONO}`;
   ctx.fillText(
-    data.rank ? `同屏劳模榜 · 本周第 ${data.rank} 名（视野内）` : '同屏劳模榜 · 未上榜',
+    data.rank ? `同屏劳模榜 · 今日第 ${data.rank} 名（视野内）` : '同屏劳模榜 · 未上榜',
     28,
     536,
   );
@@ -926,15 +928,22 @@ export async function renderShareCard(
   drawDetails(ctx, [
     { label: '工号', value: data.employeeNo },
     { label: '出勤地点', value: data.location },
-    { label: '今日在岗', value: data.todayDuration },
+    { label: '今日工时', value: data.todayDuration },
     {
-      label: '本周工时',
-      value: data.hasCareer === false ? '未上报' : `${(data.weekHours ?? 0).toFixed(1)} 小时`,
+      label: '今日如厕',
+      value:
+        data.hasCareer === false
+          ? '未上报'
+          : `${Math.max(0, Math.floor(data.todayToiletMinutes ?? 0))} 分钟`,
     },
     {
-      label: '日均工时',
+      label: '今日排名',
       value:
-        data.hasCareer === false ? '未上报' : `${data.dailyAverageHours.toFixed(1)} 小时 / 天`,
+        data.hasCareer === false
+          ? '未上报'
+          : data.rank
+            ? `第 ${data.rank} 名`
+            : '未上榜',
     },
   ]);
 

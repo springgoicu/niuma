@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CharacterAppearance, Species } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
-import { formatOnline } from '@/lib/game/badge';
+import { formatMinutesClock, getTodayMinutes, useAttendance } from '@/lib/game/attendance';
 import { GEO_FALLBACK, loadGeo, readCachedGeo, type GeoInfo } from '@/lib/game/geo';
 import { BadgeEditor, type BadgeSavePayload } from './game/BadgeEditor';
 import { SelfArchiveDialog } from './badge/SelfArchiveDialog';
@@ -22,22 +22,24 @@ export interface BadgeCardProps {
 }
 
 /**
- * 走秒单独订阅：整张工牌不必每秒重渲染，只有这一行数字在跳。
+ * 今日工时单独订阅：整张工牌不必每秒重渲染，只有这一行数字在跳。
  *
- * 口径只有一个 —— 服务端会话秒数（ADR-0060）：与牛马榜「在岗」、档案弹窗同源，
- * 断线时明确显示 `--:--`，不拿浏览器时钟继续走出一段没人看见的在岗。
+ * 口径只有一个 —— 本机 localStorage 里的今日考勤：与公告栏「今日工时」、
+ * 档案弹窗、考勤小票同源。选择器把秒级 store 折成分钟字符串，
+ * 值不变时 zustand 不会触发重渲染，所以每秒的 tick 不会带着整卡闪。
+ *
+ * 断线 / 服务端重启都不归零：数字来自浏览器，而不是服务端会话。
  */
-function SessionClock({ className }: { className?: string }) {
-  const onlineSec = useGameUi((state) => state.onlineSec);
-  const status = useGameUi((state) => state.status);
-  return <span className={className}>{status === 'online' ? formatOnline(onlineSec) : '--:--'}</span>;
+function TodayClock({ className }: { className?: string }) {
+  const clock = useAttendance((state) => formatMinutesClock(getTodayMinutes(state, state.now)));
+  return <span className={className}>{clock}</span>;
 }
 
 /**
  * 左上角常驻工牌。
  *
  * 布局与旧 PlayerCard 同一个槽位（HUD 顶栏左侧），但只保留三行信息：
- * 物种 + 昵称 + 状态 / 出勤地 / 在岗走秒。整卡点击展开工牌编辑（名字 + 状态），
+ * 物种 + 昵称 + 状态 / 出勤地 / 今日工时。整卡点击展开工牌编辑（名字 + 状态），
  * 右侧独立竖条才是档案入口——两个交互不嵌套，键盘与读屏都不会打架。
  */
 export function BadgeCard({
@@ -145,8 +147,8 @@ export function BadgeCard({
             }`}
           >
             <span aria-hidden="true">⏱️</span>
-            <span className="shrink-0">在岗时长：</span>
-            <SessionClock className="tabular-nums text-emerald-400" />
+            <span className="shrink-0">今日工时：</span>
+            <TodayClock className="tabular-nums text-emerald-400" />
           </span>
         </button>
 

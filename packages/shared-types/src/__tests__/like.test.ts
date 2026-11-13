@@ -14,19 +14,13 @@ import {
 const CAREER: CareerSummary = {
   ...EMPTY_CAREER,
   firstJoinDate: '2026-03-04',
-  totalOnlineMinutes: 12_345,
-  activeDays: 40,
   todayMinutes: 90,
-  weekMinutes: 600,
-  streakDays: 5,
-  steps: 8_888,
-  distanceM: 204,
-  slackCount: 7,
-  ventedCount: 2,
-  knockdownCount: 4,
-  overtimeCount: 3,
+  todayToiletMinutes: 6,
+  todaySteps: 8_888,
+  todayKnockdown: 4,
+  todayVented: 2,
+  todayOvertime: 1,
   province: '浙江',
-  reportedOnlineSec: 120,
 };
 
 describe('工牌点赞包', () => {

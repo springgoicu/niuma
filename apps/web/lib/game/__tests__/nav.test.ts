@@ -27,11 +27,10 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(bearingDegOf(0, 0)).toBe(0);
   });
 
-  it('出生点四个目标全部可读，四角等距时按 NAV_TARGETS 顺序取工作区', () => {
+  it('出生点 11 个导览目标全部可读，顺序与 NAV_TARGETS 一致', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     expect(readings.map((reading) => reading.target.id)).toEqual(NAV_TARGETS.map((target) => target.id));
-    // 中央广场到四角房中心等距，并列时按 NAV_TARGETS 顺序取工作区（ADR-0044）
-    expect(nearestReading(readings)?.target.name).toBe('工作区');
+    expect(readings).toHaveLength(11);
     for (const reading of readings) {
       expect(reading.distance).toBeGreaterThan(0);
       expect(reading.seconds).toBe(Math.max(1, Math.round(reading.distance / MOVE_SPEED)));
@@ -39,6 +38,14 @@ describe('园区导览方位（ADR-0036）', () => {
       expect(reading.octant).toBeLessThan(8);
       expect(OCTANT_NAMES[reading.octant]).toBeTruthy();
     }
+  });
+
+  it('最近目标取距离最短的那一个，并列时按 NAV_TARGETS 顺序', () => {
+    const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
+    const nearest = nearestReading(readings)!;
+    const shortest = Math.min(...readings.map((reading) => reading.distance));
+    expect(nearest.distance).toBe(shortest);
+    expect(readings.find((reading) => reading.distance === shortest)!.target.id).toBe(nearest.target.id);
   });
 
   it('出生点到四角房分别落在西北 / 东北 / 东南 / 西南四个象限', () => {
@@ -49,8 +56,26 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(octant('restroom')).toBe(3);
     expect(octant('lounge')).toBe(5);
     // 中央广场到四角房中心等距，四条放射路长度在同一档
-    const distances = readings.map((reading) => reading.distance);
+    const indoor = NAV_TARGETS.filter((target) => target.area === 'indoor');
+    expect(indoor).toHaveLength(4);
+    const roomDistances = readings.filter((reading) => reading.target.area === 'indoor');
+    const distances = roomDistances.map((reading) => reading.distance);
     expect(Math.max(...distances) - Math.min(...distances)).toBeLessThan(1);
+  });
+
+  it('户外 7 个目标都朝向岛外方向，不会指回出生点脚下', () => {
+    const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
+    const outdoor = readings.filter((reading) => reading.target.area === 'grounds');
+    expect(outdoor.map((reading) => reading.target.id)).toEqual([
+      'park',
+      'southYard',
+      'theater',
+      'pavilion',
+      'lakeMoping',
+      'lakeChensi',
+      'lakeLianyi',
+    ]);
+    for (const reading of outdoor) expect(reading.distance).toBeGreaterThan(MOVE_SPEED);
   });
 
   it('朝目标走 120px，步行秒数不会变大', () => {

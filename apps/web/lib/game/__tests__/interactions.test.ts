@@ -2,9 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   BULLETIN_BOARD,
   DIRECTION,
-  PARK_SLIDE,
   POSE,
-  SLIDE_INTERACT_RANGE,
   WELCOME_LANDMARKS,
   WORLD_LAYOUT,
   type PropKind,
@@ -19,8 +17,6 @@ import {
   isBulletinHit,
   isNearBulletin,
   isNearRankBoard,
-  isNearSlide,
-  isSlideHit,
   nearestInteractiveProp,
   pickLine,
   snoreDue,
@@ -120,31 +116,6 @@ describe('放假告示板（ADR-0059）', () => {
   it('与牛马榜的感应区不重叠：两块牌子各认各的', () => {
     expect(isNearBulletin(WELCOME_LANDMARKS.rankBoard.x, WELCOME_LANDMARKS.rankBoard.y)).toBe(false);
     expect(isNearRankBoard(foot.x, foot.y)).toBe(false);
-  });
-});
-
-describe('游乐园入口滑梯', () => {
-  it('点击命中整块滑梯精灵（塔楼 + 滑道），矩形之外不算', () => {
-    const { x, y, w, h } = PARK_SLIDE.hit;
-    expect(isSlideHit(x + w / 2, y + h / 2)).toBe(true);
-    expect(isSlideHit(x, y)).toBe(true);
-    expect(isSlideHit(x + w, y + h)).toBe(true);
-    expect(isSlideHit(x - 1, y + h / 2)).toBe(false);
-    expect(isSlideHit(x + w / 2, y + h + 1)).toBe(false);
-    expect(isSlideHit(Number.NaN, y)).toBe(false);
-  });
-
-  it('感应区只认落地点：站在缓冲区旁才滑，站远一格只提示', () => {
-    expect(isNearSlide(PARK_SLIDE.landing.x, PARK_SLIDE.landing.y)).toBe(true);
-    expect(isNearSlide(PARK_SLIDE.landing.x + SLIDE_INTERACT_RANGE, PARK_SLIDE.landing.y)).toBe(true);
-    expect(isNearSlide(PARK_SLIDE.landing.x + SLIDE_INTERACT_RANGE + 1, PARK_SLIDE.landing.y)).toBe(false);
-    expect(isNearSlide(PARK_SLIDE.landing.x, PARK_SLIDE.landing.y - 200)).toBe(false);
-    expect(isNearSlide(Number.NaN, 0)).toBe(false);
-  });
-
-  it('站在落地点、点击滑道中段是唯一合法的组合', () => {
-    expect(isNearSlide(PARK_SLIDE.landing.x, PARK_SLIDE.landing.y)).toBe(true);
-    expect(isSlideHit(PARK_SLIDE.hit.x + PARK_SLIDE.hit.w / 2, PARK_SLIDE.hit.y + 40)).toBe(true);
   });
 });
 

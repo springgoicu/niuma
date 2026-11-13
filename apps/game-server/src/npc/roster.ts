@@ -17,7 +17,8 @@ import type { Rng } from './rng';
  * NPC 的名册：名字、外观、常驻状态与合成考勤。
  *
  * 这些内容全部是服务端内置的静态池，不读玩家输入、不落库、不进审核；
- * 名字由「常见姓 + 普通名/牛马梗名」随机组合而成，都是 2–3 个汉字（显示宽 ≤ 16）；
+ * 同事的名字由「常见姓 + 普通名/牛马梗名」随机组合而成，都是 2–3 个汉字（显示宽 ≤ 16）；
+ * 保安统一显示「园区保安」，让玩家一眼认出身份；
  * 工号与部门由客户端按名字哈希派生，所以只要名字正常，工牌看上去与真人完全一样。
  */
 /** 普通同事：随机便装，在园区里随便走走停停 */
@@ -28,6 +29,9 @@ export type NpcRole = typeof NPC_ROLE_WORKER | typeof NPC_ROLE_GUARD;
 
 /** 固定 3 位保安；不随 GAME_NPC_COUNT 变化，关停仍由 GAME_NPC_ENABLED/count=0 控制 */
 export const GUARD_COUNT = 3;
+
+/** 保安统一显示名：4 个汉字 = 8 显示宽，仍落在头顶 16 单位预算内 */
+export const GUARD_NAME = '园区保安';
 
 export interface NpcProfile {
   name: string;
@@ -314,32 +318,24 @@ function joinDateOf(now: number, daysAgo: number): string {
 }
 
 /**
- * 合成一份自洽的考勤：工龄越长，累计工时与步数越大；今日/本周不越界。
+ * 合成一份只含今日字段的考勤：NPC 也要像真人一样遵守「如厕 ≤ 工时」与协议上限。
  * 所有值都落在 `career.ts` 的协议上限内，编码时不需要再截断。
  */
 export function buildNpcCareer(rng: Rng, now: number): CareerSummary {
   const daysAgo = rng.int(6, 400);
-  const perDayMinutes = rng.int(180, 520);
-  const activeDays = Math.max(1, Math.round(daysAgo * rng.range(0.5, 0.9)));
-  const todayMinutes = rng.int(0, Math.min(480, perDayMinutes));
-  const weekMinutes = Math.min(10_080, todayMinutes + rng.int(0, 4) * perDayMinutes);
-  const steps = Math.min(99_999_999, activeDays * rng.int(600, 2_400));
+  const todayMinutes = rng.int(0, 480);
+  const todayToiletMinutes = Math.min(todayMinutes, rng.int(0, 30));
+  const todaySteps = Math.min(99_999_999, rng.int(0, 12_000));
 
   return {
     firstJoinDate: joinDateOf(now, daysAgo),
-    totalOnlineMinutes: Math.min(60 * 24 * 365 * 100, activeDays * perDayMinutes),
-    activeDays: Math.min(36_500, activeDays),
     todayMinutes,
-    weekMinutes,
-    streakDays: rng.int(0, Math.min(30, daysAgo)),
-    steps,
-    distanceM: Math.round(steps * rng.range(0.6, 0.9)),
-    slackCount: rng.int(0, 200),
-    ventedCount: rng.int(0, 20),
-    knockdownCount: rng.int(0, 5),
-    overtimeCount: rng.int(0, 40),
+    todayToiletMinutes,
+    todaySteps,
+    todayKnockdown: rng.int(0, 5),
+    todayVented: rng.int(0, 20),
+    todayOvertime: rng.int(0, 1),
     province: rng.pick(PROVINCE_POOL),
-    reportedOnlineSec: 0,
   };
 }
 
@@ -426,7 +422,7 @@ export interface NpcRosterCounts {
   guards: number;
 }
 
-/** 一次生成整份名册：同事与保安姓名互不重名，其余字段各自随机 */
+/** 一次生成整份名册：同事姓名互不重名，保安统一叫「园区保安」，其余字段各自随机 */
 export function buildNpcRoster(
   rng: Rng,
   counts: NpcRosterCounts,
@@ -435,12 +431,13 @@ export function buildNpcRoster(
   const workers = Math.max(0, counts.workers);
   const guards = Math.max(0, counts.guards);
   const total = workers + guards;
-  const names = buildNpcNames(rng, total);
+  // 只给同事抽名字：保安不走随机池，避免白消耗随机序列与组合空间
+  const names = buildNpcNames(rng, workers);
   const profiles: NpcProfile[] = [];
   for (let index = 0; index < total; index += 1) {
     const isGuard = index >= workers;
     profiles.push({
-      name: names[index]!,
+      name: isGuard ? GUARD_NAME : names[index]!,
       appearance: isGuard ? buildGuardAppearance(rng) : buildNpcAppearance(rng),
       // 保安头顶留给警灯，不设常驻状态；同事保留随机状态
       status: isGuard ? '' : rng.pick(STATUS_POOL),

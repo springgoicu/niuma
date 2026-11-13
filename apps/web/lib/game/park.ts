@@ -1,7 +1,16 @@
 'use client';
 
 import { Container, Graphics, Rectangle, Sprite, Text, type Application, type Texture } from 'pixi.js';
-import { AMUSEMENT_PARK, PARK_EAST_GATE, PARK_RIDES, PARK_SLIDE, parkFencePosts } from '@niuma/shared-types';
+import {
+  AMUSEMENT_PARK,
+  PARK_ATTRACTIONS,
+  PARK_EAST_GATE,
+  PARK_RIDES,
+  PARK_SLIDE,
+  parkFencePosts,
+  type ParkAttraction,
+  type ParkAttractionKind,
+} from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
@@ -47,6 +56,12 @@ const GATE_ART = { w: 132, h: 96 };
 const SWING_ART = { w: 82, h: 92 };
 const SEESAW_ART = { w: 80, h: 34 };
 const CAROUSEL_ART = { w: 124, h: 102 };
+
+/** 大件器械的包围盒只从共享布局读，渲染层不写第二份尺寸 */
+const ATTRACTIONS = Object.fromEntries(PARK_ATTRACTIONS.map((item) => [item.kind, item])) as Record<
+  ParkAttractionKind,
+  ParkAttraction
+>;
 
 function rect(g: Graphics, x: number, y: number, w: number, h: number, color: number): void {
   g.rect(x, y, w, h).fill(color);
@@ -210,6 +225,152 @@ function drawCarousel(g: Graphics): void {
   });
 }
 
+/** 摩天轮：A 字腿 + 双圈轮盘 + 六个吊舱，辐条用手写偏移，不依赖三角函数 */
+function drawFerrisWheel(g: Graphics): void {
+  const { w, h } = ATTRACTIONS.ferris;
+  const cx = w / 2;
+  const cy = 74;
+  const r = 62;
+
+  g.ellipse(cx, h - 4, 58, 6).fill({ color: C.ink, alpha: 0.18 });
+
+  // 两条 A 字腿 + 底部横撑
+  for (const [legX, footX] of [
+    [cx - 26, cx - 50],
+    [cx + 26, cx + 50],
+  ] as const) {
+    g.moveTo(legX, cy + 6).lineTo(footX, h - 6);
+    g.stroke({ width: 6, color: C.ink });
+    g.moveTo(legX, cy + 6).lineTo(footX, h - 6);
+    g.stroke({ width: 3, color: C.wood });
+  }
+  box(g, cx - 44, h - 16, 88, 4, C.woodDark, C.ink);
+
+  // 轮盘：外圈 + 内圈 + 八根辐条
+  g.circle(cx, cy, r).stroke({ width: 5, color: C.ink });
+  g.circle(cx, cy, r).stroke({ width: 3, color: C.lilac });
+  g.circle(cx, cy, r - 10).stroke({ width: 2, color: C.lilacDark });
+  for (const [dx, dy] of [
+    [r, 0],
+    [0, r],
+    [-r, 0],
+    [0, -r],
+    [44, 44],
+    [44, -44],
+    [-44, 44],
+    [-44, -44],
+  ] as const) {
+    g.moveTo(cx, cy).lineTo(cx + dx, cy + dy);
+    g.stroke({ width: 2, color: C.inkSoft });
+  }
+
+  // 六个吊舱：挂绳 + 舱体 + 亮面窗
+  for (const [px, py] of [
+    [cx, cy - r],
+    [cx + 54, cy - 32],
+    [cx + 54, cy + 32],
+    [cx, cy + r],
+    [cx - 54, cy + 32],
+    [cx - 54, cy - 32],
+  ] as const) {
+    rect(g, px - 1, py - 2, 2, 6, C.ink);
+    box(g, px - 8, py + 4, 16, 12, C.peach, C.ink);
+    rect(g, px - 5, py + 6, 10, 3, C.cream);
+  }
+
+  dot(g, cx, cy, 6, C.gold);
+  rect(g, cx - 1, cy - r - 18, 2, 14, C.ink);
+  g.poly([cx + 1, cy - r - 18, cx + 16, cy - r - 13, cx + 1, cy - r - 8]).fill(C.mint);
+}
+
+/** 小火车：两节奶油车厢 + 红色车头，轮子做成黑点 */
+function drawTrain(g: Graphics): void {
+  const { w, h } = ATTRACTIONS.train;
+
+  g.ellipse(w / 2, h - 2, w / 2 - 12, 3).fill({ color: C.ink, alpha: 0.16 });
+
+  box(g, 2, h - 8, w - 4, 4, C.woodDark, C.ink);
+  for (let i = 0; i < 9; i += 1) rect(g, 8 + i * 15, h - 6, 3, 2, C.cream);
+
+  // 两节车厢：上亮窗 + 两只轮
+  for (const cx of [8, 52]) {
+    box(g, cx, 22, 40, 22, C.butter, C.ink);
+    rect(g, cx + 3, 25, 34, 6, C.cream);
+    for (const wx of [cx + 8, cx + 30]) dot(g, wx, h - 14, 4, C.ink, C.inkSoft);
+  }
+
+  // 车头：锅炉 + 双窗 + 烟囱与三团烟
+  box(g, 92, 16, 40, 28, C.red, C.ink);
+  rect(g, 96, 20, 14, 9, C.sky);
+  rect(g, 114, 20, 12, 9, C.sky);
+  box(g, 116, 2, 9, 14, C.inkSoft, C.ink);
+  for (const [sx, sy, sr] of [
+    [128, 8, 5],
+    [134, 5, 4],
+    [139, 3, 3],
+  ] as const) {
+    g.circle(sx, sy, sr).fill({ color: C.cream, alpha: 0.85 });
+  }
+  for (const wx of [100, 124]) dot(g, wx, h - 14, 5, C.ink, C.inkSoft);
+}
+
+/** 沙池：木框 + 奶油沙面 + 小红桶与蓝铲子 */
+function drawSandpit(g: Graphics): void {
+  const { w, h } = ATTRACTIONS.sandpit;
+
+  box(g, 2, 18, w - 4, h - 20, C.wood, C.woodDark);
+  rect(g, 6, 24, w - 12, h - 28, C.butter);
+  for (const [sx, sy] of [
+    [18, 32],
+    [42, 44],
+    [70, 30],
+    [96, 40],
+    [54, 26],
+    [104, 52],
+  ] as const) {
+    dot(g, sx, sy, 2, C.cream, C.wood);
+  }
+
+  box(g, 22, 4, 14, 14, C.red, C.ink);
+  rect(g, 24, 6, 10, 2, C.redLight);
+
+  rect(g, 88, 2, 3, 20, C.woodDark);
+  box(g, 84, 0, 11, 8, C.sky, C.ink);
+
+  for (const px of [4, w - 8]) box(g, px, 12, 4, 8, C.woodDark, C.ink);
+}
+
+/** 喷泉：石台 + 椭圆水池 + 三层水盘 + 四道水柱 */
+function drawFountain(g: Graphics): void {
+  const { w, h } = ATTRACTIONS.fountain;
+  const cx = w / 2;
+  const pool = h - 34;
+
+  g.ellipse(cx, h - 4, 48, 7).fill({ color: C.ink, alpha: 0.18 });
+
+  box(g, 4, pool + 12, w - 8, 16, C.cream, C.ink);
+  g.ellipse(cx, pool, 44, 16).fill(C.ink);
+  g.ellipse(cx, pool, 42, 14).fill(C.cream);
+  g.ellipse(cx, pool, 36, 10).fill(C.sky);
+
+  box(g, cx - 3, h - 62, 6, 28, C.cream, C.ink);
+  g.ellipse(cx, h - 62, 22, 8).fill(C.ink);
+  g.ellipse(cx, h - 62, 20, 6).fill(C.cream);
+  g.ellipse(cx, h - 62, 16, 4).fill(C.sky);
+
+  for (const dx of [-8, -3, 2, 7]) rect(g, cx + dx, h - 78, 2, 14, C.mintLight);
+  for (const [px, py] of [
+    [cx - 14, h - 70],
+    [cx + 12, h - 72],
+    [cx - 4, h - 80],
+    [cx + 6, h - 66],
+  ] as const) {
+    dot(g, px, py, 2, C.mintLight, C.sky);
+  }
+
+  g.ellipse(cx + 24, pool - 2, 8, 3).fill(C.mint);
+}
+
 function drawBalloons(g: Graphics): void {
   const colors = [C.red, C.sky, C.butter];
   colors.forEach((color, index) => {
@@ -275,6 +436,20 @@ export class ParkView {
     const seesawTexture = bake(renderer, drawSeesaw, { frame: new Rectangle(0, 0, SEESAW_ART.w, SEESAW_ART.h) });
     const carouselTexture = bake(renderer, drawCarousel, { frame: new Rectangle(0, 0, CAROUSEL_ART.w, CAROUSEL_ART.h) });
     const balloonTexture = bake(renderer, drawBalloons, { frame: new Rectangle(0, 0, 30, 36) });
+
+    const attractionTextures: Record<ParkAttractionKind, Texture> = {
+      ferris: bake(renderer, drawFerrisWheel, {
+        frame: new Rectangle(0, 0, ATTRACTIONS.ferris.w, ATTRACTIONS.ferris.h),
+      }),
+      train: bake(renderer, drawTrain, { frame: new Rectangle(0, 0, ATTRACTIONS.train.w, ATTRACTIONS.train.h) }),
+      sandpit: bake(renderer, drawSandpit, {
+        frame: new Rectangle(0, 0, ATTRACTIONS.sandpit.w, ATTRACTIONS.sandpit.h),
+      }),
+      fountain: bake(renderer, drawFountain, {
+        frame: new Rectangle(0, 0, ATTRACTIONS.fountain.w, ATTRACTIONS.fountain.h),
+      }),
+    };
+
     this.textures.push(
       slideTexture,
       gateTexture,
@@ -282,6 +457,7 @@ export class ParkView {
       seesawTexture,
       carouselTexture,
       balloonTexture,
+      ...Object.values(attractionTextures),
     );
 
     const slide = new Sprite(slideTexture);
@@ -314,6 +490,15 @@ export class ParkView {
       sprite.anchor.set(0.5, 1);
       sprite.position.set(ride.x, ride.y);
       this.push(this.wrap(sprite), ride.y);
+    }
+
+    // 大件器械：共用一份包围盒，深度键取脚底，玩家从正面走过来时压在自己身前
+    for (const attraction of PARK_ATTRACTIONS) {
+      const sprite = new Sprite(attractionTextures[attraction.kind]);
+      sprite.anchor.set(0.5, 1);
+      const footY = attraction.y + attraction.h / 2;
+      sprite.position.set(attraction.x, footY);
+      this.push(this.wrap(sprite), footY);
     }
   }
 

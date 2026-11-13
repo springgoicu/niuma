@@ -74,96 +74,76 @@ describe('榜单请求门', () => {
 });
 
 describe('牛马榜聚合', () => {
-  it('在岗榜按服务端会话秒数排序，并统计在岗 / 摸鱼人数', () => {
+  it('今日工时只读本地自报值，不再补会话增量', () => {
     const players = [
-      makePlayer(1, '早班牛', 10),
-      makePlayer(2, '夜班马', 30, { pose: POSE.Sit }),
-      makePlayer(3, '实习生', 20, { pose: POSE.Lie }),
+      makePlayer(1, '早班牛', 10, { career: { todayMinutes: 60 } }),
+      makePlayer(2, '夜班马', 30, { career: { todayMinutes: 90 } }),
+      makePlayer(3, '实习生', 20, { career: { todayMinutes: 30 }, pose: POSE.Sit }),
     ];
-    const board = buildBoardSnapshot(players, BOARD_METRIC.Duty, NOW, 1);
+    const board = buildBoardSnapshot(players, BOARD_METRIC.TodayMinutes, 1, 2);
     expect(board.rows.map((row) => [row.id, row.value])).toEqual([
-      [2, 30],
-      [3, 20],
-      [1, 10],
+      [2, 90],
+      [1, 60],
     ]);
     expect(board.online).toBe(3);
     // 坐和躺都算摸鱼；Idle 不算
-    expect(board.slacking).toBe(2);
-    expect(board.selfRank).toBe(3);
-    expect(board.selfValue).toBe(10);
+    expect(board.slacking).toBe(1);
+    expect(board.selfRank).toBe(2);
+    expect(board.selfValue).toBe(60);
   });
 
-  it('本周工时把上报后的会话增量算进去，且只统计已上报的人', () => {
-    const reported = makePlayer(1, '老牛', 3_600, { career: { weekMinutes: 100, reportedOnlineSec: 0 } });
-    const fresh = makePlayer(2, '新马', 120, { career: { weekMinutes: 50, reportedOnlineSec: 60 } });
-    const unreported = makePlayer(3, '没上报', 900, { reported: false });
-    const board = buildBoardSnapshot([reported, fresh, unreported], BOARD_METRIC.Week, NOW, 3);
-    expect(board.rows.map((row) => [row.id, row.value])).toEqual([
-      [1, 160],
-      [2, 51],
-    ]);
-    // 未上报者在工时榜没有名次，但仍算在岗人数
-    expect(board.selfRank).toBe(0);
-    expect(board.selfValue).toBe(0);
-    expect(board.online).toBe(3);
-  });
-
-  it('其余三项直接读本人自报的累计值', () => {
+  it('今日如厕、击倒、被创、步数各读各的今日字段，且只统计已上报的人', () => {
     const players = [
-      makePlayer(1, '摸鱼王', 10, { career: { slackCount: 99 } }),
-      makePlayer(2, '击倒王', 10, { career: { knockdownCount: 12 } }),
-      makePlayer(3, '步数王', 10, { career: { steps: 8_888 } }),
+      makePlayer(1, '如厕王', 10, { career: { todayToiletMinutes: 70, todayMinutes: 120 } }),
+      makePlayer(2, '击倒王', 20, { career: { todayKnockdown: 12 } }),
+      makePlayer(3, '被创王', 30, { career: { todayVented: 9 } }),
+      makePlayer(4, '步数王', 40, { career: { todaySteps: 20_000 } }),
+      makePlayer(5, '没上报', 50, { reported: false }),
     ];
-    expect(buildBoardSnapshot(players, BOARD_METRIC.Slack, NOW, 1).rows[0]?.id).toBe(1);
-    expect(buildBoardSnapshot(players, BOARD_METRIC.Knockdown, NOW, 1).rows[0]?.id).toBe(2);
-    expect(buildBoardSnapshot(players, BOARD_METRIC.Steps, NOW, 1).rows[0]?.id).toBe(3);
-  });
-
-  it('人气榜读服务端点赞数：0 赞也入榜，未上报 career 不影响', () => {
-    const star = makePlayer(1, '人气王', 10, { reported: false });
-    star.likes = 9;
-    const fresh = makePlayer(2, '新来的', 20, { reported: false });
-    const middle = makePlayer(3, '中间人', 30, { reported: false });
-    middle.likes = 3;
-    const board = buildBoardSnapshot([star, fresh, middle], BOARD_METRIC.Likes, NOW, 2);
-    expect(board.rows.map((row) => [row.id, row.value])).toEqual([
-      [1, 9],
-      [3, 3],
+    expect(buildBoardSnapshot(players, BOARD_METRIC.TodayToilet, 1).rows.map((row) => [row.id, row.value])).toEqual([
+      [1, 70],
       [2, 0],
+      [3, 0],
+      [4, 0],
     ]);
-    expect(board.selfRank).toBe(3);
-    expect(board.selfValue).toBe(0);
-    expect(board.online).toBe(3);
+    expect(buildBoardSnapshot(players, BOARD_METRIC.TodayKnockdown, 2).rows[0]?.id).toBe(2);
+    expect(buildBoardSnapshot(players, BOARD_METRIC.TodayVented, 3).rows[0]?.id).toBe(3);
+    expect(buildBoardSnapshot(players, BOARD_METRIC.TodaySteps, 4).rows[0]?.id).toBe(4);
+    expect(boardValueOf(players[3]!, BOARD_METRIC.TodaySteps)).toBe(20_000);
+    expect(hasCareerReport(players[4]!.career)).toBe(false);
   });
 
-  it('并列时先来的靠前，再按 id 升序，结果稳定', () => {
+  it('并列时按 id 升序，结果稳定；先后入场不再影响名次', () => {
     const players = [
-      makePlayer(9, '后到', 10, { career: { steps: 100 } }),
-      makePlayer(4, '先到', 30, { career: { steps: 100 } }),
-      makePlayer(2, '同刻', 30, { career: { steps: 100 } }),
+      makePlayer(9, '后到', 10, { career: { todaySteps: 100 } }),
+      makePlayer(4, '先到', 30, { career: { todaySteps: 100 } }),
+      makePlayer(2, '同刻', 20, { career: { todaySteps: 100 } }),
     ];
-    // 4 与 2 同一入场时刻：id 小的先
-    const board = buildBoardSnapshot(players, BOARD_METRIC.Steps, NOW, 9);
+    const board = buildBoardSnapshot(players, BOARD_METRIC.TodaySteps, 9);
     expect(board.rows.map((row) => row.id)).toEqual([2, 4, 9]);
-    expect(buildBoardSnapshot(players, BOARD_METRIC.Steps, NOW, 9).rows.map((row) => row.id)).toEqual([2, 4, 9]);
+    expect(buildBoardSnapshot(players, BOARD_METRIC.TodaySteps, 9).rows.map((row) => row.id)).toEqual([2, 4, 9]);
   });
 
   it('自己排在前十之外时仍给出真实名次与数值', () => {
     const players = Array.from({ length: 12 }, (_, index) =>
-      makePlayer(index + 1, `牛马${index + 1}`, index + 1, { career: { steps: (index + 1) * 10 } }),
+      makePlayer(index + 1, `牛马${index + 1}`, index + 1, { career: { todaySteps: (index + 1) * 10 } }),
     );
-    const board = buildBoardSnapshot(players, BOARD_METRIC.Steps, NOW, 2, 3);
+    const board = buildBoardSnapshot(players, BOARD_METRIC.TodaySteps, 2, 3);
     expect(board.rows.map((row) => row.id)).toEqual([12, 11, 10]);
     expect(board.selfRank).toBe(11);
     expect(board.selfValue).toBe(20);
   });
 
   it('NPC 不进任何榜单，也不计入在岗人数与自己的名次', () => {
-    const human = makePlayer(1, '真牛', 10, { career: { steps: 10 } });
-    const npc = makePlayer(2, '假马', 9_999, { career: { steps: 99_999 } });
+    const human = makePlayer(1, '真牛', 10, { career: { todaySteps: 10 } });
+    const npc = makePlayer(2, '假马', 9_999, { career: { todaySteps: 99_999 } });
     npc.isNpc = true;
-    for (const metric of [BOARD_METRIC.Duty, BOARD_METRIC.Steps, BOARD_METRIC.Likes]) {
-      const board = buildBoardSnapshot([human, npc], metric, NOW, 2);
+    for (const metric of [
+      BOARD_METRIC.TodayMinutes,
+      BOARD_METRIC.TodayToilet,
+      BOARD_METRIC.TodaySteps,
+    ]) {
+      const board = buildBoardSnapshot([human, npc], metric, 2);
       expect(board.rows.map((row) => row.id)).toEqual([1]);
       expect(board.online).toBe(1);
       expect(board.selfRank).toBe(0);
@@ -171,38 +151,17 @@ describe('牛马榜聚合', () => {
     }
   });
 
-  it('未上报判定：有入职日期或服务端写入过会话基线都算上报过', () => {
-    expect(hasCareerReport(makePlayer(1, 'a', 10))).toBe(true);
-    expect(hasCareerReport(makePlayer(2, 'b', 10, { reported: false }))).toBe(false);
-    expect(
-      hasCareerReport(makePlayer(3, 'c', 10, { reported: false, career: { reportedOnlineSec: 30 } })),
-    ).toBe(true);
+  it('未上报判定只看入职日期，不再依赖服务端会话基线', () => {
+    expect(hasCareerReport(makePlayer(1, 'a', 10).career)).toBe(true);
+    expect(hasCareerReport(makePlayer(2, 'b', 10, { reported: false }).career)).toBe(false);
   });
 
-  it('会话秒数不为负；未入场的玩家按 0 计', () => {
+  it('会话秒数只用于在线状态：不为负；未入场按 0 计', () => {
     const player = makePlayer(1, 'a', 10);
     expect(sessionSecOf(player, NOW)).toBe(10);
     // 时钟回拨 / 早于入场时刻：不能算出负数
     expect(sessionSecOf(player, NOW - 20_000)).toBe(0);
     player.joinedAt = 0;
     expect(sessionSecOf(player, NOW)).toBe(0);
-  });
-});
-
-describe('会话续算（ADR-0060）', () => {
-  it('入场时刻前移后在岗时长接着算，而不是从 0 重来', () => {
-    const back = makePlayer(1, '断线回来的', 3_600);
-    expect(sessionSecOf(back, NOW)).toBe(3_600);
-    // 榜单与工牌同一口径：在岗榜读的就是这个数
-    expect(boardValueOf(back, BOARD_METRIC.Duty, NOW)).toBe(3_600);
-  });
-
-  it('增量基线跟续算秒数一致时，工时不会被重连重复计一遍', () => {
-    const back = makePlayer(1, '断线回来的', 3_600, {
-      career: { weekMinutes: 600, reportedOnlineSec: 3_600 },
-    });
-    expect(boardValueOf(back, BOARD_METRIC.Week, NOW)).toBe(600);
-    // 再过两分钟只补两分钟，不会把上一段 60 分钟再加一次
-    expect(boardValueOf(back, BOARD_METRIC.Week, NOW + 120_000)).toBe(602);
   });
 });

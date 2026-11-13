@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DEFAULT_APPEARANCE, POSE } from '@niuma/shared-types';
 import { buildRemoteArchive, buildSelfArchive } from '../archive';
+import { EMPTY_CAREER_DAY } from '../career';
 import { BadgeArchiveDialog } from '../../../components/badge/BadgeArchiveDialog';
 import { AttendancePanel } from '../../../components/badge/AttendancePanel';
 import { ActivityPanel } from '../../../components/badge/ActivityPanel';
@@ -16,27 +17,21 @@ function archive() {
     geo: { region: '浙江', city: '杭州', isp: '电信' },
     attendance: {
       firstJoinDate: '2026-03-30',
-      totalOnlineMs: 0,
-      dailyRecords: {},
-      sessionStartTime: Date.now(),
+      dailyRecords: { '2026-04-01': 2 * 3_600_000 },
+      dailyToiletRecords: { '2026-04-01': 30 * 60_000 },
     },
     stats: {
-      distancePx: 0,
-      steps: 0,
-      slackCount: 0,
-      ventedCount: 0,
-      knockdownCount: 7,
-      overtimeCount: 0,
-      lastOvertimeDay: '',
+      daily: {
+        '2026-04-01': { ...EMPTY_CAREER_DAY, distancePx: 1_600, knockdownCount: 7 },
+      },
     },
     pose: POSE.Idle,
     seated: false,
     seatKind: null,
     board: [],
     rank: null,
-    onlineSec: 0,
     likes: 4,
-    now: Date.now(),
+    now: new Date(2026, 3, 1, 12, 0, 0).getTime(),
   });
 }
 
@@ -48,7 +43,6 @@ function remoteArchive(liked = false) {
     appearance: DEFAULT_APPEARANCE.cow,
     status: '',
     region: '工作区',
-    onlineSec: 180,
     pose: POSE.Idle,
     moving: false,
     seated: false,
@@ -98,12 +92,22 @@ describe('archive dialog static render', () => {
     expect(html).not.toContain('收到的赞');
   });
 
-  it('renders the week meter and activity panels', () => {
+  it('renders today attendance with a toilet share, no week or session totals', () => {
     const attendance = renderToStaticMarkup(<AttendancePanel archive={archive()} />);
-    expect(attendance).toContain('本周工时');
-    expect(attendance).toContain('本次在岗');
+    expect(attendance).toContain('今日工时');
+    expect(attendance).toContain('02:00');
+    expect(attendance).toContain('今日如厕');
+    expect(attendance).toContain('30 分钟');
+    expect(attendance).toContain('如厕占今日工时 25%');
+    expect(attendance).not.toContain('本周工时');
+    expect(attendance).not.toContain('本次在岗');
+    expect(attendance).not.toContain('连续在岗');
+    expect(attendance).not.toContain('工龄');
+
     const activity = renderToStaticMarkup(<ActivityPanel archive={archive()} />);
+    expect(activity).toContain('今日口径');
     expect(activity).toContain('击倒');
     expect(activity).toContain('同屏劳模榜');
+    expect(activity).not.toContain('摸鱼次数');
   });
 });

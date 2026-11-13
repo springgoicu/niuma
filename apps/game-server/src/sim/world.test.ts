@@ -33,9 +33,10 @@ describe('实体 id 分配', () => {
     const first = join(world, 1)!;
     first.career = {
       ...EMPTY_CAREER,
+      firstJoinDate: '2026-01-01',
       province: '浙江',
-      weekMinutes: 600,
-      reportedOnlineSec: 120,
+      todayMinutes: 600,
+      todayToiletMinutes: 12,
     };
     first.lastCareerAt = 123_456;
     world.destroy(first.id);

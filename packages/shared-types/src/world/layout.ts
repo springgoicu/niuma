@@ -40,7 +40,6 @@ import {
   LOUNGE_COUCH_SECOND,
   MEETING_PROPS,
   MEETING_ROOM,
-  NAV_ARRIVALS,
   RESTROOM,
   RESTROOM_PROPS,
   ROOM_H,
@@ -65,6 +64,7 @@ import {
 } from './campus';
 import {
   AMUSEMENT_PARK,
+  PARK_ATTRACTION_SOLIDS,
   PARK_BUILDING,
   PARK_GATE_PAVING,
   PARK_NORTH_GATE,
@@ -202,38 +202,6 @@ export const SPAWN_CENTER = { x: WORLD_CENTER.x, y: WORLD_CENTER.y } as const;
 /** 出生点散布上限，与服务端 config.spawnRadius 默认值一致 */
 export const SPAWN_RADIUS = 56;
 
-/**
- * 园区导览目标（ADR-0036）：四角房中心不变，HUD 导览卡与测试共用这一份。
- */
-export type NavTargetId = 'workroom' | 'restroom' | 'lounge' | 'meeting';
-
-export interface NavTarget {
-  readonly id: NavTargetId;
-  readonly name: string;
-  /** 房间几何中心：方位、距离与步行秒数都按它算 */
-  readonly x: number;
-  readonly y: number;
-  /** 房间内可站立的到达点（ADR-0040）：自动寻路的真正终点 */
-  readonly arrive: { readonly x: number; readonly y: number };
-}
-
-function rectCenter(rect: WorldRect): { x: number; y: number } {
-  return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
-}
-
-const NAV_SOURCES: ReadonlyArray<{ id: NavTargetId; name: string; rect: WorldRect }> = [
-  { id: 'workroom', name: '工作区', rect: WORKROOM },
-  { id: 'restroom', name: '卫生间', rect: RESTROOM },
-  { id: 'lounge', name: '宿舍区', rect: LOUNGE },
-  { id: 'meeting', name: '会议室', rect: MEETING_ROOM },
-];
-
-export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, rect }) => ({
-  id,
-  name,
-  ...rectCenter(rect),
-  arrive: NAV_ARRIVALS[id],
-}));
 
 /**
  * 中央迎宾地标（ADR-0047 / ADR-0049）：拱门跨在南向主路两侧，东侧立四向园区导览牌。
@@ -242,7 +210,7 @@ export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, re
 export const WELCOME_LANDMARKS = {
   /** 迎宾拱门：底边中心落在广场南缘，宽度 320，立柱让开 112px 的南向主路 */
   arch: { x: PLAZA_CENTER.x, y: 4408, width: 320, height: 112 },
-  /** 四向园区导览牌：拱门东侧、圆庭外缘（避开东南支路）；96×92 与旧画布一致 */
+  /** 园区导览牌：拱门东侧、圆庭外缘（避开东南支路）；96×92 与旧画布一致 */
   directory: { x: 4310, y: 4432, width: 96, height: 92 },
   /**
    * 牛马榜公告栏（ADR-0054）：广场北缘、出生点斜北侧，顶部与广场边界齐平。
@@ -786,6 +754,96 @@ const LAKE_NAMES = ['摸鱼湖', '沉思浅塘', '涟漪湖'] as const;
 const LAKES: LakeShape[] = [MOPING_LAKE_POINTS, CHENSI_POND_POINTS, LIANYI_LAKE_POINTS].map((points) => ({
   points,
   rect: polygonBounds(points),
+}));
+
+/* ------------------------------------------------------------------ *
+ * 园区导览目标（ADR-0036 / ADR-0067）
+ *
+ * 从四间房扩展到 11 处地标：四角房 + 游乐园 / 研发园 / 家庭影音室 /
+ * 摸鱼亭 + 三处景观湖。`x` / `y` 是区域几何中心，只用于方位、距离与
+ * 步行秒数；`arrive` 才是自动寻路的真正终点，必须落在可站立的陆地或
+ * 室内空地，绝不压建筑、水面与器械底座。
+ * ------------------------------------------------------------------ */
+
+export type NavTargetId =
+  | 'workroom'
+  | 'restroom'
+  | 'lounge'
+  | 'meeting'
+  | 'park'
+  | 'southYard'
+  | 'theater'
+  | 'pavilion'
+  | 'lakeMoping'
+  | 'lakeChensi'
+  | 'lakeLianyi';
+
+export interface NavTarget {
+  readonly id: NavTargetId;
+  readonly name: string;
+  /** 室内 / 园区：HUD 卡按这个分组，避免 11 行平铺 */
+  readonly area: 'indoor' | 'grounds';
+  /** 区域几何中心：方位、距离与步行秒数都按它算 */
+  readonly x: number;
+  readonly y: number;
+  /** 可站立的到达点（ADR-0040）：自动寻路的真正终点 */
+  readonly arrive: { readonly x: number; readonly y: number };
+}
+
+function rectCenter(rect: WorldRect): { x: number; y: number } {
+  return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+}
+
+/**
+ * 各目标的落地到达点：四间房沿用 ADR-0040 的进门空地，
+ * 户外则取门口内侧或湖岸的陆地空地。
+ */
+export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y: number }> = {
+  meeting: { x: MEETING_ROOM.x + 360, y: MEETING_ROOM.y + 314 },
+  restroom: { x: RESTROOM.x + 230, y: RESTROOM.y + 70 },
+  lounge: { x: LOUNGE.x + 230, y: LOUNGE.y + 70 },
+  workroom: { x: WORKROOM.x + 230, y: WORKROOM.y + 294 },
+  // 东门内侧橡胶垫：进门两步就是空地，避开滑梯塔楼底座与垃圾桶
+  park: { x: 3262, y: 5600 },
+  // 南庭院铺装中央空地
+  southYard: { x: 4200, y: 5300 },
+  // 影厅东门内侧走道：三排座椅以东，音箱之间
+  theater: { x: 3780, y: 4950 },
+  // 亭底南沿外 50px 的陆地
+  pavilion: { x: 5790, y: 5260 },
+  // 三湖各自的岸边陆地，取包围盒东/南侧外 30–40px
+  lakeMoping: { x: 5770, y: 5565 },
+  lakeChensi: { x: 5530, y: 2910 },
+  lakeLianyi: { x: 2740, y: 5215 },
+};
+
+const NAV_SOURCES: ReadonlyArray<{
+  id: NavTargetId;
+  name: string;
+  area: 'indoor' | 'grounds';
+  x: number;
+  y: number;
+}> = [
+  { id: 'workroom', name: '工作区', area: 'indoor', ...rectCenter(WORKROOM) },
+  { id: 'meeting', name: '会议室', area: 'indoor', ...rectCenter(MEETING_ROOM) },
+  { id: 'restroom', name: '卫生间', area: 'indoor', ...rectCenter(RESTROOM) },
+  { id: 'lounge', name: '宿舍区', area: 'indoor', ...rectCenter(LOUNGE) },
+  { id: 'park', name: '游乐园', area: 'grounds', ...rectCenter(AMUSEMENT_PARK) },
+  { id: 'southYard', name: '研发园', area: 'grounds', ...rectCenter(SOUTH_YARD) },
+  { id: 'theater', name: '家庭影音室', area: 'grounds', ...rectCenter(HOME_THEATER) },
+  { id: 'pavilion', name: '摸鱼亭', area: 'grounds', ...PAVILION_CENTER },
+  { id: 'lakeMoping', name: '摸鱼湖', area: 'grounds', ...rectCenter(LAKES[0]!.rect) },
+  { id: 'lakeChensi', name: '沉思浅塘', area: 'grounds', ...rectCenter(LAKES[1]!.rect) },
+  { id: 'lakeLianyi', name: '涟漪湖', area: 'grounds', ...rectCenter(LAKES[2]!.rect) },
+];
+
+export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, area, x, y }) => ({
+  id,
+  name,
+  area,
+  x,
+  y,
+  arrive: NAV_ARRIVALS[id],
 }));
 
 /**
@@ -1377,6 +1435,8 @@ export const WORLD_LAYOUT: WorldLayout = {
     { kind: 'prop', ...TEA_STATION_SOLID },
     // 游乐园器械底座（滑梯塔楼 / 秋千 / 跷跷板 / 旋转木马）
     ...PARK_RIDE_SOLIDS,
+    // 静态大件底座（摩天轮 / 小火车 / 沙池 / 喷泉）
+    ...PARK_ATTRACTION_SOLIDS,
   ],
   buildings: [...CAMPUS_BUILDINGS, PARK_BUILDING],
   paved: [SOUTH_YARD_PAVING, PARK_GATE_PAVING, ...DOOR_PAVING],

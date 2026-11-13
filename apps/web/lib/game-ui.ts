@@ -18,12 +18,10 @@ interface GameUiState {
   y: number;
   /** 本地角色所在园区区域名：工牌「所在地」直接读它 */
   region: string;
-  /** 本地会话已在线秒数：断线时工牌显示 --:-- */
-  onlineSec: number;
   /** 本地玩家收到的工牌点赞数：本人档案显示「收到的赞」（ADR-0057） */
   myLikes: number;
   nearby: number;
-  /** 视野内本周工时榜（最多 5 条），本人档案与排行条共用 */
+  /** 视野内今日工时榜（最多 5 条），本人档案与排行条共用 */
   board: BoardEntry[];
   /** 本地玩家在视野榜里的名次；未上榜为 null */
   rank: number | null;
@@ -120,7 +118,6 @@ const INITIAL = {
   x: 4096,
   y: 4096,
   region: '',
-  onlineSec: 0,
   myLikes: 0,
   nearby: 0,
   board: [] as BoardEntry[],
@@ -160,7 +157,6 @@ export const useGameUi = create<GameUiState>((set) => ({
       x: stats.x,
       y: stats.y,
       region: stats.region,
-      onlineSec: stats.onlineSec,
       myLikes: stats.likes,
       nearby: stats.nearby,
       board: stats.board,

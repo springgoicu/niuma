@@ -11,7 +11,6 @@ import {
 import type { ConnectionStatus } from '@/lib/game-ui';
 import { GAME_KEYS, TAB_KEYS } from '@/lib/game/game-keys';
 import {
-  advanceBoardValue,
   BOARD_METRICS,
   formatBoardValue,
   isBackdropCloseAllowed,
@@ -30,6 +29,11 @@ interface LeaderboardDialogProps {
   /** 已按 metric 归并的五份快照；打开后由宿主持续更新 */
   boards: Partial<Record<BoardMetric, BoardPacket>>;
   status: ConnectionStatus;
+  /**
+   * 本地今日值：服务端尚未收到新上报时，自己那一行不该显示 0。
+   * 只在展示时取 max，不回写快照；未入场或未上报时返回 0。
+   */
+  selfValue?(metric: BoardMetric): number;
   /** 重新拉取全部指标：打开面板、手动刷新与自动刷新都走它 */
   onRequest(): void;
   onClose(): void;
@@ -130,30 +134,38 @@ function PodiumSlot({
   );
 }
 
-export function LeaderboardDialog({ boards, status, onRequest, onClose }: LeaderboardDialogProps) {
+export function LeaderboardDialog({
+  boards,
+  status,
+  selfValue,
+  onRequest,
+  onClose,
+}: LeaderboardDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const refreshTimer = useRef<number | null>(null);
   /** 打开时刻：遮罩的免疫窗按它算，挡住同一次手势的余波 */
   const openedAt = useRef(Date.now());
-  /** 快照到达时刻，按指标分开记：切页签不该把别的指标的时间戳刷新掉 */
-  const stampOf = useRef<Partial<Record<BoardMetric, number>>>({});
   const seenBoards = useRef(boards);
   const [metric, setMetric] = useState<BoardMetric>(BOARD_METRICS[0]!.id);
   const [cooling, setCooling] = useState(false);
-  const [nowTick, setNowTick] = useState(0);
+  /** 最近一次收到快照的时刻：只用于页脚的「快照 HH:MM:SS」 */
+  const [snapshotAt, setSnapshotAt] = useState(0);
 
   const meta = metricMeta(metric);
   const packet = boards[metric];
   const rows = packet?.rows ?? [];
   const podium = rows.slice(0, 3);
   const rest = rows.slice(3);
+  const localSelf = Math.max(0, Math.floor(selfValue ? selfValue(metric) : 0));
 
-  /** 当前页签这份快照的到达时刻；0 表示还没有快照 */
-  const snapshotAt = stampOf.current[metric] ?? 0;
-  /** 距快照到达过了多久：在岗按秒推进，工时按整分钟推进 */
-  const elapsedSec = snapshotAt > 0 && nowTick > snapshotAt ? (nowTick - snapshotAt) / 1000 : 0;
-  const valueOf = (value: number) => advanceBoardValue(metric, value, elapsedSec);
+  /**
+   * 展示自己的今日值：服务端快照最多落后 20 秒，刚部署完也可能还没收到上报。
+   * 快照自带名次，`selfRank - 1` 就是自己那一行的下标；只在这一行取 max，
+   * 别人的快照保持原样，避免把本地值冒充成服务端事实。
+   */
+  const ownValue = (index: number, value: number) =>
+    packet?.selfRank === index + 1 ? Math.max(value, localSelf) : value;
   /** 与相邻行数值相同就算并列：让「时间一样」读作并列，而不是排序出错 */
   const tiedAt = (index: number) => {
     const value = rows[index]?.value;
@@ -192,12 +204,6 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
     return () => window.clearInterval(timer);
   }, [onRequest]);
 
-  // 每秒推一次「现在」：在岗按秒走，20 秒快照只用来校准。
-  useEffect(() => {
-    const timer = window.setInterval(() => setNowTick(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   // 只在真的来了新快照时盖时间戳：按对象身份比对，切页签不会重置别的指标。
   useEffect(() => {
     const previous = seenBoards.current;
@@ -205,12 +211,12 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
     for (const item of BOARD_METRICS) {
       const next = boards[item.id];
       if (next !== undefined && next !== previous[item.id]) {
-        stampOf.current[item.id] = Date.now();
         fresh = true;
+        break;
       }
     }
     seenBoards.current = boards;
-    if (fresh) setNowTick(Date.now());
+    if (fresh) setSnapshotAt(Date.now());
   }, [boards]);
 
   useEffect(
@@ -284,7 +290,6 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
   }, []);
 
   const online = packet?.online ?? 0;
-  const slacking = packet?.slacking ?? 0;
   const snapshotTime =
     snapshotAt > 0
       ? new Date(snapshotAt).toLocaleTimeString('zh-CN', { hour12: false })
@@ -367,8 +372,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
               aria-live="polite"
             >
               <span>
-                在岗 <span className="text-mint-400">{packet ? online : '--'}</span> · 摸鱼{' '}
-                <span className="text-amber-400">{packet ? slacking : '--'}</span>
+                在线 <span className="text-mint-400">{packet ? online : '--'}</span> 人 · 今日五榜
               </span>
               <span className="text-mist-500">本园区</span>
             </div>
@@ -384,7 +388,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
           <div
             role="tablist"
             aria-label="榜单指标"
-            className="grid shrink-0 grid-cols-6 gap-1.5 border-b-2 border-ink-600 bg-ink-950/50 px-2 py-2"
+            className="grid shrink-0 grid-cols-5 gap-1.5 border-b-2 border-ink-600 bg-ink-950/50 px-2 py-2"
           >
             {BOARD_METRICS.map((item, index) => {
               const active = item.id === metric;
@@ -455,7 +459,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                   <PodiumSlot
                     rank={2}
                     entry={podium[1]}
-                    value={podium[1] ? valueOf(podium[1].value) : 0}
+                    value={podium[1] ? ownValue(1, podium[1].value) : 0}
                     metric={metric}
                     unit={meta.unit}
                     self={packet.selfRank === 2}
@@ -464,7 +468,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                   <PodiumSlot
                     rank={1}
                     entry={podium[0]}
-                    value={podium[0] ? valueOf(podium[0].value) : 0}
+                    value={podium[0] ? ownValue(0, podium[0].value) : 0}
                     metric={metric}
                     unit={meta.unit}
                     self={packet.selfRank === 1}
@@ -473,7 +477,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                   <PodiumSlot
                     rank={3}
                     entry={podium[2]}
-                    value={podium[2] ? valueOf(podium[2].value) : 0}
+                    value={podium[2] ? ownValue(2, podium[2].value) : 0}
                     metric={metric}
                     unit={meta.unit}
                     self={packet.selfRank === 3}
@@ -514,7 +518,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                           )}
                         </span>
                         <span className="shrink-0 font-mono text-[12px] tabular-nums text-mist-100">
-                          {formatBoardValue(metric, valueOf(entry.value))}
+                          {formatBoardValue(metric, ownValue(index + 3, entry.value))}
                         </span>
                         {meta.unit && (
                           <span className="w-3 shrink-0 font-mono text-[8px] text-mist-500">{meta.unit}</span>
@@ -531,7 +535,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                         我的位置 · 第 {packet.selfRank} 名
                       </span>
                       <span className="font-mono text-[12px] tabular-nums text-mist-100">
-                        {formatBoardValue(metric, valueOf(packet.selfValue))}
+                        {formatBoardValue(metric, Math.max(packet.selfValue, localSelf))}
                         {meta.unit && <span className="ml-1 text-[8px] text-mist-500">{meta.unit}</span>}
                       </span>
                     </div>
@@ -541,7 +545,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
                 {packet.selfRank === 0 && (
                   <div className="mt-1 border-t-2 border-ink-600 px-4 py-2.5">
                     <p className="font-mono text-[9px] leading-relaxed tracking-[0.06em] text-mist-500">
-                      你还没有上榜：这一项尚未上报，或已经离开园区。
+                      你还没有上榜：这一项今日尚未上报，或已经离开园区。
                     </p>
                   </div>
                 )}
@@ -552,7 +556,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
           <footer className="shrink-0 border-t-2 border-ink-600 bg-ink-950/50 px-4 py-2">
             <div className="flex items-center justify-between gap-2">
               <p className="font-mono text-[8px] leading-relaxed tracking-[0.06em] text-mist-500">
-                仅统计本园区当前在岗 · 离线即离榜
+                今日数据存本浏览器 · 换设备重新开始
               </p>
               <button
                 type="button"
@@ -564,7 +568,7 @@ export function LeaderboardDialog({ boards, status, onRequest, onClose }: Leader
               </button>
             </div>
             <p className="mt-1 font-mono text-[8px] leading-relaxed tracking-[0.06em] text-mist-500">
-              工时按本浏览器累计，换设备或清缓存会重来 · 自报数据最多 20 秒延迟 · 快照 {snapshotTime}
+              工时与如厕由本机计时 · 自报数据最多 20 秒延迟 · 快照 {snapshotTime}
             </p>
           </footer>
         </div>

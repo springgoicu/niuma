@@ -33,9 +33,8 @@ export function SelfArchiveDialog({
 }: SelfArchiveDialogProps) {
   const now = useAttendance((state) => state.now);
   const firstJoinDate = useAttendance((state) => state.firstJoinDate);
-  const totalOnlineMs = useAttendance((state) => state.totalOnlineMs);
   const dailyRecords = useAttendance((state) => state.dailyRecords);
-  const sessionStartTime = useAttendance((state) => state.sessionStartTime);
+  const dailyToiletRecords = useAttendance((state) => state.dailyToiletRecords);
   const stats = useCareer();
   const region = useGameUi((state) => state.region);
   const board = useGameUi((state) => state.board);
@@ -43,8 +42,6 @@ export function SelfArchiveDialog({
   const pose = useGameUi((state) => state.localPose);
   const seated = useGameUi((state) => state.seated);
   const seatKind = useGameUi((state) => state.seatKind);
-  const onlineSec = useGameUi((state) => state.onlineSec);
-  const connection = useGameUi((state) => state.status);
   const myLikes = useGameUi((state) => state.myLikes);
   /** 成就存在 localStorage：首帧给空数组，挂载后再读，避免 SSR 读不到本地数据 */
   const [achievements, setAchievements] = useState<string[]>([]);
@@ -59,15 +56,13 @@ export function SelfArchiveDialog({
     status,
     region,
     geo,
-    attendance: { firstJoinDate, totalOnlineMs, dailyRecords, sessionStartTime },
+    attendance: { firstJoinDate, dailyRecords, dailyToiletRecords },
     stats,
     pose,
     seated,
     seatKind,
     board,
     rank,
-    // 与服务端会话同一口径：断线时不给一个还在往前走的数字
-    onlineSec: connection === 'online' ? onlineSec : null,
     likes: myLikes,
     achievements,
     now: now || Date.now(),

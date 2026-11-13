@@ -1,17 +1,19 @@
 /**
- * 游乐园（本轮新增）：地图下方西南草坡的糖果色游乐区。
+ * 游乐园：地图下方西南草坡的糖果色游乐区。
  *
  * 与 campus.ts 同一条纪律：
  * 1) 坐标全部手写整数，禁止 Math.random / Math.sin / Math.cos；
- * 2) 只描述「世界是什么」——碰撞、滑梯折线与入口位置是双端共用的唯一真相，
+ * 2) 只描述「世界是什么」——碰撞、器械位置与入口位置是双端共用的唯一真相，
  *    像素画、灯泡串与彩旗由 apps/web 的 `park.ts` 决定。
  *
  * 两个入口：
  * - 东门 (3300, 5600)：接南侧休息庭院西侧的树篱缺口与铺装；
  * - 北门 (2780, 5520)：西南支路从涟漪湖东岸一路延伸下来。
+ *
+ * 本园区是纯静态观赏区：滑梯、秋千、跷跷板、旋转木马、摩天轮、小火车、
+ * 沙池与喷泉都只负责「看起来好玩」，不再有可点击/按键的互动。
  */
 
-import { DIRECTION, type Direction } from '../constants';
 import type { Point } from './geometry';
 import type { BuildingSpec, SolidRect } from './campus';
 import type { WorldRect } from './geometry';
@@ -49,11 +51,11 @@ export const PARK_PROPS: ReadonlyArray<{ kind: 'lamp' | 'bench' | 'bin'; x: numb
 ];
 
 /* ------------------------------------------------------------------ *
- * 滑梯：入口处的可点击设施
+ * 滑梯：纯装饰造型
  *
  * 塔楼在东北角、正对东门；滑道从塔顶向东南弯到落地缓冲区。
- * 玩家站在 landing 附近点击滑道（或按 F），服务端把角色放到 top，
- * 再沿 chute 折线推进到 landing——路径只在这里写一次。
+ * 折线与端点仍在这里写一次，渲染端只读这份；ADR-0067 起互动入口整体下线，
+ * 因此这里不再有 id / 时长 / 交互半径，也不再有插值函数。
  * ------------------------------------------------------------------ */
 
 /** 滑梯端点用可读的对象而不是几何模块的二元组：消费方直接取 .x / .y */
@@ -62,22 +64,19 @@ export interface SlidePoint {
   readonly y: number;
 }
 
-export interface SlideSpec {
-  readonly id: number;
-  /** 点击命中的整块精灵矩形（塔楼 + 滑道） */
+/** 滑梯造型：只保留画图需要的几何，不表达任何可交互语义 */
+export interface SlideArt {
+  /** 精灵矩形（塔楼 + 滑道） */
   readonly hit: WorldRect;
-  /** 塔顶平台：服务端开始滑行时把角色放到这里 */
+  /** 塔顶平台 */
   readonly top: SlidePoint;
-  /** 落地点：滑行结束与服务端校验「人是否站在滑梯旁」都用它 */
+  /** 落地缓冲区中心 */
   readonly landing: SlidePoint;
-  /** 滑道折线：首点 = top，末点 = landing；只允许 2–5 个点 */
+  /** 滑道折线：首点 = top，末点 = landing */
   readonly chute: readonly Point[];
-  /** 一次滑行的时长（毫秒） */
-  readonly rideMs: number;
 }
 
-export const PARK_SLIDE: SlideSpec = {
-  id: 1,
+export const PARK_SLIDE: SlideArt = {
   hit: { x: 3108, y: 5512, w: 144, h: 178 },
   top: { x: 3170, y: 5570 },
   landing: { x: 3240, y: 5686 },
@@ -87,76 +86,7 @@ export const PARK_SLIDE: SlideSpec = {
     [3212, 5638],
     [3240, 5686],
   ],
-  rideMs: 1000,
 };
-
-export const SLIDES: ReadonlyArray<SlideSpec> = [PARK_SLIDE];
-
-/** 滑梯互动的距离门：站在落地缓冲区旁边即可 */
-export const SLIDE_INTERACT_RANGE = 76;
-/** 两次滑行的最小间隔：挡住连点与伪造包 */
-export const SLIDE_COOLDOWN_MS = 1200;
-
-export function slideById(id: number): SlideSpec | undefined {
-  if (!Number.isInteger(id)) return undefined;
-  return SLIDES.find((slide) => slide.id === id);
-}
-
-/** 滑道折线的累计长度：构造期一次算好，滑行时只做标量插值 */
-function chuteLengths(slide: SlideSpec): { cumulative: number[]; total: number } {
-  const cumulative: number[] = [0];
-  let total = 0;
-  for (let i = 1; i < slide.chute.length; i += 1) {
-    const a = slide.chute[i - 1]!;
-    const b = slide.chute[i]!;
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    total += Math.sqrt(dx * dx + dy * dy);
-    cumulative.push(total);
-  }
-  return { cumulative, total };
-}
-
-const SLIDE_RUNS = new Map<number, { cumulative: number[]; total: number }>(
-  SLIDES.map((slide) => [slide.id, chuteLengths(slide)]),
-);
-
-function directionOf(dx: number, dy: number): Direction {
-  if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? DIRECTION.Left : DIRECTION.Right;
-  return dy < 0 ? DIRECTION.Up : DIRECTION.Down;
-}
-
-/**
- * 把滑行进度 `t`（0..1）写成世界坐标，返回该段朝向。
- *
- * 复用调用方的 `out` 槽位：服务端每 Tick 每位乘客调用一次，
- * 客户端每帧一次，任何一次 `{x,y}` 字面量都会变成稳态垃圾。
- */
-export function slidePointInto(
-  out: { x: number; y: number },
-  slideId: number,
-  t: number,
-): Direction {
-  const slide = slideById(slideId);
-  const run = SLIDE_RUNS.get(slideId);
-  if (!slide || !run || run.total <= 0) {
-    out.x = 0;
-    out.y = 0;
-    return DIRECTION.Down;
-  }
-  const clamped = Number.isFinite(t) ? (t < 0 ? 0 : t > 1 ? 1 : t) : 0;
-  const distance = clamped * run.total;
-  let index = 1;
-  while (index < run.cumulative.length - 1 && distance > run.cumulative[index]!) index += 1;
-  const from = slide.chute[index - 1]!;
-  const to = slide.chute[index]!;
-  const segmentStart = run.cumulative[index - 1]!;
-  const segmentLength = run.cumulative[index]! - segmentStart;
-  const f = segmentLength > 0 ? (distance - segmentStart) / segmentLength : 0;
-  out.x = from[0] + (to[0] - from[0]) * f;
-  out.y = from[1] + (to[1] - from[1]) * f;
-  return directionOf(to[0] - from[0], to[1] - from[1]);
-}
 
 /* ------------------------------------------------------------------ *
  * 器械底座：只挡落地那一截，滑道与秋千吊索不挡人
@@ -185,6 +115,47 @@ export const PARK_RIDES: ReadonlyArray<ParkRide> = [
   { kind: 'swing', x: 2370, y: 5730, variant: 0 },
   { kind: 'seesaw', x: 2790, y: 5860, variant: 1 },
   { kind: 'carousel', x: 2560, y: 5940, variant: 2 },
+];
+
+/* ------------------------------------------------------------------ *
+ * 静态大件：摩天轮 / 小火车 / 沙池 / 喷泉（ADR-0067：游乐园转静态观赏区）
+ *
+ * 位置按「不挡两个门洞、不压滑梯落点、与既有器械留出 20px 以上通道」手排：
+ * - 摩天轮占东南角空地，避开南缘长椅与东侧灯柱；
+ * - 小火车沿北侧跑，西端让开北门进来的直行通道；
+ * - 沙池贴西南围栏，东侧留 148px 草坡通道；
+ * - 喷泉居中偏东，北侧留 87px 通往东门的横穿通道。
+ * ------------------------------------------------------------------ */
+
+export type ParkAttractionKind = 'ferris' | 'train' | 'sandpit' | 'fountain';
+
+/** 大件器械：`x` / `y` 是精灵包围盒中心，`w` / `h` 是包围盒尺寸 */
+export interface ParkAttraction {
+  kind: ParkAttractionKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export const PARK_ATTRACTIONS: ReadonlyArray<ParkAttraction> = [
+  { kind: 'ferris', x: 3010, y: 5920, w: 172, h: 182 },
+  { kind: 'train', x: 2640, y: 5585, w: 140, h: 60 },
+  { kind: 'sandpit', x: 2290, y: 5810, w: 120, h: 64 },
+  { kind: 'fountain', x: 2960, y: 5740, w: 106, h: 106 },
+];
+
+/** 大件器械的落地底座：只压最下面一条，玩家从正面仍可走到跟前 */
+export const PARK_ATTRACTION_SOLIDS: ReadonlyArray<SolidRect> = [
+  // 摩天轮：左右两只基座
+  { kind: 'prop', x: 2938, y: 5998, w: 44, h: 20 },
+  { kind: 'prop', x: 3038, y: 5998, w: 44, h: 20 },
+  // 小火车：整条轨道底盘，宽度贴着车头
+  { kind: 'prop', x: 2572, y: 5612, w: 136, h: 10 },
+  // 沙池：南沿一条矮沿，孩子从北侧走进沙里
+  { kind: 'prop', x: 2230, y: 5836, w: 120, h: 8 },
+  // 喷泉：水池外缘南侧
+  { kind: 'prop', x: 2912, y: 5786, w: 96, h: 8 },
 ];
 
 /** 围栏缺口之外仍然围一圈矮栅栏：纯装饰，不参与碰撞 */

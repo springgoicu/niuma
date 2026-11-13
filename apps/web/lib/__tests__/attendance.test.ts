@@ -5,18 +5,18 @@ import {
   AttendanceTracker,
   dayKey,
   formatDuration,
-  getActiveDays,
-  getCurrentSessionDuration,
-  getDailyAverageHours,
+  formatHoursMinutes,
+  formatMinutesClock,
   getJobTitle,
-  getSeniorityDays,
   getStampTitle,
-  getStreakDays,
-  getWeekMinutes,
-  getWeekMs,
+  getTodayMinutes,
+  getTodayMs,
+  getTodayToiletMinutes,
+  getTodayToiletMs,
   loadAttendance,
   saveAttendance,
   splitAttendanceInterval,
+  splitToiletInterval,
   type AttendanceStorage,
 } from '../game/attendance';
 import type { StorageLike } from '../storage';
@@ -37,9 +37,8 @@ function memoryStorage(): StorageLike {
 function record(overrides: Partial<AttendanceStorage> = {}): AttendanceStorage {
   return {
     firstJoinDate: '2026-03-30',
-    totalOnlineMs: 0,
     dailyRecords: {},
-    sessionStartTime: 0,
+    dailyToiletRecords: {},
     ...overrides,
   };
 }
@@ -54,95 +53,43 @@ describe('走秒格式', () => {
   it('负数与非有限值退化成 00:00:00', () => {
     expect(formatDuration(-1)).toBe('00:00:00');
     expect(formatDuration(Number.NaN)).toBe('00:00:00');
-    expect(getCurrentSessionDuration(0)).toBe('00:00:00');
   });
 
-  it('本次在岗按打卡时间走秒', () => {
-    const start = 1_772_000_000_000;
-    expect(getCurrentSessionDuration(start, start + 3_600_000)).toBe('01:00:00');
-    expect(getCurrentSessionDuration(start, start - 1_000)).toBe('00:00:00');
-  });
-});
-
-describe('日均工时', () => {
-  it('所有有效日期的毫秒和 ÷ 有效天数，保留一位小数', () => {
-    const hours = (h: number) => h * 3_600_000;
-    const storage = record({
-      dailyRecords: {
-        '2026-03-30': hours(7.2),
-        '2026-03-31': hours(9.8),
-      },
-    });
-    expect(getDailyAverageHours(storage)).toBe(8.5);
-  });
-
-  it('0 毫秒的日期不算有效天数', () => {
-    const storage = record({
-      dailyRecords: {
-        '2026-03-30': 0,
-        '2026-03-31': 8 * 3_600_000,
-      },
-    });
-    expect(getDailyAverageHours(storage)).toBe(8);
-    expect(getDailyAverageHours(record())).toBe(0);
+  it('工牌与档案用分钟粒度 HH:MM，分钟数不封顶', () => {
+    expect(formatHoursMinutes(0)).toBe('00:00');
+    expect(formatHoursMinutes(8 * 3_600_000 + 35 * 60_000 + 10_000)).toBe('08:35');
+    expect(formatMinutesClock(120 * 60)).toBe('120:00');
+    expect(formatMinutesClock(Number.NaN)).toBe('00:00');
   });
 });
 
-describe('本周工时与连续在岗', () => {
-  const hour = 3_600_000;
-  // 2026-04-01 是周三；本周从 3 月 30 日（周一）起算
+describe('今日工时与如厕', () => {
   const now = new Date(2026, 3, 1, 12, 0, 0).getTime();
 
-  it('只累加本周一零点之后的记录', () => {
+  it('只取本地日桶，跨零点后自然换到新的一天', () => {
     const storage = record({
-      dailyRecords: {
-        '2026-03-29': 5 * hour,
-        '2026-03-30': 2 * hour,
-        '2026-03-31': 3 * hour,
-        '2026-04-01': 1 * hour,
-      },
+      dailyRecords: { '2026-03-31': 8 * 3_600_000, '2026-04-01': 3 * 3_600_000 },
+      dailyToiletRecords: { '2026-04-01': 20 * 60_000 },
     });
-    expect(getWeekMs(storage.dailyRecords, now)).toBe(6 * hour);
-    expect(getWeekMinutes(storage, now)).toBe(360);
+    expect(getTodayMs(storage, now)).toBe(3 * 3_600_000);
+    expect(getTodayMinutes(storage, now)).toBe(180);
+    expect(getTodayToiletMs(storage, now)).toBe(20 * 60_000);
+    expect(getTodayToiletMinutes(storage, now)).toBe(20);
   });
 
-  it('跨周只算当前这一周，不把上周日算进来', () => {
-    const monday = new Date(2026, 2, 30, 0, 0, 0).getTime();
-    expect(getWeekMs({ '2026-03-29': 8 * hour }, monday)).toBe(0);
+  it('如厕永远不超过工时：坏存档也会被钳住', () => {
+    const storage = record({
+      dailyRecords: { '2026-04-01': 10 * 60_000 },
+      dailyToiletRecords: { '2026-04-01': 60 * 60_000 },
+    });
+    expect(getTodayToiletMs(storage, now)).toBe(10 * 60_000);
+    expect(getTodayToiletMinutes(storage, now)).toBe(10);
   });
 
-  it('连续在岗从今天往前数；今天还没工时就从昨天起算', () => {
-    expect(
-      getStreakDays({ '2026-03-30': hour, '2026-03-31': hour, '2026-04-01': hour }, now),
-    ).toBe(3);
-    const nextDay = new Date(2026, 3, 2, 9, 0, 0).getTime();
-    expect(
-      getStreakDays({ '2026-03-30': hour, '2026-03-31': hour, '2026-04-01': hour }, nextDay),
-    ).toBe(3);
-    expect(getStreakDays({}, now)).toBe(0);
-  });
-
-  it('有效日期数只统计大于 0 的日期', () => {
-    expect(
-      getActiveDays({ '2026-03-30': hour, '2026-03-31': 0, '2026-04-01': 1 }),
-    ).toBe(2);
-  });
-});
-
-describe('工龄', () => {
-  it('按日期间隔计算，入职当天至少给 1 天', () => {
-    expect(getSeniorityDays(dayKey(Date.now()))).toBe(1);
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    expect(getSeniorityDays(dayKey(yesterday.getTime()))).toBe(1);
-    const twoDaysAgo = new Date();
-    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-    expect(getSeniorityDays(dayKey(twoDaysAgo.getTime()))).toBe(2);
-  });
-
-  it('坏日期与未来日期都至少给 1 天', () => {
-    expect(getSeniorityDays('not-a-date')).toBe(1);
-    expect(getSeniorityDays('2099-01-01')).toBe(1);
+  it('负值、NaN 与缺失日期都按 0 处理', () => {
+    expect(getTodayMs({ dailyRecords: { '2026-04-01': -1 } }, now)).toBe(0);
+    expect(getTodayMs({ dailyRecords: { '2026-04-01': Number.NaN } }, now)).toBe(0);
+    expect(getTodayToiletMs({ dailyRecords: {}, dailyToiletRecords: {} }, now)).toBe(0);
   });
 });
 
@@ -166,27 +113,34 @@ describe('职级边界', () => {
 });
 
 describe('印章', () => {
-  it('按工时与工龄给出红/金印章文案', () => {
-    expect(getStampTitle(9, 40)).toBe('终身免下班');
-    expect(getStampTitle(9, 3)).toBe('全勤特等牲');
-    expect(getStampTitle(7, 3)).toBe('模范标兵');
-    expect(getStampTitle(3, 3)).toBe('摸鱼练习生');
+  it('只按今日工时给红/金印章文案', () => {
+    expect(getStampTitle(9)).toBe('全勤特等牲');
+    expect(getStampTitle(7)).toBe('模范标兵');
+    expect(getStampTitle(3)).toBe('摸鱼练习生');
   });
 
-  it('附加维度按「榜首 > 万步 > 摸鱼宗师 > 过载 > 连续全勤」的优先级盖章', () => {
-    expect(getStampTitle(9, 40, { rank: 1 })).toBe('卷王之王');
-    expect(getStampTitle(3, 3, { steps: 10_000 })).toBe('万步劳模');
-    expect(getStampTitle(3, 3, { slackCount: 50 })).toBe('摸鱼宗师');
-    expect(getStampTitle(9, 3, { streakDays: 7 })).toBe('全勤特等牲');
-    expect(getStampTitle(3, 3, { streakDays: 7 })).toBe('全勤铁牛');
+  it('附加维度按「榜首 > 万步 > 摸鱼宗师 > 过载 > 模范」的优先级盖章', () => {
+    expect(getStampTitle(9, { rank: 1 })).toBe('卷王之王');
+    expect(getStampTitle(3, { steps: 10_000 })).toBe('万步劳模');
+    expect(getStampTitle(3, { slackCount: 50 })).toBe('摸鱼宗师');
+    expect(getStampTitle(9, { steps: 10_000 })).toBe('万步劳模');
+    expect(getStampTitle(9, { rank: 2, slackCount: 0 })).toBe('全勤特等牲');
   });
 });
 
 describe('午夜切分', () => {
-  it('跨零点时把区间拆到两天的键上', () => {
+  it('跨零点时把在岗区间拆到两天的键上', () => {
     const from = new Date(2026, 2, 30, 23, 59, 30).getTime();
     const to = new Date(2026, 2, 31, 0, 0, 30).getTime();
     const split = splitAttendanceInterval({}, from, to);
+    expect(split['2026-03-30']).toBe(30_000);
+    expect(split['2026-03-31']).toBe(30_000);
+  });
+
+  it('如厕区间走同一套切分，不会把昨天的如厕算进今天', () => {
+    const from = new Date(2026, 2, 30, 23, 59, 30).getTime();
+    const to = new Date(2026, 2, 31, 0, 0, 30).getTime();
+    const split = splitToiletInterval({}, from, to);
     expect(split['2026-03-30']).toBe(30_000);
     expect(split['2026-03-31']).toBe(30_000);
   });
@@ -200,6 +154,66 @@ describe('午夜切分', () => {
   });
 });
 
+describe('如厕计时', () => {
+  it('坐下只加如厕，在岗仍照常走；离座后如厕停、在岗不停', () => {
+    const base = Date.now();
+    const storage = memoryStorage();
+    const tracker = new AttendanceTracker(base, storage);
+    const today = dayKey(base);
+
+    tracker.setToilet(true, base + 1_000);
+    let saved = loadAttendance(storage)!;
+    let work = saved.dailyRecords[today] ?? 0;
+    // 从 base 到 base+1000 只记了在岗，还没开始记如厕
+    expect(work).toBeGreaterThanOrEqual(1_000);
+    expect(saved.dailyToiletRecords[today] ?? 0).toBe(0);
+
+    tracker.setToilet(false, base + 6_000);
+    saved = loadAttendance(storage)!;
+    work = saved.dailyRecords[today] ?? 0;
+    const toilet = saved.dailyToiletRecords[today] ?? 0;
+    expect(work).toBeGreaterThanOrEqual(6_000);
+    expect(toilet).toBeGreaterThanOrEqual(5_000);
+    expect(toilet).toBeLessThanOrEqual(work);
+
+    // 重复设置同一状态不重复计时，也不反复写盘
+    tracker.setToilet(false, base + 9_000);
+    expect((loadAttendance(storage)!.dailyToiletRecords[today] ?? 0)).toBe(toilet);
+    // 没起 start() 就没有定时器，这里也不调 dispose()（它要碰 document）
+  });
+
+  it('两个标签页的如厕记录取 max，不会把另一页的时长抹掉', () => {
+    const now = Date.now();
+    const storage = memoryStorage();
+    const today = dayKey(now);
+    saveAttendance(
+      record({
+        firstJoinDate: today,
+        dailyRecords: { [today]: 600_000 },
+        dailyToiletRecords: { [today]: 120_000 },
+      }),
+      storage,
+    );
+    const tracker = new AttendanceTracker(now, storage);
+
+    // 另一个标签页刚写了 20 分钟工时、8 分钟如厕
+    saveAttendance(
+      record({
+        firstJoinDate: today,
+        dailyRecords: { [today]: 1_200_000 },
+        dailyToiletRecords: { [today]: 480_000 },
+      }),
+      storage,
+    );
+    tracker.flush();
+
+    const saved = loadAttendance(storage)!;
+    expect(saved.dailyRecords[today]!).toBeGreaterThanOrEqual(1_200_000);
+    expect(saved.dailyToiletRecords[today]!).toBeGreaterThanOrEqual(480_000);
+    expect(saved.dailyToiletRecords[today]!).toBeLessThanOrEqual(saved.dailyRecords[today]!);
+  });
+});
+
 describe('固定工号', () => {
   it('同一昵称稳定生成 #NM- 加 5 位编号', () => {
     const first = employeeNumber('夜班实习生');
@@ -210,62 +224,57 @@ describe('固定工号', () => {
 });
 
 describe('本地存档', () => {
-  it('round-trip 只保留协议字段，坏 JSON 当作没有', () => {
+  it('round-trip 只保留今日字段，旧版累计/会话字段被忽略', () => {
     const storage = memoryStorage();
     saveAttendance(
       record({
         firstJoinDate: '2026-03-30',
-        totalOnlineMs: 12_345,
         dailyRecords: { '2026-03-30': 12_345 },
-        sessionStartTime: 1_772_000_000_000,
+        dailyToiletRecords: { '2026-03-30': 3_456 },
       }),
       storage,
     );
     expect(storage.getItem(ATTENDANCE_KEY)).toContain('2026-03-30');
     expect(loadAttendance(storage)).toEqual({
       firstJoinDate: '2026-03-30',
-      totalOnlineMs: 12_345,
       dailyRecords: { '2026-03-30': 12_345 },
-      sessionStartTime: 1_772_000_000_000,
+      dailyToiletRecords: { '2026-03-30': 3_456 },
+    });
+
+    // 旧存档多出来的 totalOnlineMs / sessionStartTime 不再被读进来
+    storage.setItem(
+      ATTENDANCE_KEY,
+      JSON.stringify({
+        firstJoinDate: '2026-03-30',
+        totalOnlineMs: 99_999,
+        sessionStartTime: 1_772_000_000_000,
+        dailyRecords: { '2026-03-30': 12_345 },
+      }),
+    );
+    expect(loadAttendance(storage)).toEqual({
+      firstJoinDate: '2026-03-30',
+      dailyRecords: { '2026-03-30': 12_345 },
+      dailyToiletRecords: {},
     });
 
     storage.setItem(ATTENDANCE_KEY, '{broken');
     expect(loadAttendance(storage)).toBeNull();
   });
-});
 
-describe('多标签页对账', () => {
-  it('落盘取并集：后写的标签页不会把另一页的工时抹掉', () => {
-    const now = Date.now();
+  it('丢弃非法日期键与负数，保留合法日桶', () => {
     const storage = memoryStorage();
-    const today = dayKey(now);
-    // 这一页进来时存档里是 10 分钟
-    saveAttendance(
-      record({
-        firstJoinDate: today,
-        totalOnlineMs: 600_000,
-        dailyRecords: { [today]: 600_000 },
-        sessionStartTime: now,
+    storage.setItem(
+      ATTENDANCE_KEY,
+      JSON.stringify({
+        firstJoinDate: '2026-03-30',
+        dailyRecords: { '2026-03-30': -1, 'not-a-date': 100, '2026-03-31': 1_000 },
+        dailyToiletRecords: { '2026-03-31': 200, '2026-04-01': -5 },
       }),
-      storage,
     );
-    const tracker = new AttendanceTracker(now, storage);
-
-    // 另一个标签页刚写了 20 分钟
-    saveAttendance(
-      record({
-        firstJoinDate: today,
-        totalOnlineMs: 1_200_000,
-        dailyRecords: { [today]: 1_200_000 },
-        sessionStartTime: now,
-      }),
-      storage,
-    );
-    tracker.flush();
-
-    const saved = loadAttendance(storage)!;
-    expect(saved.dailyRecords[today]!).toBeGreaterThanOrEqual(1_200_000);
-    expect(saved.totalOnlineMs).toBeGreaterThanOrEqual(1_200_000);
-    // 没起 start() 就没有定时器，这里也不调 dispose()（它要碰 document）
+    expect(loadAttendance(storage)).toEqual({
+      firstJoinDate: '2026-03-30',
+      dailyRecords: { '2026-03-31': 1_000 },
+      dailyToiletRecords: { '2026-03-31': 200 },
+    });
   });
 });

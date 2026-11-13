@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
 import {
+  BOARD_METRIC,
   CAREER_REPORT_INTERVAL_MS,
   type BoardMetric,
   type BoardPacket,
@@ -18,19 +19,27 @@ import { parseSpeciesParam } from '@/lib/creator-seed';
 import { useGameUi } from '@/lib/game-ui';
 import { loadDanmakuPrefs, saveDanmakuPrefs } from '@/lib/danmaku-prefs';
 import { isAtlasVersionMismatch } from '@/lib/game/atlas-errors';
-import { loadAttendance, startAttendanceClock, useAttendance } from '@/lib/game/attendance';
+import {
+  dayKey,
+  getTodayMinutes,
+  getTodayToiletMinutes,
+  loadAttendance,
+  startAttendanceClock,
+  useAttendance,
+} from '@/lib/game/attendance';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from '@/lib/game/danmaku-prefs';
 import type { PlayerBadge } from '@/lib/game/badge';
 import {
   EMPTY_CAREER_STATS,
+  PX_PER_STEP,
   buildCareerSummary,
   loadCareerStats,
   startCareerClock,
+  useCareer,
 } from '@/lib/game/career';
 import { loadGeo, readCachedGeo } from '@/lib/game/geo';
 import { createGameClient } from '@/lib/game/client/create-game-client';
 import type { GameClient } from '@/lib/game/client/game-client';
-import { HINT, touchHint } from '@/lib/game/hint-copy';
 import type { ActionKey } from '@/lib/game/input';
 import { loadSnapshot, resumeForPark } from '@/lib/game/snapshot';
 import type { ParkEntry } from '@/lib/park';
@@ -54,6 +63,7 @@ import {
   hudButtonClassName,
 } from './Hud';
 import { InstallAppButton } from './InstallAppButton';
+import { InteractionHint } from './InteractionHint';
 import { JoinGate } from './JoinGate';
 import { LeaderboardDialog } from './LeaderboardDialog';
 import { MiniMap } from './MiniMap';
@@ -122,6 +132,8 @@ export function GameViewport({
   const [boards, setBoards] = useState<Partial<Record<BoardMetric, BoardPacket>>>({});
   /** 行为统计门面：距离 / 摸鱼 / 被喷 / 加班都从这里记 */
   const careerClockRef = useRef<ReturnType<typeof startCareerClock> | null>(null);
+  /** 考勤门面：今日工时 / 今日如厕的坐离切换都从这里走 */
+  const attendanceClockRef = useRef<ReturnType<typeof startAttendanceClock> | null>(null);
   /** 上一次统计坐标：2Hz 采样差分算里程 */
   const lastStatsRef = useRef<{ x: number; y: number } | null>(null);
   /** 上一次入座状态：只在「未坐 → 坐」的边沿记一次摸鱼 */
@@ -236,10 +248,15 @@ export function GameViewport({
   }, []);
 
   // 进入园区即开始本地考勤：1 秒心跳走内存，离开页面 / 卸载时停表并落盘。
-  // 只依赖「有没有工牌」：改状态不应该把本次在岗计时清零。
+  // 只依赖「有没有工牌」：改状态不应该把今日工时清零。
   useEffect(() => {
     if (!entering) return;
-    return startAttendanceClock();
+    const clock = startAttendanceClock();
+    attendanceClockRef.current = clock;
+    return () => {
+      clock.dispose();
+      if (attendanceClockRef.current === clock) attendanceClockRef.current = null;
+    };
   }, [entering]);
 
   // 行为统计与考勤同生命周期：进园开始攒，离开时停表落盘
@@ -259,19 +276,40 @@ export function GameViewport({
    * 组装当前考勤摘要。优先读内存里的 Tracker（最多领先落盘 30 秒），
    * 没有 Tracker 时回退到 localStorage；省份取 geo 缓存，未就绪时留空。
    */
-  const buildCareerReport = useCallback((onlineSec = 0) => {
+  const buildCareerReport = useCallback(() => {
     // 优先读 attendance store 的内存值（每秒推进），没有 store 时回退 localStorage
     const live = useAttendance.getState();
     const attendance = live.firstJoinDate
       ? {
           firstJoinDate: live.firstJoinDate,
-          totalOnlineMs: live.totalOnlineMs,
           dailyRecords: live.dailyRecords,
-          sessionStartTime: live.sessionStartTime,
+          dailyToiletRecords: live.dailyToiletRecords,
         }
       : loadAttendance();
     const stats = careerClockRef.current?.snapshot() ?? loadCareerStats() ?? EMPTY_CAREER_STATS;
-    return buildCareerSummary(attendance, stats, readCachedGeo()?.region ?? '', onlineSec);
+    return buildCareerSummary(attendance, stats, readCachedGeo()?.region ?? '');
+  }, []);
+
+  /**
+   * 榜单里自己那一行的本地兜底值：服务端快照最多落后 20 秒，
+   * 刚部署完还可能没收到本次上报。只在展示时读取，不写回快照。
+   */
+  const selfBoardValue = useCallback((metric: BoardMetric): number => {
+    const clockState = useAttendance.getState();
+    const now = clockState.now > 0 ? clockState.now : Date.now();
+    const day = useCareer.getState().daily[dayKey(now)];
+    switch (metric) {
+      case BOARD_METRIC.TodayMinutes:
+        return getTodayMinutes(clockState, now);
+      case BOARD_METRIC.TodayToilet:
+        return getTodayToiletMinutes(clockState, now);
+      case BOARD_METRIC.TodayKnockdown:
+        return day?.knockdownCount ?? 0;
+      case BOARD_METRIC.TodayVented:
+        return day?.ventedCount ?? 0;
+      case BOARD_METRIC.TodaySteps:
+        return Math.floor((day?.distancePx ?? 0) / PX_PER_STEP);
+    }
   }, []);
 
   // 兜底告知条只播一次：入场几秒后收起，别在游戏画面上常驻一条运维信息
@@ -317,6 +355,11 @@ export function GameViewport({
         onHint: (next) => setHint(next),
         onLocalState: (state) => {
           setLocalState(state);
+          // 如厕计时跟座位类型走：坐在马桶座上攒今日如厕，起身即结算。
+          // setToilet 内部按 active 变化短路，重复上报同一状态不会重复计时。
+          attendanceClockRef.current?.setToilet(
+            state.seated && state.seatKind === 'toilet',
+          );
           // 只在「未坐 → 坐」的边沿记一次摸鱼；床上躺平不算摸鱼
           if (!lastSeatedRef.current && state.seated && state.seatKind !== 'bed') {
             careerClockRef.current?.recordSlack();
@@ -352,18 +395,19 @@ export function GameViewport({
         // 换过园区时 resumeForPark 会把它丢掉，角色从新园区门口开始
         await client.start(
           host,
-          { ...current, career: buildCareerReport(0) },
+          { ...current, career: buildCareerReport() },
           resumeForPark(loadSnapshot(), parkId),
         );
         if (cancelled) return;
         // geo 是异步的：首次进园时 HELLO 可能还没省份，拿到后再补报一次
         void loadGeo().then(() => {
-          if (!cancelled) client.updateCareer(buildCareerReport(useGameUi.getState().onlineSec));
+          if (!cancelled) client.updateCareer(buildCareerReport());
         });
-        // 今日 / 本周工时每分钟都在变：60 秒补报一次，服务端转给正在围观的人
+        // 今日工时每分钟都在变：20 秒补报一次，服务端转给正在围观的人；
+        // 服务端重启后，下一次 HELLO 会用本机缓存的最近一次摘要重建榜单。
         reportTimer = window.setInterval(() => {
           if (cancelled) return;
-          client.updateCareer(buildCareerReport(useGameUi.getState().onlineSec));
+          client.updateCareer(buildCareerReport());
         }, CAREER_REPORT_INTERVAL_MS);
       })
       .catch((error: unknown) => {
@@ -701,6 +745,7 @@ export function GameViewport({
             <LeaderboardDialog
               boards={boards}
               status={status}
+              selfValue={selfBoardValue}
               onRequest={requestBoard}
               onClose={closeBoard}
             />
@@ -720,23 +765,12 @@ export function GameViewport({
 
           <QueueGate onRetry={handleRetry} />
           {hint && (
-            <div
-              role="status"
-              className={`pointer-events-none absolute border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm ${
-                // 放假告示板的感应提示走右下角（ADR-0059）：它在世界里的位置就在广场北缘，
-                // 底部居中的通用提示容易被动作条与聊天面板挤在一起
-                hint === HINT.bulletin
-                  ? portrait
-                    ? 'bottom-[300px] right-3'
-                    : isTouch
-                      ? 'bottom-56 right-3'
-                      : 'bottom-28 right-4'
-                  : `left-1/2 -translate-x-1/2 ${portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-24'}`
-              }`}
-            >
-              {/* 引擎只产出按键说法，触屏在渲染层投影成按钮名（hint-copy 单一事实源） */}
-              {isTouch ? touchHint(hint) : hint}
-            </div>
+            <InteractionHint
+              hint={hint}
+              isTouch={isTouch}
+              portrait={portrait}
+              onAction={handleAction}
+            />
           )}
           <ConnectionBanner />
           {/* 兜底告知条排在重连横幅下面：入场瞬间两者可能同时在，不能互相盖住 */}

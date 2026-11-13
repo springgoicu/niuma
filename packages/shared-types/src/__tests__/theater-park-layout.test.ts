@@ -9,6 +9,8 @@ import {
 } from '../world/campus';
 import {
   AMUSEMENT_PARK,
+  PARK_ATTRACTIONS,
+  PARK_ATTRACTION_SOLIDS,
   PARK_EAST_GATE,
   PARK_NORTH_GATE,
   PARK_RIDE_SOLIDS,
@@ -23,7 +25,6 @@ import {
   pointInPolygon,
   rectContains,
   regionAt,
-  slidePointInto,
 } from '../index';
 
 /**
@@ -166,18 +167,16 @@ describe('游乐园与入口滑梯', () => {
     expect(PARK_SLIDE.hit.y + PARK_SLIDE.hit.h).toBeGreaterThan(PARK_SLIDE.landing.y - 20);
   });
 
-  it('滑行折线首尾就是塔顶与落地点，整段留在游乐园里', () => {
-    const out = { x: 0, y: 0 };
-    const firstDir = slidePointInto(out, PARK_SLIDE.id, 0);
-    expect(out).toEqual({ x: PARK_SLIDE.top.x, y: PARK_SLIDE.top.y });
-    expect(firstDir).toBe(DIRECTION.Down);
-    slidePointInto(out, PARK_SLIDE.id, 1);
-    expect(out.x).toBeCloseTo(PARK_SLIDE.landing.x, 5);
-    expect(out.y).toBeCloseTo(PARK_SLIDE.landing.y, 5);
-    for (let t = 0; t <= 1; t += 0.1) {
-      slidePointInto(out, PARK_SLIDE.id, t);
-      expect(rectContains(AMUSEMENT_PARK, out.x, out.y)).toBe(true);
+  it('滑道折线首尾就是塔顶与落地点，整段留在游乐园里', () => {
+    expect(PARK_SLIDE.chute[0]).toEqual([PARK_SLIDE.top.x, PARK_SLIDE.top.y]);
+    const last = PARK_SLIDE.chute[PARK_SLIDE.chute.length - 1]!;
+    expect(last).toEqual([PARK_SLIDE.landing.x, PARK_SLIDE.landing.y]);
+    // 折线只描述造型：每段都必须留在橡胶垫内，第二点起向右下走
+    for (const [x, y] of PARK_SLIDE.chute) {
+      expect(rectContains(AMUSEMENT_PARK, x, y)).toBe(true);
     }
+    expect(PARK_SLIDE.chute[1]![0]).toBeGreaterThan(PARK_SLIDE.chute[0]![0]);
+    expect(PARK_SLIDE.chute[1]![1]).toBeGreaterThan(PARK_SLIDE.chute[0]![1]);
   });
 
   it('器械底座进碰撞表，但不挡东门与滑梯落点', () => {
@@ -195,5 +194,55 @@ describe('游乐园与入口滑梯', () => {
       expect(overlapsGate).toBe(false);
     }
     expect(onAnyPath(PARK_SLIDE.landing.x, PARK_SLIDE.landing.y)).toBe(false);
+  });
+
+  it('摩天轮 / 小火车 / 沙池 / 喷泉都在园区内，且两两留出 20px 通道', () => {
+    expect(PARK_ATTRACTIONS).toHaveLength(4);
+    expect(new Set(PARK_ATTRACTIONS.map((item) => item.kind)).size).toBe(4);
+    for (const attraction of PARK_ATTRACTIONS) {
+      const left = attraction.x - attraction.w / 2;
+      const top = attraction.y - attraction.h / 2;
+      // 四角各内缩 4px：精灵可以压围栏线，但不许整块探出橡胶垫
+      expect(rectContains(AMUSEMENT_PARK, left + 4, top + 4)).toBe(true);
+      expect(rectContains(AMUSEMENT_PARK, left + attraction.w - 4, top + attraction.h - 4)).toBe(true);
+    }
+    for (let i = 0; i < PARK_ATTRACTIONS.length; i += 1) {
+      for (let j = i + 1; j < PARK_ATTRACTIONS.length; j += 1) {
+        const a = PARK_ATTRACTIONS[i]!;
+        const b = PARK_ATTRACTIONS[j]!;
+        const gapX = Math.abs(a.x - b.x) - (a.w + b.w) / 2;
+        const gapY = Math.abs(a.y - b.y) - (a.h + b.h) / 2;
+        expect(Math.max(gapX, gapY)).toBeGreaterThanOrEqual(20);
+      }
+    }
+  });
+
+  it('大件底座进碰撞表，不挡东门 / 北门与滑梯落点', () => {
+    for (const solid of PARK_ATTRACTION_SOLIDS) {
+      expect(solids).toContainEqual(solid);
+      expect(isOnLand(solid.x, solid.y, 0)).toBe(true);
+      expect(rectContains(AMUSEMENT_PARK, solid.x, solid.y)).toBe(true);
+    }
+    for (const gate of [PARK_EAST_GATE, PARK_NORTH_GATE]) {
+      for (const solid of PARK_ATTRACTION_SOLIDS) {
+        const overlapsGate =
+          solid.x < gate.x + gate.gap + 26 &&
+          solid.x + solid.w > gate.x - gate.gap - 26 &&
+          solid.y < gate.y + 30 &&
+          solid.y + solid.h > gate.y - 30;
+        expect(overlapsGate).toBe(false);
+      }
+    }
+    expect(isBlocked(PARK_SLIDE.landing.x, PARK_SLIDE.landing.y)).toBe(false);
+    // 摩天轮底座不能压住东侧长椅与灯柱
+    for (const prop of [
+      { x: 3000, y: 6068 },
+      { x: 3228, y: 6060 },
+    ]) {
+      for (const solid of PARK_ATTRACTION_SOLIDS) {
+        const overlaps = solid.x < prop.x && solid.x + solid.w > prop.x && solid.y < prop.y && solid.y + solid.h > prop.y;
+        expect(overlaps).toBe(false);
+      }
+    }
   });
 });

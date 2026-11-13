@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { MAX_NAME_CHARS, MAX_NAME_DISPLAY_UNITS } from '@niuma/shared-types';
 import { createRng } from './rng';
 import {
+  GUARD_NAME,
   NPC_ROLE_GUARD,
   NPC_ROLE_WORKER,
   buildNpcAppearance,
@@ -29,17 +30,26 @@ describe('NPC 名册', () => {
     expect(first.map((profile) => profile.joinedAt)).toEqual(second.map((profile) => profile.joinedAt));
   });
 
-  it('2 位同事 + 3 位保安名字互不重复，是 2–3 个汉字且显示宽度合法', () => {
+  it('同事名字互不重复，3 位保安统一显示「园区保安」且宽度合法', () => {
     const roster = buildNpcRoster(createRng(7), { workers: 2, guards: 3 }, { speed: SPEED, now: NOW });
     expect(roster.length).toBe(5);
-    expect(new Set(roster.map((profile) => profile.name)).size).toBe(5);
-    for (const profile of roster) {
+
+    const workers = roster.filter((profile) => profile.role === NPC_ROLE_WORKER);
+    expect(workers.length).toBe(2);
+    expect(new Set(workers.map((profile) => profile.name)).size).toBe(workers.length);
+    for (const profile of workers) {
       const chars = [...profile.name].length;
       expect(chars).toBeGreaterThanOrEqual(2);
       expect(chars).toBeLessThanOrEqual(3);
       expect(chars).toBeLessThanOrEqual(MAX_NAME_CHARS);
       expect(displayWidth(profile.name)).toBeLessThanOrEqual(MAX_NAME_DISPLAY_UNITS);
     }
+
+    const guards = roster.filter((profile) => profile.role === NPC_ROLE_GUARD);
+    expect(guards.length).toBe(3);
+    for (const guard of guards) expect(guard.name).toBe(GUARD_NAME);
+    expect([...GUARD_NAME].length).toBeLessThanOrEqual(MAX_NAME_CHARS);
+    expect(displayWidth(GUARD_NAME)).toBeLessThanOrEqual(MAX_NAME_DISPLAY_UNITS);
   });
 
   it('保安穿整套警服且不设状态，普通同事不会混入警用件', () => {
@@ -94,16 +104,15 @@ describe('NPC 名册', () => {
       const career = buildNpcCareer(rng, NOW);
       expect(career.firstJoinDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(Number.isNaN(Date.parse(`${career.firstJoinDate}T00:00:00Z`))).toBe(false);
-      expect(career.totalOnlineMinutes).toBeGreaterThanOrEqual(0);
-      expect(career.totalOnlineMinutes).toBeLessThanOrEqual(60 * 24 * 365 * 100);
-      expect(career.activeDays).toBeGreaterThan(0);
+      expect(career.todayMinutes).toBeGreaterThanOrEqual(0);
       expect(career.todayMinutes).toBeLessThanOrEqual(1_440);
-      expect(career.weekMinutes).toBeLessThanOrEqual(10_080);
-      expect(career.streakDays).toBeLessThanOrEqual(36_500);
-      expect(career.steps).toBeLessThanOrEqual(100_000_000);
+      expect(career.todayToiletMinutes).toBeLessThanOrEqual(career.todayMinutes);
+      expect(career.todaySteps).toBeLessThanOrEqual(100_000_000);
+      expect(career.todayKnockdown).toBeLessThanOrEqual(65_535);
+      expect(career.todayVented).toBeLessThanOrEqual(65_535);
+      expect(career.todayOvertime).toBeLessThanOrEqual(1);
       expect(career.province.length).toBeGreaterThan(0);
       expect(career.province.length).toBeLessThanOrEqual(10);
-      expect(career.reportedOnlineSec).toBe(0);
     }
   });
 

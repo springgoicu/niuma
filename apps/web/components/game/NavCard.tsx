@@ -13,14 +13,14 @@ const LEASH = 260;
 const AUTO_COLLAPSE_MS = 8000;
 
 /**
- * 园区导览卡（ADR-0036 / ADR-0040）：四行实时方位 + 设施名 + 步行秒数，
- * 每行现在是一个「去这里」按钮——点击后角色沿网格 A* 自动走过去，
+ * 园区导览卡（ADR-0036 / ADR-0040 / ADR-0067）：实时方位 + 名称 + 步行秒数，
+ * 每行是一个「去这里」按钮——点击后角色沿网格 A* 自动走过去，
  * 导航中该行变成「取消」。
  *
+ * 目标从四间房扩到 11 处地标后，列表按「室内 / 园区」分组并限高滚动：
+ * 组标题吸顶，竖屏里不会把画面挤掉；滚动只吃指针，不吃 WASD。
  * 方位与距离全部来自 `nav.ts`（共享 `NAV_TARGETS`），箭头按真实方位角旋转；
  * 位置每 500ms 由 store 更新一次，正好够用，不额外开轮询。
- * 桌面常驻在 MiniMap 上方，触摸端默认展开数秒后收成一枚「导览」胶囊。
- * 竖屏里右上角只够放 196px 的卡片，聊天浮层展开时整块让位。
  */
 export function NavCard({
   compact = false,
@@ -44,6 +44,13 @@ export function NavCard({
   const manual = useRef(false);
 
   const readings = useMemo(() => navReadings(x, y), [x, y]);
+  const groups = useMemo(
+    () => [
+      { key: 'indoor', label: '室内', items: readings.filter((reading) => reading.target.area === 'indoor') },
+      { key: 'grounds', label: '园区', items: readings.filter((reading) => reading.target.area === 'grounds') },
+    ],
+    [readings],
+  );
   const nearest = nearestReading(readings);
   const navReading = navTarget ? readings.find((reading) => reading.target.id === navTarget.id) ?? null : null;
   const region = regionAt(x, y);
@@ -113,61 +120,71 @@ export function NavCard({
             </button>
           </header>
 
-          <ul>
-            {readings.map((reading) => {
-              const navigating = navTarget?.id === reading.target.id;
-              // 导航中只高亮目标行，避免「最近」与「正在前往」两套高亮打架
-              const nearestActive = !navTarget && nearest?.target.id === reading.target.id;
-              return (
-                <li key={reading.target.id}>
-                  <button
-                    type="button"
-                    onClick={() => pick(reading.target.id)}
-                    aria-pressed={navigating}
-                    aria-label={
-                      navigating
-                        ? `取消前往${reading.target.name}`
-                        : `前往${reading.target.name}，${OCTANT_NAMES[reading.octant]}方向，步行约 ${reading.seconds} 秒`
-                    }
-                    className={`group flex min-h-9 w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left transition-colors focus-visible:bg-mint-400/10 focus-visible:outline-none ${
-                      navigating
-                        ? 'bg-mint-400/12 text-mint-400'
-                        : nearestActive
-                          ? 'bg-mint-400/5 text-mint-400 hover:bg-mint-400/10'
-                          : 'text-mist-300 hover:bg-ink-800/80 hover:text-mist-100'
-                    }`}
-                  >
-                    <span aria-hidden className="grid h-4 w-4 shrink-0 place-items-center">
-                      <ArrowUp
-                        className="h-3.5 w-3.5 transition-transform duration-200"
-                        style={{ transform: `rotate(${reading.bearingDeg}deg)` }}
-                      />
-                    </span>
-                    <span className="flex-1 truncate text-[11px] leading-none">{reading.target.name}</span>
-                    <span
-                      className={`font-mono text-[9px] tabular-nums ${
-                        navigating ? 'text-mint-400/80' : 'text-mist-400'
-                      }`}
-                    >
-                      ≈{reading.seconds}s
-                    </span>
-                    <span
-                      aria-hidden
-                      className={`shrink-0 font-mono text-[9px] tracking-[0.08em] transition-colors ${
-                        navigating
-                          ? 'text-signal-500'
-                          : nearestActive
-                            ? 'text-mint-400/80 group-hover:text-mint-400'
-                            : 'text-mist-500 group-hover:text-mint-400'
-                      }`}
-                    >
-                      {navigating ? '取消' : '去这里'}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="max-h-[280px] overflow-y-auto overscroll-contain">
+            {groups.map((group) => (
+              <div key={group.key}>
+                <div className="sticky top-0 z-10 flex items-center justify-between border-y border-ink-700/70 bg-ink-900/95 px-2.5 py-1 font-mono text-[8px] tracking-[0.16em] text-mist-500">
+                  <span>{group.label}</span>
+                  <span className="tabular-nums text-mist-600">{group.items.length}</span>
+                </div>
+                <ul>
+                  {group.items.map((reading) => {
+                    const navigating = navTarget?.id === reading.target.id;
+                    // 导航中只高亮目标行，避免「最近」与「正在前往」两套高亮打架
+                    const nearestActive = !navTarget && nearest?.target.id === reading.target.id;
+                    return (
+                      <li key={reading.target.id}>
+                        <button
+                          type="button"
+                          onClick={() => pick(reading.target.id)}
+                          aria-pressed={navigating}
+                          aria-label={
+                            navigating
+                              ? `取消前往${reading.target.name}`
+                              : `前往${reading.target.name}，${OCTANT_NAMES[reading.octant]}方向，步行约 ${reading.seconds} 秒`
+                          }
+                          className={`group flex min-h-9 w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left transition-colors focus-visible:bg-mint-400/10 focus-visible:outline-none ${
+                            navigating
+                              ? 'bg-mint-400/12 text-mint-400'
+                              : nearestActive
+                                ? 'bg-mint-400/5 text-mint-400 hover:bg-mint-400/10'
+                                : 'text-mist-300 hover:bg-ink-800/80 hover:text-mist-100'
+                          }`}
+                        >
+                          <span aria-hidden className="grid h-4 w-4 shrink-0 place-items-center">
+                            <ArrowUp
+                              className="h-3.5 w-3.5 transition-transform duration-200"
+                              style={{ transform: `rotate(${reading.bearingDeg}deg)` }}
+                            />
+                          </span>
+                          <span className="flex-1 truncate text-[11px] leading-none">{reading.target.name}</span>
+                          <span
+                            className={`font-mono text-[9px] tabular-nums ${
+                              navigating ? 'text-mint-400/80' : 'text-mist-400'
+                            }`}
+                          >
+                            ≈{reading.seconds}s
+                          </span>
+                          <span
+                            aria-hidden
+                            className={`shrink-0 font-mono text-[9px] tracking-[0.08em] transition-colors ${
+                              navigating
+                                ? 'text-signal-500'
+                                : nearestActive
+                                  ? 'text-mint-400/80 group-hover:text-mint-400'
+                                  : 'text-mist-500 group-hover:text-mint-400'
+                            }`}
+                          >
+                            {navigating ? '取消' : '去这里'}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
 
           <footer className="flex items-center justify-between gap-2 border-t-2 border-ink-700 px-2.5 py-1 font-mono text-[8px] tracking-[0.12em] text-mist-400">
             <span className="truncate">{region}</span>

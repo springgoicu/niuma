@@ -5,53 +5,41 @@ import {
   BOARD_TOP_N,
   POSE,
   WELCOME_LANDMARKS,
-  careerSessionDeltaMinutes,
+  hasCareerReport,
   type BoardMetric,
   type BoardPacket,
 } from '@niuma/shared-types';
 import type { Player } from './world';
 
 /**
- * 牛马榜聚合（ADR-0054）。
+ * 牛马榜聚合（ADR-0054 / 新 ADR 当日化）。
  *
  * 输入是当前园区内存里的玩家集合，输出一条可直接编码的快照；
  * 只在收到 `C2S_BOARD` 时调用，不进 Tick 循环。零持久化：
- * 进程重启、玩家掉线，榜单自然清空。
+ * 进程重启、玩家掉线，榜单自然清空；玩家重连后用自己的本地当日摘要补报。
  */
 
-/** 本次会话在线秒数：与 SPAWN / 工牌的 onlineSec 同一口径 */
+/** 本次会话在线秒数：只用于 SPAWN / 工牌的在线状态，不参与任何榜单数值 */
 export function sessionSecOf(player: Player, now: number): number {
   if (!(player.joinedAt > 0)) return 0;
   return Math.max(0, Math.floor((now - player.joinedAt) / 1000));
 }
 
-/**
- * 是否已上报考勤摘要。
- *
- * `firstJoinDate` 为空表示还没上报过；但服务端补报时会把 `reportedOnlineSec`
- * 写成会话秒数，因此它大于 0 同样说明「报过」——新玩家刚入园、日期还没落盘时
- * 也不会被误判成未上报。
- */
-export function hasCareerReport(player: Player): boolean {
-  return player.career.firstJoinDate.length > 0 || player.career.reportedOnlineSec > 0;
-}
+export { hasCareerReport };
 
-/** 单项数值：在岗用服务端会话时长，其余只读本人自报的展示字段 */
-export function boardValueOf(player: Player, metric: BoardMetric, now: number): number {
-  const onlineSec = sessionSecOf(player, now);
+/** 单项数值：全部读本人自报的今日字段，服务端不再补会话增量 */
+export function boardValueOf(player: Player, metric: BoardMetric): number {
   switch (metric) {
-    case BOARD_METRIC.Duty:
-      return onlineSec;
-    case BOARD_METRIC.Week:
-      return player.career.weekMinutes + careerSessionDeltaMinutes(player.career, onlineSec);
-    case BOARD_METRIC.Slack:
-      return player.career.slackCount;
-    case BOARD_METRIC.Knockdown:
-      return player.career.knockdownCount;
-    case BOARD_METRIC.Steps:
-      return player.career.steps;
-    case BOARD_METRIC.Likes:
-      return player.likes;
+    case BOARD_METRIC.TodayMinutes:
+      return player.career.todayMinutes;
+    case BOARD_METRIC.TodayToilet:
+      return player.career.todayToiletMinutes;
+    case BOARD_METRIC.TodayKnockdown:
+      return player.career.todayKnockdown;
+    case BOARD_METRIC.TodayVented:
+      return player.career.todayVented;
+    case BOARD_METRIC.TodaySteps:
+      return player.career.todaySteps;
   }
 }
 
@@ -75,20 +63,18 @@ interface RankedRow {
   id: number;
   name: string;
   value: number;
-  joinedAt: number;
 }
 
 /**
  * 按指标生成一条榜单快照。
  *
- * - 在岗榜与 人气榜包含全部在线玩家；其余四榜只含已上报摘要的人，未上报显示「未上报」而不是 0；
- * - 排序：数值降序 → 入场时刻升序（先来的靠前）→ id 升序，结果稳定可复现；
+ * - 五个榜都只含已上报今日摘要的人，未上报显示「未上报」而不是 0；
+ * - 排序：数值降序 → id 升序，20s 刷新时同值玩家名次不跳动；
  * - `selfRank` 在切片前算出，因此第 20 名也能看到自己的位置。
  */
 export function buildBoardSnapshot(
   players: Iterable<Player>,
   metric: BoardMetric,
-  now: number,
   selfId: number,
   limit: number = BOARD_TOP_N,
 ): BoardPacket {
@@ -97,20 +83,19 @@ export function buildBoardSnapshot(
   const ranked: RankedRow[] = [];
 
   for (const player of players) {
-    // NPC 不进榜：在岗榜、人气榜与其余四榜都只排真人，避免 10 个常驻实体挤占名次
+    // NPC 不进榜：五个榜都只排真人，避免 10 个常驻实体挤占名次
     if (player.isNpc) continue;
     online += 1;
     if (player.pose === POSE.Sit || player.pose === POSE.Lie) slacking += 1;
-    if (metric !== BOARD_METRIC.Duty && metric !== BOARD_METRIC.Likes && !hasCareerReport(player)) continue;
+    if (!hasCareerReport(player.career)) continue;
     ranked.push({
       id: player.id,
       name: player.name,
-      value: boardValueOf(player, metric, now),
-      joinedAt: player.joinedAt,
+      value: boardValueOf(player, metric),
     });
   }
 
-  ranked.sort((a, b) => b.value - a.value || a.joinedAt - b.joinedAt || a.id - b.id);
+  ranked.sort((a, b) => b.value - a.value || a.id - b.id);
 
   let selfRank = 0;
   let selfValue = 0;

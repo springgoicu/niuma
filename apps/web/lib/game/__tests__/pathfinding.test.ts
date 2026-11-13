@@ -5,10 +5,11 @@ import { NAV_CELL, findPath } from '../pathfinding';
 const MAX_STEP = NAV_CELL * Math.SQRT2 + 0.001;
 
 describe('园区自动寻路（ADR-0040）', () => {
-  it('从北门出生点到四个设施都能找到路径', () => {
+  it('从出生点到 11 个导览目标都能找到路径', () => {
+    expect(NAV_TARGETS).toHaveLength(11);
     for (const target of NAV_TARGETS) {
       const path = findPath(SPAWN_CENTER.x, SPAWN_CENTER.y, target.arrive.x, target.arrive.y);
-      expect(path).not.toBeNull();
+      expect(path, target.id).not.toBeNull();
       expect(path!.length).toBeGreaterThan(4);
     }
   });
@@ -24,7 +25,7 @@ describe('园区自动寻路（ADR-0040）', () => {
     }
   });
 
-  it('最后一段落在房间内的到达点，而不是网格中心', () => {
+  it('最后一段落在导览到达点，而不是网格中心', () => {
     for (const target of NAV_TARGETS) {
       const path = findPath(SPAWN_CENTER.x, SPAWN_CENTER.y, target.arrive.x, target.arrive.y)!;
       const last = path[path.length - 1]!;
@@ -32,7 +33,7 @@ describe('园区自动寻路（ADR-0040）', () => {
     }
   });
 
-  it('广场中心到四个设施同样可达', () => {
+  it('广场中心到 11 个导览目标同样可达', () => {
     for (const target of NAV_TARGETS) {
       expect(findPath(WORLD_CENTER.x, WORLD_CENTER.y, target.arrive.x, target.arrive.y)).not.toBeNull();
     }

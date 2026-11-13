@@ -3,7 +3,9 @@ import {
   CAREER_FIXED_BYTES,
   CAREER_MAX_BYTES,
   EMPTY_CAREER,
-  careerSessionDeltaMinutes,
+  MAX_COUNT,
+  MAX_DAY_MINUTES,
+  MAX_STEPS,
   clampSessionCarry,
   dateToEpochDays,
   epochDaysToDate,
@@ -24,33 +26,21 @@ describe('career summary', () => {
   it('clamps negative, NaN and oversized numbers instead of throwing', () => {
     const safe = sanitizeCareer({
       firstJoinDate: '2026-01-01',
-      totalOnlineMinutes: Number.POSITIVE_INFINITY,
-      activeDays: -3,
-      todayMinutes: Number.NaN,
-      weekMinutes: 999_999,
-      streakDays: -1,
-      steps: 1e12,
-      distanceM: -5,
-      slackCount: 1e9,
-      ventedCount: -1,
-      knockdownCount: -1,
-      overtimeCount: Number.NaN,
+      todayMinutes: Number.POSITIVE_INFINITY,
+      todayToiletMinutes: Number.NaN,
+      todaySteps: 1e12,
+      todayKnockdown: -1,
+      todayVented: 1e9,
+      todayOvertime: Number.NaN,
       province: '  浙江  ',
-      reportedOnlineSec: 1e12,
     });
-    expect(safe.totalOnlineMinutes).toBe(0);
-    expect(safe.activeDays).toBe(0);
-    expect(safe.todayMinutes).toBe(0);
-    expect(safe.weekMinutes).toBe(10_080);
-    expect(safe.streakDays).toBe(0);
-    expect(safe.steps).toBe(100_000_000);
-    expect(safe.distanceM).toBe(0);
-    expect(safe.slackCount).toBe(65_535);
-    expect(safe.ventedCount).toBe(0);
-    expect(safe.knockdownCount).toBe(0);
-    expect(safe.overtimeCount).toBe(0);
+    expect(safe.todayMinutes).toBe(MAX_DAY_MINUTES);
+    expect(safe.todayToiletMinutes).toBe(0);
+    expect(safe.todaySteps).toBe(MAX_STEPS);
+    expect(safe.todayKnockdown).toBe(0);
+    expect(safe.todayVented).toBe(MAX_COUNT);
+    expect(safe.todayOvertime).toBe(0);
     expect(safe.province).toBe('浙江');
-    expect(safe.reportedOnlineSec).toBe(100 * 365 * 24 * 3_600);
   });
 
   it('drops invalid first-join dates instead of inventing one', () => {
@@ -67,43 +57,24 @@ describe('career summary', () => {
     expect(truncateProvince(undefined)).toBe('');
   });
 
-  it('round-trips every field through the binary payload', () => {
+  it('round-trips every today field through the binary payload', () => {
     const career = {
       firstJoinDate: '2026-03-04',
-      totalOnlineMinutes: 12_345,
-      activeDays: 42,
       todayMinutes: 361,
-      weekMinutes: 1_234,
-      streakDays: 9,
-      steps: 123_456,
-      distanceM: 8_765,
-      slackCount: 88,
-      ventedCount: 13,
-      knockdownCount: 21,
-      overtimeCount: 7,
+      todayToiletMinutes: 88,
+      todaySteps: 123_456,
+      todayKnockdown: 21,
+      todayVented: 13,
+      todayOvertime: 1,
       province: '浙江',
-      reportedOnlineSec: 61,
     };
     expect(decodeCareer(encodeCareer(career))).toEqual(career);
   });
 
-  it('computes the session delta from the server-reported baseline', () => {
-    const career = { ...EMPTY_CAREER, reportedOnlineSec: 600 };
-    expect(careerSessionDeltaMinutes(career, 600)).toBe(0);
-    expect(careerSessionDeltaMinutes(career, 659)).toBe(0);
-    expect(careerSessionDeltaMinutes(career, 660)).toBe(1);
-    // 重连后服务端会话秒数归零：不能倒扣历史工时
-    expect(careerSessionDeltaMinutes(career, 0)).toBe(0);
-    expect(careerSessionDeltaMinutes(career, Number.NaN)).toBe(0);
-  });
-
   it('续算秒数取「上报值 / 一天 / 进程运行时长」三者最小', () => {
     expect(clampSessionCarry(3_600, 7_200)).toBe(3_600);
-    // 进程才跑了 2 小时：上报 24 小时也只能认 2 小时
     expect(clampSessionCarry(99_999, 7_200)).toBe(7_200);
-    // 一天是硬上限
     expect(clampSessionCarry(200_000, 200_000)).toBe(86_400);
-    // 进程刚起：一律从 0 开始，重启后旧值自然失效
     expect(clampSessionCarry(3_600, 0)).toBe(0);
   });
 
@@ -114,7 +85,7 @@ describe('career summary', () => {
     expect(clampSessionCarry(100, Number.NaN)).toBe(0);
   });
 
-  it('decodes a legacy v1 payload with knockdownCount defaulted to zero', () => {
+  it('decodes a legacy v1 payload but only maps todayMinutes', () => {
     // v1 固定 34 字节 + 省份 6 字节；这里手工构造，确保版本偏移没有被改坏
     const legacy = new Uint8Array(34 + 6);
     const view = new DataView(legacy.buffer);
@@ -148,8 +119,12 @@ describe('career summary', () => {
     legacy.set(new TextEncoder().encode('浙江'), at);
 
     const decoded = decodeCareer(legacy);
-    expect(decoded?.knockdownCount).toBe(0);
-    expect(decoded?.ventedCount).toBe(13);
+    expect(decoded?.todayMinutes).toBe(361);
+    expect(decoded?.todaySteps).toBe(0);
+    expect(decoded?.todayVented).toBe(0);
+    expect(decoded?.todayKnockdown).toBe(0);
+    expect(decoded?.todayOvertime).toBe(0);
+    expect(decoded?.todayToiletMinutes).toBe(0);
     expect(decoded?.province).toBe('浙江');
   });
 

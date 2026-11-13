@@ -1,6 +1,5 @@
 import {
   POSE,
-  careerSessionDeltaMinutes,
   type CareerSummary,
   type CharacterAppearance,
   type Pose,
@@ -8,11 +7,12 @@ import {
   type Species,
 } from '@niuma/shared-types';
 
-/** 视野内本周工时榜的一条；`self` 用于高亮自己 */
+/** 视野内今日工时榜的一条；`self` 用于高亮自己 */
 export interface BoardEntry {
   id: number;
   name: string;
-  weekMinutes: number;
+  /** 今日工时（分钟）；口径与工牌、公告栏一致 */
+  todayMinutes: number;
   self: boolean;
 }
 
@@ -32,42 +32,28 @@ export interface PlayerBadge {
   status: string;
   /** 园区区域名，来自 `regionAt` */
   region: string;
-  /** 服务端会话口径的已在线秒数 */
-  onlineSec: number;
   pose: Pose;
   moving: boolean;
   seated: boolean;
   seatKind: SeatKind | null;
   /** 本人自报的考勤摘要；旧服务端或未上报时为 undefined */
   career?: CareerSummary;
+  /** 实体角色（0 普通 / 1 保安）：3 位保安同名，工牌靠 role + id 区分 */
+  role?: number;
   /** 服务端内存里的工牌点赞数（ADR-0057）；0 表示没人点过 */
   likes: number;
   /** 当前连接是否已经点过这块工牌；来自 S2C_LIKE 的 flag0 */
   liked: boolean;
-  /** 视野内本周工时榜（最多 5 条） */
+  /** 视野内今日工时榜（最多 5 条） */
   board: BoardEntry[];
   /** 该玩家在视野榜里的名次；未上报或不在榜内为 null */
   rank: number | null;
 }
 
 /**
- * 在线时长：`HH:MM:SS`。小时不封顶——挂在园区里一天也不会溢出不存在的位数。
- * 非有限值（断线 / 还没入场）显示 `--:--`，不要用 00:00:00 假装刚上线。
- */
-export function formatOnline(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '--:--';
-  const total = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-/**
  * 当前姿态文案。坐姿分「入座摸鱼」与「席地而坐」，因为这两件事在园区里的语义完全不同；
  * 行走与 moving 标志都算搬砖——服务端抖动时姿态与标志可能差一拍，取并集避免闪字。
- */
-export function poseLabel(pose: Pose, moving: boolean, seated: boolean): string {
+ */export function poseLabel(pose: Pose, moving: boolean, seated: boolean): string {
   if (pose === POSE.Lie) return '躺平中';
   if (pose === POSE.Sit) return seated ? '入座摸鱼' : '席地而坐';
   if (moving || pose === POSE.Walk) return '搬砖中';
@@ -88,10 +74,17 @@ export function seatLabel(seatKind: SeatKind | null): string {
   return '马桶';
 }
 
-/** 昵称哈希：djb2，按码点推进。工号、部门与班次共用同一把尺子。 */
-export function hashName(name: string): number {
+/**
+ * 昵称哈希：djb2，按码点推进。工号、部门与班次共用同一把尺子。
+ *
+ * `salt` 只给「同名实体」用：3 位保安都叫「园区保安」，靠实体 id 混进哈希才能分开；
+ * 真人与普通同事不传，固定工号语义保持不变。
+ */
+export function hashName(name: string, salt?: number): number {
   let hash = 5381;
-  for (const char of name) {
+  // \u0000 把名字与 salt 分段：避免「名字尾部是数字」与 salt 拼接时撞成同一个输入
+  const text = salt === undefined ? name : `${name}\u0000${salt}`;
+  for (const char of text) {
     hash = ((hash << 5) + hash + (char.codePointAt(0) ?? 0)) >>> 0;
   }
   return hash;
@@ -102,9 +95,10 @@ export function hashName(name: string): number {
  *
  * 纯函数、与时间无关：同一个昵称今天与明年都是同一张工牌，
  * 换名字才会换号——这正是「固定工号」该有的行为。
+ * `salt` 只用于区分同名 NPC，真人永不传。
  */
-export function employeeNumber(name: string): string {
-  return `#NM-${String(hashName(name) % 100_000).padStart(5, '0')}`;
+export function employeeNumber(name: string, salt?: number): string {
+  return `#NM-${String(hashName(name, salt) % 100_000).padStart(5, '0')}`;
 }
 
 const DEPARTMENTS = [
@@ -119,30 +113,13 @@ const DEPARTMENTS = [
 const SHIFTS = ['白班', '夜班', '弹性班', '连班'] as const;
 
 /** 部门：由昵称哈希稳定派生，不占协议字段，也不会因为刷新而换组。 */
-export function departmentOf(name: string): string {
-  return DEPARTMENTS[hashName(name) % DEPARTMENTS.length]!;
+export function departmentOf(name: string, salt?: number): string {
+  return DEPARTMENTS[hashName(name, salt) % DEPARTMENTS.length]!;
 }
 
 /** 班次：取哈希的高位，避免与部门总是同进同退。 */
-export function shiftOf(name: string): string {
-  return SHIFTS[(hashName(name) >>> 8) % SHIFTS.length]!;
-}
-
-/**
- * 把「上报时的快照」换算成「此刻的工时」。
- *
- * 只加上报之后的会话增量：`reportedOnlineSec` 由服务端在入场 / 补报时写入，
- * 重连与两端时钟差都不会造成重复计时。行为统计是累计值，不做增量。
- */
-export function withCareerDelta(career: CareerSummary, onlineSec: number): CareerSummary {
-  const deltaMin = careerSessionDeltaMinutes(career, onlineSec);
-  if (deltaMin <= 0) return career;
-  return {
-    ...career,
-    totalOnlineMinutes: career.totalOnlineMinutes + deltaMin,
-    todayMinutes: career.todayMinutes + deltaMin,
-    weekMinutes: career.weekMinutes + deltaMin,
-  };
+export function shiftOf(name: string, salt?: number): string {
+  return SHIFTS[(hashName(name, salt) >>> 8) % SHIFTS.length]!;
 }
 
 /** 点击命中盒：以脚底为原点，覆盖角色本体与头顶昵称，和 `EntityView` 的锚点一致 */
