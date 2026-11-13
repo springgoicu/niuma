@@ -1,8 +1,8 @@
 'use client';
 
 import { Container, Graphics, Rectangle, Sprite, Text, type Application, type Texture } from 'pixi.js';
-import { WELCOME_LANDMARKS, type NavTargetId } from '@niuma/shared-types';
-import { navReadings } from './nav';
+import { WELCOME_LANDMARKS } from '@niuma/shared-types';
+import { signPlates, type SignPlate } from './signpost';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
 
@@ -141,13 +141,13 @@ function drawArrow(g: Graphics, cx: number, cy: number, octant: number): void {
 }
 
 /**
- * 指路牌：一根木柱上叠五块纸牌，箭头方向由 NAV_TARGETS 的真实方位决定。
- * 牌面只列园区级目的地（游乐园 / 研发园 / 影音室 / 摸鱼亭 / 湖区），
- * 室内四间、三湖细分与发泄区这类后加目标都交给 HUD 导览卡，
- * 牌面就不会随目标增加而爆掉。画布仍锁 96×92：五块牌压到 13px 行距，
+ * 指路牌：一根木柱上叠若干块纸牌，箭头方向由 NAV_TARGETS 的真实方位决定。
+ * 牌面只列园区级目标（游乐场 / 发泄区 / 擂台），室内与设施细节交给 HUD 导览卡，
+ * 牌面就不会随目标增加而爆掉（ADR-0077）。画布仍锁 96×92：
+ * 块数由 `signPlates()` 自适应，行位置统一走 `signPlateTop()`，
  * 靠箭头与分隔线维持可读性。
  */
-function drawSignpost(g: Graphics, w: number, h: number, arrows: readonly number[]): void {
+function drawSignpost(g: Graphics, w: number, h: number, plates: readonly SignPlate[]): void {
   const plateX = Math.round((w - 72) / 2);
   const tagX = Math.round((w - 52) / 2);
   const tagY = h - 10;
@@ -162,12 +162,12 @@ function drawSignpost(g: Graphics, w: number, h: number, arrows: readonly number
   // 标题左侧的菱形记号：读作「导览」，不冒充指北针
   g.poly([plateX + 12, 3, plateX + 16, 7, plateX + 12, 11, plateX + 8, 7]).fill(COLOR.mintDark);
 
-  // 五块目的地牌：自上而下按 SIGN_PLATES 顺序，13px 行距刚好压进原画布
-  for (let i = 0; i < 5; i += 1) {
-    const top = 16 + i * 13;
+  // 目的地牌：自上而下按 signPlates() 顺序，行位置由 signPlateTop() 统一给出
+  for (let i = 0; i < plates.length; i += 1) {
+    const top = plates[i]!.top;
     box(g, 6, top, w - 12, 13, COLOR.paper, COLOR.paperEdge);
     g.rect(6, top + 12, w - 12, 1).fill(COLOR.clothLight);
-    drawArrow(g, 20, top + 6, arrows[i] ?? 0);
+    drawArrow(g, 20, top + 6, plates[i]!.octant);
   }
 
   // 底牌：反色小标签，给「你在这里」一个视觉落点
@@ -331,10 +331,10 @@ export class WelcomeView {
   }
 
   private buildSignpost(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
-    const plates = signPlates();
+    const plates = signPlates(DIRECTORY.x, DIRECTORY.y, DIRECTORY.height);
     const texture = bake(
       renderer,
-      (g) => drawSignpost(g, DIRECTORY.width, DIRECTORY.height, plates.map((plate) => plate.octant)),
+      (g) => drawSignpost(g, DIRECTORY.width, DIRECTORY.height, plates),
       { frame: new Rectangle(0, 0, DIRECTORY.width, DIRECTORY.height) },
     );
     const root = new Container();
@@ -356,7 +356,8 @@ export class WelcomeView {
       this.addText(root, devicePxPerTexel, {
         text: plates[i]!.label,
         x: -DIRECTORY.width / 2 + 30,
-        y: base + 21 + i * 13,
+        // 牌高 13px、字高 8px：文字垂直居中在牌面上
+        y: base + plates[i]!.top + 5,
         size: 8,
         fill: COLOR.inkSoft,
         anchorX: 0,
@@ -433,23 +434,4 @@ export class WelcomeView {
   }
 }
 
-/** 指路牌按自己的位置计算八向：移动地标不需要回来改箭头 */
-/**
- * 牌面五块目的地：只列园区级区域，室内四间与三湖的细分交给 HUD 导览卡。
- * `octant` 由真实方位实时计算，牌子朝向不写死。
- */
-const SIGN_PLATES: ReadonlyArray<{ id: NavTargetId; label: string }> = [
-  { id: 'park', label: '游乐园' },
-  { id: 'southYard', label: '研发园' },
-  { id: 'theater', label: '影音室' },
-  { id: 'pavilion', label: '摸鱼亭' },
-  { id: 'lakeMoping', label: '湖区' },
-];
 
-function signPlates(): Array<{ label: string; octant: number }> {
-  const readings = navReadings(DIRECTORY.x, DIRECTORY.y);
-  return SIGN_PLATES.map(({ id, label }) => {
-    const reading = readings.find((item) => item.target.id === id);
-    return { label, octant: reading?.octant ?? 0 };
-  });
-}

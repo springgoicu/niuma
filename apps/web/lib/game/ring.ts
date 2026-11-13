@@ -3,6 +3,7 @@
 import { Container, Graphics, Sprite, Text, type Application, type Texture } from 'pixi.js';
 import {
   RING_ARENA,
+  RING_AWARD_MS,
   RING_PHASE,
   RING_PODIUM_SLOTS,
   type RingPacket,
@@ -36,11 +37,17 @@ const CJK_FONT = "'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif";
 const RISE_MS = 600;
 /** 奖杯上下浮动周期 */
 const TROPHY_BOB_MS = 1_600;
-/** 彩带持续生成 3.6s，之后只让已有粒子落完 */
-const CONFETTI_SPAWN_MS = 3_600;
-const CONFETTI_LIFE_MS = 6_200;
+/**
+ * 彩带节奏按 4 秒颁奖窗口排（ADR-0076）：2.2s 内生成完毕，最后一颗正好在
+ * 窗口关闭时落尽。窗口只有原来的一半，所以下落速度相应加快，否则彩带会
+ * 停半空里被整片切掉。
+ */
+const CONFETTI_SPAWN_MS = 2_200;
+const CONFETTI_LIFE_MS = 1_800;
 const CONFETTI_MAX = 46;
 const CONFETTI_INTERVAL_MS = 90;
+/** 颁奖窗口收尾淡出：最后 240ms 整体渐隐，避免阶段切换时硬切 */
+const AWARD_FADE_MS = 240;
 
 const TAU = Math.PI * 2;
 
@@ -97,7 +104,7 @@ export class RingView {
     title.alpha = 0.86;
     this.groundRoot.addChild(title);
 
-    const rule = this.makeText('2 分钟 · 10 血 · 三人为限', 10, RING_COLORS.rope, 2);
+    const rule = this.makeText('10 血 · 三人为限 · 打完即开奖', 10, RING_COLORS.rope, 2);
     rule.anchor.set(0.5, 0);
     rule.position.set(RING_ARENA.w / 2, 52);
     rule.alpha = 0.7;
@@ -229,6 +236,10 @@ export class RingView {
 
     if (this.overlayRoot.visible && this.awardAt >= 0) {
       const since = this.elapsedMs - this.awardAt;
+      // 窗口末尾整体淡出：阶段包到达时 resetAward 会直接隐藏覆盖层
+      const fadeStart = RING_AWARD_MS - AWARD_FADE_MS;
+      this.overlayRoot.alpha =
+        since >= fadeStart ? Math.max(0, 1 - (since - fadeStart) / AWARD_FADE_MS) : 1;
       const progress = easeOutCubic(since / RISE_MS);
       for (const step of this.steps) {
         step.alpha = Math.min(1, progress * 1.4);
@@ -272,7 +283,7 @@ export class RingView {
       view: piece,
       x: piece.position.x,
       y: piece.position.y,
-      vy: 34 + this.randomInt(34),
+      vy: 70 + this.randomInt(50),
       sway: 6 + this.randomInt(12),
       swayPhase: this.randomInt(628) / 100,
       spin: (this.randomInt(2) === 0 ? -1 : 1) * (0.6 + this.randomInt(3) * 0.4),
@@ -304,6 +315,8 @@ export class RingView {
   private resetAward(): void {
     this.awardAt = -1;
     this.overlayRoot.visible = false;
+    // 淡出会改 alpha；不复位的话下一局开奖会从半透明开始
+    this.overlayRoot.alpha = 1;
     this.trophy.visible = false;
     for (const step of this.steps) step.visible = false;
     for (const label of this.podiumTexts) label.visible = false;

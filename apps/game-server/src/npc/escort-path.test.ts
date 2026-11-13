@@ -49,7 +49,8 @@ describe('押送寻路（ADR-0072）', () => {
     // 一端在墙外、一端在墙内，中间必然经过西墙门洞
     expect(points.some((point) => point.x < JAIL.x)).toBe(true);
     expect(points.some((point) => point.x > JAIL.x + 40)).toBe(true);
-    expect(pathLength(points)).toBeGreaterThan(450);
+    // ADR-0077：房间收到 320×240 后进屋路径变短，仍必须明显长于一条直线穿墙
+    expect(pathLength(points)).toBeGreaterThan(300);
   });
 
   it('从屋北外侧绕到屋南外侧：不穿北/东/南墙，只能绕行或走西门', () => {
@@ -60,8 +61,8 @@ describe('押送寻路（ADR-0072）', () => {
     expect(path).not.toBeNull();
     const points = path!;
     expectSegmentsClear(points);
-    // 起终点被院落挤到最近的可走格，直线约 400px；绕行明显更长
-    expect(pathLength(points)).toBeGreaterThan(700);
+    // 起终点被院落挤到最近的可走格，直线约 400px；ADR-0077 房间变矮后绕行仍明显更长
+    expect(pathLength(points)).toBeGreaterThan(600);
   });
 
   it('门框与墙体本身不可走，门口铺装可走', () => {

@@ -6,14 +6,19 @@ import {
   JAIL_PHASE,
   OpCode,
   POSE,
+  RING_EXIT,
+  RING_START_SLOTS,
+  SYSTEM_NOTICE_KIND,
   decodeJail,
+  decodeSystemNotice,
   packState,
   quantizeCoord,
   type JailPacket,
   type MovePacket,
+  type SystemNoticePacket,
 } from '@niuma/shared-types';
 import { SpatialGrid } from '../spatial/grid';
-import { Detention, type EscortEvent } from './detention';
+import { ASSAULT, Detention, type EscortEvent } from './detention';
 import { applyMove } from './movement';
 import { World, type Player } from './world';
 
@@ -24,6 +29,8 @@ interface Harness {
   bystander: Player;
   detention: Detention;
   sent: Array<{ wsId: number; packet: JailPacket }>;
+  /** 系统提示：打人警告只发本人、押送通播发给旁观者，两类都要能验 */
+  notices: Array<{ wsId: number; packet: SystemNoticePacket }>;
   dispatched: number[];
   cancelled: number[];
   dispatchGuard: { id: number };
@@ -44,6 +51,7 @@ function setup(options: { witness?: boolean } = {}): Harness {
   bystander.known.add(player.id);
 
   const sent: Array<{ wsId: number; packet: JailPacket }> = [];
+  const notices: Array<{ wsId: number; packet: SystemNoticePacket }> = [];
   const dispatched: number[] = [];
   const cancelled: number[] = [];
   const dispatchGuard = { id: 42 };
@@ -53,9 +61,11 @@ function setup(options: { witness?: boolean } = {}): Harness {
     grid,
     transport: {
       send(wsId: number, data: Uint8Array) {
-        // 系统提示与小黑屋包共用一条连接，这里只关心后者
-        if (data[0] !== OpCode.S2C_JAIL) return;
-        sent.push({ wsId, packet: decodeJail(data) });
+        // 系统提示与小黑屋包共用一条连接，按 opcode 分流
+        if (data[0] === OpCode.S2C_JAIL) sent.push({ wsId, packet: decodeJail(data) });
+        else if (data[0] === OpCode.S2C_SYSTEM_NOTICE) {
+          notices.push({ wsId, packet: decodeSystemNotice(data) });
+        }
       },
     },
     releaseSeat: () => {},
@@ -74,7 +84,7 @@ function setup(options: { witness?: boolean } = {}): Harness {
   // 之后才开始认「坐→站」的跃迁，夹具也照同一条路径走。
   detention.observe(0);
 
-  return { world, grid, player, bystander, detention, sent, dispatched, cancelled, dispatchGuard };
+  return { world, grid, player, bystander, detention, sent, notices, dispatched, cancelled, dispatchGuard };
 }
 
 function sit(h: Harness, at: number): void {
@@ -227,5 +237,146 @@ describe('小黑屋判定（不设禁足时长）', () => {
     h.detention.update(at + 100);
     expect(phasesOf(h, 11)).toContain(JAIL_PHASE.Dispatch);
     expect(h.sent.find((entry) => entry.wsId === 11 && entry.packet.phase === JAIL_PHASE.Dispatch)!.packet.guardId).toBe(7);
+  });
+});
+
+describe('打人触发执法（ADR-0074）', () => {
+  /** 直接走公开入口：命中几何由 vent 负责，这里只验执法账本 */
+  function hit(h: Harness, victimId: number, at: number): void {
+    h.detention.onVentHit(h.world.get(h.player.id)!, h.world.get(victimId)!, at);
+  }
+
+  it('第 2 次命中只私下警告本人：旁人不收、不派单', () => {
+    const h = setup();
+    hit(h, h.bystander.id, 1_000);
+    expect(h.notices).toEqual([]);
+    expect(h.dispatched).toEqual([]);
+
+    hit(h, h.bystander.id, 3_000);
+
+    const warns = h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.AssaultWarn);
+    expect(warns.map((entry) => entry.wsId)).toEqual([11]);
+    expect(warns[0]!.packet.text).toContain('不许动手');
+    expect(h.dispatched).toEqual([]);
+    expect(phasesOf(h, 11)).toEqual([]);
+  });
+
+  it('第 3 次命中确认：通播打人提示并派给最近保安', () => {
+    const h = setup();
+    hit(h, h.bystander.id, 1_000);
+    hit(h, h.bystander.id, 3_000);
+    hit(h, h.bystander.id, 5_000);
+
+    expect(h.dispatched).toEqual([h.player.id]);
+    expect(phasesOf(h, 11)).toContain(JAIL_PHASE.Dispatch);
+    const fight = h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.DetainedFight);
+    // 通播只发看得见他的人：本人靠 Dispatch 阶段包知道自己被盯上
+    expect(fight.map((entry) => entry.wsId)).toEqual([12]);
+    expect(fight[0]!.packet.text).toContain('不许动手');
+  });
+
+  it('超过 2 分钟窗口的老命中不算：重新从第 1 次开始数', () => {
+    const h = setup();
+    hit(h, h.bystander.id, 0);
+    hit(h, h.bystander.id, 1_000);
+    // 第 3 次落在窗口外：前两下已过期，这一下只是新窗口的第 1 次
+    hit(h, h.bystander.id, ASSAULT.WINDOW_MS + 2_000);
+    expect(h.dispatched).toEqual([]);
+    expect(h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.AssaultWarn)).toHaveLength(1);
+
+    // 再打一次才凑成新窗口的第 2 次，警告重新出现
+    hit(h, h.bystander.id, ASSAULT.WINDOW_MS + 3_000);
+    expect(h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.AssaultWarn)).toHaveLength(2);
+  });
+
+  it('打不同的人分别计数，不跨目标合并', () => {
+    const h = setup();
+    const third = h.world.create('丙', DEFAULT_APPEARANCE.cow, 13, 4_200, 4_200)!;
+    hit(h, h.bystander.id, 1_000);
+    hit(h, h.bystander.id, 2_000);
+    hit(h, third.id, 3_000);
+
+    // 对丙只有 1 次，不能拿乙的两次凑满 3 次
+    expect(h.dispatched).toEqual([]);
+    expect(h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.AssaultWarn)).toHaveLength(1);
+  });
+
+  it('打 NPC 不计数：只有真人之间才算动手', () => {
+    const h = setup();
+    const npc = h.world.createNpc('同事', DEFAULT_APPEARANCE.cow, 4_300, 4_300)!;
+    hit(h, npc.id, 1_000);
+    hit(h, npc.id, 2_000);
+    hit(h, npc.id, 3_000);
+
+    expect(h.dispatched).toEqual([]);
+    expect(h.notices).toEqual([]);
+  });
+
+  it('已在押送流程里的人不再重复建案', () => {
+    const h = setup();
+    for (let index = 0; index < 3; index += 1) hit(h, h.bystander.id, 1_000 + index * 1_000);
+    expect(h.dispatched).toHaveLength(1);
+
+    hit(h, h.bystander.id, 5_000);
+    hit(h, h.bystander.id, 6_000);
+
+    expect(h.dispatched).toHaveLength(1);
+  });
+
+  it('攻击者断线后账本清空，回来从零开始', () => {
+    const h = setup();
+    hit(h, h.bystander.id, 1_000);
+    // 断线：wsId 归零，5 秒节流的清理应把这条旧账丢掉
+    h.player.wsId = 0;
+    h.detention.update(6_000);
+    h.player.wsId = 11;
+
+    hit(h, h.bystander.id, 7_000);
+
+    expect(h.notices).toEqual([]);
+    expect(h.dispatched).toEqual([]);
+  });
+});
+
+describe('擂台赛期间保安不执法（ADR-0075）', () => {
+  /** 报名只认围绳附近的服务端传送：夹具先把人挪到场边，再走同一条入场路径 */
+  function enterRing(h: Harness, at: number): void {
+    h.player.x = RING_EXIT.x;
+    h.player.y = RING_EXIT.y;
+    expect(h.world.ring.enter(h.player, at).ok).toBe(true);
+  }
+
+  it('名单内的玩家不累计坐站循环，也不派单', () => {
+    const h = setup();
+    enterRing(h, 1_000);
+    // 围观者贴到起跑位旁：排除「身边没人」这个不触发原因
+    h.bystander.x = RING_START_SLOTS[0]!.x + 20;
+    h.bystander.y = RING_START_SLOTS[0]!.y;
+
+    let at = 1_100;
+    for (let index = 0; index < 6; index += 1) at = cycle(h, at);
+
+    expect(h.sent).toEqual([]);
+    expect(h.dispatched).toEqual([]);
+  });
+
+  it('已确认的案子在上擂台后撤销：保安原地松手，只发一次 Released', () => {
+    const h = setup();
+    let at = 1_000;
+    for (let index = 0; index < 6; index += 1) at = cycle(h, at);
+    expect(h.dispatched).toEqual([h.player.id]);
+
+    enterRing(h, at);
+    h.detention.update(at);
+
+    expect(h.cancelled).toEqual([h.player.id]);
+    const released = () => h.sent.filter((entry) => entry.packet.phase === JAIL_PHASE.Released);
+    // 本人 + 旁观者各一份
+    expect(released()).toHaveLength(2);
+
+    // 案子只撤销一次：后续 Tick 不重复发 Released，也不重复取消
+    h.detention.update(at + 50);
+    expect(h.cancelled).toEqual([h.player.id]);
+    expect(released()).toHaveLength(2);
   });
 });

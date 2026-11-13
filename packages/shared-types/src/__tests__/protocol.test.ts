@@ -51,7 +51,6 @@ import {
   decodeChatHistoryRequest,
   decodeChatRejected,
   decodeDespawn,
-  decodeGraze,
   decodeHello,
   decodeJail,
   decodeMove,
@@ -80,7 +79,6 @@ import {
   encodeCareerSegment,
   encodeChatRejected,
   encodeDespawn,
-  encodeGraze,
   encodeHello,
   encodeJail,
   encodeMove,
@@ -372,19 +370,6 @@ describe('sync packet', () => {
   });
 });
 
-describe('咀嚼事件包', () => {
-  it('3 字节，round-trip entityId', () => {
-    const packet = encodeGraze(513);
-    expect(packet.byteLength).toBe(3);
-    expect([...packet]).toEqual([OpCode.S2C_GRAZE, 1, 2]);
-    expect(decodeGraze(packet)).toBe(513);
-  });
-
-  it('拒绝错误 opcode', () => {
-    expect(() => decodeGraze(encodeDespawn(1))).toThrow(/graze packet/);
-  });
-});
-
 describe('发泄结算包', () => {
   it('9 字节定长，round-trip 出招者 / 受害者 / 权威坐标', () => {
     const packet = encodeVent(513, 258, 1234, 5678);
@@ -415,7 +400,7 @@ describe('发泄结算包', () => {
   });
 
   it('拒绝错误 opcode 与错误长度', () => {
-    expect(() => decodeVent(encodeGraze(1))).toThrow(/must be 9 or 10 bytes/);
+    expect(() => decodeVent(encodeDespawn(1))).toThrow(/must be 9 or 10 bytes/);
     expect(() => decodeVent(encodeVent(1, 1, 1, 1).subarray(0, 8))).toThrow(/must be 9 or 10 bytes/);
   });
 });
@@ -558,7 +543,7 @@ describe('发泄区老板血量包', () => {
   });
 
   it('拒绝错误 opcode 与错误长度', () => {
-    expect(() => decodeBoss(encodeGraze(1))).toThrow(/must be 6 bytes/);
+    expect(() => decodeBoss(encodeDespawn(1))).toThrow(/must be 6 bytes/);
     expect(() => decodeBoss(encodeVent(1, 1, 1, 1))).toThrow(/must be 6 bytes/);
     expect(() => decodeBoss(encodeBoss({ hp: 1, attackerId: 1, died: false, reset: false }).subarray(0, 5))).toThrow(
       /must be 6 bytes/,

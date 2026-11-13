@@ -1106,12 +1106,12 @@ export class InteriorArt {
     rect(g, innerX, innerY, 1, innerH, COLOR.mintTileDeep);
     rect(g, innerX + innerW - 1, innerY, 1, innerH, COLOR.mintTileDeep);
 
-    // 水渍：砖缝处的半透明反光贴花
+    // 水渍：砖缝处的半透明反光贴花（ADR-0077：房间 340×300，全部收在中央区附近）
     const stains: Array<[number, number, number, number]> = [
-      [x + 172, y + 302, 18, 4],
-      [x + 204, y + 278, 12, 3],
-      [x + 244, y + 260, 20, 4],
-      [x + 284, y + 292, 10, 3],
+      [x + 130, y + 250, 18, 4],
+      [x + 160, y + 228, 12, 3],
+      [x + 186, y + 212, 20, 4],
+      [x + 196, y + 240, 10, 3],
     ];
     for (const [sx, sy, sw, sh] of stains) {
       wash(g, sx, sy, sw, sh, COLOR.water, 0.16);
@@ -1119,8 +1119,8 @@ export class InteriorArt {
     }
 
     // 深灰地漏
-    const dx = x + 230;
-    const dy = y + 246;
+    const dx = x + 166;
+    const dy = y + 200;
     rect(g, dx - 4, dy - 4, 8, 8, COLOR.outline);
     rect(g, dx - 3, dy - 3, 6, 6, COLOR.drain);
     for (let i = 0; i < 3; i += 1) rect(g, dx - 2, dy - 2 + i * 2, 4, 1, COLOR.fixtureEdge);
@@ -1139,7 +1139,7 @@ export class InteriorArt {
     // 隔间木门 + 红锁 + 厕纸架
     this.stallDoors(g);
     // 北墙提示牌：节约用水 · 严禁超时（图标 + 点阵字块）
-    this.restroomSign(g, x + 268, y + 2);
+    this.restroomSign(g, x + 146, y + 2);
   }
 
   private decorateRestroomFittings(depth: DepthSink, renderer: TextureFactory, room: Room): void {
@@ -1147,7 +1147,7 @@ export class InteriorArt {
     this.place(depth, renderer, 'dryer', drawHandDryer, HAND_DRYER, x + 320, y + h - room.wall);
     // 香薰与绿萝挪到男 / 女区南端：北墙整排让给坑位，留在原处会压在马桶上
     this.place(depth, renderer, 'diffuser', drawDiffuser, DIFFUSER, x + 26, y + h - room.wall - 6);
-    this.place(depth, renderer, 'pothos', drawPothos, POTHOS, x + 424, y + h - room.wall - 6);
+    this.place(depth, renderer, 'pothos', drawPothos, POTHOS, x + 300, y + h - room.wall - 6);
 
     // 水龙头下的一滴水：sink 精灵在 depth y+350，水滴要再晚一格才画得出来
     const sink = propsIn(room, 'sink')[0];
@@ -1264,14 +1264,14 @@ export class InteriorArt {
 
   /** 连体洗手台：从两个 sink prop 的坐标反推台面，画一条连续白瓷台 + 宽镜 */
   private vanity(g: Graphics, room: Room): void {
-    const { y } = room.rect;
     const sinks = propsIn(room, 'sink');
     if (sinks.length < 2) return;
     const left = Math.min(...sinks.map((sink) => sink.x));
     const right = Math.max(...sinks.map((sink) => sink.x));
     const counterX = left - 28;
     const counterW = right - left + 56;
-    const counterBottom = y + 350;
+    // 台面贴南墙内侧：不再写死 y+350，卫生间收到 300 高后仍然对齐
+    const counterBottom = room.rect.y + room.rect.h - room.wall;
     const counterTop = counterBottom - 24;
     const mirrorX = counterX + 16;
     const mirrorW = counterW - 32;
@@ -1284,7 +1284,7 @@ export class InteriorArt {
     rect(g, counterX + 1, counterTop + 1, counterW - 2, 2, COLOR.coolWhite);
     rect(g, counterX, counterBottom - 3, counterW, 1, COLOR.tileDeep);
     // 后挡水
-    rect(g, counterX, y + 348, counterW, 2, COLOR.mintTileDeep);
+    rect(g, counterX, counterBottom - 2, counterW, 2, COLOR.mintTileDeep);
     // 宽幅镜面：冷白框 + 45° 阶梯反光斜条
     box(g, mirrorX, mirrorTop, mirrorW, mirrorH, 0xeaf4f8, COLOR.fixtureEdge);
     rect(g, mirrorX + 2, mirrorTop + 2, mirrorW - 4, mirrorH - 4, 0xdceef6);

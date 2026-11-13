@@ -7,6 +7,7 @@
  * 2) 只描述「世界是什么」，不依赖 Pixi / Bun / DOM。渲染尺寸、贴图与配色由各自的消费方决定。
  *
  * ADR-0028：岛按 0.7 收缩到 3805×4212。
+ * ADR-0077：岛再收紧约 20%，矩形陆地收到 3040×3368；游乐园北移、三湖与摸鱼亭内收。
  * ADR-0064：海岸线取消，边界改成同一个包围盒的四条直边（矩形陆地）；
  *   北湾 / 东湾 / 南中湾全部填成陆地，四边由一片不可通行的密林封住。
  * ADR-0044：北门内收成四角院落（一院四房）。
@@ -71,11 +72,11 @@ import {
   PARK_ATTRACTION_SOLIDS,
   PARK_BUILDING,
   PARK_GATE_PAVING,
-  PARK_NORTH_GATE,
   PARK_PROPS,
   PARK_RIDE_SOLIDS,
 } from './park';
 import { BOSS_ARENA, BOSS_SOLID } from './boss';
+import { RING_ARENA, RING_EXIT } from './ring';
 
 export {
   BENCH_SEAT_OFFSET,
@@ -257,11 +258,11 @@ export const BULLETIN_BOARD_SOLID: WorldRect = {
  * ------------------------------------------------------------------ */
 
 /**
- * 摸鱼亭（八角重檐凉亭）：摸鱼湖东北岸的凸角，亭心正对湖面。
+ * 摸鱼亭（八角重檐凉亭）：摸鱼湖北岸的凸角，亭心正对湖面（ADR-0077 随湖内收）。
  * 与 `WELCOME_LANDMARKS` 同一种写法——`x` 是横向中心，`y` 是底座南沿（脚底 y），
  * 宽高是含飞檐外挑的整体包围盒。
  */
-export const MOPING_PAVILION = { x: 5790, y: 5210, width: 200, height: 180 } as const;
+export const MOPING_PAVILION = { x: 5350, y: 4890, width: 200, height: 180 } as const;
 
 /** 亭心：汉白玉石桌落在这里，四张石鼓凳绕它一圈 */
 export const PAVILION_CENTER = {
@@ -457,7 +458,8 @@ export const DOOR_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
   },
   { x: MEETING_ROOM.x + 390, hangTop: MEETING_ROOM.y + ROOM_H - 58, depthY: MEETING_ROOM.y + ROOM_H },
   { x: LOUNGE.x + 260, hangTop: LOUNGE.y - 58, depthY: LOUNGE.y },
-  { x: RESTROOM.x + 260, hangTop: RESTROOM.y - 58, depthY: RESTROOM.y },
+  // 卫生间门洞收窄到 x+150..x+210，宫灯挂在东侧门柱外沿
+  { x: RESTROOM.x + 214, hangTop: RESTROOM.y - 58, depthY: RESTROOM.y },
 ];
 
 /**
@@ -523,16 +525,16 @@ export const ISLAND_SAND = 26;
 /**
  * 陆地边界（顺时针，屏幕坐标 y 向下）。
  *
- * ADR-0064：取消海岸线，直接取 ADR-0028 的岛界包围盒 ——
- * 3805×4212（x 2146–5951 / y 1956–6168，地图尺寸与 ADR-0028 完全一致）。
- * 原来伸进地图的北湾（x 3392–4448 / y 1956–3158）、东湾（x 5598–5951 / y 3393–5009）、
- * 南中湾（x 3392–4775 / y 5989–6168）全部变成可通行陆地。
+ * ADR-0077：在 ADR-0064 的矩形岛界上再收紧约 20% ——
+ * 3040×3368（x 2560–5600 / y 2412–5780），面积约 −36%。
+ * 中心四角院落、广场、出生点与欢迎地标全部不动，收掉的是四周的纯草走廊；
+ * 游乐园、三湖、摸鱼亭、影音室与小黑屋都在同一轮向心靠拢。
  */
 const ISLAND_POINTS: Point[] = [
-  [2146, 1956],
-  [5951, 1956],
-  [5951, 6168],
-  [2146, 6168],
+  [2560, 2412],
+  [5600, 2412],
+  [5600, 5780],
+  [2560, 5780],
 ];
 
 export const ISLAND: IslandShape = {
@@ -605,47 +607,44 @@ const PATHS: PathShape[] = [
     ],
     PATH_MAIN_HALF_WIDTH,
   ),
-  // 西向主路：圆庭西缘 → 西岸，末端略向北弯
+  // 西向主路：圆庭西缘 → 西带，末端略向北弯（ADR-0077 收到岛内 2700）
   buildPath(
     [
       [3736, 4096],
       [3400, 4096],
       [3050, 4070],
       [2760, 4010],
-      [2500, 3970],
+      [2700, 3980],
     ],
     PATH_MAIN_HALF_WIDTH,
   ),
-  // 东向主路：圆庭东缘 → 东侧，向东南弯向摸鱼湖
+  // 东向主路：圆庭东缘 → 摸鱼湖北岸，向东南弯
   buildPath(
     [
       [4456, 4096],
       [4800, 4096],
-      [5150, 4110],
-      [5350, 4300],
-      [5400, 4650],
+      [5060, 4160],
+      [5140, 4400],
+      [5180, 4680],
     ],
     PATH_MAIN_HALF_WIDTH,
   ),
   // 东北支路：东向主路 → 沉思浅塘南岸
   buildPath(
     [
-      [5150, 4110],
-      [5160, 3800],
-      [5160, 3450],
-      [5200, 3180],
+      [5060, 4160],
+      [5060, 3800],
+      [5050, 3450],
+      [5050, 3180],
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
-  // 西南支路：西向主路 → 涟漪湖东岸 → 游乐园北门
+  // 涟漪湖支路：西向主路 → 西带小湖的北岸（原「西南支路 → 游乐园」已随园北移删除）
   buildPath(
     [
-      [3050, 4070],
-      [2950, 4400],
-      [2850, 4800],
-      [2780, 5050],
-      [2780, 5300],
-      [PARK_NORTH_GATE.x, PARK_NORTH_GATE.y],
+      [2900, 4030],
+      [2880, 4300],
+      [2860, 4600],
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
@@ -675,12 +674,12 @@ const PATHS: PathShape[] = [
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
-  // 东南：圆庭 → 卫生间北门
+  // 东南：圆庭 → 卫生间北门（门洞 x+150..x+210，支路压中线 x+180）
   buildPath(
     [
       [4270, 4270],
       [4460, 4300],
-      [4626, 4290],
+      [4696, 4350],
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
@@ -713,57 +712,60 @@ export const LAKE_SHORE = 22;
  * - 涟漪湖：西侧小湖，接西南支路。
  * 12–16 点手写，绕中心做不规则收放，读起来像天然积水而不是圆规坑。
  */
+/** ADR-0077：整块多边形平移 (−140,−220)，形状与面积不变，只往岛内靠 */
 const MOPING_LAKE_POINTS: Point[] = [
-  [5700, 5560],
-  [5680, 5680],
-  [5620, 5790],
-  [5520, 5870],
-  [5390, 5910],
-  [5260, 5890],
-  [5150, 5820],
-  [5070, 5710],
-  [5040, 5580],
-  [5060, 5450],
-  [5120, 5340],
-  [5220, 5260],
-  [5350, 5220],
-  [5480, 5240],
-  [5590, 5310],
-  [5660, 5420],
+  [5560, 5340],
+  [5540, 5460],
+  [5480, 5570],
+  [5380, 5650],
+  [5250, 5690],
+  [5120, 5670],
+  [5010, 5600],
+  [4930, 5490],
+  [4900, 5360],
+  [4920, 5230],
+  [4980, 5120],
+  [5080, 5040],
+  [5210, 5000],
+  [5340, 5020],
+  [5450, 5090],
+  [5520, 5200],
 ];
 
+/** ADR-0077：整块多边形平移 (−150,0) */
 const CHENSI_POND_POINTS: Point[] = [
-  [5490, 2920],
-  [5470, 3010],
-  [5410, 3080],
-  [5320, 3120],
-  [5230, 3110],
-  [5140, 3080],
-  [5050, 3020],
-  [4990, 2950],
-  [4980, 2860],
-  [5040, 2780],
-  [5130, 2730],
-  [5230, 2700],
-  [5330, 2720],
-  [5420, 2780],
+  [5340, 2920],
+  [5320, 3010],
+  [5260, 3080],
+  [5170, 3120],
+  [5080, 3110],
+  [4990, 3080],
+  [4900, 3020],
+  [4840, 2950],
+  [4830, 2860],
+  [4890, 2780],
+  [4980, 2730],
+  [5080, 2700],
+  [5180, 2720],
+  [5270, 2780],
 ];
 
+/** ADR-0077：整块多边形平移 (+380,−290) */
 const LIANYI_LAKE_POINTS: Point[] = [
-  [2700, 5240],
-  [2680, 5330],
-  [2620, 5400],
-  [2530, 5440],
-  [2430, 5430],
-  [2350, 5380],
-  [2290, 5310],
-  [2260, 5220],
-  [2260, 5130],
-  [2300, 5050],
-  [2380, 5000],
-  [2470, 4990],
-  [2560, 5020],
-  [2640, 5090],
+  [3080, 4950],
+  [3060, 5040],
+  [3000, 5110],
+  [2910, 5150],
+  [2810, 5140],
+  [2730, 5090],
+  [2670, 5020],
+  [2640, 4930],
+  [2640, 4840],
+  [2680, 4760],
+  [2760, 4710],
+  [2850, 4700],
+  [2940, 4730],
+  [3020, 4800],
 ];
 
 const LAKE_NAMES = ['摸鱼湖', '沉思浅塘', '涟漪湖'] as const;
@@ -774,12 +776,14 @@ const LAKES: LakeShape[] = [MOPING_LAKE_POINTS, CHENSI_POND_POINTS, LIANYI_LAKE_
 }));
 
 /* ------------------------------------------------------------------ *
- * 园区导览目标（ADR-0036 / ADR-0067）
+ * 园区导览目标（ADR-0036 / ADR-0067 / ADR-0077）
  *
- * 从四间房扩展到 12 处地标：四角房 + 游乐园 / 研发园 / 家庭影音室 /
- * 摸鱼亭 + 三处景观湖 + 发泄区。`x` / `y` 是区域几何中心，只用于方位、
- * 距离与步行秒数；`arrive` 才是自动寻路的真正终点，必须落在可站立的
- * 陆地或室内空地，绝不压建筑、水面与器械底座。
+ * 只列「走进去就能互动」的地点与设施，共 8 处：四角房 + 财神供案
+ * + 游乐场 / 发泄区 / 擂台。静态观赏型地标（研发园、影音室、小黑屋、
+ * 摸鱼亭、三湖）仍在世界里可步行抵达，但不进导览。
+ * `x` / `y` 是区域几何中心，只用于方位、距离与步行秒数；`arrive` 才是
+ * 自动寻路的真正终点，必须落在可站立的陆地或室内空地，绝不压建筑、
+ * 水面与器械底座。
  * ------------------------------------------------------------------ */
 
 export type NavTargetId =
@@ -787,15 +791,10 @@ export type NavTargetId =
   | 'restroom'
   | 'lounge'
   | 'meeting'
+  | 'shrine'
   | 'park'
-  | 'southYard'
-  | 'theater'
-  | 'jail'
-  | 'pavilion'
-  | 'lakeMoping'
-  | 'lakeChensi'
-  | 'lakeLianyi'
-  | 'bossArena';
+  | 'bossArena'
+  | 'ring';
 
 export interface NavTarget {
   readonly id: NavTargetId;
@@ -815,29 +814,22 @@ function rectCenter(rect: WorldRect): { x: number; y: number } {
 
 /**
  * 各目标的落地到达点：四间房沿用 ADR-0040 的进门空地，
- * 户外则取门口内侧或湖岸的陆地空地。
+ * 设施类落在「站过去就能互动」的那一步之内。
  */
 export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y: number }> = {
   meeting: { x: MEETING_ROOM.x + 360, y: MEETING_ROOM.y + 314 },
-  restroom: { x: RESTROOM.x + 230, y: RESTROOM.y + 70 },
+  // 卫生间收到 340×300 后，中央区中线是 x+180，到达点落在门内两步
+  restroom: { x: RESTROOM.x + 170, y: RESTROOM.y + 60 },
   lounge: { x: LOUNGE.x + 230, y: LOUNGE.y + 70 },
   workroom: { x: WORKROOM.x + 230, y: WORKROOM.y + 294 },
-  // 东门内侧橡胶垫：进门两步就是空地，避开滑梯塔楼底座与垃圾桶
-  park: { x: 3262, y: 5600 },
-  // 研发园西侧休息区：避开中央发泄垫与北入口树篱
-  southYard: { x: 3600, y: 5480 },
-  // 影厅东门内侧走道：三排座椅以东，音箱之间
-  theater: { x: 3780, y: 4950 },
-  // 小黑屋西门内侧：门洞进来两步，避开反省凳
-  jail: { x: JAIL.x + 70, y: 4950 },
-  // 亭底南沿外 50px 的陆地
-  pavilion: { x: 5790, y: 5260 },
-  // 三湖各自的岸边陆地，取包围盒东/南侧外 30–40px
-  lakeMoping: { x: 5770, y: 5565 },
-  lakeChensi: { x: 5530, y: 2910 },
-  lakeLianyi: { x: 2740, y: 5215 },
+  // 财神供案正前方：案面底边外 18px，落地即可按 F 上香，不压案腿
+  shrine: { x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y + 18 },
+  // 游乐园南门内侧：进门两步就是喷泉前空地，避开沙池与小火车底座
+  park: { x: 4096, y: 3020 },
   // 发泄区垫内左下角：老板左脚外侧，离脚底碰撞 80px / 20px，站过去就能出招
   bossArena: { x: BOSS_ARENA.x + 50, y: BOSS_ARENA.y + BOSS_ARENA.h - 20 },
+  // 擂台场边报名点：围绳外 40px、报名半径内，落地就能按 F，不会被困在绳内
+  ring: { x: RING_EXIT.x, y: RING_EXIT.y },
 };
 
 const NAV_SOURCES: ReadonlyArray<{
@@ -851,15 +843,10 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'meeting', name: '会议室', area: 'indoor', ...rectCenter(MEETING_ROOM) },
   { id: 'restroom', name: '卫生间', area: 'indoor', ...rectCenter(RESTROOM) },
   { id: 'lounge', name: '宿舍区', area: 'indoor', ...rectCenter(LOUNGE) },
+  { id: 'shrine', name: '财神供案', area: 'indoor', x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y },
   { id: 'park', name: '游乐园', area: 'grounds', ...rectCenter(AMUSEMENT_PARK) },
-  { id: 'southYard', name: '研发园', area: 'grounds', ...rectCenter(SOUTH_YARD) },
   { id: 'bossArena', name: '发泄区', area: 'grounds', ...rectCenter(BOSS_ARENA) },
-  { id: 'theater', name: '家庭影音室', area: 'grounds', ...rectCenter(HOME_THEATER) },
-  { id: 'jail', name: '小黑屋', area: 'grounds', ...rectCenter(JAIL) },
-  { id: 'pavilion', name: '摸鱼亭', area: 'grounds', ...PAVILION_CENTER },
-  { id: 'lakeMoping', name: '摸鱼湖', area: 'grounds', ...rectCenter(LAKES[0]!.rect) },
-  { id: 'lakeChensi', name: '沉思浅塘', area: 'grounds', ...rectCenter(LAKES[1]!.rect) },
-  { id: 'lakeLianyi', name: '涟漪湖', area: 'grounds', ...rectCenter(LAKES[2]!.rect) },
+  { id: 'ring', name: '擂台', area: 'grounds', ...rectCenter(RING_ARENA) },
 ];
 
 export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, area, x, y }) => ({
@@ -959,32 +946,33 @@ const TREE_VARIANTS = 4;
  * 每簇从固定 5 点五边形偏移表里取前 2–5 个点，保证簇内最小间距 ≥86。
  */
 const GROVE_CENTERS: ReadonlyArray<Point> = [
-  [2250, 2900],
-  [2450, 2300],
-  [2900, 2500],
-  [2900, 2850],
-  [3250, 2250],
-  [3330, 2700],
-  [4650, 2250],
-  [5150, 2250],
-  [5600, 2500],
-  [5700, 3150],
-  [3600, 3320],
+  // 西北带（游乐园西侧与岛北缘）
+  [2760, 2640],
+  [3020, 2860],
+  [2740, 3160],
+  [3300, 2600],
+  [3260, 3220],
+  [3300, 2900],
+  [3100, 2500],
+  [3800, 3300],
   [4550, 3300],
-  [5000, 3500],
-  [5500, 3800],
-  [3100, 3050],
-  [2400, 3900],
-  [2500, 4700],
-  [3000, 4750],
-  [5450, 4900],
-  [2350, 4900],
-  [2350, 5650],
-  [3000, 5900],
-  [3700, 5750],
-  [4300, 5850],
-  [4800, 5050],
-  [3100, 5400],
+  // 东北带（沉思浅塘四周）
+  [4700, 2560],
+  [5450, 2560],
+  [5450, 3350],
+  [5450, 3600],
+  [5450, 4150],
+  [5000, 3600],
+  // 西带（西主路以南、涟漪湖以北）
+  [2760, 3700],
+  [2780, 4300],
+  [3000, 4450],
+  [3150, 3450],
+  // 东南带（摸鱼湖西岸与南岸）
+  [3250, 4900],
+  [4950, 4680],
+  [2800, 5400],
+  [2900, 5680],
 ];
 
 /** 五边形偏移：前 2 / 3 / 4 个点两两距离都 ≥90，簇半径约 120 */
@@ -1063,12 +1051,12 @@ function isPlantable(x: number, y: number): boolean {
  * 全部避开广场、土路、三湖与院落，只做视觉分区，不参与碰撞。
  */
 const FLOWER_FIELDS: FlowerPatch[] = [
-  { rect: { x: 2180, y: 4400, w: 250, h: 170 }, palette: 2 },
-  { rect: { x: 5150, y: 4900, w: 200, h: 160 }, palette: 1 },
-  { rect: { x: 5300, y: 5960, w: 300, h: 160 }, palette: 0 },
-  { rect: { x: 2880, y: 3260, w: 240, h: 150 }, palette: 1 },
-  { rect: { x: 2180, y: 4550, w: 240, h: 220 }, palette: 2 },
-  { rect: { x: 5250, y: 3450, w: 180, h: 140 }, palette: 1 },
+  { rect: { x: 2680, y: 3300, w: 240, h: 150 }, palette: 2 },
+  { rect: { x: 4680, y: 3280, w: 220, h: 150 }, palette: 1 },
+  { rect: { x: 5280, y: 3860, w: 180, h: 140 }, palette: 0 },
+  { rect: { x: 2760, y: 5250, w: 220, h: 160 }, palette: 1 },
+  { rect: { x: 4900, y: 4560, w: 200, h: 150 }, palette: 2 },
+  { rect: { x: 3150, y: 4950, w: 160, h: 130 }, palette: 1 },
 ];
 
 function buildGroves(): TreeCluster[] {
@@ -1137,9 +1125,10 @@ function looseTrees(planted: TreeInstance[]): TreeInstance[] {
   const random = mulberry32(0x1f3a5c7d);
   const out: TreeInstance[] = [];
   const { x, y, w, h } = ISLAND.bounds;
-  for (let py = y + 180; py < y + h - 180; py += 128) {
-    for (let px = x + 180; px < x + w - 180; px += 128) {
-      if (random() > 0.24) continue;
+  // ADR-0077：岛缩到 3040×3368 后 128 栅格的候选太少，格距收到 96 保住林荫密度
+  for (let py = y + 180; py < y + h - 180; py += 96) {
+    for (let px = x + 180; px < x + w - 180; px += 96) {
+      if (random() > 0.3) continue;
       const tx = px + Math.round((random() - 0.5) * 96);
       const ty = py + Math.round((random() - 0.5) * 96);
       if (!isPlantable(tx, ty)) continue;
@@ -1207,7 +1196,7 @@ const HUB_PROPS: PropInstance[] = [
  * 每一组都是「灯 + 长椅 / 野餐桌 + 垃圾桶」的固定搭配。
  */
 const ROAD_PROPS: PropInstance[] = [
-  // 北入口
+  // 北入口（北向主路末端接游乐园南门）
   { kind: 'lamp', x: 3980, y: 3350 },
   { kind: 'lamp', x: 4212, y: 3350 },
   { kind: 'sign', x: 4290, y: 3320 },
@@ -1227,24 +1216,19 @@ const ROAD_PROPS: PropInstance[] = [
   { kind: 'lamp', x: 4800, y: 4212 },
   { kind: 'lamp', x: 5100, y: 3980 },
   { kind: 'bench', x: 5100, y: 4212 },
-  // 东北支路 / 沉思浅塘
-  { kind: 'lamp', x: 5080, y: 3300 },
+  // 东北支路 / 沉思浅塘：灯与长椅挪到新塘南岸
+  { kind: 'lamp', x: 4700, y: 2650 },
   { kind: 'bench', x: 5240, y: 3300 },
-  { kind: 'lamp', x: 5000, y: 2660 },
-  { kind: 'lamp', x: 5560, y: 2900 },
-  // 摸鱼湖
-  { kind: 'lamp', x: 5150, y: 5140 },
-  { kind: 'bench', x: 5300, y: 5140 },
-  { kind: 'bin', x: 5450, y: 5140 },
-  { kind: 'lamp', x: 5760, y: 5600 },
-  { kind: 'table', x: 5760, y: 5720 },
-  // 涟漪湖
-  { kind: 'lamp', x: 2750, y: 5180 },
-  { kind: 'bench', x: 2750, y: 5300 },
-  { kind: 'table', x: 2220, y: 5250 },
-  // 西南支路
-  { kind: 'lamp', x: 2800, y: 4600 },
-  { kind: 'bench', x: 3000, y: 4600 },
+  // 摸鱼湖：北岸一组 + 南岸一组
+  { kind: 'lamp', x: 5000, y: 4900 },
+  { kind: 'bench', x: 5150, y: 4900 },
+  { kind: 'bin', x: 5300, y: 4900 },
+  { kind: 'lamp', x: 5050, y: 5740 },
+  { kind: 'table', x: 5250, y: 5740 },
+  // 涟漪湖：北岸灯与长椅，南岸野餐桌
+  { kind: 'lamp', x: 2800, y: 4620 },
+  { kind: 'bench', x: 2950, y: 4620 },
+  { kind: 'table', x: 2800, y: 5230 },
 ];
 
 /**
@@ -1375,14 +1359,7 @@ function southYardHedges(): PropInstance[] {
   }
   for (const edgeX of [x + HEDGE_INSET, x + w - HEDGE_INSET]) {
     for (let py = y + 40; py <= y + h - 40; py += HEDGE_STEP) {
-      // 西侧正对游乐园东门的那一段断开：树篱让路，铺装接住
-      if (
-        edgeX === x + HEDGE_INSET &&
-        py > PARK_GATE_PAVING.y &&
-        py < PARK_GATE_PAVING.y + PARK_GATE_PAVING.h
-      ) {
-        continue;
-      }
+      // ADR-0077：游乐园北移后，西侧不再有对门的缺口，东西两列完整围合
       out.push({ kind: 'hedge', x: edgeX, y: py });
     }
   }

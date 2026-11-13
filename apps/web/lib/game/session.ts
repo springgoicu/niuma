@@ -7,7 +7,6 @@ import {
   CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
   DEFAULT_APPEARANCE,
-  GRAZE_COOLDOWN_MS,
   JAIL_ANCHORS,
   JAIL_PHASE,
   MOVE_SPEED,
@@ -93,7 +92,6 @@ import {
   isNearShrine,
   isNearTeaStation,
   nearestInteractivePropInto,
-  pickGrazeLine,
   pickLine,
   pickVentLine,
   pickVentVictimLine,
@@ -314,9 +312,6 @@ export class GameSession {
   private interactCount = 0;
   /** 设施查询输出槽：F 键在按键栈里调用，不为一次查询造字面量 */
   private readonly interactTarget: InteractiveTarget = { kind: 'vending', x: 0, y: 0 };
-  /** 咀嚼节流与台词轮转：本地与服务端共用 500ms 口径（ADR-0048） */
-  private grazeAt = 0;
-  private grazeCount = 0;
   /**
    * 发泄节流与出招窗口。
    *
@@ -497,7 +492,6 @@ export class GameSession {
       onBoard: (packet) => this.handleBoard(packet),
       onLike: (packet) => this.handleLike(packet),
       onSeatState: (entries) => this.handleSeatState(entries),
-      onGraze: (id) => this.handleGraze(id),
       onVent: (packet) => this.handleVent(packet),
       onJail: (packet) => this.handleJail(packet),
       onBoss: (packet) => this.handleBoss(packet),
@@ -1046,7 +1040,7 @@ export class GameSession {
    * 聊天上屏（ADR-0056）。
    *
    * 聊天不再弹头顶气泡：屏幕空间弹幕是唯一表现，频道列表是完整记录。
-   * Zzz / 发泄 / 互动 / 咀嚼这些非聊天台词仍走 `renderer.showBubble`。
+   * Zzz / 发泄 / 互动这些非聊天台词仍走 `renderer.showBubble`。
    */
   private handleChat(packet: ChatPacket): void {
     const { entityId, msgId, text } = packet;
@@ -1287,10 +1281,15 @@ export class GameSession {
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
-    // 倒地硬直期间不接受任何动作：起身只能等硬直结束（ADR-0051）
-    if (this.elapsed < this.stunUntil || this.escortLocked) return;
-    // 颁奖阶段参赛者被冻结：站位与名次都由服务端定格，任何动作都会破坏画面
-    if (this.ringAwardFrozen()) return;
+    // 颁奖阶段参赛者被冻结：站位与名次都由服务端定格，只放行「领奖离场」这一个意图。
+    // 这道分支必须排在硬直门之前：被淘汰者的 `stunUntil` 还停在本局剩余时间上，
+    // 否则提示写着能走、按下去却没反应。
+    if (this.ringAwardFrozen()) {
+      if (action !== 'interact') return;
+    } else if (this.elapsed < this.stunUntil || this.escortLocked) {
+      // 倒地硬直期间不接受任何动作：起身只能等硬直结束（ADR-0051）
+      return;
+    }
     // 任何动作都先夺回控制权：坐着 / 躺着 / 跳跃 / 互动都不该被自动寻路拽着走
     this.cancelNavigation();
     this.applyIntent(eid, resolveInteraction(action, this.interactionState(eid)));
@@ -1386,9 +1385,6 @@ export class GameSession {
         return;
       case 'interact':
         this.interact(eid);
-        return;
-      case 'graze':
-        this.graze(eid);
         return;
       case 'blocked':
         this.showHint(intent.hint);
@@ -1513,31 +1509,6 @@ export class GameSession {
   }
 
   /**
-   * 咀嚼（G）：本地立即发声 + 冒气泡，同时把一次性事件发给服务端，
-   * 由服务端按视野广播给附近玩家（ADR-0048）。
-   *
-   * state 字节已满，所以它不进 20Hz 同步包；这也意味着它没有远端姿态，
-   * 其他人只会听到按方位衰减的咀嚼声。旧服务端会忽略未知 action，本地照常发声。
-   */
-  private graze(eid: number): void {
-    if (this.elapsed < this.grazeAt) return;
-    this.grazeAt = this.elapsed + GRAZE_COOLDOWN_MS;
-    const x = Position.x[eid]!;
-    const y = Position.y[eid]!;
-    this.emitAudio({ kind: 'chew', x, y, local: true });
-    this.renderer.showBubble(this.localId, pickGrazeLine(this.grazeCount));
-    this.grazeCount += 1;
-    this.net?.sendAction(this.localId, ACTION.Graze);
-  }
-
-  /** 附近玩家咀嚼：按该实体当前的插值位置发声，服务端已做 500ms 限频 */
-  private handleGraze(id: number): void {
-    const eid = this.ecs.get(id);
-    if (!eid) return;
-    this.emitAudio({ kind: 'chew', x: Position.x[eid]!, y: Position.y[eid]!, local: false });
-  }
-
-  /**
    * 老板血量（ADR-0070）：入场快照、每次发泄结算与跨日重置共用这一条包。
    * 渲染层自己按 hp 切换倒地状态，这里只负责转发与「是不是自己踹倒的」判定。
    * 抖动挂在 attackerId 上而不是本地出招瞬间：服务端没判中就不该抖，否则玩家会以为打到了。
@@ -1602,7 +1573,7 @@ export class GameSession {
     return this.ring?.phase === RING_PHASE.Award && this.ringSlotOf(this.ring) >= 0;
   }
 
-  /** 淘汰者要躺到本局结束：本地按快照剩余时间估算，至少保留一个普通硬直 */
+  /** 淘汰者要躺到本局结算：本地按快照剩余时间估算，至少保留一个普通硬直 */
   private ringStunRemainMs(): number {
     const remaining =
       this.ring?.phase === RING_PHASE.Running
@@ -1624,11 +1595,13 @@ export class GameSession {
     this.renderer.updateCamera(point.x, point.y);
   }
 
-  /** 擂台旁的 F 提示：报名 / 取消 / 已满 / 进行中 / 颁奖中 */
+  /** 擂台旁的 F 提示：报名 / 取消 / 已满 / 进行中 / 领奖离场 / 颁奖中 */
   private ringHint(): string | null {
     if (this.ringSlotOf(this.ring) >= 0) {
       if (this.ring?.phase === RING_PHASE.Waiting) return HINT.ringLeave;
       if (this.ring?.phase === RING_PHASE.Running) return HINT.ringFighting;
+      // 奖牌在颁奖首包就已入账，参赛者不必站满窗口（ADR-0076）
+      if (this.ring?.phase === RING_PHASE.Award) return HINT.ringAwardLeave;
       return HINT.ringAward;
     }
     if (!this.ring) return HINT.ringJoin;
@@ -1644,6 +1617,12 @@ export class GameSession {
       if (this.ring?.phase === RING_PHASE.Waiting) {
         this.net?.sendRingLeave();
         this.showHint('已取消报名，回到场边');
+        return;
+      }
+      if (this.ring?.phase === RING_PHASE.Award) {
+        // 名次与奖牌早已随颁奖首包入账，离场只是把人送回出口（ADR-0076）
+        this.net?.sendRingLeave();
+        this.showHint('已领奖，回到场边');
         return;
       }
       this.showHint('比赛已经开始，等这局结束就能出去');

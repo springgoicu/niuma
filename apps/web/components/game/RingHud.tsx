@@ -200,7 +200,7 @@ export function RingHud({ touch = false }: { touch?: boolean }) {
           <AwardBoard packet={packet} />
         ) : packet.phase === RING_PHASE.Waiting ? (
           <p className="mt-1.5 text-[10px] text-mist-500">
-            {member ? '再进 1 人就开始 2 分钟计时' : '第 2 人入场后开始计时'}
+            {member ? '再进 1 人就开始，打到剩 1 人即开奖' : '第 2 人入场后开始计分'}
           </p>
         ) : urgent ? (
           <p className="mt-1.5 text-[10px] text-signal-500">最后 10 秒，撑住血量</p>

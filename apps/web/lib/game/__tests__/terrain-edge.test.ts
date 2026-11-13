@@ -15,7 +15,7 @@ const LAKE_INSIDE = { x: 5370, y: 5565 };
 const PATH_INSIDE = { x: 4096, y: 4800 };
 const PLAZA_INSIDE = { x: 4096, y: 4096 };
 const OFFICE_LAWN = { x: 3566, y: 4000 };
-const GRASS_INSIDE = { x: 2400, y: 2600 };
+const GRASS_INSIDE = { x: 2700, y: 3600 };
 
 describe('材质判定', () => {
   it('优先级：水压土、土路压石砖、石砖压草；院落空档仍是草', () => {
@@ -27,12 +27,12 @@ describe('材质判定', () => {
   });
 
   it('边界沙带：矩形内侧 ISLAND_SAND 宽是沙，再往内是草，出了矩形就是林地', () => {
-    // ADR-0064：陆地是 x 2146–5951 / y 1956–6168 的矩形，北边界 y = 1956
-    expect(materialAt(2400, 1956 + 8)).toBe(MATERIAL.sand);
-    expect(materialAt(2400, 1956 + 26)).toBe(MATERIAL.sand);
-    expect(materialAt(2400, 1956 + 40)).toBe(MATERIAL.grass);
-    expect(materialAt(2400, 1956 - 1)).toBe(MATERIAL.outside);
-    expect(materialAt(2146 - 10, 3000)).toBe(MATERIAL.outside);
+    // ADR-0077：陆地是 x 2560–5600 / y 2412–5780 的矩形，北边界 y = 2412
+    expect(materialAt(2700, 2412 + 8)).toBe(MATERIAL.sand);
+    expect(materialAt(2700, 2412 + 26)).toBe(MATERIAL.sand);
+    expect(materialAt(2700, 2412 + 40)).toBe(MATERIAL.grass);
+    expect(materialAt(2700, 2412 - 1)).toBe(MATERIAL.outside);
+    expect(materialAt(2560 - 10, 3000)).toBe(MATERIAL.outside);
   });
 
   it('非有限坐标回落到边界外，不会把 NaN 传进判定', () => {
@@ -64,7 +64,7 @@ describe('材质网格与 8 邻掩码', () => {
   });
 
   it('草地内部的掩码为 0，八邻全是同类', () => {
-    expect(edgeMaskAt(grid, 2400, 2600, MATERIAL.grass)).toBe(0);
+    expect(edgeMaskAt(grid, 2700, 3600, MATERIAL.grass)).toBe(0);
   });
 });
 

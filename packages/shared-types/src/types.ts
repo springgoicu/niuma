@@ -113,11 +113,10 @@ export const OpCode = {
   C2S_CHAT_HISTORY: 0x1e,
   /** 历史聊天页：`[op][flags u8][count u8]` + count × entry */
   S2C_CHAT_HISTORY: 0x1f,
-  /**
-   * 咀嚼事件：`[op][entityId u16]`。没有 state 位可用（字节已满），
-   * 只发给看得见发声者的人，旧客户端走 default 静默忽略（ADR-0048）。
+  /*
+   * 0x20 已随「吃草」动作下线（原 S2C_GRAZE），空号保留不复用：
+   * 旧客户端仍按旧表解析该字节，复用会让它们把新包当成咀嚼事件。
    */
-  S2C_GRAZE: 0x20,
   /**
    * 发泄结算：`[op][attackerId u16][targetId u16][x u16][y u16]`。
    *

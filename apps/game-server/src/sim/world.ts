@@ -118,13 +118,11 @@ export class Player {
   lastRenameAt = 0;
   /** 上一次拉取历史的时刻：上翻请求的节流窗口，防止滚动抖动刷穿服务端 */
   lastHistoryAt = 0;
-  /** 上一次咀嚼广播：一次性事件绕过 state 位，必须由服务端限频防伪造包放大 */
-  lastGrazeAt = 0;
   /**
    * 上一次发泄结算的时刻。
    *
-   * 与 `lastGrazeAt` 同口径，但这里还兼作边沿闸门的第二道保险：
-   * 限频窗口内的重复上报一律不结算，连点也刷不出第二下。
+   * 一次性事件绕过 state 位，必须由服务端限频防伪造包放大；
+   * 这里还兼作边沿闸门的第二道保险：限频窗口内的重复上报一律不结算，连点也刷不出第二下。
    */
   lastVentAt = 0;
   /**
@@ -237,7 +235,6 @@ export class Player {
     this.lastStatusAt = 0;
     this.lastRenameAt = 0;
     this.lastHistoryAt = 0;
-    this.lastGrazeAt = 0;
     this.lastVentAt = 0;
     this.stunUntil = 0;
     this.spawnBodyCache = null;

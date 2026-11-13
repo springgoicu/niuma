@@ -31,8 +31,6 @@ function actionForKey(code: string): ActionKey | null {
       return 'vent';
     case 'KeyF':
       return 'interact';
-    case 'KeyG':
-      return 'graze';
     case 'Space':
       return 'jump';
     default:

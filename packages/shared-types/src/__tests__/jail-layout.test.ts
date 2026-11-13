@@ -14,19 +14,21 @@ import { rectContains } from '../world/geometry';
 import { WORLD_LAYOUT } from '../world/layout';
 
 /**
- * 小黑屋布局（ADR-0072）：
- * - 与影厅隔南向主路东西镜像，尺寸相同、门都开在 y=4950 一线；
- * - 北边离四角院落 74px、南边离南侧庭院 30px，不和既有建筑抢地；
- * - 西门洞 60px 可通行，门前铺装接主路；
+ * 小黑屋布局（ADR-0072 / ADR-0077）：
+ * - 与影厅隔南向主路东西相对，门都开在 y=4950 一线；
+ * - ADR-0077 把 460×320 收到 320×240：北边仍离四角院落 74px，南留白变成 110px；
+ * - 西门洞 60px 可通行，门前铺装与支路不动；
  * - 反省点与左右两个并排点都在室内、都可站立。
  */
-describe('小黑屋布局（ADR-0072）', () => {
-  it('与影厅同尺寸、同 y，北 74px / 南 30px 留白', () => {
-    expect(JAIL.w).toBe(HOME_THEATER.w);
-    expect(JAIL.h).toBe(HOME_THEATER.h);
+describe('小黑屋布局（ADR-0072 / ADR-0077）', () => {
+  it('与影厅同北线、在东侧、体量更小：北 74px / 南 110px 留白', () => {
     expect(JAIL.y).toBe(HOME_THEATER.y);
+    expect(JAIL.w).toBe(320);
+    expect(JAIL.h).toBe(240);
+    expect(JAIL.w).toBeLessThan(HOME_THEATER.w);
+    expect(JAIL.h).toBeLessThan(HOME_THEATER.h);
     expect(JAIL.y - (CAMPUS_RECT.y + CAMPUS_RECT.h)).toBe(74);
-    expect(SOUTH_YARD.y - (JAIL.y + JAIL.h)).toBe(30);
+    expect(SOUTH_YARD.y - (JAIL.y + JAIL.h)).toBe(110);
     // 影厅在西、小黑屋在东，中间隔着 4096 的南向主路
     expect(JAIL.x).toBeGreaterThan(HOME_THEATER.x + HOME_THEATER.w);
   });

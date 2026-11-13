@@ -7,6 +7,8 @@ import {
   DIRECTION,
   OpCode,
   POSE,
+  RING_EXIT,
+  RING_MAX_HP,
   VENT_KNOCKBACK_PX,
   VENT_STUN_MS,
   WORLD_LAYOUT,
@@ -23,7 +25,7 @@ import { SpatialGrid } from '../spatial/grid';
 import { applyMove } from './movement';
 import { SeatRegistry } from './seats';
 import type { Transport } from './view';
-import { resolveVents } from './vent';
+import { resolveVents, type VentHitObserver } from './vent';
 import { World, type Player } from './world';
 
 interface Sent {
@@ -69,8 +71,9 @@ function ventTick(
   env: { world: World; grid: SpatialGrid },
   transport: Transport,
   now: number,
+  observer?: VentHitObserver,
 ): void {
-  resolveVents(env.world, env.grid, transport, now);
+  resolveVents(env.world, env.grid, transport, now, observer);
 }
 
 describe('发泄命中结算', () => {
@@ -229,6 +232,59 @@ describe('发泄命中结算', () => {
     expect(env.b.seat).toBe(0);
     expect(env.b.pose).toBe(POSE.Lie);
     expect(env.b.stunUntil).toBe(10_000 + VENT_STUN_MS);
+  });
+});
+
+describe('命中观察者（ADR-0074）', () => {
+  it('擂台外命中真人只上报一次，带出招者、目标与时刻', () => {
+    const env = arena();
+    const { transport } = recorder();
+    const hits: Array<{ attackerId: number; targetId: number; now: number }> = [];
+
+    ventTick(env, transport, 10_000, {
+      onVentHit(attacker, target, now) {
+        hits.push({ attackerId: attacker.id, targetId: target.id, now });
+      },
+    });
+
+    expect(hits).toEqual([{ attackerId: env.a.id, targetId: env.b.id, now: 10_000 }]);
+  });
+
+  it('空放与打到入座者都不上报', () => {
+    const empty = arena(-24);
+    const emptyHits: number[] = [];
+    ventTick(empty, recorder().transport, 10_000, { onVentHit: () => emptyHits.push(1) });
+    expect(emptyHits).toEqual([]);
+
+    const seated = arena();
+    seated.b.seat = 99;
+    const seatedHits: number[] = [];
+    ventTick(seated, recorder().transport, 10_000, { onVentHit: () => seatedHits.push(1) });
+    expect(seatedHits).toEqual([]);
+  });
+
+  it('擂台内互打只结算血量，不进执法统计', () => {
+    const world = new World();
+    const grid = new SpatialGrid();
+    const a = world.create('甲', DEFAULT_APPEARANCE.cow, 11, RING_EXIT.x, RING_EXIT.y)!;
+    const b = world.create('乙', DEFAULT_APPEARANCE.cow, 12, RING_EXIT.x, RING_EXIT.y)!;
+    expect(world.ring.enter(a, 10_000).ok).toBe(true);
+    expect(world.ring.enter(b, 10_000).ok).toBe(true);
+    // 入场会把两人送到起跑位：把甲挪到乙左侧 24px，正对出招
+    a.x = b.x - 24;
+    a.y = b.y;
+    a.applyState(DIRECTION.Right, POSE.Idle, false, true);
+    a.known.add(b.id);
+    b.known.add(a.id);
+
+    const { transport } = recorder();
+    const hits: number[] = [];
+    ventTick({ world, grid }, transport, 10_000, { onVentHit: () => hits.push(1) });
+
+    expect(hits).toEqual([]);
+    // 命中确实发生了：擂台血量掉 1
+    const member = world.ring.snapshot(10_000, world).members.find((entry) => entry.id === b.id)!;
+    expect(member.hp).toBe(RING_MAX_HP - 1);
   });
 });
 

@@ -20,10 +20,6 @@ export function applyAudioEvent(event: AudioEvent, listenerX: number, listenerY:
     case 'interact':
       sfx.interact(event.target, event.x, event.y);
       return;
-    case 'chew':
-      if (event.local) sfx.chew(event.x, event.y);
-      else sfx.chewRemote(event.x, event.y);
-      return;
     case 'incense':
       // 磬音不进 Voice 池：长衰减会被 `acquire()` 抢占（ADR-0061）
       playTempleBell();

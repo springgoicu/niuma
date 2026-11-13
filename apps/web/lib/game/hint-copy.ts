@@ -26,6 +26,8 @@ export const HINT = {
   /** 三人擂台（ADR-0073）：报名入口只有场边 F 传送，围绳不能靠走进去 */
   ringJoin: '[F] 报名擂台',
   ringLeave: '[F] 取消报名',
+  /** 颁奖期（ADR-0076）：奖牌已入账，参赛者不必站满窗口 */
+  ringAwardLeave: '[F] 领奖离场',
   ringFull: '擂台已满员，先在外围绕观',
   ringFighting: '擂台比赛中，等本局结束',
   ringAward: '颁奖中，稍后再来',
@@ -63,6 +65,7 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.boss]: { action: 'vent', label: '发泄', key: 'E' },
   [HINT.ringJoin]: { action: 'interact', label: '报名擂台', key: 'F' },
   [HINT.ringLeave]: { action: 'interact', label: '取消报名', key: 'F' },
+  [HINT.ringAwardLeave]: { action: 'interact', label: '领奖离场', key: 'F' },
   // 劝阻文案没有可执行动作：保留纯文本，避免把「不能躺」渲染成按钮
   [HINT.ringFull]: null,
   [HINT.ringFighting]: null,
@@ -97,6 +100,7 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.boss]: '点「发泄」踹老板一脚',
   [HINT.ringJoin]: '点「互动」报名擂台',
   [HINT.ringLeave]: '点「互动」取消报名',
+  [HINT.ringAwardLeave]: '点「互动」领奖离场',
   [HINT.ringFull]: '擂台已满员，先在外围绕观',
   [HINT.ringFighting]: '擂台比赛中，等本局结束',
   [HINT.ringAward]: '颁奖中，稍后再来',

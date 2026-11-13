@@ -112,7 +112,7 @@ describe('控制写端：两种传输给出同一份可读状态', () => {
     const writer = createControlWriter((message) => messages.push(message));
     writer.writeKeys(0b0101);
     writer.writeTouch(0.25, -0.5);
-    writer.pushAction(ACTION_CODE.graze);
+    writer.pushAction(ACTION_CODE.interact);
     writer.writeViewport(1024, 768, 2);
 
     // 对端：有共享内存就是同一块；没有就把每条消息逐条落进私有块
@@ -124,7 +124,7 @@ describe('控制写端：两种传输给出同一份可读状态', () => {
     const touch = peer.readTouch({ x: 0, y: 0 });
     expect(touch.x).toBeCloseTo(0.25, 3);
     expect(touch.y).toBeCloseTo(-0.5, 3);
-    expect(peer.takeAction()).toBe(ACTION_CODE.graze);
+    expect(peer.takeAction()).toBe(ACTION_CODE.interact);
     const viewport = { width: 0, height: 0, dpr: 1 };
     expect(peer.readViewport(viewport)).toBe(true);
     expect(viewport).toEqual({ width: 1024, height: 768, dpr: 2 });

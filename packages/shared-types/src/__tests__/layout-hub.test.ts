@@ -52,27 +52,29 @@ function strictInside(rect: { x: number; y: number; w: number; h: number }, x: n
 }
 
 describe('陆地边界锁定', () => {
-  it('矩形陆地沿用 ADR-0028 的岛界尺寸 3805×4212', () => {
-    expect(ISLAND.bounds).toEqual({ x: 2146, y: 1956, w: 3805, h: 4212 });
+  it('矩形陆地收到 ADR-0077 的 3040×3368', () => {
+    expect(ISLAND.bounds).toEqual({ x: 2560, y: 2412, w: 3040, h: 3368 });
     expect(ISLAND.points).toEqual([
-      [2146, 1956],
-      [5951, 1956],
-      [5951, 6168],
-      [2146, 6168],
+      [2560, 2412],
+      [5600, 2412],
+      [5600, 5780],
+      [2560, 5780],
     ]);
-    // ADR-0064：原来的北湾 / 东湾 / 南中湾全部填成可通行陆地
+    // 四角与四边中段都仍是可通行陆地
     for (const [x, y] of [
-      [3950, 2500],
-      [5750, 4200],
-      [4000, 6050],
+      [3400, 2600],
+      [5400, 4000],
+      [3300, 5400],
+      [2700, 4500],
     ] as const) {
       expect(isOnLand(x, y)).toBe(true);
     }
     // 矩形之外仍然不可进入
     for (const [x, y] of [
-      [1200, 6000],
-      [3950, 1900],
-      [6000, 4200],
+      [2000, 3000],
+      [4000, 2300],
+      [5800, 4000],
+      [100, 100],
     ] as const) {
       expect(isOnLand(x, y)).toBe(false);
     }

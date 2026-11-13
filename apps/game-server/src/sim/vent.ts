@@ -38,6 +38,16 @@ import type { Transport } from './view';
 const MOTION: MotionTarget = { x: 0, y: 0 };
 
 /**
+ * 命中观察者：只上报「擂台外的玩家命中」，要不要警告 / 派单由实现方决定。
+ *
+ * 端口定义在命中结算这一侧，而不是反过来导入 `sim/detention`：
+ * 这一层只回答「打没打到、打到谁」，执法策略留在执法模块里。
+ */
+export interface VentHitObserver {
+  onVentHit(attacker: Player, target: Player, now: number): void;
+}
+
+/**
  * 结算本 Tick 的所有发泄。
  *
  * 空放（前方扇形内没人，或最近的人正坐在座位上）同样会广播一条 `targetId = 0`
@@ -48,6 +58,7 @@ export function resolveVents(
   grid: SpatialGrid,
   transport: Transport,
   now: number,
+  observer?: VentHitObserver,
 ): void {
   for (const attacker of world.players.values()) {
     if (!attacker.ventPending) continue;
@@ -110,7 +121,8 @@ export function resolveVents(
 
     // 强制倒地：姿态由服务端写死，客户端的上报在硬直期内一律不被采信（见 applyMove）
     target.applyState(target.direction, POSE.Lie, false);
-    // 淘汰者躺到本局结束，避免倒地后站起来又参与移动/出招
+    // 淘汰者躺到本局结算，避免倒地后站起来又参与移动 / 出招；
+    // 结算可能因冠军已定而提前（ADR-0076），所以取 endsAt 而不是写死 120 秒
     target.stunUntil = eliminated
       ? Math.max(now + VENT_STUN_MS, world.ring.endsAt)
       : now + VENT_STUN_MS;
@@ -119,6 +131,8 @@ export function resolveVents(
 
     broadcastVent(world, attacker, target.id, target.x, target.y, transport, flags);
     if (ringHit) broadcastRing(world, transport, now);
+    // 擂台是独立战斗域（ADR-0073）：场内命中只结算血量，不进执法统计
+    else observer?.onVentHit(attacker, target, now);
   }
 }
 

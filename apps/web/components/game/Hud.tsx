@@ -96,7 +96,7 @@ export function HudStatus({ compact = false }: { compact?: boolean }) {
 }
 
 /**
- * 游戏音效静音开关：发泄 / 咀嚼 / 设施互动共用同一条 master 总线（ADR-0048）。
+ * 游戏音效静音开关：发泄 / 设施互动共用同一条 master 总线（ADR-0048）。
  * 偏好只存本地，不参与任何服务端状态；初值固定为「有声」，
  * 挂载后再读存储，避免 SSR 水合不一致。
  */

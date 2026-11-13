@@ -32,7 +32,8 @@ describe('边界密林', () => {
   it('两排都铺满，相邻树影之间不留缺口', () => {
     for (const depth of [0, 1] as const) {
       const north = TREES.filter((tree) => tree.depth === depth && tree.y < BOUNDS.y);
-      expect(north.length).toBeGreaterThan(50);
+      // ADR-0077：岛宽收到 3040，64px 步进下每排约 48 棵；只要铺满即可
+      expect(north.length).toBeGreaterThan(40);
       north.sort((a, b) => a.x - b.x);
       for (let i = 1; i < north.length; i += 1) {
         expect(north[i]!.x - north[i - 1]!.x).toBeLessThanOrEqual(MAX_GAP);

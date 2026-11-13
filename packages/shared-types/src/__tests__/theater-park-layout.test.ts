@@ -12,9 +12,10 @@ import {
   PARK_ATTRACTIONS,
   PARK_ATTRACTION_SOLIDS,
   PARK_EAST_GATE,
-  PARK_NORTH_GATE,
+  PARK_GATE_PAVING,
   PARK_RIDE_SOLIDS,
   PARK_SLIDE,
+  PARK_SOUTH_GATE,
 } from '../world/park';
 import {
   DIRECTION,
@@ -99,8 +100,9 @@ describe('家庭影音室', () => {
     expect(wallAt(HOME_THEATER.x + HOME_THEATER.w - 5, doorY)).toBe(false);
     expect(wallAt(HOME_THEATER.x + HOME_THEATER.w - 5, doorY - 60)).toBe(true);
     expect(isBlocked(HOME_THEATER.x + HOME_THEATER.w + 60, doorY)).toBe(false);
-    // 支路中心线末端落在门前铺装里
-    const branch = paths[paths.length - 1]!;
+    // 支路中心线末端落在门前铺装里（按终点找，不依赖 paths 数组顺序）
+    const branch = paths.find((path) => path.centerline.some(([x, y]) => y === doorY && x < 4096))!;
+    expect(branch).toBeDefined();
     const end = branch.centerline[branch.centerline.length - 1]!;
     expect(end[1]).toBe(doorY);
     expect(end[0]).toBeGreaterThan(HOME_THEATER.x + HOME_THEATER.w);
@@ -147,11 +149,16 @@ describe('游乐园与入口滑梯', () => {
     expect(regionAt(AMUSEMENT_PARK.x + 500, AMUSEMENT_PARK.y + 300)).toBe('游乐园');
   });
 
-  it('东门与北门都能走进去，北门接西南支路', () => {
+  it('南门与东门都能走进去，南门正对北向主路末端', () => {
+    expect(isBlocked(PARK_SOUTH_GATE.x, PARK_SOUTH_GATE.y)).toBe(false);
     expect(isBlocked(PARK_EAST_GATE.x, PARK_EAST_GATE.y)).toBe(false);
-    expect(isBlocked(PARK_NORTH_GATE.x, PARK_NORTH_GATE.y - 40)).toBe(false);
-    const branch = paths.find((path) => path.centerline.some(([x, y]) => x === PARK_NORTH_GATE.x && y === PARK_NORTH_GATE.y));
-    expect(branch).toBeDefined();
+    // 北向主路末端落在南门外的铺装上，进门就是园区
+    const north = paths[0]!;
+    const end = north.centerline[north.centerline.length - 1]!;
+    expect(end[0]).toBe(PARK_SOUTH_GATE.x);
+    expect(end[1]).toBeGreaterThanOrEqual(AMUSEMENT_PARK.y + AMUSEMENT_PARK.h - 40);
+    expect(end[1]).toBeLessThanOrEqual(PARK_GATE_PAVING.y + PARK_GATE_PAVING.h);
+    expect(rectContains(PARK_GATE_PAVING, end[0], end[1])).toBe(true);
   });
 
   it('滑梯在入口内侧，落地点是自由地面', () => {
@@ -185,13 +192,15 @@ describe('游乐园与入口滑梯', () => {
       expect(isOnLand(solid.x, solid.y, 0)).toBe(true);
       expect(rectContains(AMUSEMENT_PARK, solid.x, solid.y)).toBe(true);
     }
-    for (const solid of PARK_RIDE_SOLIDS) {
-      const overlapsGate =
-        solid.x < PARK_EAST_GATE.x + 30 &&
-        solid.x + solid.w > PARK_EAST_GATE.x - 30 &&
-        solid.y < PARK_EAST_GATE.y + 30 &&
-        solid.y + solid.h > PARK_EAST_GATE.y - 30;
-      expect(overlapsGate).toBe(false);
+    for (const gate of [PARK_EAST_GATE, PARK_SOUTH_GATE]) {
+      for (const solid of PARK_RIDE_SOLIDS) {
+        const overlapsGate =
+          solid.x < gate.x + 30 &&
+          solid.x + solid.w > gate.x - 30 &&
+          solid.y < gate.y + 30 &&
+          solid.y + solid.h > gate.y - 30;
+        expect(overlapsGate).toBe(false);
+      }
     }
     expect(onAnyPath(PARK_SLIDE.landing.x, PARK_SLIDE.landing.y)).toBe(false);
   });
@@ -223,7 +232,7 @@ describe('游乐园与入口滑梯', () => {
       expect(isOnLand(solid.x, solid.y, 0)).toBe(true);
       expect(rectContains(AMUSEMENT_PARK, solid.x, solid.y)).toBe(true);
     }
-    for (const gate of [PARK_EAST_GATE, PARK_NORTH_GATE]) {
+    for (const gate of [PARK_EAST_GATE, PARK_SOUTH_GATE]) {
       for (const solid of PARK_ATTRACTION_SOLIDS) {
         const overlapsGate =
           solid.x < gate.x + gate.gap + 26 &&
@@ -236,8 +245,8 @@ describe('游乐园与入口滑梯', () => {
     expect(isBlocked(PARK_SLIDE.landing.x, PARK_SLIDE.landing.y)).toBe(false);
     // 摩天轮底座不能压住东侧长椅与灯柱
     for (const prop of [
-      { x: 3000, y: 6068 },
-      { x: 3228, y: 6060 },
+      { x: 4336, y: 3108 },
+      { x: 4564, y: 3100 },
     ]) {
       for (const solid of PARK_ATTRACTION_SOLIDS) {
         const overlaps = solid.x < prop.x && solid.x + solid.w > prop.x && solid.y < prop.y && solid.y + solid.h > prop.y;

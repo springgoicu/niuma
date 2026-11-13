@@ -20,7 +20,7 @@ import { attenuationFor, panFor } from './spatial-audio';
 const MASTER_GAIN = 0.22;
 /** 连点节流：发泄动画一个窗口 440ms，90ms 内的重复触发直接丢弃，避免叠音 */
 const MIN_GAP_MS = 90;
-/** 固定声道数：一次咀嚼 / 挥空最多三路振荡器，6 路足够覆盖附近的并发声源 */
+/** 固定声道数：一次挥空 / 机器音最多三路振荡器，6 路足够覆盖附近的并发声源 */
 const POOL_SIZE = 6;
 /** 声像过渡：触发瞬间硬切会爆音，20ms 线性滑过去听不出来 */
 const PAN_RAMP_S = 0.02;
@@ -28,10 +28,9 @@ const PAN_RAMP_S = 0.02;
 const NOISE_SECONDS = 1;
 
 const KIND = {
-  chew: 0,
-  vending: 1,
-  cooler: 2,
-  coffee: 3,
+  vending: 0,
+  cooler: 1,
+  coffee: 2,
 } as const;
 
 type SoundKind = (typeof KIND)[keyof typeof KIND];
@@ -114,16 +113,6 @@ class SfxPlayer {
     this.play(sound, sourceX, sourceY, true);
   }
 
-  /** 本地咀嚼（G）：节流由 session 的按键冷却负责，这里只保留极短保护 */
-  chew(sourceX: number, sourceY: number): void {
-    this.play(KIND.chew, sourceX, sourceY, true);
-  }
-
-  /** 远端咀嚼：服务端已按 500ms 限频，客户端不再二次节流 */
-  chewRemote(sourceX: number, sourceY: number): void {
-    this.play(KIND.chew, sourceX, sourceY, false);
-  }
-
   private play(kind: SoundKind, sourceX: number, sourceY: number, throttled: boolean): void {
     if (this.muted || typeof window === 'undefined') return;
     const dx = sourceX - this.listenerX;
@@ -150,9 +139,6 @@ class SfxPlayer {
 
     this.prepare(voice, now, panFor(dx));
     switch (kind) {
-      case KIND.chew:
-        this.chewInto(voice, now, distanceGain);
-        return;
       case KIND.vending:
         this.vending(voice, now, distanceGain);
         return;
@@ -428,35 +414,6 @@ class SfxPlayer {
       voice.panner.pan.setValueAtTime(from, now);
       voice.panner.pan.linearRampToValueAtTime(pan, now + PAN_RAMP_S);
     }
-  }
-
-  /** 咀嚼：三次短脉冲的低频「咔嚓」，带一点 7Hz 的嚼动感 */
-  private chewInto(voice: Voice, now: number, gain: number): void {
-    voice.filter.type = 'lowpass';
-    voice.filter.frequency.setValueAtTime(620, now);
-    voice.filter.Q.setValueAtTime(3, now);
-
-    voice.body.type = 'triangle';
-    voice.sub.type = 'sine';
-    voice.sub.frequency.setValueAtTime(58, now);
-    voice.bodyGain.gain.setValueAtTime(1, now);
-    voice.subGain.gain.setValueAtTime(0.3, now);
-
-    voice.lfo.type = 'sine';
-    voice.lfo.frequency.setValueAtTime(7, now);
-    voice.lfoDepth.gain.setValueAtTime(8, now);
-
-    const amp = voice.amp.gain;
-    for (let i = 0; i < 3; i += 1) {
-      const at = now + i * 0.16;
-      voice.body.frequency.setValueAtTime(126 - i * 6, at);
-      voice.body.frequency.linearRampToValueAtTime(96 - i * 4, at + 0.1);
-      amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.55 * gain), at + 0.02);
-      amp.exponentialRampToValueAtTime(0.0001, at + 0.12);
-    }
-    const end = now + 0.46;
-    amp.linearRampToValueAtTime(0, end);
-    voice.endAt = end;
   }
 
   /** 售货机：低频 thunk + 稍后一声高频「咔哒」 */

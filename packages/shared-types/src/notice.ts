@@ -23,6 +23,10 @@ export const SYSTEM_NOTICE_KIND = {
   Renovation: 4,
   /** 保安执法：附近有人被请进小黑屋（ADR-0072） */
   Detained: 5,
+  /** 打人警告：只发给动手的本人，旁人不该知道保安在盯谁（ADR-0074） */
+  AssaultWarn: 6,
+  /** 保安带走动手的人：发给看得见他的人（ADR-0074） */
+  DetainedFight: 7,
 } as const;
 
 export type SystemNoticeKind = (typeof SYSTEM_NOTICE_KIND)[keyof typeof SYSTEM_NOTICE_KIND];
@@ -52,6 +56,11 @@ const TEMPLATES: Readonly<Record<number, NoticeTemplate>> = {
   // 「不许色色」是这条提示的固定落点，名字只换主语，文案不随阶段变
   [SYSTEM_NOTICE_KIND.Detained]: ({ name }) =>
     name ? `${name} 被保安请进了小黑屋：园区内不许色色。` : null,
+  // 警告只说「再打一次」，不报次数：玩家不该从文案里反推判定阈值
+  [SYSTEM_NOTICE_KIND.AssaultWarn]: () =>
+    '保安盯上你了：园区内不许动手，再打一次就请你进小黑屋。',
+  [SYSTEM_NOTICE_KIND.DetainedFight]: ({ name }) =>
+    name ? `${name} 被保安请进了小黑屋：园区内不许动手。` : null,
 };
 
 /**

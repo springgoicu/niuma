@@ -4,9 +4,9 @@ import { Container, Graphics, Rectangle, Sprite, Text, type Application, type Te
 import {
   AMUSEMENT_PARK,
   PARK_ATTRACTIONS,
-  PARK_EAST_GATE,
   PARK_RIDES,
   PARK_SLIDE,
+  PARK_SOUTH_GATE,
   parkFencePosts,
   type ParkAttraction,
   type ParkAttractionKind,
@@ -412,9 +412,18 @@ export class ParkView {
   private readonly items: Array<{ root: Container; depthY: number }> = [];
 
   constructor(renderer: TextureFactory, devicePxPerTexel: number) {
+    // 旋转木马的灯随器械走：不再写死旧地图上的 (2560,5940)
+    const carousel = PARK_RIDES.find((ride) => ride.kind === 'carousel');
     this.lights = [
-      { x: PARK_EAST_GATE.x, y: PARK_EAST_GATE.y, radius: 62, color: 0xffd27a, intensity: 0.5, flicker: 0.12 },
-      { x: 2560, y: 5940, radius: 88, color: 0xffc07a, intensity: 0.55, flicker: 0.1 },
+      { x: PARK_SOUTH_GATE.x, y: PARK_SOUTH_GATE.y, radius: 62, color: 0xffd27a, intensity: 0.5, flicker: 0.12 },
+      {
+        x: carousel?.x ?? PARK_SOUTH_GATE.x,
+        y: carousel?.y ?? PARK_SOUTH_GATE.y,
+        radius: 88,
+        color: 0xffc07a,
+        intensity: 0.55,
+        flicker: 0.1,
+      },
     ];
     this.gateText = new Text({
       text: '游乐园',
@@ -465,20 +474,20 @@ export class ParkView {
     slide.position.set(PARK_SLIDE.hit.x + PARK_SLIDE.hit.w / 2, PARK_SLIDE.hit.y + PARK_SLIDE.hit.h);
     this.push(this.wrap(slide), PARK_SLIDE.top.y);
 
-    // 东门：门头精灵 + Pixi 中文「游乐园」
+    // 南门：门头精灵 + Pixi 中文「游乐园」（正对北向主路，进门即园）
     const gate = new Container();
-    gate.position.set(PARK_EAST_GATE.x, PARK_EAST_GATE.y);
+    gate.position.set(PARK_SOUTH_GATE.x, PARK_SOUTH_GATE.y);
     const gateSprite = new Sprite(gateTexture);
     gateSprite.anchor.set(0.5, 1);
     gateSprite.position.set(0, 8);
     this.gateText.position.set(0, -34);
     gate.addChild(gateSprite, this.gateText);
-    this.push(gate, PARK_EAST_GATE.y);
+    this.push(gate, PARK_SOUTH_GATE.y);
 
     const balloons = new Sprite(balloonTexture);
     balloons.anchor.set(0.5, 1);
-    balloons.position.set(PARK_EAST_GATE.x - 46, PARK_EAST_GATE.y + 16);
-    this.push(this.wrap(balloons), PARK_EAST_GATE.y + 16);
+    balloons.position.set(PARK_SOUTH_GATE.x - 46, PARK_SOUTH_GATE.y + 16);
+    this.push(this.wrap(balloons), PARK_SOUTH_GATE.y + 16);
 
     const textures: Record<string, Texture> = {
       swing: swingTexture,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { HINT, hintButton, resolveVisibleHint, touchHint } from '../hint-copy';
 
 /** 动作盘上真实存在的按钮名：说法必须指向其中之一，否则玩家找不到按钮 */
-const TOUCH_BUTTONS = ['跳', '招手', '发泄', '吃草', '坐下', '躺平', '互动', '起身'];
+const TOUCH_BUTTONS = ['跳', '招手', '发泄', '坐下', '躺平', '互动', '起身'];
 
 describe('触屏提示文案', () => {
   /** 只有「能按」的提示才需要换成按钮说法；纯状态/劝阻文案两端同文 */
@@ -57,6 +57,7 @@ describe('设施提示按钮映射', () => {
     [HINT.tea, 'interact', '续杯养生茶', 'F'],
     [HINT.ringJoin, 'interact', '报名擂台', 'F'],
     [HINT.ringLeave, 'interact', '取消报名', 'F'],
+    [HINT.ringAwardLeave, 'interact', '领奖离场', 'F'],
   ] as const;
 
   it('每条可互动提示都映射到动作、动作名与键帽', () => {

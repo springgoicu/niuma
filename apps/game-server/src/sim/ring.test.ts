@@ -123,22 +123,49 @@ describe('擂台血量与淘汰', () => {
 });
 
 describe('擂台结算与颁奖', () => {
-  it('倒计时归零即结算，不因提前打光血量而结束', () => {
+  it('打空最后一个对手后下一拍立刻结算，不必等满 120 秒', () => {
     const { world, ring, players } = setup();
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0 + 2_000);
-    ring.applyHit(players[1]!, players[0]!, T0 + 2_100);
+    for (let hit = 0; hit < RING_MAX_HP; hit += 1) {
+      ring.applyHit(players[0]!, players[1]!, T0 + 2_100 + hit);
+    }
+    // 淘汰只标血量，结算统一留在 tick 的唯一入口
     expect(ring.phase).toBe(RING_PHASE.Running);
 
-    ring.tick(ring.endsAt - 1, world);
-    expect(ring.phase).toBe(RING_PHASE.Running);
-
-    const result = ring.tick(ring.endsAt, world);
+    const settledAt = T0 + 2_200;
+    expect(settledAt).toBeLessThan(ring.endsAt);
+    const result = ring.tick(settledAt, world);
     expect(result.changed).toBe(true);
     expect(ring.phase).toBe(RING_PHASE.Award);
-    expect(ring.isFrozen(players[0]!.id)).toBe(true);
+    expect(ring.endsAt).toBe(settledAt + RING_AWARD_MS);
+    // 领奖台传送与名次仍然照常发生
+    expect(players[0]!.x).toBe(RING_PODIUM_SLOTS[0]!.x);
     expect(ring.isFrozen(players[1]!.id)).toBe(true);
     expect(ring.isFrozen(players[2]!.id)).toBe(false);
+  });
+
+  it('三人局先倒一人不结束，剩下的两人继续打', () => {
+    const { world, ring, players } = setup();
+    enter(ring, players[0]!, T0);
+    enter(ring, players[1]!, T0);
+    enter(ring, players[2]!, T0);
+    for (let hit = 0; hit < RING_MAX_HP; hit += 1) {
+      ring.applyHit(players[0]!, players[2]!, T0 + 100 + hit);
+    }
+    ring.tick(T0 + 200, world);
+    expect(ring.phase).toBe(RING_PHASE.Running);
+
+    // 只剩 1 人站立的那一拍才结算：乙冠军，甲（后倒）亚军，丙季军
+    for (let hit = 0; hit < RING_MAX_HP; hit += 1) {
+      ring.applyHit(players[1]!, players[0]!, T0 + 300 + hit);
+    }
+    ring.tick(T0 + 400, world);
+    expect(ring.phase).toBe(RING_PHASE.Award);
+    const packet = ring.snapshot(T0 + 400, world);
+    expect(rankOf(packet.members, players[1]!.id)).toBe(1);
+    expect(rankOf(packet.members, players[0]!.id)).toBe(2);
+    expect(rankOf(packet.members, players[2]!.id)).toBe(3);
   });
 
   it('按剩余血量排前三，并逐个传送到对应台阶', () => {
@@ -181,7 +208,7 @@ describe('擂台结算与颁奖', () => {
     expect(rankOf(packet.members, players[1]!.id)).toBe(3);
   });
 
-  it('颁奖期间冻结移动判定，9 秒后送回出口并清空席位', () => {
+  it('颁奖期间冻结移动判定，4 秒后送回出口并清空席位', () => {
     const { world, ring, players } = setup();
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
@@ -210,6 +237,30 @@ describe('擂台离场与断线', () => {
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
     expect(ring.leave(players[0]!, T0 + 200)).toBe(false);
+  });
+
+  it('颁奖期可以领奖离场，全员走光立刻回空闲', () => {
+    const { world, ring, players } = setup();
+    enter(ring, players[0]!, T0);
+    enter(ring, players[1]!, T0);
+    ring.tick(ring.endsAt, world);
+    expect(ring.phase).toBe(RING_PHASE.Award);
+
+    const awardAt = ring.endsAt - RING_AWARD_MS;
+    expect(ring.leave(players[1]!, awardAt + 500)).toBe(true);
+    expect(players[1]!.x).toBe(RING_EXIT.x);
+    expect(players[1]!.y).toBe(RING_EXIT.y);
+    // 走一个人，颁奖窗口对剩下的人照旧；离场者不再被冻结也不再占席位
+    expect(ring.phase).toBe(RING_PHASE.Award);
+    expect(ring.count).toBe(1);
+    expect(ring.isFrozen(players[1]!.id)).toBe(false);
+    expect(ring.snapshot(awardAt + 500, world).members.map((member) => member.id)).toEqual([
+      players[0]!.id,
+    ]);
+
+    expect(ring.leave(players[0]!, awardAt + 800)).toBe(true);
+    expect(ring.phase).toBe(RING_PHASE.Idle);
+    expect(ring.count).toBe(0);
   });
 
   it('断线移除后剩 1 人仍走完计时，清空则立刻回 idle', () => {

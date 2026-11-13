@@ -256,17 +256,6 @@ export function pickLine(kind: InteractiveKind, counter: number): string {
 }
 
 /**
- * 咀嚼台词：没有对应动画帧，气泡是唯一的本地视觉反馈。
- * 与设施台词分表，避免连按 F / G 时互相串词。
- */
-const GRAZE_LINES = ['嚼嚼…', '这草有点柴', '低头，是为了不被点名'] as const;
-
-export function pickGrazeLine(counter: number): string {
-  const index = Number.isFinite(counter) ? Math.abs(Math.trunc(counter)) % GRAZE_LINES.length : 0;
-  return GRAZE_LINES[index]!;
-}
-
-/**
  * 发泄的台词：出招者三句、被创飞者三句。
  *
  * 与设施台词的关键区别是**按 netId 取值而不是按次数轮转**：

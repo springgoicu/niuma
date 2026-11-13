@@ -1,6 +1,6 @@
 'use client';
 
-import { Armchair, Coffee, Flame, Hand, Keyboard, MessageSquare, Rabbit, Sandwich, Wheat } from 'lucide-react';
+import { Armchair, Coffee, Flame, Hand, Keyboard, MessageSquare, Rabbit, Sandwich } from 'lucide-react';
 import { POSE } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { actionPresentation } from '@/lib/game/actions';
@@ -17,8 +17,6 @@ const ACTIONS: Array<{ key: string; label: string; hint: string; tip?: string; I
   // 发泄：一记牛马式冲撞，打到人对方会被创飞倒地（ADR-0051）
   // tip 是悬停教学提示：新玩家常以为原地按 E 就能出招（ADR-0051）
   { key: 'vent', label: '发泄', hint: 'E', tip: '走到同事面前按 E 即可击倒', Icon: Flame, action: 'vent' },
-  // 吃草紧挨发泄：E / G 在键盘上相邻，两个都是一次性动作（ADR-0048）
-  { key: 'graze', label: '吃草', hint: 'G', Icon: Wheat, action: 'graze' },
   { key: 'wave', label: '打招呼', hint: 'C', Icon: Hand, action: 'wave' },
   { key: 'jump', label: '跳一下', hint: 'Space', Icon: Rabbit, action: 'jump' },
   { key: 'interact', label: '互动', hint: 'F', Icon: Coffee, action: 'interact' },

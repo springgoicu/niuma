@@ -27,10 +27,10 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(bearingDegOf(0, 0)).toBe(0);
   });
 
-  it('出生点 13 个导览目标全部可读，顺序与 NAV_TARGETS 一致', () => {
+  it('出生点 8 个导览目标全部可读，顺序与 NAV_TARGETS 一致', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     expect(readings.map((reading) => reading.target.id)).toEqual(NAV_TARGETS.map((target) => target.id));
-    expect(readings).toHaveLength(13);
+    expect(readings).toHaveLength(8);
     for (const reading of readings) {
       expect(reading.distance).toBeGreaterThan(0);
       expect(reading.seconds).toBe(Math.max(1, Math.round(reading.distance / MOVE_SPEED)));
@@ -55,28 +55,23 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(octant('meeting')).toBe(1);
     expect(octant('restroom')).toBe(3);
     expect(octant('lounge')).toBe(5);
-    // 中央广场到四角房中心等距，四条放射路长度在同一档
-    const indoor = NAV_TARGETS.filter((target) => target.area === 'indoor');
-    expect(indoor).toHaveLength(4);
-    const roomDistances = readings.filter((reading) => reading.target.area === 'indoor');
-    const distances = roomDistances.map((reading) => reading.distance);
-    expect(Math.max(...distances) - Math.min(...distances)).toBeLessThan(1);
+    // 中央广场到三间 460×360 的房间等距；卫生间收到 340×300 后中心略远，仍在同一档
+    // 室内组 = 四间房 + 工作区里的财神供案
+    expect(NAV_TARGETS.filter((target) => target.area === 'indoor')).toHaveLength(5);
+    const bigRooms = readings
+      .filter((reading) => ['workroom', 'meeting', 'lounge'].includes(reading.target.id))
+      .map((reading) => reading.distance);
+    expect(Math.max(...bigRooms) - Math.min(...bigRooms)).toBeLessThan(1);
+    const roomDistances = readings
+      .filter((reading) => ['workroom', 'meeting', 'lounge', 'restroom'].includes(reading.target.id))
+      .map((reading) => reading.distance);
+    expect(Math.max(...roomDistances) - Math.min(...roomDistances)).toBeLessThan(120);
   });
 
-  it('户外 9 个目标都朝向岛外方向，不会指回出生点脚下', () => {
+  it('户外 3 个目标都朝向岛外方向，不会指回出生点脚下', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     const outdoor = readings.filter((reading) => reading.target.area === 'grounds');
-    expect(outdoor.map((reading) => reading.target.id)).toEqual([
-      'park',
-      'southYard',
-      'bossArena',
-      'theater',
-      'jail',
-      'pavilion',
-      'lakeMoping',
-      'lakeChensi',
-      'lakeLianyi',
-    ]);
+    expect(outdoor.map((reading) => reading.target.id)).toEqual(['park', 'bossArena', 'ring']);
     for (const reading of outdoor) expect(reading.distance).toBeGreaterThan(MOVE_SPEED);
   });
 

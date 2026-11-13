@@ -47,11 +47,6 @@ export type InteractionIntent =
   | { kind: 'wave' }
   /** 与最近的可互动设施（售货机 / 饮水机 / 咖啡机）互动 */
   | { kind: 'interact' }
-  /**
-   * 低头咀嚼：图集没有吃草帧，动作只体现为一声空间化的咀嚼音与气泡。
-   * 与发泄一样在任何姿态下都可用，不做站定限制（ADR-0048）。
-   */
-  | { kind: 'graze' }
   /** 当前状态下不可用：提示文案交给 session 走瞬时 hint 通道 */
   | { kind: 'blocked'; hint: string };
 
@@ -107,9 +102,6 @@ export function resolveInteraction(action: ActionKey, state: InteractionState): 
     case 'interact':
       // 附近没有设施时由 session 走瞬时提示，不在这里判距离
       return { kind: 'interact' };
-    case 'graze':
-      // 咀嚼是纯声效动作：没有姿态帧，也就不存在「行走中滑步」的降级条件
-      return { kind: 'graze' };
   }
 }
 
@@ -153,9 +145,6 @@ export function actionPresentation(action: ActionKey, state: PresentationState):
       };
     }
     case 'interact':
-      return { active: false, unavailable: false };
-    case 'graze':
-      // 与发泄同属一次性动作：不进高亮态，也不因移动而不可用
       return { active: false, unavailable: false };
     case 'vent':
       // 行走中也能出招（打断移动），所以永不降级

@@ -8,7 +8,6 @@ import {
   CHAT_HISTORY_REQUEST_INTERVAL_MS,
   EMPTY_CAREER,
   FALLBACK_NICKNAME,
-  GRAZE_COOLDOWN_MS,
   MAX_PACKET_BYTES,
   OpCode,
   QUEUE_REJECT_REASON,
@@ -31,7 +30,6 @@ import {
   encodeCareerBroadcast,
   encodeBoss,
   encodeChatHistory,
-  encodeGraze,
   encodeNameBroadcast,
   encodePong,
   encodeQueueRejected,
@@ -415,21 +413,9 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_ACTION) {
-      // 被押送时的输入硬直：坐 / 躺 / 起身 / 咀嚼全部拒绝，聊天仍走下面的频道
+      // 被押送时的输入硬直：坐 / 躺 / 起身全部拒绝，聊天仍走下面的频道
       if (now < player.stunUntil) return;
       const { action } = decodeAction(data);
-      // 咀嚼是一次性事件：state 字节已满，不能挤进同步条目，限频后按视野定向广播（ADR-0048）
-      if (action === ACTION.Graze) {
-        if (now - player.lastGrazeAt < GRAZE_COOLDOWN_MS) return;
-        player.lastGrazeAt = now;
-        const packet = encodeGraze(player.id);
-        // player.known 是「看得见我的人」：不含自己，本地已经即时发声
-        for (const id of player.known) {
-          const other = world.get(id);
-          if (other) transport.send(other.wsId, packet);
-        }
-        return;
-      }
       // 只有坐 / 躺 / 起身走这个包：发泄与跳随 20Hz 的 move 包上行（见 ADR-0051）
       if (action === ACTION.Stand) {
         broadcastSeats(seats.stand(player));
@@ -822,7 +808,8 @@ export function startGameServer(config: ServerConfig) {
     // 发泄结算必须跑在 runTick 之前：受害者被推开的坐标与躺姿要赶在同一 Tick 的
     // dirty 广播里发出去。放到 runTick 之后会晚 50ms，旁观者先看到站着、再看到倒下。
     // 入座者免伤（ADR-0065），因此这里不再产生座位释放条目。
-    resolveVents(world, grid, transport, now);
+    // 命中观察者与执法模块是同一个实例：没有保安 / 关闭执法时不存在，攻击自然不计数
+    resolveVents(world, grid, transport, now, detention ?? undefined);
 
     // 先看姿态边沿再派单：保安本 Tick 就能起步，抓取 / 拖行也在同一帧生效
     detention?.observe(now);

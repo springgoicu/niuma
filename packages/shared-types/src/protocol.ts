@@ -905,27 +905,11 @@ export function readRoleSegment(data: Uint8Array, offset: number): number | unde
 }
 
 /**
- * 咀嚼事件：一次性动作，不走 state 位（8 位已被朝向/姿态/四个叠加位占满），
- * 也不改 48 bit 紧凑条目；只发给看得见发声者的人（ADR-0048）。
- */
-export function encodeGraze(id: number): Uint8Array {
-  const writer = new ByteWriter(3);
-  writer.u8(OpCode.S2C_GRAZE).u16(id);
-  return writer.finish();
-}
-
-export function decodeGraze(data: Uint8Array): number {
-  const reader = new ByteReader(data);
-  if (reader.u8() !== OpCode.S2C_GRAZE) throw new Error('not a graze packet');
-  return reader.u16();
-}
-
-/**
  * 发泄结算：`[op][attackerId u16][targetId u16][x u16][y u16]`，9 字节定长。
  *
- * 与 `encodeGraze` 同属一次性事件通道，但多带「谁打到谁」与受害者的权威坐标：
- * 前者让旁观者能把倒地归因到具体的人（音效、台词、镜头都有对象），
- * 后者让受害者本人越过 128px 的本地和解阈值，直接贴到服务端算出的落点上。
+ * 一次性事件通道，不属于 20Hz 同步包，只补 Tick 表达不了的两件事：
+ * 「谁打到谁」让旁观者能把倒地归因到具体的人（音效、台词、镜头都有对象），
+ * 「受害者坐标」让对方越过 128px 的本地和解阈值，直接贴到服务端算出的落点上。
  *
  * 擂台命中在末尾追加 `flags u8`：bit0 = 擂台命中，bit1 = 目标淘汰。
  * 普通发泄仍写 9 字节，旧客户端读到 9 字节时天然不认识这一位。

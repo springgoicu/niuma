@@ -26,6 +26,9 @@ export interface RingTickResult { changed: boolean; moved: Player[] }
 /**
  * 三人擂台状态机：idle → waiting → running → award → idle。
  * 只活在服务端内存；入场、扣血、倒计时、名次与传送全由这里裁决。
+ *
+ * `RING_ROUND_MS` 是本局上限而不是固定时长：只要站着的只剩 1 人（冠军已定），
+ * 下一次 `tick` 就立刻结算，不必等倒计时走完（ADR-0076）。
  */
 export class RingRuntime {
   phase: RingPhase = RING_PHASE.Idle;
@@ -76,14 +79,18 @@ export class RingRuntime {
     return { ok: true, started };
   }
 
-  /** 等待阶段可以取消；开赛后按“不得离开”拒绝主动离场。 */
+  /** 等待期可以取消报名，颁奖期可以领奖后提前离场；比赛中按「不得离开」拒绝。 */
   leave(player: Player, now: number): boolean {
-    if (this.phase !== RING_PHASE.Waiting) return false;
+    if (this.phase !== RING_PHASE.Waiting && this.phase !== RING_PHASE.Award) return false;
     const index = this.members.findIndex((member) => member.id === player.id);
     if (index < 0) return false;
     this.members.splice(index, 1);
     this.teleport(player, RING_EXIT);
-    if (this.members.length === 0) this.phase = RING_PHASE.Idle;
+    // 全员走光就直接回空闲：颁奖窗口已经没有意义，再留着会让报名继续被拒
+    if (this.members.length === 0) {
+      this.phase = RING_PHASE.Idle;
+      this.phaseEndsAt = 0;
+    }
     this.lastBroadcastAt = now;
     return true;
   }
@@ -115,11 +122,25 @@ export class RingRuntime {
     return { hp: victimMember.hp, eliminated };
   }
 
+  /**
+   * 冠军已定：本局至少 2 人参战，且站着的只剩 1 人（或全部倒下）。
+   *
+   * 断线剩 1 人时 `members.length === 1`，不算分出胜负——那种情况仍走完计时，
+   * 免得白送一个冠军；判定本身只扫 ≤3 个成员，不需要额外状态。
+   */
+  private isDecided(): boolean {
+    if (this.members.length < 2) return false;
+    let standing = 0;
+    for (const member of this.members) if (member.hp > 0) standing += 1;
+    return standing <= 1;
+  }
+
   /** 每 Tick 推进状态机；返回是否广播，以及本 Tick 被传送的玩家。 */
   tick(now: number, world: World): RingTickResult {
     this.moved.length = 0;
     let changed = false;
-    if (this.phase === RING_PHASE.Running && now >= this.phaseEndsAt) {
+    // 到点与提前决出共用同一条结算路径：领奖台传送、名次与广播都不另开分支
+    if (this.phase === RING_PHASE.Running && (now >= this.phaseEndsAt || this.isDecided())) {
       this.settle(now, world);
       changed = true;
     } else if (this.phase === RING_PHASE.Award && now >= this.phaseEndsAt) {

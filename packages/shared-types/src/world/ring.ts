@@ -3,8 +3,9 @@
  *
  * 擂台是发泄区西侧一块独立的 300×260 矩形，和老板垫隔开 160px：
  * - 非参赛者不能靠移动踏入，只能在场边按 F 传送到起点；
- * - 参赛者被夹在矩形内，等待/进行/颁奖三个阶段都不能离开；
- * - 容量 3、初始 10 血、严格 120 秒，按剩余血量排出前三名。
+ * - 参赛者被夹在矩形内，比赛中不能离开；等待期可取消报名，颁奖期可领奖离场；
+ * - 容量 3、初始 10 血，2 分钟是上限：站着的只剩 1 人就立刻结算（ADR-0076），
+ *   按剩余血量排出前三名。
  */
 
 import { rectContains, rectExpanded, type WorldRect } from './geometry';
@@ -23,8 +24,10 @@ export const RING_BOUND_PADDING = 18;
 
 export const RING_CAPACITY = 3;
 export const RING_MAX_HP = 10;
+/** 本局上限：站着的只剩 1 人时提前结算，不必走满。 */
 export const RING_ROUND_MS = 120_000;
-export const RING_AWARD_MS = 9_000;
+/** 颁奖窗口：领奖台与彩带的表现时长，参赛者可随时提前离场。 */
+export const RING_AWARD_MS = 4_000;
 export const RING_DAMAGE = 1;
 
 /** 三个起跑位：左前、中后、右前，第三人从空位补入。 */

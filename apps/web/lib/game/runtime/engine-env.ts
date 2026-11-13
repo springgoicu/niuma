@@ -26,7 +26,6 @@ export type AudioEvent =
    */
   | { kind: 'vent'; x: number; y: number; hit: boolean; local: boolean }
   | { kind: 'interact'; target: InteractiveKind; x: number; y: number }
-  | { kind: 'chew'; x: number; y: number; local: boolean }
   /** 上香：寺庙磬音（ADR-0061） */
   | { kind: 'incense'; x: number; y: number }
   /** 续杯：喝茶的咕嘟声（ADR-0061） */

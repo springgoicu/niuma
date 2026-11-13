@@ -4,7 +4,9 @@ import {
   LOUNGE,
   MEETING_ROOM,
   RESTROOM,
+  RESTROOM_H,
   RESTROOM_STALLS,
+  RESTROOM_W,
   ROOM_H,
   ROOM_W,
   WALL_THICKNESS,
@@ -39,12 +41,17 @@ function inside(rect: WorldRect, x: number, y: number): boolean {
 }
 
 describe('四角院落（ADR-0044）', () => {
-  it('四间房各贴院落一角，尺寸一致', () => {
-    for (const room of [WORKROOM, MEETING_ROOM, LOUNGE, RESTROOM]) {
+  it('四间房各贴院落一角：三间 460×360，卫生间 340×300 贴在东南角', () => {
+    for (const room of [WORKROOM, MEETING_ROOM, LOUNGE]) {
       expect(room.w).toBe(ROOM_W);
       expect(room.h).toBe(ROOM_H);
       expect(rectContains(rectExpanded(CAMPUS_RECT, 1), room.x, room.y)).toBe(true);
     }
+    // ADR-0077：卫生间单独收小，但两个外沿仍与院落东南角对齐
+    expect(RESTROOM.w).toBe(RESTROOM_W);
+    expect(RESTROOM.h).toBe(RESTROOM_H);
+    expect(RESTROOM.w).toBeLessThan(ROOM_W);
+    expect(RESTROOM.h).toBeLessThan(ROOM_H);
     // 西北 / 东北 / 西南 / 东南
     expect(WORKROOM.x).toBe(CAMPUS_RECT.x);
     expect(WORKROOM.y).toBe(CAMPUS_RECT.y);
@@ -67,7 +74,7 @@ describe('四角院落（ADR-0044）', () => {
     // 会议室南墙、宿舍区与卫生间北墙各留一扇 60px 门洞
     expect(wallAt(MEETING_ROOM.x + 360, MEETING_ROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(false);
     expect(wallAt(LOUNGE.x + 230, LOUNGE.y + WALL_THICKNESS / 2)).toBe(false);
-    expect(wallAt(RESTROOM.x + 230, RESTROOM.y + WALL_THICKNESS / 2)).toBe(false);
+    expect(wallAt(RESTROOM.x + 180, RESTROOM.y + WALL_THICKNESS / 2)).toBe(false);
     // 同一面墙的门洞之外仍然是实体墙
     expect(wallAt(MEETING_ROOM.x + 40, MEETING_ROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(true);
     expect(wallAt(LOUNGE.x + 40, LOUNGE.y + WALL_THICKNESS / 2)).toBe(true);
@@ -77,47 +84,49 @@ describe('四角院落（ADR-0044）', () => {
   it('卫生间是男 / 洗手池 / 女 三区，洗手池在中间', () => {
     const sinks = props.filter((prop) => prop.kind === 'sink' && inside(RESTROOM, prop.x, prop.y));
     expect(sinks.length).toBeGreaterThanOrEqual(2);
+    // 中央区夹在两道内隔墙之间：x+110（墙左沿）.. x+220（第二道墙右沿）
     for (const sink of sinks) {
-      expect(sink.x).toBeGreaterThan(RESTROOM.x + 160);
-      expect(sink.x).toBeLessThan(RESTROOM.x + 300);
+      expect(sink.x).toBeGreaterThan(RESTROOM.x + WALL_THICKNESS + 100);
+      expect(sink.x).toBeLessThan(RESTROOM.x + WALL_THICKNESS + 110 + 100);
     }
 
     const toilets = seats.filter((seat) => seat.kind === 'toilet' && inside(RESTROOM, seat.x, seat.y));
-    expect(toilets).toHaveLength(6);
-    const west = toilets.filter((seat) => seat.x < RESTROOM.x + ROOM_W / 2);
-    const east = toilets.filter((seat) => seat.x > RESTROOM.x + ROOM_W / 2);
-    expect(west).toHaveLength(3);
-    expect(east).toHaveLength(3);
+    // ADR-0077：每侧从 3 格收到 2 格
+    expect(toilets).toHaveLength(4);
+    const west = toilets.filter((seat) => seat.x < RESTROOM.x + RESTROOM.w / 2);
+    const east = toilets.filter((seat) => seat.x > RESTROOM.x + RESTROOM.w / 2);
+    expect(west).toHaveLength(2);
+    expect(east).toHaveLength(2);
 
     // 两道内隔墙各被门洞断成两段 → 房间内部恰好 4 段纵墙
     const innerWalls = solids.filter(
       (solid) =>
         solid.kind === 'wall' &&
         solid.x > RESTROOM.x + WALL_THICKNESS &&
-        solid.x + solid.w < RESTROOM.x + ROOM_W - WALL_THICKNESS &&
+        solid.x + solid.w < RESTROOM.x + RESTROOM.w - WALL_THICKNESS &&
         solid.y >= RESTROOM.y &&
-        solid.y + solid.h <= RESTROOM.y + ROOM_H,
+        solid.y + solid.h <= RESTROOM.y + RESTROOM.h,
     );
     expect(innerWalls).toHaveLength(4);
   });
 
-  it('卫生间每侧三格坑位（ADR-0053）：隔断夹出三格，格子之间互不重叠', () => {
-    expect(RESTROOM_STALLS).toHaveLength(6);
-    // 每侧两片隔断，各自进碰撞表；最后一格贴内隔墙，没有隔断
+  it('卫生间每侧两格坑位（ADR-0053 / ADR-0077）：隔断夹出两格，格子之间互不重叠', () => {
+    expect(RESTROOM_STALLS).toHaveLength(4);
+    // 每侧一片隔断，各自进碰撞表；最后一格贴内隔墙，没有隔断
     const partitions = solids.filter(
       (solid) =>
         solid.kind === 'fixture' &&
         solid.w === 6 &&
         solid.y >= RESTROOM.y &&
-        solid.y + solid.h <= RESTROOM.y + ROOM_H &&
+        solid.y + solid.h <= RESTROOM.y + RESTROOM.h &&
         solid.x > RESTROOM.x &&
-        solid.x < RESTROOM.x + ROOM_W,
+        solid.x < RESTROOM.x + RESTROOM.w,
     );
-    expect(partitions).toHaveLength(4);
+    expect(partitions).toHaveLength(2);
     for (const stall of RESTROOM_STALLS) {
       // 第一格贴西墙内侧、最后一格贴内隔墙：两端都正好落在房间净宽内
       expect(stall.x).toBeGreaterThanOrEqual(RESTROOM.x + WALL_THICKNESS);
-      expect(stall.x + stall.w).toBeLessThanOrEqual(RESTROOM.x + ROOM_W - WALL_THICKNESS);
+      expect(stall.x + stall.w).toBeLessThanOrEqual(RESTROOM.x + RESTROOM.w - WALL_THICKNESS);
       if (stall.partition) expect(solids).toContainEqual(stall.partition);
     }
     for (let i = 0; i < RESTROOM_STALLS.length; i += 1) {

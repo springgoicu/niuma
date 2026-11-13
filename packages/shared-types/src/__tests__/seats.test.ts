@@ -95,8 +95,8 @@ describe('座位布局', () => {
 
   it('马桶位于卫生间内，背靠水箱、面朝房间', () => {
     const toilets = seats.filter((seat) => seat.kind === 'toilet');
-    // 每侧三格（ADR-0053）：房间尺寸不变，北墙从 2 个坑加到 3 个
-    expect(toilets.length).toBe(6);
+    // 每侧两格（ADR-0077）：房间收到 340×300，马桶从 6 个减到 4 个
+    expect(toilets.length).toBe(4);
     for (const seat of toilets) {
       // 水箱画在精灵北端（drawToilet），人必须背对它：面向南 = 背靠水箱
       expect(seat.facing).toBe(DIRECTION.Down);
@@ -130,8 +130,8 @@ describe('座位布局', () => {
   it('宿舍区与卫生间的北门都能穿过', () => {
     // 宿舍区北墙 y 4356–4366、门洞 x 3536–3596：从室内向北走
     expect(resolveMotion(3566, 4400, 3566, 4330).y).toBeLessThan(4356);
-    // 卫生间北墙同一条 y、门洞 x 4596–4656
-    expect(resolveMotion(4626, 4400, 4626, 4330).y).toBeLessThan(4356);
+    // 卫生间收到 340×300 后北墙在 y 4416–4426、门洞 x 4666–4726
+    expect(resolveMotion(4696, 4460, 4696, 4390).y).toBeLessThan(4416);
   });
 
   it('会议室南门能穿过，工作区没有墙', () => {

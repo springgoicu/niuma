@@ -150,7 +150,7 @@ describe('地形布局', () => {
     expect(regionAt(CENTER.x, CENTER.y)).toBe('中央迎宾广场');
     expect(regionAt(lake.x + lake.w / 2, lake.y + lake.h / 2)).toBe('摸鱼湖');
     expect(regionAt(3566, 3656)).toBe('工作区');
-    expect(regionAt(2200, 4300)).toBe('园区野地');
+    expect(regionAt(2800, 3500)).toBe('园区野地');
   });
 
   it('树木不会长进广场、办公区、水面与道路上', () => {
@@ -236,20 +236,21 @@ describe('树与花箱的脚底碰撞', () => {
 });
 
 describe('矩形边界', () => {
-  it('原来的三个海湾已填成陆地，矩形之外仍不可进入', () => {
-    // ADR-0064：北湾 / 东湾 / 南中湾都在矩形内，现在是人可以走的草地
+  it('矩形收窄后四边都是陆地，矩形之外仍不可进入', () => {
+    // ADR-0077：岛界 x 2560–5600 / y 2412–5780
     for (const [x, y] of [
-      [3950, 2500], // 原北湾
-      [5750, 4200], // 原东湾
-      [4000, 6050], // 原南中湾
+      [3400, 2600],
+      [5400, 4000],
+      [3300, 5400],
     ] as const) {
       expect(isOnLand(x, y)).toBe(true);
     }
     for (const [x, y] of [
-      [1200, 6000], // 西侧边界外
+      [2000, 3000], // 西侧边界外
       [100, 100], // 西北角外
-      [6000, 4200], // 东侧边界外
-      [4000, 1900], // 北侧边界外
+      [5800, 4000], // 东侧边界外
+      [4000, 2300], // 北侧边界外
+      [4000, 6000], // 南侧边界外
     ] as const) {
       expect(isOnLand(x, y)).toBe(false);
       expect(isBlocked(x, y)).toBe(true);
@@ -257,18 +258,18 @@ describe('矩形边界', () => {
   });
 
   it('从陆地走向四边都会被挡住', () => {
-    // 北边界 y = 1956，玩家半径 9：停在边界内侧
-    const north = resolveMotion(3950, 2100, 3950, 1800);
-    expect(north.y).toBeGreaterThan(1956);
+    // 北边界 y = 2412，玩家半径 9：停在边界内侧
+    const north = resolveMotion(3950, 2700, 3950, 2300);
+    expect(north.y).toBeGreaterThan(2412);
 
-    const west = resolveMotion(2400, 3900, 2100, 3900);
-    expect(west.x).toBeGreaterThan(2146);
+    const west = resolveMotion(2800, 3900, 2500, 3900);
+    expect(west.x).toBeGreaterThan(2560);
 
-    const south = resolveMotion(5500, 6100, 5500, 6300);
-    expect(south.y).toBeLessThan(6168);
+    const south = resolveMotion(5500, 5600, 5500, 5900);
+    expect(south.y).toBeLessThan(5780);
 
-    const east = resolveMotion(5700, 4000, 6100, 4000);
-    expect(east.x).toBeLessThan(5951);
+    const east = resolveMotion(5400, 4000, 5700, 4000);
+    expect(east.x).toBeLessThan(5600);
   });
 
   it('所有静态地形都在矩形以内，且离边界至少 24px', () => {

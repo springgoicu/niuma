@@ -81,8 +81,8 @@ describe('押送状态机（ADR-0072）', () => {
     expect(events[0]?.kind).toBe('grab');
     expect(dragAt).toBeGreaterThan(0);
     expect(dragAt - grabbedAt).toBeGreaterThanOrEqual(ESCORT.GRAB_HOLD_MS);
-    // 被押者被带着走了至少一个身位，并且进了屋
-    expect(target.x - startX).toBeGreaterThan(200);
+    // 被押者被带着走了至少一个身位，并且进了屋（ADR-0077：房间收小，位移从 200 降到 180）
+    expect(target.x - startX).toBeGreaterThan(150);
     expect(target.x).toBeGreaterThan(JAIL.x);
     // 拖行时目标始终挂在保安身后 22px
     expect(towDistance).toBeLessThanOrEqual(ESCORT.TOW_OFFSET_PX + 1);

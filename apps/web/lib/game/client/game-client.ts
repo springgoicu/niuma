@@ -30,7 +30,7 @@ export interface GameClient {
   attachMinimap(host: HTMLElement): void;
   stop(): void;
   setMoveVector(x: number, y: number): void;
-  /** 动作（坐 / 躺 / 挥手 / 叫唤 / 跳 / 互动 / 咀嚼）：桌面动作条与触屏动作盘共用 */
+  /** 动作（坐 / 躺 / 挥手 / 叫唤 / 跳 / 互动）：桌面动作条与触屏动作盘共用 */
   perform(action: ActionKey): void;
   /** 收回移动控制权：打开聊天、点画布空白处时调用 */
   clearMovement(): void;

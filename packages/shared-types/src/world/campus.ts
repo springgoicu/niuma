@@ -208,6 +208,14 @@ export const ROOM_W = 460;
 export const ROOM_H = 360;
 
 /**
+ * 卫生间单独收小（ADR-0077）：460×360 → 340×300，仍贴院落东南角。
+ * 净宽 320 = 100（男）+ 10（隔墙）+ 100（洗手池）+ 10（隔墙）+ 100（女），
+ * 每侧从 3 格坑位降到 2 格，房间不再是「半座空房」。
+ */
+export const RESTROOM_W = 340;
+export const RESTROOM_H = 300;
+
+/**
  * 四角院落（也是 `WORLD_LAYOUT.office`）：北门正对，中心仍是世界中心 (4096,4096)。
  * 1520 = 460 + 600 + 460，1240 = 360 + 520 + 360 —— 中间的 600×520 就是中庭。
  */
@@ -229,12 +237,12 @@ export const LOUNGE: WorldRect = {
   w: ROOM_W,
   h: ROOM_H,
 };
-/** 东南：卫生间 */
+/** 东南：卫生间（比其它三间小一圈，仍贴院落东南角） */
 export const RESTROOM: WorldRect = {
-  x: CAMPUS_RECT.x + CAMPUS_RECT.w - ROOM_W,
-  y: CAMPUS_RECT.y + CAMPUS_RECT.h - ROOM_H,
-  w: ROOM_W,
-  h: ROOM_H,
+  x: CAMPUS_RECT.x + CAMPUS_RECT.w - RESTROOM_W,
+  y: CAMPUS_RECT.y + CAMPUS_RECT.h - RESTROOM_H,
+  w: RESTROOM_W,
+  h: RESTROOM_H,
 };
 
 /**
@@ -281,21 +289,24 @@ export const THEATER_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = THEATER_R
 );
 
 /* ------------------------------------------------------------------ *
- * 小黑屋（ADR-0072）
+ * 小黑屋（ADR-0072 / ADR-0077）
  *
  * 与家庭影音室隔南向主路东西对称：北缘离四角院落 74px，南缘离南侧
- * 庭院 30px，西门接一条和影厅支路同高的支路。进门是一间水泥房，
+ * 庭院 110px，西门接一条和影厅支路同高的支路。进门是一间水泥房，
  * 没有座位、没有出口以外的互动，只留一个反省点让被押来的人坐下。
+ *
+ * ADR-0077 把房间从 460×320 收到 320×240：西墙、门洞、门前铺装与
+ * y=4950 的支路全部不动，只把东墙与南墙收进来，三个反省位更紧凑。
  * ------------------------------------------------------------------ */
 
-export const JAIL: WorldRect = { x: 4320, y: 4790, w: 460, h: 320 };
+export const JAIL: WorldRect = { x: 4320, y: 4790, w: 320, h: 240 };
 /** 西墙门洞：与南向主路接出来的支路同一条 y（4950） */
 export const JAIL_DOOR: DoorSpec = { side: 'west', from: 4920, to: 4980 };
 /** 门前铺装：从墙外接到支路末端的 80px */
 export const JAIL_DOOR_PAVING: WorldRect = { x: 4250, y: 4920, w: 80, h: 60 };
 
 /** 反省凳锚点：被押送者坐在这里，面朝北墙的警示海报 */
-export const JAIL_ANCHOR = { x: 4590, y: 4980 } as const;
+export const JAIL_ANCHOR = { x: 4470, y: 4980 } as const;
 /** 同时关 3 人时的左右空位：以反省点为中心各让 48px */
 export const JAIL_ANCHORS: ReadonlyArray<{ x: number; y: number }> = [
   { x: JAIL_ANCHOR.x - 48, y: JAIL_ANCHOR.y },
@@ -313,8 +324,8 @@ const MEETING_DOOR: DoorSpec = {
 };
 const RESTROOM_DOOR: DoorSpec = {
   side: 'north',
-  from: RESTROOM.x + 200,
-  to: RESTROOM.x + 260,
+  from: RESTROOM.x + 150,
+  to: RESTROOM.x + 210,
 };
 const LOUNGE_DOOR: DoorSpec = {
   side: 'north',
@@ -417,14 +428,17 @@ const theaterSolids = roomWalls(HOME_THEATER, HOME_THEATER_DOOR);
 const jailSolids = roomWalls(JAIL, JAIL_DOOR);
 
 /**
- * 卫生间三区（自西向东）：男 140 / 洗手池 140 / 女 140。
+ * 卫生间三区（自西向东）：男 100 / 洗手池 100 / 女 100。
  * 两道 10px 内隔墙各留一扇 60px 门洞，中央区从北门直进，
  * 两侧要绕过隔墙才能进——这是「男女生分割 + 中间洗手池」的几何。
+ *
+ * ADR-0077：房间收到 340 宽后，三个分区同比从 140 收到 100，
+ * 净宽 320 = 100 × 3 + 10 × 2，两侧各 2 格坑位。
  *
  * 隔墙的视觉由 `interior-art.ts` 按本文件的 solids 反查后绘制（ADR-0053）：
  * 早先它只进碰撞、不进贴图，玩家会在门洞之外撞到一道看不见的墙。
  */
-const RESTROOM_ZONE_W = 140;
+const RESTROOM_ZONE_W = 100;
 const RESTROOM_LANE_W = RESTROOM_ZONE_W + WALL_THICKNESS;
 const RESTROOM_DIVIDER_X = [
   RESTROOM.x + WALL_THICKNESS + RESTROOM_ZONE_W,
@@ -460,13 +474,13 @@ const restroomDividers: SolidRect[] = RESTROOM_DIVIDER_X.flatMap((x) => [
 ]);
 
 /**
- * 卫生间坑位（ADR-0053）：每侧三个，净宽 42 / 44 / 42 + 6px 隔断。
+ * 卫生间坑位（ADR-0053 / ADR-0077）：每侧两个，净宽 48 / 46 + 6px 隔断。
  *
- * 一条北墙从 2 个坑加到 3 个，房间尺寸不变：42 + 6 + 44 + 6 + 42 = 140，
- * 正好是一个分区的整宽。宽度首尾对称，所以女区从东往西排也自动是镜像。
- * 马桶落在格子中点，相邻两坑相距 49，仍满足座位表「两两间距 > 40」的断言。
+ * 房间收到 340 宽后，一个分区只剩 100：48 + 6 + 46 = 100，正好铺满。
+ * 48 在前、46 在后，让隔间木门与内隔墙之间留出 4px 余量，画起来不贴死。
+ * 马桶落在格子中点，相邻两坑相距 53，仍满足座位表「两两间距 > 40」的断言。
  */
-const STALL_WIDTHS = [42, 44, 42] as const;
+const STALL_WIDTHS = [48, 46] as const;
 
 /** 一个坑位：净宽区间 + 进深，以及右邻的隔断（最东一格贴内隔墙，没有隔断） */
 export interface RestroomStall {
@@ -505,7 +519,7 @@ export const RESTROOM_STALLS: ReadonlyArray<RestroomStall> = [
 /** 马桶贴房间北墙：与旧卫生间同一档「水箱离墙 56px」的坐点 */
 const TOILET_SEAT_Y = RESTROOM.y + WALL_THICKNESS + 78;
 
-/** 隔间隔断：每侧两片，夹出三格 */
+/** 隔间隔断：每侧一片，夹出两格 */
 const stallPartitions: SolidRect[] = RESTROOM_STALLS.flatMap((stall) =>
   stall.partition ? [stall.partition] : [],
 );
@@ -602,7 +616,7 @@ export const AREA_LOGOS: PropInstance[] = [
   { kind: 'logo', variant: 0, x: CAMPUS_RECT.x + 478, y: CAMPUS_RECT.y + 370 },
   { kind: 'logo', variant: 1, x: MEETING_ROOM.x + 344, y: MEETING_ROOM.y + 386 },
   { kind: 'logo', variant: 2, x: LOUNGE.x + 270, y: LOUNGE.y - 16 },
-  { kind: 'logo', variant: 3, x: RESTROOM.x + 270, y: RESTROOM.y - 16 },
+  { kind: 'logo', variant: 3, x: RESTROOM.x + 240, y: RESTROOM.y - 16 },
 ];
 
 /**
@@ -640,11 +654,14 @@ export const MEETING_PROPS: PropInstance[] = [
   { kind: 'bin', x: MEETING_ROOM.x + 424, y: MEETING_ROOM.y + 30 },
 ];
 
-/** 卫生间陈设：中央区南墙两个洗手台，门口一只垃圾桶 */
+/**
+ * 卫生间陈设：中央区南墙两个洗手台，门口一只垃圾桶。
+ * ADR-0077 后中央区只剩 100 宽（x+110 .. x+210），两个洗手台收在区内。
+ */
 export const RESTROOM_PROPS: PropInstance[] = [
-  { kind: 'sink', x: RESTROOM.x + 194, y: RESTROOM.y + 350 },
-  { kind: 'sink', x: RESTROOM.x + 264, y: RESTROOM.y + 350 },
-  { kind: 'bin', x: RESTROOM.x + 176, y: RESTROOM.y + 44 },
+  { kind: 'sink', x: RESTROOM.x + 146, y: RESTROOM.y + 290 },
+  { kind: 'sink', x: RESTROOM.x + 190, y: RESTROOM.y + 290 },
+  { kind: 'bin', x: RESTROOM.x + 134, y: RESTROOM.y + 44 },
 ];
 
 /** 工作区陈设：咖啡机与饮水机靠南缘，绿植与垃圾桶守两角；开放区没有墙可依 */
@@ -669,7 +686,7 @@ export const LOUNGE_PROPS: PropInstance[] = [
 export const DOOR_PAVING: WorldRect[] = [
   { x: MEETING_ROOM.x + 326, y: MEETING_ROOM.y + 360, w: 68, h: 36 },
   { x: LOUNGE.x + 196, y: LOUNGE.y - 36, w: 68, h: 36 },
-  { x: RESTROOM.x + 196, y: RESTROOM.y - 36, w: 68, h: 36 },
+  { x: RESTROOM.x + 146, y: RESTROOM.y - 36, w: 68, h: 36 },
   HOME_THEATER_DOOR_PAVING,
   JAIL_DOOR_PAVING,
 ];
