@@ -517,6 +517,12 @@ export class WorkerGameClient implements GameClient {
       case 'ventDealt':
         callbacks.onVentDealt?.();
         return;
+      case 'bossDown':
+        callbacks.onBossDown?.(message.local);
+        return;
+      case 'bossReset':
+        callbacks.onBossReset?.();
+        return;
       case 'boardOpen':
         callbacks.onBoardOpen?.();
         return;

@@ -147,7 +147,19 @@ export const OpCode = {
   /** 改名广播：`[op][entityId u16][len u16][utf8]` */
   S2C_NAME: 0x29,
   // 0x2a / 0x2b 曾是滑梯请求与滑行事件，ADR-0067 起永久留空，不复用编号
+  /**
+   * 发泄区老板血量：`[op][hp u16][attackerId u16][flags u8]`，6 字节定长。
+   *
+   * 纯下行快照：入场补发一次，之后每次命中广播一次。`flags bit0` 表示本次
+   * 归零（客户端只弹一次横幅），`bit1` 表示跨日重置（客户端恢复彩色）。
+   * 空挥不发包；同 Tick 多人命中按服务端裁决顺序各发一条。
+   */
+  S2C_BOSS: 0x2c,
 } as const;
+
+/** 老板血量包：flags bit0 = 本次归零，bit1 = 跨日重置 */
+export const BOSS_FLAG_DIED = 1;
+export const BOSS_FLAG_RESET = 1 << 1;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
 
@@ -278,6 +290,20 @@ export interface VentEventPacket {
   targetId: number;
   x: number;
   y: number;
+}
+
+/**
+ * 老板血量快照（`S2C_BOSS`）。
+ *
+ * `hp` 是全园区共享的当日剩余血量；`attackerId` 只用于让出招者本人播「-1」
+ * 飘字，0 表示入场补发或跨日重置。`died` / `reset` 由 flags 解出，避免
+ * 调用方自己记位。
+ */
+export interface BossPacket {
+  hp: number;
+  attackerId: number;
+  died: boolean;
+  reset: boolean;
 }
 
 /**

@@ -1,6 +1,7 @@
 import {
   ACTION,
   BOARD_METRIC_ALL,
+  BOSS,
   CHAT_HISTORY_FLAG,
   LIKE_FLAG_SELF,
   CHAT_HISTORY_PAGE_SIZE,
@@ -34,6 +35,7 @@ import {
   unpackState,
   type BoardMetric,
   type BoardPacket,
+  type BossPacket,
   type CareerSummary,
   type LikePacket,
   type CharacterAppearance,
@@ -61,7 +63,7 @@ import { type BoardEntry, type PlayerBadge } from './badge';
 import { ventOutcome } from './vent-outcome';
 import { toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
-import { HINT } from './hint-copy';
+import { HINT, resolveVisibleHint } from './hint-copy';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
 import { seatLift } from './seat-art';
 import { NEVER_SENT, shouldSendMove, type MoveSample } from './move-send';
@@ -83,6 +85,7 @@ import {
   pickLine,
   pickVentLine,
   pickVentVictimLine,
+  selectContextHint,
   snoreDue,
   type InteractiveTarget,
 } from './interactions';
@@ -165,6 +168,10 @@ export interface SessionCallbacks {
   onVentHit?(local: boolean): void;
   /** 本地成功击倒他人：空放不回调，旁观互殴也不回调 */
   onVentDealt?(): void;
+  /** 老板今天第一次被打倒：`local` 表示最后一下是不是自己踢的（ADR-0070） */
+  onBossDown?(local: boolean): void;
+  /** 跨日血量回满：宿主据此收起「老板倒下」提示 */
+  onBossReset?(): void;
   /** 在公告栏旁按了 F：宿主据此打开榜单面板并主动拉一次快照 */
   onBoardOpen?(): void;
   /** 在放假告示板旁按 F 或点击牌面：宿主据此展开软木看板（ADR-0060） */
@@ -274,10 +281,15 @@ export class GameSession {
   private localSeat = 0;
   /** 已发出入座 / 上床请求且尚未起身：只有此时服务端的占座结果才会吸附本地角色 */
   private seatIntent = false;
-  private seatHint: string | null = null;
+  /** 环境提示：按位置 / 朝向持续算出；瞬时文案只让它暂时让位，不阻断判定 */
+  private contextHint: string | null = null;
   private seatHintAt = 0;
-  /** 瞬时提示（被拦下 / 附近没东西）的展示截止时刻：期间不被环境提示覆盖 */
-  private hintUntil = 0;
+  /** 瞬时提示（被拦下 / 附近没东西）：到期后自动让回环境提示 */
+  private transientHint: string | null = null;
+  /** 瞬时提示的展示截止时刻：用真实时间，掉帧时 1.6s 不会被拉长 */
+  private transientUntil = 0;
+  /** 最近一次真正发给前端的值：只在变化时推送，避免每拍刷消息 */
+  private publishedHint: string | null = null;
   /** 互动节流与台词轮转序号：连按同一台机器也要隔一拍 */
   private interactAt = 0;
   private interactCount = 0;
@@ -459,6 +471,7 @@ export class GameSession {
       onSeatState: (entries) => this.handleSeatState(entries),
       onGraze: (id) => this.handleGraze(id),
       onVent: (packet) => this.handleVent(packet),
+      onBoss: (packet) => this.handleBoss(packet),
       onPing: (rtt) => {
         this.ping = rtt;
         this.jitter.onRtt(rtt);
@@ -922,37 +935,45 @@ export class GameSession {
   }
 
   /**
-   * 环境提示：已入座 → 附近床 → 附近坐位 → 放假告示板 → 牛马榜 → 附近设施，
-   * 只显示优先级最高的一条。
-   * 瞬时提示（被拦下 / 附近没东西）在 `hintUntil` 之前不被覆盖。
+   * 环境提示：已入座 → F 类互动（告示板 → 牛马榜 → 供案 → 茶台 → 设施），
+   * 都没有时才轮到 Z/X 类（座位 → 床）。
+   *
+   * 每 150ms 都重新算一遍，瞬时文案不再阻断判定；顺序与 `interact()` 严格一致，
+   * 否则会出现「提示说续杯、按下去却在接水」。F 类排在座位之前是必需的：座位感应圈
+   * 90px 远大于设施的 56px，办公区椅子密集，旧顺序下站在咖啡机旁只会看到「按 Z 坐下」。
    *
    * 告示板要求「在 64px 内且面朝板面」（ADR-0060）；牛马榜仍是纯距离判定，
    * 两者相距 272px，不会出现两条提示抢位。
    */
   private updateSeatHint(eid: number): void {
-    if (this.elapsed < this.hintUntil) return;
-    let hint: string | null = null;
     if (this.localSeat !== 0) {
-      hint = '移动即可起身';
+      this.contextHint = '移动即可起身';
     } else {
       const x = Position.x[eid]!;
       const y = Position.y[eid]!;
       const direction = Motion.direction[eid]! as Direction;
-      const isFree = (id: number) => !this.seatOwner.has(id);
-      const seat = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind !== 'bed');
-      const bed = findNearestSeat(x, y, isFree, SIT_RANGE, (item) => item.kind === 'bed');
-      if (seat) hint = seat.kind === 'toilet' ? HINT.toilet : HINT.seat;
-      else if (bed) hint = HINT.bed;
-      else if (isNearBulletin(x, y) && facesBulletin(x, y, direction)) hint = HINT.bulletin;
-      else if (isNearRankBoard(x, y)) hint = HINT.board;
-      // 国风玄学两处（ADR-0061）：与 `interact()` 的判定顺序严格一致，
-      // 否则会出现「提示说续杯、按下去却在接水」
-      else if (isNearShrine(x, y)) hint = HINT.shrine;
-      else if (isNearTeaStation(x, y)) hint = HINT.tea;
-      else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = HINT.interact;
+      this.contextHint = selectContextHint(x, y, direction, {
+        isFreeSeat: (id) => !this.seatOwner.has(id),
+        propOut: this.interactTarget,
+      });
     }
-    if (hint === this.seatHint) return;
-    this.seatHint = hint;
+    this.publishHint();
+  }
+
+  /**
+   * 把「这一拍该显示的提示」推给界面：瞬时文案优先，其余时间始终是环境提示。
+   * 只在值变化时发送，避免 150ms 一次刷消息；瞬时文案到期后这里会自然切回去，
+   * 玩家不再需要走开再走回来「唤醒」提示。
+   */
+  private publishHint(): void {
+    const hint = resolveVisibleHint(
+      this.contextHint,
+      this.transientHint,
+      this.transientUntil,
+      performance.now(),
+    );
+    if (hint === this.publishedHint) return;
+    this.publishedHint = hint;
     this.callbacks.onHint(hint);
   }
 
@@ -1105,8 +1126,12 @@ export class GameSession {
     this.entitySeat.clear();
     this.localSeat = 0;
     this.seatIntent = false;
-    this.seatHint = null;
-    this.hintUntil = 0;
+    this.contextHint = null;
+    this.transientHint = null;
+    this.transientUntil = 0;
+    this.publishedHint = null;
+    // 重连后前端可能还挂着上一座园区的旧文案：这里主动清一次
+    this.callbacks.onHint(null);
     this.interactAt = 0;
     this.lieAt = 0;
     this.snoreAt = 0;
@@ -1461,6 +1486,26 @@ export class GameSession {
   }
 
   /**
+   * 老板血量（ADR-0070）：入场快照、每次发泄结算与跨日重置共用这一条包。
+   * 渲染层自己按 hp 切换倒地状态，这里只负责转发与「是不是自己踹倒的」判定。
+   * 抖动挂在 attackerId 上而不是本地出招瞬间：服务端没判中就不该抖，否则玩家会以为打到了。
+   */
+  private handleBoss(packet: BossPacket): void {
+    this.renderer.setBossHp(packet.hp);
+    const byLocal = packet.attackerId !== 0 && packet.attackerId === this.localId;
+    if (byLocal) {
+      this.renderer.flashBossHit();
+      // 钝击音才在结算后补：10000 点血要踢很久，每脚都该听到「砰」而不是破空声
+      this.emitAudio({ kind: 'vent', x: BOSS.x, y: BOSS.y, hit: true, local: true });
+    }
+    if (packet.reset) {
+      this.callbacks.onBossReset?.();
+      return;
+    }
+    if (packet.died) this.callbacks.onBossDown?.(byLocal);
+  }
+
+  /**
    * 发泄结算（ADR-0051）：服务端裁定「谁打到了谁、对方落在哪」。
    *
    * 这条包不能省，因为本地玩家的姿态是客户端预测的——Tick 里的 state 对自己不生效，
@@ -1525,11 +1570,11 @@ export class GameSession {
     this.env.emitAudio(event, eid ? Position.x[eid]! : 0, eid ? Position.y[eid]! : 0);
   }
 
-  /** 瞬时提示：1.6s 内不被环境提示覆盖，足够读完一句 */
+  /** 瞬时提示：1.6s 内盖住环境提示，到期后由下一拍 `publishHint` 自动让回去 */
   private showHint(text: string): void {
-    this.hintUntil = this.elapsed + HINT_HOLD_MS;
-    this.seatHint = text;
-    this.callbacks.onHint(text);
+    this.transientHint = text;
+    this.transientUntil = performance.now() + HINT_HOLD_MS;
+    this.publishHint();
   }
 
   /** 三个叠加动作互斥：后按的打断先按的，连按从第 0 帧重播 */

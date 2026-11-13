@@ -74,4 +74,11 @@ describe('设施互动提示', () => {
     expect(render(HINT.seat, true)).toContain('bottom-56');
     expect(render(HINT.seat, false, true)).toContain('bottom-[296px]');
   });
+
+  it('桌面端提示抬到动作条上方并带层级，不会被读成动作条的一部分', () => {
+    const html = render(HINT.seat);
+    expect(html).toContain('bottom-[112px]');
+    expect(html).not.toContain('bottom-24 ');
+    expect(html).toContain('z-30');
+  });
 });

@@ -106,6 +106,8 @@ export function runWorkerHost(scope: WorkerScope): void {
         onNav: (nav) => post({ t: 'nav', nav }),
         onVentHit: (local) => post({ t: 'ventHit', local }),
         onVentDealt: () => post({ t: 'ventDealt' }),
+        onBossDown: (local) => post({ t: 'bossDown', local }),
+        onBossReset: () => post({ t: 'bossReset' }),
         onBoardOpen: () => post({ t: 'boardOpen' }),
         onBulletinOpen: () => post({ t: 'bulletinOpen' }),
         onBoard: (packet) => post({ t: 'board', packet }),

@@ -145,6 +145,11 @@ export function GameViewport({
   const [notice, setNotice] = useState<string | null>(
     fallbackFrom ? `${fallbackFrom}暂时不可达，已进入${parkName}` : null,
   );
+  /**
+   * 老板被打倒的轻提示（ADR-0070）：只在「1 → 0」那一次出现 4.5 秒。
+   * 不做常驻战报：血条与纸板名牌已经说明「今天打完了」，顶部再挂一行会变成噪声。
+   */
+  const [bossDown, setBossDown] = useState<{ local: boolean } | null>(null);
   /** 只有多园区部署时「切换园区」才有意义 */
   const canSwitchPark = parks.length > 1;
   /**
@@ -319,6 +324,13 @@ export function GameViewport({
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  // 老板倒下只轻提示 4.5s；跨日回满时若还挂着，由 onBossReset 立即清掉
+  useEffect(() => {
+    if (!bossDown) return;
+    const timer = window.setTimeout(() => setBossDown(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [bossDown]);
+
   useEffect(() => {
     const host = hostRef.current;
     const current = profileRef.current;
@@ -371,6 +383,8 @@ export function GameViewport({
           if (local) careerClockRef.current?.recordVented();
         },
         onVentDealt: () => careerClockRef.current?.recordKnockdown(),
+        onBossDown: (local) => setBossDown({ local }),
+        onBossReset: () => setBossDown(null),
         onBoardOpen: openBoard,
         onBulletinOpen: openBulletin,
         onBoard: (packet) => setBoards((prev) => ({ ...prev, [packet.metric]: packet })),
@@ -773,6 +787,21 @@ export function GameViewport({
             />
           )}
           <ConnectionBanner />
+          {/* 老板倒下：4.5s 轻提示，不挡血条与动作条 */}
+          {bossDown && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="pointer-events-none absolute left-1/2 top-24 z-30 -translate-x-1/2"
+            >
+              <div className="flex items-center gap-2 border-2 border-red-500/50 bg-ink-900/95 px-3 py-1.5 backdrop-blur">
+                <span className="h-2 w-2 shrink-0 bg-red-500" aria-hidden />
+                <span className="font-mono text-[11px] tracking-[0.18em] text-red-300">
+                  {bossDown.local ? '你一记发泄踹倒了老板 · 明天回满' : '老板今日已被打倒 · 明天回满'}
+                </span>
+              </div>
+            </div>
+          )}
           {/* 兜底告知条排在重连横幅下面：入场瞬间两者可能同时在，不能互相盖住 */}
           {notice && (
             <div role="status" className="pointer-events-none absolute left-1/2 top-32 z-30 -translate-x-1/2">

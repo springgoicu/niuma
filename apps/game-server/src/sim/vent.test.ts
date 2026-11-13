@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  BOSS,
+  BOSS_MAX_HP,
+  BOSS_SOLID,
   DEFAULT_APPEARANCE,
   DIRECTION,
+  OpCode,
   POSE,
   VENT_KNOCKBACK_PX,
   VENT_STUN_MS,
   WORLD_LAYOUT,
+  decodeBoss,
   isBlocked,
   packState,
   seatById,
@@ -278,6 +283,112 @@ describe('发泄的边沿与限频', () => {
 
     expect(sent).toHaveLength(0);
     expect(env.b.pose).toBe(POSE.Idle);
+  });
+});
+
+describe('发泄区老板', () => {
+  function bossFight(direction = DIRECTION.Up) {
+    const world = new World();
+    const grid = new SpatialGrid();
+    // 站在老板脚底南侧 12px：贴住脚底碰撞，向上出招正好踢到肚子
+    const attacker = world.create(
+      '甲',
+      DEFAULT_APPEARANCE.cow,
+      11,
+      BOSS.x,
+      BOSS_SOLID.y + BOSS_SOLID.h + 12,
+    )!;
+    attacker.applyState(direction, POSE.Idle, false, true);
+    grid.insert(attacker.id, attacker.x, attacker.y);
+    return { world, grid, attacker };
+  }
+
+  function bossEvents(sent: Sent[]) {
+    return sent
+      .filter((item) => item.data[0] === OpCode.S2C_BOSS)
+      .map((item) => ({ wsId: item.wsId, ...decodeBoss(item.data) }));
+  }
+
+  it('踢中一次扣 1 点，并把新血量发给所有真人连接', () => {
+    const env = bossFight();
+    const bystander = env.world.create('旁观', DEFAULT_APPEARANCE.cow, 13, 4096, 4096)!;
+    const { sent, transport } = recorder();
+
+    ventTick(env, transport, 10_000);
+
+    expect(env.world.boss.hp).toBe(BOSS_MAX_HP - 1);
+    const events = bossEvents(sent);
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.wsId).sort()).toEqual([11, 13]);
+    for (const event of events) {
+      expect(event).toMatchObject({ hp: BOSS_MAX_HP - 1, attackerId: env.attacker.id, died: false });
+    }
+    // 旁观者不在出招者视野内，仍应收到老板血包：血量是全园区共享状态
+    expect(bystander.known.size).toBe(0);
+  });
+
+  it('扇形内优先打玩家：老板不掉血', () => {
+    const env = bossFight();
+    const victim = env.world.create('乙', DEFAULT_APPEARANCE.cow, 12, BOSS.x, env.attacker.y - 24)!;
+    env.attacker.known.add(victim.id);
+    victim.known.add(env.attacker.id);
+    env.grid.insert(victim.id, victim.x, victim.y);
+    const { sent, transport } = recorder();
+
+    ventTick(env, transport, 10_000);
+
+    expect(victim.pose).toBe(POSE.Lie);
+    expect(env.world.boss.hp).toBe(BOSS_MAX_HP);
+    expect(bossEvents(sent)).toHaveLength(0);
+  });
+
+  it('入座者挡刀时按空放处理：老板不隔空掉血', () => {
+    const env = bossFight();
+    const sitter = env.world.create('乙', DEFAULT_APPEARANCE.cow, 12, BOSS.x, env.attacker.y - 24)!;
+    sitter.seat = 99;
+    env.attacker.known.add(sitter.id);
+    sitter.known.add(env.attacker.id);
+    env.grid.insert(sitter.id, sitter.x, sitter.y);
+    const { sent, transport } = recorder();
+
+    ventTick(env, transport, 10_000);
+
+    expect(env.world.boss.hp).toBe(BOSS_MAX_HP);
+    expect(bossEvents(sent)).toHaveLength(0);
+    // 仍然发一条 targetId=0 的发泄包，让出招者播破空动作
+    const vent = sent.find((item) => item.data[0] === OpCode.S2C_VENT);
+    expect(vent).toBeDefined();
+    expect(vent!.data[3]).toBe(0);
+    expect(vent!.data[4]).toBe(0);
+  });
+
+  it('距离外或背对老板都不掉血', () => {
+    const far = bossFight();
+    far.attacker.x = BOSS.x - 120;
+    far.attacker.y = BOSS_SOLID.y + BOSS_SOLID.h + 12;
+    const farTransport = recorder();
+    ventTick(far, farTransport.transport, 10_000);
+    expect(far.world.boss.hp).toBe(BOSS_MAX_HP);
+    expect(bossEvents(farTransport.sent)).toHaveLength(0);
+
+    const back = bossFight(DIRECTION.Down);
+    const backTransport = recorder();
+    ventTick(back, backTransport.transport, 10_000);
+    expect(back.world.boss.hp).toBe(BOSS_MAX_HP);
+    expect(bossEvents(backTransport.sent)).toHaveLength(0);
+  });
+
+  it('归零后继续踢只播动作，不再扣血也不再发血包', () => {
+    const env = bossFight();
+    for (let i = 0; i < BOSS_MAX_HP; i += 1) env.world.boss.hit(env.attacker.id, 10_000);
+    expect(env.world.boss.hp).toBe(0);
+    const { sent, transport } = recorder();
+
+    ventTick(env, transport, 10_000);
+
+    expect(env.world.boss.hp).toBe(0);
+    expect(bossEvents(sent)).toHaveLength(0);
+    expect(sent.some((item) => item.data[0] === OpCode.S2C_VENT)).toBe(true);
   });
 });
 

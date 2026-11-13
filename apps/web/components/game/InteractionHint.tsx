@@ -16,7 +16,9 @@ function placement(hint: string, isTouch: boolean, portrait: boolean): string {
     // 竖屏要避开聊天面板与动作盘，横屏/桌面按原有偏移
     return portrait ? 'bottom-[300px] right-3' : isTouch ? 'bottom-56 right-3' : 'bottom-28 right-4';
   }
-  return `left-1/2 -translate-x-1/2 ${portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-24'}`;
+  // 桌面动作条（7 个纵向按钮）顶边距底约 95px：96px（bottom-24）会和它贴死，
+  // 视觉上被读成动作条的一部分，所以再抬高一档留出明确间隙
+  return `left-1/2 -translate-x-1/2 ${portrait ? 'bottom-[296px]' : isTouch ? 'bottom-56' : 'bottom-[112px]'}`;
 }
 
 /**
@@ -35,7 +37,7 @@ export function InteractionHint({ hint, isTouch, portrait, onAction }: Interacti
     return (
       <div
         role="status"
-        className={`pointer-events-none absolute ${where} border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm`}
+        className={`pointer-events-none absolute z-30 ${where} border-2 border-ink-600 bg-ink-900/92 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-500 backdrop-blur-sm`}
       >
         {isTouch ? touchHint(hint) : hint}
       </div>
@@ -44,7 +46,7 @@ export function InteractionHint({ hint, isTouch, portrait, onAction }: Interacti
 
   return (
     // key 让换设施时重播一次入场，不打断提示内容的连续更新
-    <div key={hint} className={`pointer-events-none absolute ${where}`}>
+    <div key={hint} className={`pointer-events-none absolute z-30 ${where}`}>
       <button
         type="button"
         onClick={() => {

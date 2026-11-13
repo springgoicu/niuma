@@ -18,3 +18,4 @@ export * from './world/layout';
 export * from './world/park';
 export * from './world/collision';
 export * from './world/vent';
+export * from './world/boss';

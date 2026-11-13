@@ -4,12 +4,14 @@ import {
   VENT_FACING,
   VENT_KNOCKBACK_PX,
   VENT_STUN_MS,
+  bossHitPoint,
   encodeVent,
   quantizeCoord,
   resolveMotionInto,
   withinVentCone,
   type MotionTarget,
 } from '@niuma/shared-types';
+import { broadcastBoss } from './boss';
 import type { SpatialGrid } from '../spatial/grid';
 import type { Player, World } from './world';
 import type { Transport } from './view';
@@ -57,6 +59,8 @@ export function resolveVents(
     const target = nearestInCone(world, attacker, now);
     if (!target) {
       broadcastVent(world, attacker, 0, 0, 0, transport);
+      // 只有「扇形内没有可命中玩家」才轮到老板；入座者挡刀的那条分支不会走到这里
+      resolveBossHit(world, attacker, now, transport);
       continue;
     }
 
@@ -87,6 +91,25 @@ export function resolveVents(
 
     broadcastVent(world, attacker, target.id, target.x, target.y, transport);
   }
+}
+
+/**
+ * 老板受击：把「踢向肚子」折算成受击矩形上最近的一点，再复用同一把扇形尺子。
+ *
+ * 这样正面、侧面都能踢到，距离太远或背对则打不到；老板归零后继续出招只保留
+ * 发泄动作，不再产生血包（客户端也不再看到「-1」）。
+ */
+function resolveBossHit(world: World, attacker: Player, now: number, transport: Transport): void {
+  const hit = bossHitPoint(attacker.x, attacker.y);
+  if (!withinVentCone(attacker.x, attacker.y, attacker.direction, hit.x, hit.y)) return;
+  const result = world.boss.hit(attacker.id, now);
+  if (!result) return;
+  broadcastBoss(world, transport, {
+    hp: result.hp,
+    attackerId: result.attackerId,
+    died: result.justDied,
+    reset: false,
+  });
 }
 
 /**

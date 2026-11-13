@@ -16,6 +16,7 @@ import {
   type CharacterAppearance,
 } from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
+import { BossView } from './boss';
 import { BulletinView } from './bulletin';
 import { DanmakuField, type DanmakuMessage } from './danmaku';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
@@ -713,6 +714,8 @@ export class GameRenderer {
   private shrine?: ShrineView;
   /** 老干部紫砂茶台：紫砂壶、白瓷杯与蒸汽（ADR-0061） */
   private tea?: TeaStationView;
+  /** 发泄区胖老板：地面垫子、200×256 本体、血条与倒地纸板（ADR-0070） */
+  private boss?: BossView;
   /** 门头牌匾与对联：三座自建牌坊（ADR-0061） */
   private plaques?: PlaqueView;
   /** 游乐园：入口门头、滑梯、秋千、跷跷板、旋转木马与灯串 */
@@ -952,6 +955,10 @@ export class GameRenderer {
     this.shrine.build(this.sortLayer);
     this.tea = new TeaStationView(this.app.renderer);
     this.tea.build(this.sortLayer);
+
+    // 发泄区（ADR-0070）：垫子铺在地面层，本体按脚底 y 排序，血条与名牌进标签层
+    this.boss = new BossView(this.app.renderer, this.metrics.devicePxPerTexel);
+    this.boss.build(this.sortLayer, this.props.base, this.labels);
 
     // 门头牌匾（ADR-0061）：墙体是平铺色带没有立面，所以每处门头自带一座牌坊
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
@@ -1247,6 +1254,16 @@ export class GameRenderer {
     this.ritual.grantAura(performance.now(), durationMs);
   }
 
+  /** 老板血量：下行广播与入场快照都走这里（ADR-0070） */
+  setBossHp(hp: number): void {
+    this.boss?.setHp(hp);
+  }
+
+  /** 本地踢中反馈：先抖一下，不等服务端回包 */
+  flashBossHit(): void {
+    this.boss?.flashHit();
+  }
+
   tickBubbles(dtMs: number): void {
     const now = performance.now();
 
@@ -1289,6 +1306,7 @@ export class GameRenderer {
     // 职场玄学两处的常驻微动（青烟 / 蒸汽）与一次性反馈（金色飘字、首香光晕）
     this.shrine?.update(dtMs);
     this.tea?.update(dtMs);
+    this.boss?.update(dtMs);
     this.ritual?.update(now);
     if (this.auraEid !== 0) {
       const auraView = this.views.get(this.auraEid);
@@ -1457,6 +1475,7 @@ export class GameRenderer {
     this.ritual?.setTextResolution(next.devicePxPerTexel);
     this.plaques?.setTextResolution(next.devicePxPerTexel);
     this.park?.setTextResolution(next.devicePxPerTexel);
+    this.boss?.setTextResolution(next.devicePxPerTexel);
   }
 
   get entityCount(): number {
@@ -1525,6 +1544,7 @@ export class GameRenderer {
     this.festival?.destroy();
     this.shrine?.destroy();
     this.tea?.destroy();
+    this.boss?.destroy();
     this.plaques?.destroy();
     this.park?.destroy();
     this.ritual?.destroy();

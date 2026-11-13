@@ -5,14 +5,18 @@ import {
   DIRECTION,
   POSE,
   SHRINE_ALTAR,
+  SIT_RANGE,
   TEA_STATION,
   WELCOME_LANDMARKS,
   WORLD_LAYOUT,
+  bossHitPoint,
+  findNearestSeat,
   type Direction,
   type Pose,
   type PropKind,
   type SeatKind,
 } from '@niuma/shared-types';
+import { HINT } from './hint-copy';
 
 /**
  * 轻互动：售货机、饮水机、咖啡机的一次性反馈，与躺床打呼。
@@ -56,6 +60,25 @@ export function isNearBulletin(x: number, y: number, range: number = BULLETIN_IN
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
   const dx = x - BULLETIN_BOARD.x;
   const dy = y - BULLETIN_BOARD.y;
+  return dx * dx + dy * dy <= range * range;
+}
+
+/**
+ * 发泄区老板（ADR-0070）。
+ *
+ * 感应区不是「到中心点的距离」：老板 200×256，中心点在肚子里面，
+ * 玩家站到脚底南侧时离中心还有 100 多 px，那样提示永远不出现。
+ * 这里量的是「到受击矩形的最近点」——和 `withinVentCone` 用的同一个折算点，
+ * 提示范围与服务端判定范围不会一个够得着、一个够不着。
+ */
+export const BOSS_INTERACT_RANGE = 72;
+
+/** 是否站在老板脚边、正面能踹到肚子 */
+export function isNearBoss(x: number, y: number, range: number = BOSS_INTERACT_RANGE): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  const hit = bossHitPoint(x, y);
+  const dx = x - hit.x;
+  const dy = y - hit.y;
   return dx * dx + dy * dy <= range * range;
 }
 
@@ -184,6 +207,45 @@ export function nearestInteractiveProp(
 ): { kind: InteractiveKind; x: number; y: number } | null {
   const out: InteractiveTarget = { kind: 'vending', x: 0, y: 0 };
   return nearestInteractivePropInto(out, x, y, range) ? out : null;
+}
+
+/** `selectContextHint` 的输入：座位是否空闲由调用方提供（客户端查本地占用镜像） */
+export interface ContextHintOptions {
+  isFreeSeat: (seatId: number) => boolean;
+  /** 复用调用方的设施查询槽，避免每拍造一份短命字面量 */
+  propOut?: InteractiveTarget;
+  sitRange?: number;
+}
+
+/**
+ * 当前站位该显示哪一条环境提示；不在任何感应区时返回 null。
+ *
+ * 顺序与 `GameSession.interact()` 严格一致（告示板 → 牛马榜 → 供案 → 茶台 → 设施），
+ * 避免出现「提示说续杯、按下去却在接水」。
+ *
+ * 与旧实现的关键差别：F 类互动整体排在 Z/X 类（座位 → 床）之前。旧顺序把座位放最前，
+ * 而座位半径 90px 比设施 56px 大得多——办公区椅子密集，站在咖啡机 / 饮水机旁时
+ * 几乎永远只看到「按 Z 坐下」，互动提示被静默顶掉。
+ */
+export function selectContextHint(
+  x: number,
+  y: number,
+  direction: Direction,
+  options: ContextHintOptions,
+): string | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  if (isNearBulletin(x, y) && facesBulletin(x, y, direction)) return HINT.bulletin;
+  if (isNearRankBoard(x, y)) return HINT.board;
+  if (isNearShrine(x, y)) return HINT.shrine;
+  if (isNearBoss(x, y)) return HINT.boss;
+  if (isNearTeaStation(x, y)) return HINT.tea;
+  const prop = options.propOut ?? { kind: 'vending', x: 0, y: 0 };
+  if (nearestInteractivePropInto(prop, x, y)) return HINT.interact;
+  const range = options.sitRange ?? SIT_RANGE;
+  const seat = findNearestSeat(x, y, options.isFreeSeat, range, (item) => item.kind !== 'bed');
+  if (seat) return seat.kind === 'toilet' ? HINT.toilet : HINT.seat;
+  const bed = findNearestSeat(x, y, options.isFreeSeat, range, (item) => item.kind === 'bed');
+  return bed ? HINT.bed : null;
 }
 
 /** 按互动次数取台词：同一个 counter 永远同一句，便于单测与复现 */

@@ -29,6 +29,7 @@ import {
   encodeAppearanceBroadcast,
   encodeBoard,
   encodeCareerBroadcast,
+  encodeBoss,
   encodeChatHistory,
   encodeGraze,
   encodeNameBroadcast,
@@ -64,6 +65,7 @@ import { applyMove } from './sim/movement';
 import { resolveSpawn } from './sim/resume';
 import { SeatRegistry } from './sim/seats';
 import { runTick } from './sim/tick';
+import { broadcastBoss } from './sim/boss';
 import { resolveVents } from './sim/vent';
 import { broadcastDespawn, refreshView, type Transport } from './sim/view';
 import { World } from './sim/world';
@@ -262,6 +264,9 @@ export function startGameServer(config: ServerConfig) {
         sessionSec,
       }),
     );
+    // 入场补发老板当前血量：新玩家不必等到下一次有人出招才知道血条位置。
+    // 这里不调 syncDay，跨日重置只由 Tick 广播，避免入场者把 reset 事件吞掉。
+    ws.send(encodeBoss({ hp: world.boss.hp, attackerId: 0, died: false, reset: false }));
     const occupied = seats.snapshot();
     if (occupied.length > 0) ws.send(encodeSeatState(occupied));
     // 历史必须早于 refreshView：known 一旦建立，实时聊天才可能到达这个 socket；
@@ -740,6 +745,17 @@ export function startGameServer(config: ServerConfig) {
     for (const { wsId, status } of admission.statuses(now, world.humans)) {
       const socket = sockets.get(wsId);
       if (socket && socket.readyState === 1) socket.send(encodeQueueStatus(status));
+    }
+
+    // 跨日重置必须先于发泄裁决：否则零点后的第一脚会先扣在昨日的 0 上，
+    // 客户端要等下一 Tick 才看到回满。重置只广播一条 6 字节快照。
+    if (world.boss.syncDay(now)) {
+      broadcastBoss(world, transport, {
+        hp: world.boss.hp,
+        attackerId: 0,
+        died: false,
+        reset: true,
+      });
     }
 
     // 发泄结算必须跑在 runTick 之前：受害者被推开的坐标与躺姿要赶在同一 Tick 的

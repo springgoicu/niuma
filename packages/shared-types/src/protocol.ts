@@ -48,6 +48,7 @@ import {
   SESSION_EXTENSION_BYTES,
   SESSION_EXTENSION_MAGIC,
   STATUS_EXTENSION_MAGIC,
+  BOSS_PACKET_BYTES,
   SYNC_CAPABILITY_MAGIC,
   SYNC_ENTRY_BYTES,
   SYNC_ENTRY_BYTES_COMPACT,
@@ -75,6 +76,7 @@ import type {
   ChatHistoryEntry,
   ChatHistoryPacket,
   ChatHistoryRequest,
+  BossPacket,
   ChatPacket,
   ChatSendPacket,
   EntitySnapshot,
@@ -88,7 +90,8 @@ import type {
   VentEventPacket,
   WelcomePacket,
 } from './types';
-import { OpCode, QUEUE_REJECT_REASON } from './types';
+import { BOSS_FLAG_DIED, BOSS_FLAG_RESET, OpCode, QUEUE_REJECT_REASON } from './types';
+import { BOSS_MAX_HP } from './world/boss';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -905,6 +908,37 @@ export function decodeVent(data: Uint8Array): VentEventPacket {
   if (reader.u8() !== OpCode.S2C_VENT) throw new Error('not a vent packet');
   // 坐标保持量化口径：调用方用 dequantizeCoord 还原成世界像素，与移动包同一把尺子
   return { attackerId: reader.u16(), targetId: reader.u16(), x: reader.u16(), y: reader.u16() };
+}
+
+/**
+ * 老板血量：`[op][hp u16][attackerId u16][flags u8]`，6 字节定长。
+ *
+ * 只传变化量，不传坐标：老板是静态地标，位置由 shared-types 常量固定。
+ * flags 只编码两个一次性事件，其余位留给未来且被解码端忽略。
+ */
+export function encodeBoss(packet: BossPacket): Uint8Array {
+  const flags = (packet.died ? BOSS_FLAG_DIED : 0) | (packet.reset ? BOSS_FLAG_RESET : 0);
+  const writer = new ByteWriter(BOSS_PACKET_BYTES);
+  writer.u8(OpCode.S2C_BOSS).u16(packet.hp).u16(packet.attackerId).u8(flags);
+  return writer.finish();
+}
+
+export function decodeBoss(data: Uint8Array): BossPacket {
+  if (data.byteLength !== BOSS_PACKET_BYTES) {
+    throw new Error(`boss packet must be ${BOSS_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_BOSS) throw new Error('not a boss packet');
+  // 服务端只会写 0..10000；解码端仍夹一次，坏包不至于把血条画成负数或超长
+  const hp = Math.min(reader.u16(), BOSS_MAX_HP);
+  const attackerId = reader.u16();
+  const flags = reader.u8();
+  return {
+    hp,
+    attackerId,
+    died: (flags & BOSS_FLAG_DIED) !== 0,
+    reset: (flags & BOSS_FLAG_RESET) !== 0,
+  };
 }
 
 /**

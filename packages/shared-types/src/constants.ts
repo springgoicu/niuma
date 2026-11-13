@@ -164,6 +164,8 @@ export const RESUME_BYTES = 8;
 export const QUEUE_STATUS_BYTES = 16;
 /** 发泄结算：op(1) + attackerId(2) + targetId(2) + x(2) + y(2) */
 export const VENT_PACKET_BYTES = 9;
+/** 老板血量：op(1) + hp(2) + attackerId(2) + flags(1) */
+export const BOSS_PACKET_BYTES = 6;
 /** 排队拒绝：op(1) + reason(1) */
 export const QUEUE_REJECT_BYTES = 2;
 /** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */

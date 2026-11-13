@@ -97,6 +97,10 @@ export type WorkerToMain =
   | { t: 'ventHit'; local: boolean }
   /** 本地成功击倒他人：击倒数 +1 */
   | { t: 'ventDealt' }
+  /** 老板被打倒：`local` 表示最后一脚是不是自己踢的（ADR-0070） */
+  | { t: 'bossDown'; local: boolean }
+  /** 跨日老板回满血：主线程收起顶部提示 */
+  | { t: 'bossReset' }
   /** 在公告栏旁按了 F：主线程打开榜单面板并请求快照 */
   | { t: 'boardOpen' }
   /** 在放假告示板旁按 F / 点击牌面：主线程展开软木看板（ADR-0059） */

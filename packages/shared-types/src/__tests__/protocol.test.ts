@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   APPEARANCE_BYTES,
   APPEARANCE_COLOR_KEYS,
+  BOSS_FLAG_DIED,
+  BOSS_FLAG_RESET,
+  BOSS_MAX_HP,
+  BOSS_PACKET_BYTES,
   CAREER_EXTENSION_MAGIC,
   CAREER_FIXED_BYTES,
   CAREER_MAX_BYTES,
@@ -31,6 +35,7 @@ import {
   DEFAULT_APPEARANCE,
   decodeAppearance,
   decodeAppearanceBroadcast,
+  decodeBoss,
   decodeCareer,
   decodeCareerBroadcast,
   decodeCareerReport,
@@ -56,6 +61,7 @@ import {
   directionFromVector,
   encodeAppearance,
   encodeAppearanceBroadcast,
+  encodeBoss,
   encodeChatBroadcast,
   encodeChatHistory,
   encodeChatHistoryRequest,
@@ -385,6 +391,58 @@ describe('发泄结算包', () => {
   it('拒绝错误 opcode 与错误长度', () => {
     expect(() => decodeVent(encodeGraze(1))).toThrow(/must be 9 bytes/);
     expect(() => decodeVent(encodeVent(1, 1, 1, 1).subarray(0, 8))).toThrow(/must be 9 bytes/);
+  });
+});
+
+describe('发泄区老板血量包', () => {
+  it('6 字节定长，round-trip 血量 / 出招者 / 状态位', () => {
+    const packet = encodeBoss({ hp: 9500, attackerId: 513, died: false, reset: false });
+    expect(packet.byteLength).toBe(BOSS_PACKET_BYTES);
+    expect(packet.byteLength).toBe(6);
+    expect(packet[0]).toBe(OpCode.S2C_BOSS);
+    expect(decodeBoss(packet)).toEqual({ hp: 9500, attackerId: 513, died: false, reset: false });
+  });
+
+  it('归零与跨日重置各占一位，可同时出现', () => {
+    expect(decodeBoss(encodeBoss({ hp: 0, attackerId: 7, died: true, reset: false }))).toEqual({
+      hp: 0,
+      attackerId: 7,
+      died: true,
+      reset: false,
+    });
+    expect(decodeBoss(encodeBoss({ hp: BOSS_MAX_HP, attackerId: 0, died: false, reset: true }))).toEqual({
+      hp: BOSS_MAX_HP,
+      attackerId: 0,
+      died: false,
+      reset: true,
+    });
+    expect(
+      decodeBoss(encodeBoss({ hp: 0, attackerId: 0, died: true, reset: true })),
+    ).toEqual({ hp: 0, attackerId: 0, died: true, reset: true });
+  });
+
+  it('解码端把越界血量夹回 0..10000', () => {
+    // 坏包 / 旧服务端都可能写超上界；渲染层不应拿到 65535
+    expect(decodeBoss(encodeBoss({ hp: 65535, attackerId: 1, died: false, reset: false })).hp).toBe(
+      BOSS_MAX_HP,
+    );
+    expect(decodeBoss(encodeBoss({ hp: 0, attackerId: 1, died: false, reset: false })).hp).toBe(0);
+  });
+
+  it('拒绝错误 opcode 与错误长度', () => {
+    expect(() => decodeBoss(encodeGraze(1))).toThrow(/must be 6 bytes/);
+    expect(() => decodeBoss(encodeVent(1, 1, 1, 1))).toThrow(/must be 6 bytes/);
+    expect(() => decodeBoss(encodeBoss({ hp: 1, attackerId: 1, died: false, reset: false }).subarray(0, 5))).toThrow(
+      /must be 6 bytes/,
+    );
+  });
+
+  it('flags 只认低两位，未知位不改变语义', () => {
+    const packet = new Uint8Array([OpCode.S2C_BOSS, 0xd2, 0x04, 0x02, 0x00, 0xf0]);
+    const decoded = decodeBoss(packet);
+    expect(decoded).toEqual({ hp: 1234, attackerId: 2, died: false, reset: false });
+    expect(BOSS_FLAG_DIED).toBe(1);
+    expect(BOSS_FLAG_RESET).toBe(2);
   });
 });
 

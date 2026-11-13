@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { HINT, hintButton, touchHint } from '../hint-copy';
+import { HINT, hintButton, resolveVisibleHint, touchHint } from '../hint-copy';
 
 /** 动作盘上真实存在的按钮名：说法必须指向其中之一，否则玩家找不到按钮 */
-const TOUCH_BUTTONS = ['坐下', '躺平', '互动', '起身'];
+const TOUCH_BUTTONS = ['跳', '招手', '发泄', '吃草', '坐下', '躺平', '互动', '起身'];
 
 describe('触屏提示文案', () => {
   it('每条带按键的提示都有触屏说法，且不再出现「按 」', () => {
@@ -81,5 +81,19 @@ describe('设施提示按钮映射', () => {
     for (const copy of ['toString', 'constructor', '__proto__']) {
       expect(hintButton(copy)).toBeNull();
     }
+  });
+});
+
+describe('提示让位', () => {
+  it('瞬时文案只在到期前优先，到期后自动回到环境提示', () => {
+    expect(resolveVisibleHint(HINT.interact, '已到达食堂', 2000, 1500)).toBe('已到达食堂');
+    // 到期这一刻不再需要玩家走开再走回来「唤醒」
+    expect(resolveVisibleHint(HINT.interact, '已到达食堂', 2000, 2000)).toBe(HINT.interact);
+    expect(resolveVisibleHint(HINT.interact, '已到达食堂', 2000, 2600)).toBe(HINT.interact);
+  });
+
+  it('没有瞬时文案时始终显示环境提示，环境提示为空时就是空', () => {
+    expect(resolveVisibleHint(HINT.interact, null, 0, 10)).toBe(HINT.interact);
+    expect(resolveVisibleHint(null, null, 0, 10)).toBeNull();
   });
 });

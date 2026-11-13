@@ -5,6 +5,7 @@ import {
   OpCode,
   decodeAppearanceBroadcast,
   decodeBoard,
+  decodeBoss,
   decodeCareerBroadcast,
   decodeChatBroadcast,
   decodeChatHistory,
@@ -38,6 +39,7 @@ import {
   ByteWriter,
   type BoardMetric,
   type BoardPacket,
+  type BossPacket,
   type CareerSummary,
   type CharacterAppearance,
   type ChatHistoryPacket,
@@ -98,6 +100,8 @@ export interface NetHandlers {
    * 受害者的新坐标与躺姿走 Tick，这条包只负责「归因」与硬直的起点。
    */
   onVent(packet: VentEventPacket): void;
+  /** 老板血量：入场快照、每次发泄结算与跨日重置都走这一条（ADR-0070） */
+  onBoss(packet: BossPacket): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -330,6 +334,9 @@ export class NetClient {
         break;
       case OpCode.S2C_VENT:
         this.handlers.onVent(decodeVent(data));
+        break;
+      case OpCode.S2C_BOSS:
+        this.handlers.onBoss(decodeBoss(data));
         break;
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));

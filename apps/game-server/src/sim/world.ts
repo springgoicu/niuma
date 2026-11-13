@@ -1,3 +1,4 @@
+import { BossRuntime } from './boss';
 import {
   DEFAULT_APPEARANCE,
   DIRECTION,
@@ -267,6 +268,8 @@ export class Player {
 /** 进程内世界：没有数据库、没有快照、断开即回收 */
 export class World {
   readonly players = new Map<number, Player>();
+  /** 发泄区老板：静态地标，不占实体 id，也不进入 AOI 与同步快照 */
+  readonly boss = new BossRuntime();
   private readonly pool: Player[] = [];
   private nextId = 1;
   /** 真人数：准入、排队与在线统计的唯一口径，NPC 永不参与 */

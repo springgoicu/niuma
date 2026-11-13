@@ -71,6 +71,7 @@ import {
   PARK_PROPS,
   PARK_RIDE_SOLIDS,
 } from './park';
+import { BOSS_ARENA, BOSS_SOLID } from './boss';
 
 export {
   BENCH_SEAT_OFFSET,
@@ -911,6 +912,8 @@ const REGIONS: RegionSpec[] = [
   { name: '卫生间', rect: RESTROOM },
   // 校园与庭院之间的独立影厅（本轮新增）
   { name: '家庭影音室', rect: HOME_THEATER },
+  // 发泄区（ADR-0070）：必须排在广场扩展带之前，否则北半区会显示成广场
+  { name: '发泄区', rect: BOSS_ARENA },
   // 圆庭外缘 120px 的迎宾带：拱门、四向导览牌与四向路口都算广场
   { name: '中央迎宾广场', rect: rectExpanded(PLAZA, 120) },
   { name: '办公区', rect: CAMPUS_RECT },
@@ -1007,6 +1010,8 @@ function isPlantable(x: number, y: number): boolean {
   // 竹林留白：这两片交给竹子，普通树不再混长进来（ADR-0061 的「替换部分普通树木」）
   for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
   if (rectContains(rectExpanded(SOUTH_YARD, 40), x, y)) return false;
+  // 发泄区地面与老板占地内不长树（ADR-0070）
+  if (rectContains(rectExpanded(BOSS_ARENA, 8), x, y)) return false;
   for (const paving of DOOR_PAVING) if (rectContains(rectExpanded(paving, 40), x, y)) return false;
   for (const path of PATHS) {
     if (pointInPolygon(x, y, path.polygon)) return false;
@@ -1437,6 +1442,8 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...PARK_RIDE_SOLIDS,
     // 静态大件底座（摩天轮 / 小火车 / 沙池 / 喷泉）
     ...PARK_ATTRACTION_SOLIDS,
+    // 发泄区老板脚底（ADR-0070）：只挡地面那一截
+    { kind: 'prop', ...BOSS_SOLID },
   ],
   buildings: [...CAMPUS_BUILDINGS, PARK_BUILDING],
   paved: [SOUTH_YARD_PAVING, PARK_GATE_PAVING, ...DOOR_PAVING],

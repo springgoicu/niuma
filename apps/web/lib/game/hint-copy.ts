@@ -21,6 +21,8 @@ export const HINT = {
   shrine: '[F] 上香祈福',
   /** 老干部紫砂茶台（ADR-0061） */
   tea: '[F] 续杯养生茶',
+  /** 发泄区老板（ADR-0070）：出招键是 E，不是互动键 F */
+  boss: '[E] 发泄·踹老板一脚',
   lieOnSeat: '座位上不能躺，先按 Z 起身',
   sitOnBed: '床上只能躺，按 X 起身',
   bedOnly: '床上只能躺，按 X 上床',
@@ -52,6 +54,7 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.interact]: { action: 'interact', label: '互动', key: 'F' },
   [HINT.shrine]: { action: 'interact', label: '上香祈福', key: 'F' },
   [HINT.tea]: { action: 'interact', label: '续杯养生茶', key: 'F' },
+  [HINT.boss]: { action: 'vent', label: '发泄', key: 'E' },
   // 劝阻文案没有可执行动作：保留纯文本，避免把「不能躺」渲染成按钮
   [HINT.lieOnSeat]: null,
   [HINT.sitOnBed]: null,
@@ -80,6 +83,7 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.interact]: '点「互动」',
   [HINT.shrine]: '点「互动」上香祈福',
   [HINT.tea]: '点「互动」续杯养生茶',
+  [HINT.boss]: '点「发泄」踹老板一脚',
   [HINT.lieOnSeat]: '座位上不能躺，先点「起身」',
   [HINT.sitOnBed]: '床上只能躺，点「起身」',
   [HINT.bedOnly]: '床上只能躺，点「躺平」',
@@ -88,4 +92,19 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
 /** 无按键的提示（已到达某地、附近没有设施等）原样透传，不做通用替换 */
 export function touchHint(hint: string): string {
   return (TOUCH_HINTS as Record<string, string>)[hint] ?? hint;
+}
+
+/**
+ * 这一拍该发到界面上的提示：瞬时文案在到期前优先，其余时间始终回到环境提示。
+ *
+ * 环境提示从不被阻断，只是暂时让位；`now` 与 `transientUntil` 用同一时钟
+ * （`performance.now()`），掉帧时 1.6 秒不会被截断成好几秒。
+ */
+export function resolveVisibleHint(
+  context: string | null,
+  transient: string | null,
+  transientUntil: number,
+  now: number,
+): string | null {
+  return transient !== null && now < transientUntil ? transient : context;
 }
