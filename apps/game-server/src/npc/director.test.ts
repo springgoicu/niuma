@@ -2,13 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import { PLAYER_RADIUS, isBlocked } from '@niuma/shared-types';
 import { DEFAULT_NPC_CONFIG } from './config';
 import { createNpcDirector } from './director';
-import { ChatHistory } from '../sim/history';
 import { runTick } from '../sim/tick';
 import type { Transport } from '../sim/view';
 import { World } from '../sim/world';
 import { SpatialGrid } from '../spatial/grid';
 
-function setup(count = 10, seed = 1) {
+function setup(count = 2, seed = 1) {
   const world = new World();
   const grid = new SpatialGrid();
   const packets: Array<{ wsId: number; data: Uint8Array }> = [];
@@ -17,26 +16,25 @@ function setup(count = 10, seed = 1) {
       packets.push({ wsId, data });
     },
   };
-  const history = new ChatHistory(20, 60_000);
   const director = createNpcDirector({
     world,
     grid,
     transport,
     config: { ...DEFAULT_NPC_CONFIG, count, seed },
-    chatHistory: history,
   });
-  return { world, grid, packets, transport, history, director };
+  return { world, grid, packets, transport, director };
 }
 
 describe('NPC 生成', () => {
-  it('默认生成 10 位同事：不占真人名额，全部进入空间索引', () => {
+  it('默认生成 2 位同事 + 3 位保安：不占真人名额，全部进入空间索引', () => {
     const { world, grid, director } = setup();
     director.spawn();
-    expect(director.count).toBe(10);
-    expect(world.npcCount).toBe(10);
+    expect(director.count).toBe(5);
+    expect(director.guardCount).toBe(3);
+    expect(world.npcCount).toBe(5);
     expect(world.humans).toBe(0);
-    expect(world.size).toBe(10);
-    expect(grid.size).toBe(10);
+    expect(world.size).toBe(5);
+    expect(grid.size).toBe(5);
     for (const player of world.players.values()) {
       expect(player.isNpc).toBe(true);
       expect(player.wsId).toBe(0);
@@ -53,16 +51,17 @@ describe('NPC 生成', () => {
   });
 
   it('重复 spawn 不会生成第二批', () => {
-    const { world, director } = setup(10);
+    const { world, director } = setup(2);
     director.spawn();
     director.spawn();
-    expect(world.npcCount).toBe(10);
+    expect(world.npcCount).toBe(5);
   });
 
-  it('数量按配置生效，且每人都有合法名字与考勤', () => {
+  it('数量按配置生效，保安固定 3 位，且每人都有合法名字与考勤', () => {
     const { world, director } = setup(6, 9);
     director.spawn();
-    expect(world.npcCount).toBe(6);
+    expect(world.npcCount).toBe(9);
+    expect(director.guardCount).toBe(3);
     for (const player of world.players.values()) {
       expect(player.name.length).toBeGreaterThan(0);
       expect(player.career.firstJoinDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -72,7 +71,7 @@ describe('NPC 生成', () => {
 
 describe('NPC 推进', () => {
   it('连续 2000 Tick 始终站在可走位置，不产生 NaN', () => {
-    const { world, director } = setup(10, 3);
+    const { world, director } = setup(2, 3);
     director.spawn();
     const now = Date.now();
     for (let index = 0; index < 2_000; index += 1) {
@@ -87,7 +86,7 @@ describe('NPC 推进', () => {
   });
 
   it('初始停顿期间不产生 dirty：静止的同事一个字节都不发', () => {
-    const { world, grid, packets, transport, director } = setup(10, 4);
+    const { world, grid, packets, transport, director } = setup(2, 4);
     director.spawn();
     // 先跑一帧，清掉出生时的 needsViewRefresh 与基准
     runTick(world, grid, transport, 1);

@@ -7,7 +7,14 @@ import {
   Text,
   type Texture,
 } from 'pixi.js';
-import { ISLAND, WORLD_LAYOUT, isWadingAt, seatById, type CharacterAppearance } from '@niuma/shared-types';
+import {
+  ENTITY_ROLE_GUARD,
+  ISLAND,
+  WORLD_LAYOUT,
+  isWadingAt,
+  seatById,
+  type CharacterAppearance,
+} from '@niuma/shared-types';
 import { loadAtlas, type Atlas } from './atlas';
 import { BulletinView } from './bulletin';
 import { DanmakuField, type DanmakuMessage } from './danmaku';
@@ -43,6 +50,14 @@ import {
 } from './nameplate';
 import { PonyRenderer } from './pony';
 import type { PonyMotion } from './pony-motion';
+import {
+  BEACON_BLUE,
+  BEACON_HEIGHT,
+  BEACON_OFF_ALPHA,
+  BEACON_RED,
+  BEACON_WIDTH,
+  beaconPhase,
+} from './police-beacon';
 import { PropsView } from './props';
 import {
   normalizeDpr,
@@ -177,6 +192,12 @@ class EntityView {
   private readonly FADE_DURATION = 400; // 淡出持续时间 ms
 
   readonly bubble = new Container();
+  /** 是否保安：只有保安才有警灯，也只在 beacons 集合里逐帧更新 */
+  readonly isGuard: boolean;
+  /** 警灯容器：挂在 labels 上，不被树冠遮挡 */
+  private beacon: Container | null = null;
+  private beaconRed: Graphics | null = null;
+  private beaconBlue: Graphics | null = null;
 
   constructor(
     private readonly atlas: Atlas,
@@ -187,7 +208,9 @@ class EntityView {
     shadows: Texture[],
     wadingTexture: Texture,
     private readonly onFootfall: (x: number, y: number, wading: boolean) => void,
+    role = 0,
   ) {
+    this.isGuard = role === ENTITY_ROLE_GUARD;
     this.textResolution = devicePxPerTexel;
     // 接触阴影先入容器：它永远压在所有角色图层之下。
     // 阴影是 root 的直接子节点，角色本体的起伏只作用在 body.container 上，
@@ -241,6 +264,27 @@ class EntityView {
     this.bubble.visible = false;
     this.bubble.addChild(this.bubbleBg, this.bubbleText);
     this.shadow = shadowSprite;
+
+    // 保安警灯：灯座 + 红蓝双灯，底边贴在头顶文字上方 3px
+    if (this.isGuard) {
+      const top = this.statusText
+        ? statusBottomY(this.nameBottom, this.label.height) - Math.ceil(this.statusText.height) - 3
+        : this.nameBottom - this.label.height - 3;
+      const beacon = new Container();
+      beacon.position.set(0, top);
+      const housing = new Graphics();
+      const half = Math.round(BEACON_WIDTH / 2);
+      housing.rect(-half, -BEACON_HEIGHT, BEACON_WIDTH, BEACON_HEIGHT).fill(0x1a1f2a);
+      housing.rect(-half + 1, -BEACON_HEIGHT + 1, BEACON_WIDTH - 2, BEACON_HEIGHT - 2).fill(0x0d1119);
+      const red = new Graphics();
+      red.rect(-4, -4, 4, 3).fill(BEACON_RED);
+      const blue = new Graphics();
+      blue.rect(1, -4, 4, 3).fill(BEACON_BLUE);
+      beacon.addChild(housing, red, blue);
+      this.beacon = beacon;
+      this.beaconRed = red;
+      this.beaconBlue = blue;
+    }
   }
 
   private readonly shadow: Sprite;
@@ -251,7 +295,16 @@ class EntityView {
     this.root.addChild(this.shadow, this.body.container, this.wading);
     // 状态行先入层：它永远在昵称与气泡之上，层级顺序不影响永不重叠的几何
     if (this.statusText) this.labels.addChild(this.statusText);
+    if (this.beacon) this.labels.addChild(this.beacon);
     this.labels.addChild(this.label, this.bubble);
+  }
+
+  /** 警灯相位：红蓝交替；没有警灯的实体不在 beacons 集合里，不会被调用 */
+  updateBeacon(now: number): void {
+    if (!this.beaconRed || !this.beaconBlue) return;
+    const phase = beaconPhase(now);
+    this.beaconRed.alpha = phase === 0 ? 1 : BEACON_OFF_ALPHA;
+    this.beaconBlue.alpha = phase === 0 ? BEACON_OFF_ALPHA : 1;
   }
 
   /** DPR 变化时按新的设备纹素重建文字位图，否则文字会被拉伸到 2 倍而发虚 */
@@ -640,6 +693,8 @@ export class GameRenderer {
   private sortLayer!: SortLayer;
   private readonly labels = new Container();
   private readonly views = new Map<number, EntityView>();
+  /** 只有保安加入：逐帧更新警灯，避免遍历全部实体 */
+  private readonly beacons = new Set<EntityView>();
   private atlas!: Atlas;
   private terrain?: TerrainView;
   private props?: PropsView;
@@ -949,6 +1004,7 @@ export class GameRenderer {
     status: string,
     x = 0,
     y = 0,
+    role = 0,
   ): Promise<void> {
     if (!this.ready || this.views.has(id)) return;
     
@@ -978,6 +1034,7 @@ export class GameRenderer {
           }
         }
       },
+      role,
     );
     
     try {
@@ -1007,6 +1064,7 @@ export class GameRenderer {
     
     // 所有检查通过，正式加入渲染系统
     this.views.set(id, view);
+    if (view.isGuard) this.beacons.add(view);
     // 先把位置摆好再挂进 band：否则首帧会停在 (0,0)，在地图左上角闪一下
     const sx = snapTexel(x);
     const sy = snapTexel(y);
@@ -1022,6 +1080,7 @@ export class GameRenderer {
     const view = this.views.get(id);
     if (view) {
       this.views.delete(id);
+      this.beacons.delete(view);
       view.destroy();
     }
     
@@ -1196,6 +1255,9 @@ export class GameRenderer {
 
     // 星星与气泡同一个节拍：两者都挂在头顶，同一帧推进不会互相错位
     this.stunStars?.update(now, this.views);
+
+    // 警灯只遍历保安集合：普通实体与真人不会被每帧白算一次
+    for (const view of this.beacons) view.updateBeacon(now);
 
     // 职场玄学两处的常驻微动（青烟 / 蒸汽）与一次性反馈（金色飘字、首香光晕）
     this.shrine?.update(dtMs);

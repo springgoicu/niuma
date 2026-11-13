@@ -1,8 +1,10 @@
 'use client';
 
-import { EYEWEAR_IDS, HAIR_IDS, HEADWEAR_IDS, NECKWEAR_IDS, PATTERN_IDS, SNOUT_IDS, TAIL_IDS } from '@niuma/shared-types';
+import { EYEWEAR_IDS, HAIR_IDS, PATTERN_IDS, SNOUT_IDS, TAIL_IDS } from '@niuma/shared-types';
 import {
   PART_META,
+  PLAYER_HEADWEAR_IDS,
+  PLAYER_NECKWEAR_IDS,
   extraOptions,
   partItemLabel,
   partValue,
@@ -167,9 +169,9 @@ export function PartRail({ mobileTab, className = '' }: { mobileTab?: CreatorTab
         {partGroup('extra', extraOptions(appearance.species), (_id, index) => setExtra(index))}
         {partGroup('tail', TAIL_IDS, (_id, index) => setTail(index))}
 
-        {cosmeticGroup('headwear', HEADWEAR_IDS)}
+        {cosmeticGroup('headwear', PLAYER_HEADWEAR_IDS)}
         {cosmeticGroup('eyewear', EYEWEAR_IDS)}
-        {cosmeticGroup('neckwear', NECKWEAR_IDS)}
+        {cosmeticGroup('neckwear', PLAYER_NECKWEAR_IDS)}
         {cosmeticGroup('hairstyle', HAIR_IDS)}
 
         <p className="mt-6 border-t border-ink-700/70 pt-4 text-[11px] leading-[1.7] text-mist-400">

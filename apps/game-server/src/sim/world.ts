@@ -28,6 +28,8 @@ export class Player {
    * 「是不是 NPC」只影响准入与展示口径，不影响实体行为。
    */
   isNpc = false;
+  /** 实体角色：0 普通 / 1 保安。随 spawn 包下发给客户端画警灯 */
+  role = 0;
   name = '';
   appearance: CharacterAppearance = DEFAULT_APPEARANCE.cow;
   /** 常驻状态：空串表示没设置，只活在内存里，不进任何持久层 */
@@ -193,6 +195,7 @@ export class Player {
     this.id = 0;
     this.wsId = 0;
     this.isNpc = false;
+    this.role = 0;
     this.name = '';
     this.appearance = DEFAULT_APPEARANCE.cow;
     this.status = '';
@@ -333,10 +336,12 @@ export class World {
     status = '',
     joinedAt = Date.now(),
     career?: CareerSummary,
+    role = 0,
   ): Player | null {
     const player = this.create(name, appearance, 0, x, y, status, joinedAt);
     if (!player) return null;
     player.isNpc = true;
+    player.role = role;
     // create 已按真人记账，这里改成 NPC：两边都必须是 O(1)
     this.humanCount -= 1;
     this.npcTotal += 1;

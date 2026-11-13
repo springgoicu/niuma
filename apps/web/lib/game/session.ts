@@ -560,7 +560,7 @@ export class GameSession {
     // 先塞一帧快照：回放缓冲有时间戳，不塞的话这个人在延迟窗口内没有数据可采样。
     // 坐标取自 spawn 包，姿态与叠加位则由随后的 sync 校正。
     this.ecs.remote.push(eid, performance.now(), x, y, packet.state);
-    void this.renderer.addEntity(id, name, appearance, status ?? '', x, y);
+    void this.renderer.addEntity(id, name, appearance, status ?? '', x, y, packet.role ?? 0);
   }
 
   private handleDespawn(id: number): void {

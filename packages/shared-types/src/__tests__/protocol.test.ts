@@ -14,6 +14,7 @@ import {
   DANMAKU_META_BYTES,
   DANMAKU_MODE,
   DIRECTION,
+  ENTITY_ROLE_GUARD,
   LIMIT_KIND,
   MOVE_PACKET_BYTES,
   POSE,
@@ -808,6 +809,69 @@ describe('spawn / despawn / chat / hello', () => {
     const decoded = decodeAppearanceBroadcast(packet);
     expect(decoded.entityId).toBe(77);
     expect(decoded.appearance.species).toBe('cow');
+  });
+
+  it('carries entity role for guards and omits it for everyone else', () => {
+    const guard = decodeSpawn(
+      encodeSpawn({
+        id: 1,
+        x: 0,
+        y: 0,
+        state: 0,
+        name: '保安',
+        appearance: DEFAULT_APPEARANCE.cow,
+        role: ENTITY_ROLE_GUARD,
+      }),
+    );
+    expect(guard.role).toBe(ENTITY_ROLE_GUARD);
+
+    const worker = decodeSpawn(
+      encodeSpawn({ id: 2, x: 0, y: 0, state: 0, name: '同事', appearance: DEFAULT_APPEARANCE.cow }),
+    );
+    expect(worker.role).toBeUndefined();
+  });
+
+  it('reads role together with status, career and likes', () => {
+    const decoded = decodeSpawn(
+      encodeSpawn({
+        id: 3,
+        x: 0,
+        y: 0,
+        state: 0,
+        name: '保安',
+        appearance: DEFAULT_APPEARANCE.cow,
+        status: '执勤中',
+        onlineSec: 90,
+        career: CAREER,
+        likes: 5,
+        role: ENTITY_ROLE_GUARD,
+      }),
+    );
+    expect(decoded.status).toBe('执勤中');
+    expect(decoded.onlineSec).toBe(90);
+    expect(decoded.career).toEqual(CAREER);
+    expect(decoded.likes).toBe(5);
+    expect(decoded.role).toBe(ENTITY_ROLE_GUARD);
+  });
+
+  it('cached body + role matches whole-packet encoding', () => {
+    const name = '保安';
+    const body = buildSpawnBody(name, DEFAULT_APPEARANCE.horse);
+    const writer = new ByteWriter(256);
+    encodeSpawnInto(writer, 9, 100, 200, 7, body, 61, CAREER, undefined, 5, ENTITY_ROLE_GUARD);
+    const direct = encodeSpawn({
+      id: 9,
+      x: 100,
+      y: 200,
+      state: 7,
+      name,
+      appearance: DEFAULT_APPEARANCE.horse,
+      onlineSec: 61,
+      career: CAREER,
+      likes: 5,
+      role: ENTITY_ROLE_GUARD,
+    });
+    expect([...writer.finish()]).toEqual([...direct]);
   });
 });
 

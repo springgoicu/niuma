@@ -190,6 +190,11 @@ export interface SpawnPacket {
    * 旧服务端不带这一段时为 undefined，按 0 展示；只有大于 0 才写进包，省 3 字节。
    */
   likes?: number;
+  /**
+   * 实体角色（0 普通 / 1 保安）。只有保安才写这一段；
+   * 旧服务端不带时为 undefined，客户端按普通实体渲染，不画警灯。
+   */
+  role?: number;
 }
 
 /** 考勤摘要广播：`entityId` 是被围观者，payload 与 HELLO / SPAWN 的尾部段一致。 */

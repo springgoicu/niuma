@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 import { MAX_NAME_CHARS, MAX_NAME_DISPLAY_UNITS } from '@niuma/shared-types';
 import { createRng } from './rng';
-import { buildNpcAppearance, buildNpcCareer, buildNpcRoster } from './roster';
+import {
+  NPC_ROLE_GUARD,
+  NPC_ROLE_WORKER,
+  buildNpcAppearance,
+  buildNpcCareer,
+  buildNpcRoster,
+} from './roster';
 
 const NOW = 1_700_000_000_000;
 const SPEED = { min: 0.62, max: 0.95 };
@@ -15,20 +21,42 @@ function displayWidth(text: string): number {
 
 describe('NPC 名册', () => {
   it('同一颗种子生成同一批同事：名字、步速与出生时刻都可复现', () => {
-    const first = buildNpcRoster(createRng(42), 10, { speed: SPEED, now: NOW });
-    const second = buildNpcRoster(createRng(42), 10, { speed: SPEED, now: NOW });
+    const counts = { workers: 2, guards: 3 };
+    const first = buildNpcRoster(createRng(42), counts, { speed: SPEED, now: NOW });
+    const second = buildNpcRoster(createRng(42), counts, { speed: SPEED, now: NOW });
     expect(first.map((profile) => profile.name)).toEqual(second.map((profile) => profile.name));
     expect(first.map((profile) => profile.speedFactor)).toEqual(second.map((profile) => profile.speedFactor));
     expect(first.map((profile) => profile.joinedAt)).toEqual(second.map((profile) => profile.joinedAt));
   });
 
-  it('10 个名字互不重复，字符数与显示宽度都合法', () => {
-    const roster = buildNpcRoster(createRng(7), 10, { speed: SPEED, now: NOW });
-    expect(new Set(roster.map((profile) => profile.name)).size).toBe(10);
+  it('2 位同事 + 3 位保安名字互不重复，是 2–3 个汉字且显示宽度合法', () => {
+    const roster = buildNpcRoster(createRng(7), { workers: 2, guards: 3 }, { speed: SPEED, now: NOW });
+    expect(roster.length).toBe(5);
+    expect(new Set(roster.map((profile) => profile.name)).size).toBe(5);
     for (const profile of roster) {
-      expect([...profile.name].length).toBeLessThanOrEqual(MAX_NAME_CHARS);
+      const chars = [...profile.name].length;
+      expect(chars).toBeGreaterThanOrEqual(2);
+      expect(chars).toBeLessThanOrEqual(3);
+      expect(chars).toBeLessThanOrEqual(MAX_NAME_CHARS);
       expect(displayWidth(profile.name)).toBeLessThanOrEqual(MAX_NAME_DISPLAY_UNITS);
-      expect(profile.name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('保安穿整套警服且不设状态，普通同事不会混入警用件', () => {
+    const roster = buildNpcRoster(createRng(7), { workers: 2, guards: 3 }, { speed: SPEED, now: NOW });
+    const guards = roster.filter((profile) => profile.role === NPC_ROLE_GUARD);
+    const workers = roster.filter((profile) => profile.role === NPC_ROLE_WORKER);
+    expect(guards.length).toBe(3);
+    expect(workers.length).toBe(2);
+
+    for (const guard of guards) {
+      expect(guard.appearance.cosmetics.headwear).toBe('police_cap');
+      expect(guard.appearance.cosmetics.neckwear).toBe('epaulette');
+      expect(guard.status).toBe('');
+    }
+    for (const worker of workers) {
+      expect(worker.appearance.cosmetics.headwear).not.toBe('police_cap');
+      expect(worker.appearance.cosmetics.neckwear).not.toBe('epaulette');
     }
   });
 
@@ -80,7 +108,7 @@ describe('NPC 名册', () => {
   });
 
   it('步速有快有慢，且永不越过真人速度', () => {
-    const roster = buildNpcRoster(createRng(5), 10, { speed: SPEED, now: NOW });
+    const roster = buildNpcRoster(createRng(5), { workers: 10, guards: 0 }, { speed: SPEED, now: NOW });
     for (const profile of roster) {
       expect(profile.speedFactor).toBeGreaterThanOrEqual(SPEED.min);
       expect(profile.speedFactor).toBeLessThanOrEqual(SPEED.max);
@@ -89,7 +117,7 @@ describe('NPC 名册', () => {
   });
 
   it('入场时刻早于当下 30 分钟到 6 小时：工牌看起来已经上了一阵班', () => {
-    const roster = buildNpcRoster(createRng(9), 10, { speed: SPEED, now: NOW });
+    const roster = buildNpcRoster(createRng(9), { workers: 10, guards: 0 }, { speed: SPEED, now: NOW });
     for (const profile of roster) {
       const elapsed = NOW - profile.joinedAt;
       expect(elapsed).toBeGreaterThanOrEqual(1_800_000);
@@ -97,9 +125,9 @@ describe('NPC 名册', () => {
     }
   });
 
-  it('数量超过名字池时允许重名，但不会少生成或崩溃', () => {
-    const roster = buildNpcRoster(createRng(13), 64, { speed: SPEED, now: NOW });
+  it('取满上限 64 位也不会重名：组合空间远大于数量上限', () => {
+    const roster = buildNpcRoster(createRng(13), { workers: 64, guards: 0 }, { speed: SPEED, now: NOW });
     expect(roster.length).toBe(64);
-    expect(roster.every((profile) => profile.name.length > 0)).toBe(true);
+    expect(new Set(roster.map((profile) => profile.name)).size).toBe(64);
   });
 });

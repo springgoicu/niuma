@@ -19,18 +19,17 @@ import {
   type NpcAgent,
 } from './brain';
 import { createRng } from './rng';
-import { NPC_REGIONS, pickSpawnPoint } from './spots';
+import { pickSpawnPoint } from './spots';
 import { World } from '../sim/world';
 
 const NOW = 1_700_000_000_000;
 
 function makeAgent(seed: number): { agent: NpcAgent; rng: ReturnType<typeof createRng> } {
   const world = new World();
-  const region = NPC_REGIONS[0]!;
   const rng = createRng(seed);
-  const spawn = pickSpawnPoint(rng, region);
+  const spawn = pickSpawnPoint(rng);
   const player = world.createNpc('测试同事', DEFAULT_APPEARANCE.cow, spawn.x, spawn.y, '', NOW)!;
-  return { agent: createAgent(rng, player, region, 0.8, 0, DEFAULT_NPC_CONFIG, NOW), rng };
+  return { agent: createAgent(rng, player, 0.8, DEFAULT_NPC_CONFIG, NOW), rng };
 }
 
 describe('停顿时长', () => {

@@ -14,9 +14,9 @@
  * 16 × 1.25 = 20，所以帽子相对头宽的比例和旧版完全一致，不需要重调锚点偏移。
  */
 export const COSMETIC_CATALOG = {
-  head: ['grad', 'cap', 'beret', 'helmet', 'top', 'god_of_wealth', 'bamboo_hat', 'curse_hoop'],
+  head: ['grad', 'cap', 'beret', 'helmet', 'top', 'god_of_wealth', 'bamboo_hat', 'curse_hoop', 'police_cap'],
   eyes: ['round', 'sun', 'monocle'],
-  neck: ['scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant'],
+  neck: ['scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant', 'epaulette'],
   hair: ['buzz', 'bangs', 'ponytail', 'afro', 'slick', 'topknot', 'braid'],
 } as const;
 
@@ -277,6 +277,38 @@ function drawHeadwear(id: string, dir: CosmeticDirection): Icon {
     icon.rect(1, 8, 18, 1, SHADE);
     icon.rect(1, 9, 18, 1, TRIM);
     icon.rect(2, 10, 16, 1, DEEP);
+  } else if (id === 'police_cap') {
+    // 大檐警帽（保安专用）：平顶 + 深色帽箍 + 宽帽檐 + 正中帽徽。
+    // 帽檐压在 row 7–8，比其它帽子高一档，给帽徽留出完整的帽箍高度。
+    if (dir === 'side') {
+      icon.rect(8, 1, 6, 1, SHADE);
+      icon.rect(6, 2, 9, 1, BASE);
+      icon.rect(5, 3, 10, 1, BASE);
+      icon.rect(5, 4, 10, 1, TRIM);
+      icon.rect(5, 5, 10, 2, DEEP);
+      icon.rect(10, 4, 2, 2, TRIM);
+      icon.rect(4, 7, 14, 1, BASE);
+      icon.rect(4, 8, 13, 1, SHADE);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      // 背面：没有檐，后箍收口
+      icon.rect(6, 1, 8, 1, SHADE);
+      icon.rect(5, 2, 10, 1, BASE);
+      icon.rect(4, 3, 12, 1, BASE);
+      icon.rect(4, 4, 12, 1, TRIM);
+      icon.rect(4, 5, 12, 2, DEEP);
+      icon.rect(8, 7, 4, 1, SHADE);
+      return finished(icon);
+    }
+    icon.rect(6, 1, 8, 1, SHADE);
+    icon.rect(5, 2, 10, 1, BASE);
+    icon.rect(4, 3, 12, 1, BASE);
+    icon.rect(4, 4, 12, 1, TRIM);
+    icon.rect(4, 5, 12, 2, DEEP);
+    icon.rect(8, 4, 4, 2, TRIM);
+    icon.rect(2, 7, 16, 1, BASE);
+    icon.rect(2, 8, 16, 1, SHADE);
   } else {
     // 赛博紧箍咒（ADR-0061）：贴前额的一圈金箍（row 10–12），
     // 上下各留一档亮边当「自带辉光」，正中 3×3 空心方环读成卷云纹。
@@ -485,6 +517,26 @@ function drawNeckwear(id: string, dir: CosmeticDirection): Icon {
     icon.rect(8, 14, 4, 1, TRIM);
     icon.rect(9, 12, 2, 2, SHADE);
     icon.set(9, 12, OUTLINE);
+    return finished(icon);
+  }
+
+  if (id === 'epaulette') {
+    // 肩章 + 反光条（保安专用）：颈线压深色领口，左右肩章各带一颗星点，
+    // 胸前两条横向反光条是最容易读的「制服」信号。
+    if (dir === 'side') {
+      icon.rect(6, 8, 8, 1, DEEP);
+      icon.rect(12, 10, 3, 2, BASE);
+      icon.set(13, 10, TRIM);
+      icon.rect(7, 13, 8, 1, TRIM);
+      icon.rect(8, 15, 6, 1, TRIM);
+      return finished(icon);
+    }
+    icon.band(8, 5, DEEP);
+    icon.pair(2, 10, 3, 2, BASE);
+    icon.set(3, 10, TRIM);
+    icon.set(16, 10, TRIM);
+    icon.band(13, 6, TRIM);
+    icon.band(15, 5, TRIM);
     return finished(icon);
   }
 

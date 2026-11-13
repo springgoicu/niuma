@@ -3,6 +3,7 @@ export * from './constants';
 export * from './danmaku';
 export * from './career';
 export * from './like';
+export * from './role';
 export * from './name';
 export * from './quantize';
 export * from './catalog';

@@ -153,24 +153,20 @@ export function startGameServer(config: ServerConfig) {
    *
    * 与真人共用实体通道，因此 AOI、去脏广播、地形碰撞与工牌渲染全部复用；
    * 人数容量、排队与榜单只读 `world.humans`，NPC 永远不占真人的名额。
-   * `GAME_NPC_COUNT=0` 是完整回滚开关：不生成、不广播、不发言。
+   * `GAME_NPC_COUNT=0` 是完整回滚开关：不生成、不广播。
    */
   const npcs = createNpcDirector({
     world,
     grid,
     transport,
     config: config.npc,
-    chatHistory,
-    // 外置台词进频道前过一遍与昵称同一套审核；拒绝整条丢弃（fail-closed）
-    inspect: (text) => {
-      const verdict = moderation.inspect(text);
-      return verdict.verdict === 'reject' ? null : verdict.text;
-    },
   });
   const npcSampler = new RingSampler(1200);
   npcs.spawn();
   if (npcs.count > 0) {
-    console.log(`[npc] count=${npcs.count} seed=${config.npc.seed} chat=${config.npc.chat ? 'on' : 'off'}`);
+    console.log(
+      `[npc] count=${npcs.count} guards=${npcs.guardCount} seed=${config.npc.seed}`,
+    );
   }
 
   /**
@@ -625,6 +621,7 @@ export function startGameServer(config: ServerConfig) {
             npcs: world.npcCount,
             npc: {
               count: npcs.count,
+              guards: npcs.guardCount,
               // 只展示同事自身的推进耗时；tickMs 仍是包含它的真实总耗时
               updateMs: {
                 avg: Number(npcSampler.average().toFixed(3)),

@@ -23,6 +23,9 @@ export const TAIL_IDS = ['tuft', 'long'] as const;
  * ADR-0061：国风件全部追加在末尾。
  * 头饰 6→9、颈饰 3→5、发型 5→7；字节编号仍是 `[27..30]` 各一字节，
  * 32 字节外观编码不需要改协议，旧档的字节值语义保持原样。
+ *
+ * 警用件（保安专用）继续追加在末尾：头饰 9、颈饰 6。
+ * 捏人界面会过滤掉这两件，只有服务端 NPC 的保安档案会使用它们。
  */
 export const HEADWEAR_IDS = [
   'none',
@@ -34,9 +37,18 @@ export const HEADWEAR_IDS = [
   'god_of_wealth',
   'bamboo_hat',
   'curse_hoop',
+  'police_cap',
 ] as const;
 export const EYEWEAR_IDS = ['none', 'round', 'sun', 'monocle'] as const;
-export const NECKWEAR_IDS = ['none', 'scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant'] as const;
+export const NECKWEAR_IDS = [
+  'none',
+  'scarf',
+  'collar',
+  'phones',
+  'chinese_knot',
+  'jade_pendant',
+  'epaulette',
+] as const;
 export const HAIR_IDS = ['none', 'buzz', 'bangs', 'ponytail', 'afro', 'slick', 'topknot', 'braid'] as const;
 
 export type PatternId = (typeof PATTERN_IDS)[number];

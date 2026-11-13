@@ -148,6 +148,13 @@ export function extraOptions(species: Species): readonly string[] {
   return species === 'cow' ? HORN_IDS : MANE_IDS;
 }
 
+/**
+ * 捏人界面可选的配件目录：警用件只给服务端保安使用，不对玩家开放。
+ * 外观编码仍保留完整目录，玩家旧档如果带着警用索引也会被正常解析。
+ */
+export const PLAYER_HEADWEAR_IDS = HEADWEAR_IDS.filter((id) => id !== 'police_cap');
+export const PLAYER_NECKWEAR_IDS = NECKWEAR_IDS.filter((id) => id !== 'epaulette');
+
 const EXTRA_LABELS: Record<Species, Record<string, string>> = {
   cow: { none: '无角', spike: '尖角', curve: '弯角', broken: '断角' },
   horse: { short: '短鬃', long: '披肩长发', mohawk: '莫西干' },
@@ -181,6 +188,7 @@ export const PART_META: Record<
       god_of_wealth: '财神官帽',
       bamboo_hat: '江湖斗笠',
       curse_hoop: '赛博紧箍',
+      police_cap: '大檐警帽',
     },
   },
   eyewear: {
@@ -200,6 +208,7 @@ export const PART_META: Record<
       phones: '挂脖耳机',
       chinese_knot: '吉祥中国结',
       jade_pendant: '翡翠平安扣',
+      epaulette: '肩章反光条',
     },
   },
   hairstyle: {
@@ -263,11 +272,11 @@ export function partCatalog(appearance: CharacterAppearance, part: PartKey): rea
     case 'tail':
       return TAIL_IDS;
     case 'headwear':
-      return HEADWEAR_IDS;
+      return PLAYER_HEADWEAR_IDS;
     case 'eyewear':
       return EYEWEAR_IDS;
     case 'neckwear':
-      return NECKWEAR_IDS;
+      return PLAYER_NECKWEAR_IDS;
     default:
       return HAIR_IDS;
   }

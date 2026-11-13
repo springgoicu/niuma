@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   DEFAULT_APPEARANCE,
+  ENTITY_ROLE_GUARD,
   OpCode,
   SPAWN_CENTER,
   decodeSpawn,
@@ -8,13 +9,12 @@ import {
 } from '@niuma/shared-types';
 import { DEFAULT_NPC_CONFIG } from './config';
 import { createNpcDirector } from './director';
-import { ChatHistory } from '../sim/history';
 import { runTick } from '../sim/tick';
 import { refreshView, type Transport } from '../sim/view';
 import { World } from '../sim/world';
 import { SpatialGrid } from '../spatial/grid';
 
-function setup(count = 10, seed = 21) {
+function setup(count = 2, seed = 21) {
   const world = new World();
   const grid = new SpatialGrid();
   const packets: Array<{ wsId: number; data: Uint8Array }> = [];
@@ -28,7 +28,6 @@ function setup(count = 10, seed = 21) {
     grid,
     transport,
     config: { ...DEFAULT_NPC_CONFIG, count, seed },
-    chatHistory: new ChatHistory(20, 60_000),
   });
   return { world, grid, packets, transport, director };
 }
@@ -47,8 +46,8 @@ describe('NPC 与真人共享实体通道', () => {
     refreshView(human, world, grid, transport);
 
     const spawnPackets = packets.filter((packet) => packet.data[0] === OpCode.S2C_ENTITY_SPAWN);
-    // 前四位固定分到广场，1000px 视野内至少能看到他们
-    expect(spawnPackets.length).toBeGreaterThanOrEqual(4);
+    // 第 1 位同事与第 1 位保安从广场出发，1000px 视野内至少能看到他们
+    expect(spawnPackets.length).toBeGreaterThanOrEqual(2);
     expect(spawnPackets.every((packet) => packet.wsId === human.wsId)).toBe(true);
     // wsId=0 的下行已经被短路径挡掉：NPC 不会收到自己的包
     expect(packets.some((packet) => packet.wsId === 0)).toBe(false);
@@ -60,6 +59,11 @@ describe('NPC 与真人共享实体通道', () => {
       expect(npcIds.has(decodeSpawn(packet.data).id)).toBe(true);
     }
     expect(human.known.size).toBe(spawnPackets.length);
+
+    // 广场固定位：一名普通同事（无 role 段）+ 一名保安（0xfd 段）
+    const roles = spawnPackets.map((packet) => decodeSpawn(packet.data).role);
+    expect(roles).toContain(ENTITY_ROLE_GUARD);
+    expect(roles.some((role) => role === undefined)).toBe(true);
   });
 
   it('known 双向对称：NPC 也把真人放进自己的邻居集合', () => {
@@ -104,7 +108,7 @@ describe('NPC 与真人共享实体通道', () => {
   });
 
   it('真人离开视野外不会收到 NPC 的包：只有 known 里的人收', () => {
-    const { world, grid, packets, transport, director } = setup(10, 23);
+    const { world, grid, packets, transport, director } = setup(2, 23);
     director.spawn();
     const human = joinHuman(world, grid);
     refreshView(human, world, grid, transport);

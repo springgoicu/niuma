@@ -20,6 +20,7 @@ import {
   MAX_LIKES,
   type LikePacket,
 } from './like';
+import { ROLE_EXTENSION_BYTES, ROLE_EXTENSION_MAGIC } from './role';
 import {
   APPEARANCE_BYTES,
   CAREER_EXTENSION_MAGIC,
@@ -712,6 +713,8 @@ export function encodeSpawnInto(
   careerSegment?: Uint8Array,
   /** 工牌点赞数（ADR-0057）：只写 > 0 的 3 字节尾段 */
   likes?: number,
+  /** 实体角色（0 普通 / 1 保安）：只有保安才写 2 字节尾段 */
+  role?: number,
 ): void {
   writer.u8(OpCode.S2C_ENTITY_SPAWN).u16(id).u16(x).u16(y).u8(state).raw(body);
   // 在线秒数每秒变化，不能进 spawnBody 缓存；只有调用方现算时才追加这一段
@@ -719,12 +722,18 @@ export function encodeSpawnInto(
   if (careerSegment) writer.raw(careerSegment);
   else writeCareerSegment(writer, career);
   writeLikeSegment(writer, likes);
+  writeRoleSegment(writer, role);
 }
 
 export function encodeSpawn(packet: SpawnPacket): Uint8Array {
   const body = buildSpawnBody(packet.name, packet.appearance, packet.status);
   const writer = new ByteWriter(
-    6 + body.length + ONLINE_EXTENSION_BYTES + CAREER_SEGMENT_MAX_BYTES + LIKE_EXTENSION_BYTES,
+    6 +
+      body.length +
+      ONLINE_EXTENSION_BYTES +
+      CAREER_SEGMENT_MAX_BYTES +
+      LIKE_EXTENSION_BYTES +
+      ROLE_EXTENSION_BYTES,
   );
   encodeSpawnInto(
     writer,
@@ -737,6 +746,7 @@ export function encodeSpawn(packet: SpawnPacket): Uint8Array {
     packet.career,
     undefined,
     packet.likes,
+    packet.role,
   );
   return writer.finish();
 }
@@ -753,13 +763,14 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
   const appearance = decodeAppearance(data, reader.offset);
   reader.offset += APPEARANCE_BYTES;
   // 旧服务端的入场包没有状态段：剩余 0 字节即「没设置」，不能因此拒收整条 spawn。
-  // 0xfe / 0xfc / 0xfb 是尾部扩展段的魔数，不是状态长度，必须先排除再按长度读状态。
+  // 0xfe / 0xfc / 0xfb / 0xfd 是尾部扩展段的魔数，不是状态长度，必须先排除再按长度读状态。
   let status = '';
   if (
     reader.remaining >= 1 &&
     data[reader.offset] !== ONLINE_EXTENSION_MAGIC &&
     data[reader.offset] !== CAREER_EXTENSION_MAGIC &&
-    data[reader.offset] !== LIKE_EXTENSION_MAGIC
+    data[reader.offset] !== LIKE_EXTENSION_MAGIC &&
+    data[reader.offset] !== ROLE_EXTENSION_MAGIC
   ) {
     const statusLength = reader.u8();
     // 长度字段与剩余字节不符说明包被截断或伪造：丢掉状态而不是猜半个字符
@@ -772,14 +783,19 @@ export function decodeSpawn(data: Uint8Array): SpawnPacket {
     onlineSec = reader.u32();
   }
   // 考勤摘要段：旧服务端没有这一段，按 undefined 显示「未上报」
-  const career = readCareerSegment(data, reader.offset);
+  const careerOffset = reader.offset;
+  const career = readCareerSegment(data, careerOffset);
   // 点赞段：只有 likes > 0 才写；旧服务端没有这一段时按 0 展示。
   // `readCareerSegment` 不消费 offset，这里显式跳过 career 段再定位 0xfb。
-  const likes = readLikeSegment(data, reader.offset + careerSegmentSizeAt(data, reader.offset));
+  const likeOffset = careerOffset + careerSegmentSizeAt(data, careerOffset);
+  const likes = readLikeSegment(data, likeOffset);
+  // 角色段追加在 likes 之后：旧客户端读到 0xfd 会当作非法状态长度并忽略尾段
+  const role = readRoleSegment(data, likeOffset + (likes !== undefined ? LIKE_EXTENSION_BYTES : 0));
   const packet: SpawnPacket = { id, x, y, state, name, appearance, status };
   if (onlineSec !== undefined) packet.onlineSec = onlineSec;
   if (career) packet.career = career;
   if (likes !== undefined) packet.likes = likes;
+  if (role !== undefined) packet.role = role;
   return packet;
 }
 
@@ -846,6 +862,20 @@ export function readLikeSegment(data: Uint8Array, offset: number): number | unde
     return undefined;
   }
   return data[offset + 1]! | (data[offset + 2]! << 8);
+}
+
+/** spawn 尾段：`[0xfd][role u8]`；普通角色一个字节都不写，旧包体不变。 */
+export function writeRoleSegment(writer: ByteWriter, role: number | undefined): void {
+  if (role === undefined || !Number.isFinite(role) || role <= 0) return;
+  writer.u8(ROLE_EXTENSION_MAGIC).u8(Math.min(0xff, Math.floor(role)));
+}
+
+/** 读 spawn 尾段；不是角色段或长度不足返回 undefined，不消费调用方 offset。 */
+export function readRoleSegment(data: Uint8Array, offset: number): number | undefined {
+  if (data.length - offset < ROLE_EXTENSION_BYTES || data[offset] !== ROLE_EXTENSION_MAGIC) {
+    return undefined;
+  }
+  return data[offset + 1]!;
 }
 
 /**

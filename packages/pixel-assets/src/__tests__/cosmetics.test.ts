@@ -131,6 +131,28 @@ describe('国风配件（ADR-0061）', () => {
   });
 });
 
+describe('保安警用件', () => {
+  const lumaAt = (data: Uint8Array, x: number, y: number): number => data[(y * COSMETIC_SIZE + x) * 4] ?? 0;
+  const alphaAt = (data: Uint8Array, x: number, y: number): number => data[(y * COSMETIC_SIZE + x) * 4 + 3] ?? 0;
+
+  it('大檐警帽正面是一整条宽帽檐，帽徽比帽箍亮', () => {
+    const cap = drawCosmetic('head', 'police_cap', 'down');
+    let brim = 0;
+    for (let x = 0; x < COSMETIC_SIZE; x += 1) if (alphaAt(cap, x, 8) > 0) brim += 1;
+    expect(brim).toBeGreaterThanOrEqual(14);
+    expect(lumaAt(cap, 9, 4)).toBeGreaterThan(lumaAt(cap, 5, 5));
+  });
+
+  it('肩章左右各有一块，胸前反光条连续', () => {
+    const badge = drawCosmetic('neck', 'epaulette', 'down');
+    expect(alphaAt(badge, 2, 10) + alphaAt(badge, 3, 10)).toBeGreaterThan(0);
+    expect(alphaAt(badge, 16, 10) + alphaAt(badge, 17, 10)).toBeGreaterThan(0);
+    let strip = 0;
+    for (let x = 0; x < COSMETIC_SIZE; x += 1) if (alphaAt(badge, x, 13) > 0) strip += 1;
+    expect(strip).toBeGreaterThanOrEqual(10);
+  });
+});
+
 describe('配件挂点', () => {
   it('背面没有眼睛，其余朝向都有', () => {
     for (const species of ['cow', 'horse'] as const) {

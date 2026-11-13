@@ -10,7 +10,7 @@ import {
 import type { Player } from '../sim/world';
 import type { NpcConfig } from './config';
 import type { Rng } from './rng';
-import { pickWaypoint, type NpcRegion, type NpcSpot } from './spots';
+import { pickWaypoint, type NpcSpot } from './spots';
 
 /**
  * 单个 NPC 的行为状态机：走走停停、停下看四周、被撞倒后自己爬起来。
@@ -23,7 +23,6 @@ export type NpcPhase = 'walk' | 'pause';
 
 export interface NpcAgent {
   readonly player: Player;
-  region: NpcRegion;
   /** 像素/秒：MOVE_SPEED × speedFactor */
   readonly speed: number;
   phase: NpcPhase;
@@ -43,10 +42,6 @@ export interface NpcAgent {
   stuckCount: number;
   /** 下一次邻居感知的时刻（social 消费） */
   nextSocialAt: number;
-  /** 下一次频道发言的时刻（social 消费） */
-  nextChatAt: number;
-  /** 弹幕颜色索引：每个同事有稳定的个人色 */
-  readonly chatColor: number;
 }
 
 /** 每次推进的时长：与服务器 Tick 同一口径，NPC 不另跑一套时间 */
@@ -89,19 +84,16 @@ export function pickPauseMs(rng: Rng, config: NpcConfig): number {
 export function createAgent(
   rng: Rng,
   player: Player,
-  region: NpcRegion,
   speedFactor: number,
-  chatColor: number,
   config: NpcConfig,
   now: number,
 ): NpcAgent {
   return {
     player,
-    region,
     speed: MOVE_SPEED * speedFactor,
     phase: 'pause',
-    target: pickWaypoint(rng, region, { x: player.x, y: player.y }),
-    // 出生后先站一会儿：十个人同时起步会像列队
+    target: pickWaypoint(rng, { x: player.x, y: player.y }),
+    // 出生后先站一会儿：五个人同时起步会像列队
     pauseUntil: now + rng.int(400, 2_400),
     pauseMs: 0,
     lookAt: now + rng.int(LOOK_MIN_MS, LOOK_MAX_MS),
@@ -111,8 +103,6 @@ export function createAgent(
     lastProgressY: player.y,
     stuckCount: 0,
     nextSocialAt: now + rng.int(0, config.socialIntervalMs),
-    nextChatAt: now + rng.int(config.chatDelayMs.first[0], config.chatDelayMs.first[1]),
-    chatColor,
   };
 }
 
@@ -149,7 +139,7 @@ function enterPause(agent: NpcAgent, rng: Rng, config: NpcConfig, now: number): 
 
 function enterWalk(agent: NpcAgent, rng: Rng, now: number): void {
   agent.phase = 'walk';
-  agent.target = pickWaypoint(rng, agent.region, { x: agent.player.x, y: agent.player.y });
+  agent.target = pickWaypoint(rng, { x: agent.player.x, y: agent.player.y });
   agent.lastProgressAt = now;
   agent.lastProgressX = agent.player.x;
   agent.lastProgressY = agent.player.y;
@@ -234,7 +224,7 @@ export function updateAgent(agent: NpcAgent, rng: Rng, config: NpcConfig, now: n
           agent.lookAt = now + rng.int(LOOK_MIN_MS, LOOK_MAX_MS);
         } else if (agent.stuckCount >= STUCK_TURN_AT) {
           // 换一个落点：撞到树或墙角时不必等满五次
-          agent.target = pickWaypoint(rng, agent.region, { x: player.x, y: player.y });
+          agent.target = pickWaypoint(rng, { x: player.x, y: player.y });
         }
       } else {
         agent.stuckCount = 0;
