@@ -15,6 +15,7 @@ import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
 import { LanternView } from './lighting/lanterns';
 import { FestivalArt } from './festival-art';
 import { readFestivalEnabled } from './festival-decor';
+import { ParkView } from './park';
 import { PavilionView } from './pavilion';
 import { PlaqueView } from './plaques';
 import { RitualFx } from './ritual-fx';
@@ -659,6 +660,8 @@ export class GameRenderer {
   private tea?: TeaStationView;
   /** 门头牌匾与对联：三座自建牌坊（ADR-0061） */
   private plaques?: PlaqueView;
+  /** 游乐园：入口门头、滑梯、秋千、跷跷板、旋转木马与灯串 */
+  private park?: ParkView;
   /** 上香 / 续杯的一次性反馈：金色飘字与当日首香光晕（ADR-0061） */
   private ritual?: RitualFx;
   /** 淡金光晕跟随的实体：0 表示当前没有光晕 */
@@ -793,6 +796,7 @@ export class GameRenderer {
       this.lightmap.register(this.lanterns?.lights ?? []);
       this.lightmap.register(this.festival?.lights ?? []);
       this.lightmap.register(this.shrine?.lights ?? []);
+      this.lightmap.register(this.park?.lights ?? []);
       this.app.stage.addChild(this.lightmap.container);
     }
     // 弹幕是屏幕空间最顶层：必须在 lightmap 之后入栈，柔光才不会盖住文字。
@@ -898,6 +902,10 @@ export class GameRenderer {
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
 
+    // 游乐园：入口门头、滑梯与三件器械；滑梯的深度键在塔顶，滑下时不会被盖住
+    this.park = new ParkView(this.app.renderer, this.metrics.devicePxPerTexel);
+    this.park.build(this.sortLayer, this.props.base);
+
     // 节日装饰（ADR-0063）：跨路彩旗、门楣挂饰与树梢灯笼；纯装饰、不参与碰撞。
     // 必须排在牌匾之后入层：门楣彩旗与牌坊同一条深度键，后入者压在横枋之上；
     // `?festival=0` 时连纹理都不烘，运行时零开销
@@ -933,7 +941,7 @@ export class GameRenderer {
       this.world.addChild(this.critters.butterflyLayer);
       if (params.get('critters') === 'debug') {
         console.info(
-          `[critters] ${this.critters.groundCount} 只地面动物 / ${this.critters.butterflyCount} 只蝴蝶 / ` +
+          `[critters] ${this.critters.groundCount} 只兔子 / ${this.critters.butterflyCount} 只蝴蝶 / ` +
             `${this.fish?.fishCount ?? 0} 条小鱼，构造 ${(performance.now() - started).toFixed(1)}ms`,
         );
       }
@@ -1386,6 +1394,7 @@ export class GameRenderer {
     this.bulletin?.setTextResolution(next.devicePxPerTexel);
     this.ritual?.setTextResolution(next.devicePxPerTexel);
     this.plaques?.setTextResolution(next.devicePxPerTexel);
+    this.park?.setTextResolution(next.devicePxPerTexel);
   }
 
   get entityCount(): number {
@@ -1455,6 +1464,7 @@ export class GameRenderer {
     this.shrine?.destroy();
     this.tea?.destroy();
     this.plaques?.destroy();
+    this.park?.destroy();
     this.ritual?.destroy();
     // 冬季与室内陈设的精灵先交给 app.destroy 统一回收，纹理在这里手动释放
     this.winterArt?.destroy();

@@ -10,9 +10,12 @@ import {
   GRAZE_COOLDOWN_MS,
   MOVE_SPEED,
   NAV_TARGETS,
+  PARK_SLIDE,
   QUEUE_REJECT_REASON,
   SHRINE_ALTAR,
   SIT_RANGE,
+  SLIDE_COOLDOWN_MS,
+  SLIDE_PHASE,
   STATE_BITS,
   TEA_STATION,
   SYSTEM_NOTICE_KIND,
@@ -32,6 +35,8 @@ import {
   resolveMotionInto,
   seatById,
   seatPose,
+  slideById,
+  slidePointInto,
   unpackState,
   type BoardMetric,
   type BoardPacket,
@@ -50,6 +55,8 @@ import {
   type SeatInstance,
   type SeatKind,
   type SeatStateEntry,
+  type SlideEventPacket,
+  type SlideSpec,
   type SpawnPacket,
   type Species,
   type SyncFormat,
@@ -79,7 +86,9 @@ import {
   isNearBulletin,
   isNearRankBoard,
   isNearShrine,
+  isNearSlide,
   isNearTeaStation,
+  isSlideHit,
   nearestInteractivePropInto,
   pickGrazeLine,
   pickLine,
@@ -297,6 +306,15 @@ export class GameSession {
   private interactCount = 0;
   /** 设施查询输出槽：F 键在按键栈里调用，不为一次查询造字面量 */
   private readonly interactTarget: InteractiveTarget = { kind: 'vending', x: 0, y: 0 };
+  /**
+   * 本地滑行状态：服务端 S2C_SLIDE 开始事件到达后才进入，
+   * 本地按同一份折线做 60fps 插值；结束回执或本地计时到点都会落回落点。
+   */
+  private ride: { slideId: number; startedAt: number; endsAt: number } | null = null;
+  /** 滑梯请求冷却：与服务端 SLIDE_COOLDOWN_MS 同一把尺子 */
+  private slideRequestAt = 0;
+  /** 滑行路径的复用输出槽：每帧写一次，不建对象 */
+  private readonly ridePoint = { x: 0, y: 0 };
   /** 咀嚼节流与台词轮转：本地与服务端共用 500ms 口径（ADR-0048） */
   private grazeAt = 0;
   private grazeCount = 0;
@@ -481,6 +499,7 @@ export class GameSession {
       onSeatState: (entries) => this.handleSeatState(entries),
       onGraze: (id) => this.handleGraze(id),
       onVent: (packet) => this.handleVent(packet),
+      onSlide: (packet) => this.handleSlide(packet),
       onPing: (rtt) => {
         this.ping = rtt;
         this.jitter.onRtt(rtt);
@@ -694,6 +713,109 @@ export class GameSession {
   }
 
   /**
+   * 请求滑一次滑梯（本轮新增）。
+   *
+   * 只发意图：服务端校验距离 / 冷却 / 站立且未入座之后，才把角色放到塔顶。
+   * 客户端这道先做距离门与 1.2s 冷却，站远了或连点不会白发包。
+   */
+  rideSlide(slideId: number): void {
+    if (this.ride) return;
+    if (this.elapsed < this.slideRequestAt) return;
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    if (!isNearSlide(Position.x[eid]!, Position.y[eid]!)) {
+      this.showHint('走近一点再滑');
+      return;
+    }
+    this.slideRequestAt = this.elapsed + SLIDE_COOLDOWN_MS;
+    this.net?.sendSlide(slideId);
+  }
+
+  /**
+   * 滑行事件：位置仍然由 20Hz 同步包推进，这条只负责「锁定坐姿 + 音效 + 落点」。
+   * 本人收到开始事件后进入本地插值；结束事件或本地计时到点都会回到站立。
+   */
+  private handleSlide(packet: SlideEventPacket): void {
+    const slide = slideById(packet.slideId);
+    if (!slide) return;
+    const local = packet.entityId === this.localId;
+    if (packet.phase === SLIDE_PHASE.Start) {
+      this.emitAudio({ kind: 'slide', x: slide.top.x, y: slide.top.y, local, phase: SLIDE_PHASE.Start });
+      this.renderer.showBubble(packet.entityId, '咻——');
+      if (local) this.beginRide(slide);
+      return;
+    }
+    if (local) {
+      this.endRide();
+    } else {
+      this.emitAudio({
+        kind: 'slide',
+        x: slide.landing.x,
+        y: slide.landing.y,
+        local: false,
+        phase: SLIDE_PHASE.Finish,
+      });
+    }
+  }
+
+  /** 本地进入滑行：锁输入、吸附塔顶、坐姿，并把上行基准标成「从未发过」 */
+  private beginRide(slide: SlideSpec): void {
+    const eid = this.ecs.get(this.localId);
+    if (!eid || this.ride) return;
+    this.cancelNavigation();
+    this.ride = { slideId: slide.id, startedAt: this.elapsed, endsAt: this.elapsed + slide.rideMs };
+    Position.x[eid] = slide.top.x;
+    Position.y[eid] = slide.top.y;
+    Motion.direction[eid] = slidePointInto(this.ridePoint, slide.id, 0);
+    this.setLocalPose(eid, POSE.Sit);
+    Motion.moving[eid] = 0;
+    this.clearOverlays(eid);
+    this.lastSentMove.x = NEVER_SENT;
+    this.lastSentMove.y = NEVER_SENT;
+    this.lastSentMove.state = NEVER_SENT;
+  }
+
+  /** 每帧沿共享折线推进：与服务端同一份 `slidePointInto`，落点完全一致 */
+  private updateRide(eid: number): void {
+    const ride = this.ride;
+    if (!ride) return;
+    const slide = slideById(ride.slideId);
+    if (!slide || this.elapsed >= ride.endsAt) {
+      this.endRide();
+      return;
+    }
+    const t = (this.elapsed - ride.startedAt) / slide.rideMs;
+    Motion.direction[eid] = slidePointInto(this.ridePoint, ride.slideId, t);
+    Position.x[eid] = this.ridePoint.x;
+    Position.y[eid] = this.ridePoint.y;
+    this.setLocalPose(eid, POSE.Sit);
+    Motion.moving[eid] = 0;
+  }
+
+  /** 结束滑行：落到缓冲区、回站姿，并补一声落地音 */
+  private endRide(): void {
+    const ride = this.ride;
+    if (!ride) return;
+    const slide = slideById(ride.slideId);
+    this.ride = null;
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    if (slide) {
+      Position.x[eid] = slide.landing.x;
+      Position.y[eid] = slide.landing.y;
+      this.emitAudio({
+        kind: 'slide',
+        x: slide.landing.x,
+        y: slide.landing.y,
+        local: true,
+        phase: SLIDE_PHASE.Finish,
+      });
+    }
+    this.setLocalPose(eid, POSE.Idle);
+    Motion.moving[eid] = 0;
+  }
+
+  /**
    * 视野内本周工时榜。零持久化下只能统计当前在线且已上报的人；
    * 缓存 2 秒，避免 2Hz 的工牌推送每次都重新排序。
    */
@@ -730,20 +852,30 @@ export class GameSession {
      * 这条规则与 F 键的距离门完全一致。
      */
     const localEid = this.ecs.get(this.localId);
-    if (localEid) {
-      const point = this.renderer.worldPointAt(stageX, stageY);
-      if (point && isBulletinHit(point.x, point.y)) {
-        if (isNearBulletin(Position.x[localEid]!, Position.y[localEid]!)) {
-          this.callbacks.onBulletinOpen?.();
-        } else {
-          this.showHint('走近一点再看');
-        }
-        return null;
+    const point = localEid ? this.renderer.worldPointAt(stageX, stageY) : null;
+    if (localEid && point && isBulletinHit(point.x, point.y)) {
+      if (isNearBulletin(Position.x[localEid]!, Position.y[localEid]!)) {
+        this.callbacks.onBulletinOpen?.();
+      } else {
+        this.showHint('走近一点再看');
       }
+      return null;
     }
+
+    // 点人优先：站在滑梯上的人也应该能点开工牌，而不是被自己的滑梯请求抢走
     const id = this.renderer.pickEntityAt(stageX, stageY);
-    if (id === null || id === this.localId) return null;
-    return this.badgeOf(id);
+    if (id !== null && id !== this.localId) return this.badgeOf(id);
+
+    // 滑梯：命中整块精灵矩形；距离不够只提示，不隔空发请求（服务端还会再判一次）
+    if (localEid && point && isSlideHit(point.x, point.y)) {
+      if (isNearSlide(Position.x[localEid]!, Position.y[localEid]!)) {
+        this.rideSlide(PARK_SLIDE.id);
+      } else {
+        this.showHint('走近一点再滑');
+      }
+      return null;
+    }
+    return null;
   }
 
   /** 会话口径的已在线秒数：本地从 WELCOME 起算，远端在入场包秒数上叠加本地增量 */
@@ -818,6 +950,8 @@ export class GameSession {
     const y = dequantizeCoord(qy);
 
     if (id === this.localId) {
+      // 滑行中以本地 60fps 折线为准：服务端同步有 20Hz + 网络延迟，跟它会被拉成锯齿
+      if (this.ride) return;
       const dx = x - Position.x[eid]!;
       const dy = y - Position.y[eid]!;
       // 移动中以本地预测为准，只在偏差超过合法延迟上限时一次性对齐（ADR-0021）。
@@ -973,6 +1107,13 @@ export class GameSession {
    */
   private updateSeatHint(eid: number): void {
     if (this.elapsed < this.hintUntil) return;
+    if (this.ride) {
+      if (this.seatHint !== '滑梯中…') {
+        this.seatHint = '滑梯中…';
+        this.callbacks.onHint('滑梯中…');
+      }
+      return;
+    }
     let hint: string | null = null;
     if (this.localSeat !== 0) {
       hint = '移动即可起身';
@@ -991,6 +1132,7 @@ export class GameSession {
       // 否则会出现「提示说续杯、按下去却在接水」
       else if (isNearShrine(x, y)) hint = HINT.shrine;
       else if (isNearTeaStation(x, y)) hint = HINT.tea;
+      else if (isNearSlide(x, y)) hint = HINT.slide;
       else if (nearestInteractivePropInto(this.interactTarget, x, y)) hint = HINT.interact;
     }
     if (hint === this.seatHint) return;
@@ -1168,6 +1310,8 @@ export class GameSession {
     this.lieAt = 0;
     this.snoreAt = 0;
     this.prayAt = -1;
+    this.ride = null;
+    this.slideRequestAt = 0;
     // 换连接后旧的硬直 / 出招窗口都失去意义：新角色从站立开始
     this.stunUntil = 0;
     this.ventLockUntil = 0;
@@ -1274,6 +1418,8 @@ export class GameSession {
   perform(action: ActionKey): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
+    // 滑行中不接受动作：位移与坐姿由 updateRide 接管
+    if (this.ride) return;
     // 倒地硬直期间不接受任何动作：起身只能等硬直结束（ADR-0051）
     if (this.elapsed < this.stunUntil) return;
     // 任何动作都先夺回控制权：坐着 / 躺着 / 跳跃 / 互动都不该被自动寻路拽着走
@@ -1429,6 +1575,11 @@ export class GameSession {
     }
     if (isNearTeaStation(x, y)) {
       this.brewTea();
+      return;
+    }
+    // 游乐园入口滑梯：F 与点击共用同一条请求路径
+    if (isNearSlide(x, y)) {
+      this.rideSlide(PARK_SLIDE.id);
       return;
     }
     const target = this.interactTarget;
@@ -1641,6 +1792,12 @@ export class GameSession {
   private stepLocal(eid: number, dt: number): void {
     this.expireLocalOverlays(eid);
 
+    // 滑行中只沿共享折线推进：手动输入、自动寻路与起身都不参与
+    if (this.ride) {
+      this.updateRide(eid);
+      return;
+    }
+
     // 倒地硬直与出招窗口都要冻结位移：前者是「躺在地上动不了」，
     // 后者是「正在头槌，脚不该还在地上滑」（ADR-0051）
     const frozen = this.elapsed < this.stunUntil || this.elapsed < this.ventLockUntil;
@@ -1791,6 +1948,8 @@ export class GameSession {
    * 不再补发积压：服务端速度窗口封顶后，一帧一个最新坐标比补发一串过期坐标更准。
    */
   private sendMove(eid: number): void {
+    // 滑行中不上行：位置由服务端脚本推进，客户端上报只会被 applyMove 丢掉
+    if (this.ride) return;
     const x = quantizeCoord(Position.x[eid]!);
     const y = quantizeCoord(Position.y[eid]!);
     const state = packState(

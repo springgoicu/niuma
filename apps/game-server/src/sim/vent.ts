@@ -50,6 +50,8 @@ export function resolveVents(
     if (!attacker.vent) continue;
     // 自己躺在地上时出不了招
     if (now < attacker.stunUntil) continue;
+    // 滑梯上出不了招：位移由服务端脚本控制，不能被一次头槌打断
+    if (attacker.rideSlide !== 0 && now < attacker.rideEndsAt) continue;
     // 限频：连点与「位保持窗口内的重复上报」都在这里被收敛成一次
     if (now - attacker.lastVentAt < VENT_COOLDOWN_MS) continue;
     attacker.lastVentAt = now;
@@ -102,6 +104,8 @@ function nearestInCone(world: World, attacker: Player, now: number): Player | nu
     const candidate = world.get(id);
     if (!candidate) continue;
     if (now < candidate.stunUntil) continue;
+    // 滑行中的人不可被命中：两套位置写入会互相覆盖
+    if (candidate.rideSlide !== 0 && now < candidate.rideEndsAt) continue;
     if (!withinVentCone(attacker.x, attacker.y, attacker.direction, candidate.x, candidate.y)) continue;
     const dx = candidate.x - attacker.x;
     const dy = candidate.y - attacker.y;

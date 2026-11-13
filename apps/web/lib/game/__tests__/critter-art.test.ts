@@ -69,32 +69,30 @@ describe('小动物图集绘制', () => {
     }
   });
 
-  it('全部地面帧与蝴蝶帧都被真的画过，没有空格子', () => {
+  it('每个声明的帧都被真的画过：没有漏画，图集也不用画满', () => {
     const touched = new Set<number>();
     for (const rect of rects) {
       const col = Math.floor(rect.x / CRITTER_CELL);
       const row = Math.floor(rect.y / CRITTER_CELL);
       touched.add(row * CRITTER_COLUMNS + col);
     }
-    // 地面 108 + 蝴蝶 6 + 小鱼 6：图集 12×10 刚好画满（ADR-0045）
+    // 兔子 45 帧 + 蝴蝶 6 + 小鱼 6 = 57；12×5=60，留 3 格空位
     const expected =
-      3 * 3 * GROUND_VIEWS * GROUND_FRAMES +
+      3 * GROUND_VIEWS * GROUND_FRAMES +
       BUTTERFLY_VARIANTS * BUTTERFLY_FRAMES +
       FISH_VARIANTS * FISH_FRAMES;
     expect(touched.size).toBe(expected);
-    expect(expected).toBe(CRITTER_COLUMNS * CRITTER_ROWS);
+    expect(expected).toBeLessThanOrEqual(CRITTER_COLUMNS * CRITTER_ROWS);
   });
 
   it('地面帧号与蝴蝶帧号不重叠且连续覆盖', () => {
     const used = new Set<number>();
-    for (let species = 0; species < 3; species += 1) {
-      for (let variant = 0; variant < 3; variant += 1) {
-        for (let view = 0; view < GROUND_VIEWS; view += 1) {
-          for (let frame = 0; frame < GROUND_FRAMES; frame += 1) {
-            const cell = groundCell(species, variant, view, frame);
-            expect(used.has(cell)).toBe(false);
-            used.add(cell);
-          }
+    for (let variant = 0; variant < 3; variant += 1) {
+      for (let view = 0; view < GROUND_VIEWS; view += 1) {
+        for (let frame = 0; frame < GROUND_FRAMES; frame += 1) {
+          const cell = groundCell(variant, view, frame);
+          expect(used.has(cell)).toBe(false);
+          used.add(cell);
         }
       }
     }
@@ -114,6 +112,8 @@ describe('小动物图集绘制', () => {
         used.add(cell);
       }
     }
-    expect(used.size).toBe(CRITTER_COLUMNS * CRITTER_ROWS);
+    // 兔子 45 + 蝴蝶 6 + 小鱼 6
+    expect(used.size).toBe(57);
+    expect(used.size).toBeLessThanOrEqual(CRITTER_COLUMNS * CRITTER_ROWS);
   });
 });

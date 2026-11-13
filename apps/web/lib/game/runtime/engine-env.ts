@@ -30,7 +30,9 @@ export type AudioEvent =
   /** 上香：寺庙磬音（ADR-0061） */
   | { kind: 'incense'; x: number; y: number }
   /** 续杯：喝茶的咕嘟声（ADR-0061） */
-  | { kind: 'tea'; x: number; y: number };
+  | { kind: 'tea'; x: number; y: number }
+  /** 游乐园滑梯：phase 0 = 出发破空，1 = 落地缓冲 */
+  | { kind: 'slide'; x: number; y: number; local: boolean; phase: number };
 
 /**
  * 引擎对"平台"的全部依赖，注入而不是直接摸全局。

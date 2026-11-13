@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { BENCH_SEAT_OFFSET, DIRECTION, type Direction, type SeatKind } from '@niuma/shared-types';
 import { SEAT_TOP, chairArtFor } from '../chair-art';
-import { SIT_HIP_Y, seatArtFor, seatLift } from '../seat-art';
+import { BENCH_ART, SIT_HIP_Y, seatArtFor, seatLift } from '../seat-art';
 
 const FACINGS: Array<{ facing: Direction; name: string }> = [
   { facing: DIRECTION.Up, name: '人坐桌南、面朝北' },
@@ -67,11 +67,11 @@ describe('座位接触契约（ADR-0032）', () => {
     for (const { facing, name } of FACINGS) {
       const seat = seatArtFor('bench', facing);
       const lift = seatLift('bench', facing);
-      expect({ facing: name, frame: seat.frame }).toEqual({ facing: name, frame: { w: 40, h: 18 } });
+      expect({ facing: name, frame: seat.frame }).toEqual({ facing: name, frame: BENCH_ART.frame });
       // 座面顶在帧内 y=8，坐点前移 12px：相对锚点 -(18-8)-12
       expect({ facing: name, contactY: seat.contactY }).toEqual({
         facing: name,
-        contactY: -(18 - 8) - BENCH_SEAT_OFFSET,
+        contactY: -(BENCH_ART.frame.h - BENCH_ART.seatTop) - BENCH_SEAT_OFFSET,
       });
       expect({ facing: name, lift }).toEqual({ facing: name, lift: 21 });
       expect(SIT_HIP_Y - lift).toBe(seat.contactY);

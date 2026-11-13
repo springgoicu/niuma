@@ -18,7 +18,7 @@ import {
 } from '@niuma/shared-types';
 import { chairArtFor, type ChairArt } from './chair-art';
 import { deskArtFor, type DeskArt } from './desk-art';
-import { seatArtFor } from './seat-art';
+import { BENCH_ART, seatArtFor } from './seat-art';
 import { bake } from './terrain-textures';
 import type { DepthSink } from './sort-layer';
 
@@ -149,7 +149,7 @@ const COLOR = {
  */
 const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   lamp: { w: 14, h: 40 },
-  bench: { w: 40, h: 18 },
+  bench: BENCH_ART.frame,
   bin: { w: 14, h: 18 },
   sign: { w: 24, h: 32 },
   board: { w: 34, h: 24 },
@@ -237,11 +237,11 @@ function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
       rect(g, 6, 8, 2, 2, COLOR.lampGlow);
       return;
     case 'bench':
-      rect(g, 2, 7, 36, 1, COLOR.outline);
+      rect(g, 2, BENCH_ART.seatTop - 1, 36, 1, COLOR.outline);
       box(g, 1, 3, 38, 4, COLOR.woodLight);
-      box(g, 1, 8, 38, 4, COLOR.woodDark);
-      box(g, 4, 12, 3, 5, COLOR.woodDark);
-      box(g, 33, 12, 3, 5, COLOR.woodDark);
+      box(g, 1, BENCH_ART.seatTop, 38, 4, COLOR.woodDark);
+      box(g, 4, BENCH_ART.seatTop + 4, 3, 5, COLOR.woodDark);
+      box(g, 33, BENCH_ART.seatTop + 4, 3, 5, COLOR.woodDark);
       return;
     case 'bin':
       box(g, 2, 4, 10, 13, COLOR.binBody);

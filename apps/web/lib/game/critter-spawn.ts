@@ -15,7 +15,7 @@ import { seeded } from './seeded';
  * 3. **稀疏**：320px 网格每格最多一只 + 80px 最小间距，避免出生就挤成一堆。
  */
 
-/** 地面小动物人口：72 只撒在 3805×4212 的岛上，视野内通常 2–4 只 */
+/** 地面兔子人口：72 只撒在 3805×4212 的岛上，视野内通常 2–4 只 */
 export const GROUND_POPULATION = 72;
 /** 蝴蝶人口：集中在花海周边，同一片花海里能看到 2–4 只 */
 export const BUTTERFLY_POPULATION = 18;

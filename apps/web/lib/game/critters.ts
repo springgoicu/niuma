@@ -93,8 +93,8 @@ export class CritterField {
     for (let i = 0; i < spawns.length; i += 1) {
       const critter = createGroundCritter(spawns[i]!);
       this.ground[i] = critter;
-      this.groundBase[i] = ((critter.species * 3 + critter.variant) * GROUND_VIEWS) * GROUND_FRAMES;
-      const sprite = new Sprite(art.frames[groundCell(critter.species, critter.variant, critter.view, critter.frame)]!);
+      this.groundBase[i] = (critter.variant * GROUND_VIEWS) * GROUND_FRAMES;
+      const sprite = new Sprite(art.frames[groundCell(critter.variant, critter.view, critter.frame)]!);
       sprite.anchor.set(0.5, ANCHOR_Y);
       sprite.position.set(Math.round(critter.x), Math.round(critter.y));
       this.groundSprites[i] = sprite;

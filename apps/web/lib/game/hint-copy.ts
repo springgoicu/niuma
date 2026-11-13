@@ -19,6 +19,8 @@ export const HINT = {
   shrine: '[F] 上香祈福',
   /** 老干部紫砂茶台（ADR-0061） */
   tea: '[F] 续杯养生茶',
+  /** 游乐园入口滑梯（本轮新增） */
+  slide: '[F] 滑滑梯',
   lieOnSeat: '座位上不能躺，先按 Z 起身',
   sitOnBed: '床上只能躺，按 X 起身',
   bedOnly: '床上只能躺，按 X 上床',
@@ -40,6 +42,7 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.interact]: '点「互动」',
   [HINT.shrine]: '点「互动」上香祈福',
   [HINT.tea]: '点「互动」续杯养生茶',
+  [HINT.slide]: '点「互动」滑滑梯',
   [HINT.lieOnSeat]: '座位上不能躺，先点「起身」',
   [HINT.sitOnBed]: '床上只能躺，点「起身」',
   [HINT.bedOnly]: '床上只能躺，点「躺平」',

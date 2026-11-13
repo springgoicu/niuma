@@ -103,6 +103,64 @@ export function playTempleBell(): void {
 }
 
 /**
+ * 滑梯出发：锯齿从 1.8kHz 扫到 420Hz 的「咻——」。
+ * `volume` 由声源到听者的距离衰减给出；0 时不建节点。
+ */
+export function playSlideWhoosh(volume = 1): void {
+  const gain = Math.max(0, Math.min(1, volume));
+  if (gain <= 0.01) return;
+  const ready = gate();
+  if (!ready) return;
+  const { audio, t } = ready;
+  const { ctx, master, delay } = audio;
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(1800, t);
+  osc.frequency.exponentialRampToValueAtTime(420, t + 0.42);
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(2200, t);
+  filter.frequency.exponentialRampToValueAtTime(700, t + 0.42);
+  const amp = ctx.createGain();
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.16 * gain), t + 0.04);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.46);
+  osc.connect(filter);
+  filter.connect(amp);
+  amp.connect(master);
+  amp.connect(delay);
+  osc.start(t);
+  osc.stop(t + 0.5);
+}
+
+/** 滑梯落地：低频「咚」+ 一声清脆的铃，不拖尾 */
+export function playSlideLanding(volume = 1): void {
+  const gain = Math.max(0, Math.min(1, volume));
+  if (gain <= 0.01) return;
+  const ready = gate();
+  if (!ready) return;
+  const { audio, t } = ready;
+  const { ctx, master, delay } = audio;
+
+  const thump = ctx.createOscillator();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(150, t);
+  thump.frequency.exponentialRampToValueAtTime(58, t + 0.18);
+  const amp = ctx.createGain();
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.22 * gain), t + 0.012);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+  thump.connect(amp);
+  amp.connect(master);
+  thump.start(t);
+  thump.stop(t + 0.26);
+
+  partial(ctx, master, t + 0.02, 1046, 0.1 * gain, 0.5);
+  partial(ctx, delay, t + 0.02, 1046, 0.05 * gain, 0.35);
+}
+
+/**
  * 喝茶：两下低沉的「咕嘟」+ 一段带通的气流声。
  * 气流用低通锯齿近似（本模块不建噪音缓冲，省一条常驻源）。
  */

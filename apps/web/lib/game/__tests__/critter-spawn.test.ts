@@ -63,10 +63,9 @@ describe('小动物撒点', () => {
     }
   });
 
-  it('物种与配色都在合法区间内', () => {
+  it('地面动物全部是兔子：只保留三套配色，不再带物种字段', () => {
     for (const critter of planGroundCritters(SEED)) {
-      expect(critter.species).toBeGreaterThanOrEqual(0);
-      expect(critter.species).toBeLessThanOrEqual(2);
+      expect('species' in critter).toBe(false);
       expect(critter.variant).toBeGreaterThanOrEqual(0);
       expect(critter.variant).toBeLessThanOrEqual(2);
       expect(Math.abs(critter.dirX) + Math.abs(critter.dirY)).toBeGreaterThan(0.9);

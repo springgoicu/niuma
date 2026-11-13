@@ -320,7 +320,7 @@ function drawSide(g: Graphics, ox: number, oy: number, coat: Coat, frame: number
   const graze = frame === FRAME_GRAZE;
   const twitch = frame === FRAME_SIT_B;
   const bob = frame === FRAME_WALK_B ? -1 : 0;
-  const headCy = 17 + bob + (graze ? 3 : 0);
+  const headCy = 17 + bob + (graze ? 2 : 0);
   const bodyCy = (sitting ? 23 : 22) + bob;
   const haunchCy = 24 + bob;
 
@@ -333,8 +333,8 @@ function drawSide(g: Graphics, ox: number, oy: number, coat: Coat, frame: number
   // 耳朵在头后面：低头 / 抖耳时高度与倾角变化
   const earTop = headCy - RABBIT_HEAD_R - 6 + (graze ? 2 : 0);
   const earH = graze ? 4 : 6;
-  rabbitEar(g, ox, oy, 19, earTop, earH, coat.inner, coat, twitch);
-  rabbitEar(g, ox, oy, 25, earTop + 1, earH - (graze ? 0 : 1), coat.inner, coat, !twitch);
+  rabbitEar(g, ox, oy, 18, earTop, earH, coat.inner, coat, twitch);
+  rabbitEar(g, ox, oy, 24, earTop + 1, earH - (graze ? 0 : 1), coat.inner, coat, !twitch);
 
   if (!sitting) {
     // 行走：先画腿，躯干盖住腿根
@@ -344,12 +344,12 @@ function drawSide(g: Graphics, ox: number, oy: number, coat: Coat, frame: number
   const blobs: BlobSpec[] = sitting
     ? [
         { cx: 12, cy: haunchCy, rx: 6, ry: 4 },
-        { cx: 17, cy: bodyCy - 1, rx: 4, ry: 4 },
-        { cx: 23, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
+        { cx: 17, cy: bodyCy - 1, rx: 5, ry: 5 },
+        { cx: 22, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
       ]
     : [
         { cx: 14, cy: bodyCy, rx: 6, ry: 4 },
-        { cx: 23, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
+        { cx: 22, cy: headCy, rx: RABBIT_HEAD_R, ry: RABBIT_HEAD_R },
       ];
   outlinedBlobs(g, ox, oy, blobs, coat);
 
@@ -365,7 +365,7 @@ function drawSide(g: Graphics, ox: number, oy: number, coat: Coat, frame: number
   }
 
   // 眼睛：抖耳帧眨眼；高光让深色配色也有神
-  const eyeX = 25;
+  const eyeX = 24;
   const eyeY = headCy - 1;
   if (twitch) {
     rect(g, ox, oy, eyeX - 1, eyeY, 2, 1, INK);
@@ -373,8 +373,8 @@ function drawSide(g: Graphics, ox: number, oy: number, coat: Coat, frame: number
     dot(g, ox, oy, eyeX, eyeY, INK);
     dot(g, ox, oy, eyeX, eyeY - 1, coat.light);
   }
-  dot(g, ox, oy, 27, headCy + 1, coat.inner); // 鼻头
-  dot(g, ox, oy, 26, headCy + 2, coat.shade); // W 嘴的一角
+  dot(g, ox, oy, 26, headCy + 1, coat.inner); // 鼻头
+  dot(g, ox, oy, 25, headCy + 2, coat.shade); // W 嘴的一角
 }
 
 function drawSideLegs(g: Graphics, ox: number, oy: number, coat: Coat, frame: number, bob: number): void {
