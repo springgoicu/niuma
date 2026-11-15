@@ -147,6 +147,13 @@ export function runWorkerHost(scope: WorkerScope): void {
         onArenaPool: (packet) => post({ t: 'arenaPool', packet }),
         onRoomState: (packet) => post({ t: 'room', packet }),
         onRoomInvite: (packet) => post({ t: 'roomInvite', packet }),
+        // 打工产出与随机事件（ADR-0088）
+        onWorkOpen: () => post({ t: 'workOpen' }),
+        onWorkResult: (packet) => post({ t: 'workResult', packet }),
+        onQuestState: (packet) => post({ t: 'questState', packet }),
+        onWorldEvent: (packet) => post({ t: 'worldEvent', packet }),
+        onEventClaim: (packet) => post({ t: 'eventClaim', packet }),
+        onBossShock: (packet) => post({ t: 'bossShock', packet }),
         onClock: (sample) => {
           const now = performance.now();
           if (clockForwardTz === sample.tzOffsetMin && now - clockForwardAt < CLOCK_FORWARD_MS) {
@@ -281,6 +288,15 @@ export function runWorkerHost(scope: WorkerScope): void {
         return;
       case 'roomLayout':
         session?.saveRoomLayout(message.placements);
+        return;
+      case 'claimWork':
+        session?.claimWork(message.combo);
+        return;
+      case 'claimQuest':
+        session?.claimQuest(message.questId);
+        return;
+      case 'claimEvent':
+        session?.claimEvent(message.index);
         return;
       case 'navigate':
         session?.navigateTo(message.id);

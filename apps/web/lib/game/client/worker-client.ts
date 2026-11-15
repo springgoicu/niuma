@@ -496,6 +496,24 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'roomLayout', placements });
   }
 
+  /** 搬砖结算（ADR-0088）：只报连击数，金额由服务端算 */
+  claimWork(combo: number): void {
+    if (this.delegate) return this.delegate.claimWork(combo);
+    this.post({ t: 'claimWork', combo });
+  }
+
+  /** 领取每日悬赏 */
+  claimQuest(questId: number): void {
+    if (this.delegate) return this.delegate.claimQuest(questId);
+    this.post({ t: 'claimQuest', questId });
+  }
+
+  /** 手动抢红包：自动拾取走会话层，这条只给「点界面上红包」用 */
+  claimEvent(index: number): void {
+    if (this.delegate) return this.delegate.claimEvent(index);
+    this.post({ t: 'claimEvent', index });
+  }
+
   navigateTo(id: NavTargetId): void {
     if (this.delegate) return this.delegate.navigateTo(id);
     this.post({ t: 'navigate', id });
@@ -692,6 +710,24 @@ export class WorkerGameClient implements GameClient {
         return;
       case 'apartmentOpen':
         callbacks.onApartmentOpen?.();
+        return;
+      case 'workOpen':
+        callbacks.onWorkOpen?.();
+        return;
+      case 'workResult':
+        callbacks.onWorkResult?.(message.packet);
+        return;
+      case 'questState':
+        callbacks.onQuestState?.(message.packet);
+        return;
+      case 'worldEvent':
+        callbacks.onWorldEvent?.(message.packet);
+        return;
+      case 'eventClaim':
+        callbacks.onEventClaim?.(message.packet);
+        return;
+      case 'bossShock':
+        callbacks.onBossShock?.(message.packet);
         return;
       case 'clock':
         // 主线程自己的 serverNow 从来没对过时（pong 在 Worker 里），这里补上

@@ -77,6 +77,13 @@ export interface GameClient {
   apartmentInvite(targetId: number): void;
   /** 上传家具布局（件数与格子由服务端按户型档位校验） */
   saveRoomLayout(placements: FurniturePlacement[]): void;
+  // ---- 打工产出与随机事件（ADR-0088）----
+  /** 完成一轮搬砖：只报连击数，金额由服务端按坐姿 / 间隔 / 工效 / 夜班算 */
+  claimWork(combo: number): void;
+  /** 领取每日悬赏：达标且当日未领才发钱 */
+  claimQuest(questId: number): void;
+  /** 手动抢红包（自动拾取走会话层） */
+  claimEvent(index: number): void;
   navigateTo(id: NavTargetId): void;
   cancelNavigation(): void;
   /** 舞台局部坐标 → 命中角色的 netId（经 `options.onPick` 回调） */

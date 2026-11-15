@@ -186,6 +186,19 @@ export class Player {
   lastShoutAt = 0;
   /** 互动包限频时间戳：邀请 / 打赏 / 道具 / 购买共用同一个闸门 */
   lastP2PAt = 0;
+  /** 上一次搬砖结算时刻：工位搬砖的最小间隔靠它，重发包刷不出双份工资（ADR-0088） */
+  lastWorkClaimAt = 0;
+
+  // ---- 每日悬赏（ADR-0088）----
+  /**
+   * 进度所属的园区日期键 `YYYY-MM-DD`。
+   *
+   * 换日时整表清零：悬赏是「今天这三件事」，不是累计成就；断线即回收，
+   * 与钱包同一条「服务端不记得你是谁」的口径。
+   */
+  questDay = '';
+  questProgress: Record<number, number> = {};
+  questClaimed = new Set<number>();
 
   /** 进园落位：HELLO 经济段是不可信输入，必须再过一次 sanitize */
   applyEconomy(profile: EconomyProfile | undefined): void {
@@ -372,6 +385,10 @@ export class Player {
     this.ventCdMul = 1;
     this.lastShoutAt = 0;
     this.lastP2PAt = 0;
+    this.lastWorkClaimAt = 0;
+    this.questDay = '';
+    this.questProgress = {};
+    this.questClaimed.clear();
     this.stunUntil = 0;
     this.recentHits = 0;
     this.lastHitTick = -10000;

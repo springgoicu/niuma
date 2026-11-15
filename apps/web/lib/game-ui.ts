@@ -19,6 +19,9 @@ import {
   type RoomStatePacket,
   type SeatKind,
   type VillaStatePacket,
+  type BossShockPacket,
+  type QuestStatePacket,
+  type WorldEventPacket,
 } from '@niuma/shared-types';
 import { create } from 'zustand';
 import { loadChatOpen, saveChatOpen } from './chat-prefs';
@@ -136,6 +139,22 @@ interface GameUiState {
   room: RoomStatePacket | null;
   /** 最近的串门邀请：右上角小提示，5 秒后自行消失 */
   roomInvite: RoomInvitePacket | null;
+  // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
+  /** 加班搬砖终端小游戏：整层浮窗，世界与连接照跑 */
+  workOpen: boolean;
+  /** 每日悬赏进度快照：服务端权威，入场补发 + 进度变化各一条 */
+  quests: QuestStatePacket | null;
+  /** 悬赏面板展开态 */
+  questOpen: boolean;
+  /** 世界事件横幅：`receivedAt` 用本机单调时钟，按 remainingSec 本地倒数 */
+  worldEvent: { packet: WorldEventPacket; receivedAt: number } | null;
+  /** 画饼冲击波：预警圈与命中震屏共用，到期由组件清除 */
+  bossShock: { packet: BossShockPacket; receivedAt: number } | null;
+  setWorkOpen: (open: boolean) => void;
+  setQuests: (packet: QuestStatePacket | null) => void;
+  setQuestOpen: (open: boolean) => void;
+  setWorldEvent: (packet: WorldEventPacket | null) => void;
+  setBossShock: (packet: BossShockPacket | null, receivedAt?: number) => void;
   setDiceOpen: (table: number | null) => void;
   setDice: (packet: DiceStatePacket | null) => void;
   setArenaBetOpen: (open: boolean) => void;
@@ -259,6 +278,11 @@ const INITIAL = {
   apartmentOpen: false,
   room: null as RoomStatePacket | null,
   roomInvite: null as RoomInvitePacket | null,
+  workOpen: false,
+  quests: null as QuestStatePacket | null,
+  questOpen: false,
+  worldEvent: null as { packet: WorldEventPacket; receivedAt: number } | null,
+  bossShock: null as { packet: BossShockPacket; receivedAt: number } | null,
 };
 let coinPopSeq = 0;
 let shoutSeq = 0;
@@ -320,6 +344,16 @@ export const useGameUi = create<GameUiState>((set) => ({
   setApartmentOpen: (apartmentOpen) => set({ apartmentOpen }),
   setRoom: (room) => set({ room }),
   setRoomInvite: (roomInvite) => set({ roomInvite }),
+
+  // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
+  setWorkOpen: (workOpen) => set({ workOpen }),
+  setQuests: (quests) => set({ quests }),
+  setQuestOpen: (questOpen) => set({ questOpen }),
+  // 横幅与冲击波都记下收到时刻：倒计时与动画按本地单调时钟推进，不受本机日历影响
+  setWorldEvent: (packet) =>
+    set({ worldEvent: packet ? { packet, receivedAt: performance.now() } : null }),
+  setBossShock: (packet, receivedAt) =>
+    set({ bossShock: packet ? { packet, receivedAt: receivedAt ?? performance.now() } : null }),
 
   setHint: (hint) => set({ hint }),
 

@@ -14,9 +14,23 @@
  * 16 × 1.25 = 20，所以帽子相对头宽的比例和旧版完全一致，不需要重调锚点偏移。
  */
 export const COSMETIC_CATALOG = {
-  head: ['grad', 'cap', 'beret', 'helmet', 'top', 'god_of_wealth', 'bamboo_hat', 'curse_hoop', 'police_cap', 'nurse_cap'],
-  eyes: ['round', 'sun', 'monocle'],
-  neck: ['scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant', 'epaulette'],
+  head: [
+    'grad',
+    'cap',
+    'beret',
+    'helmet',
+    'top',
+    'god_of_wealth',
+    'bamboo_hat',
+    'curse_hoop',
+    'police_cap',
+    'nurse_cap',
+    // ADR-0088：打工经济上线后的一批「暴富」件（只许追加）
+    'golden_helmet',
+    'crown',
+  ],
+  eyes: ['round', 'sun', 'monocle', 'cyber_shades', 'gold_rim_glasses'],
+  neck: ['scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant', 'epaulette', 'gold_chain', 'red_scarf'],
   hair: ['buzz', 'bangs', 'ponytail', 'afro', 'slick', 'topknot', 'braid'],
 } as const;
 
@@ -100,6 +114,64 @@ class Icon {
  */
 function drawHeadwear(id: string, dir: CosmeticDirection): Icon {
   const icon = new Icon();
+
+  // ---- ADR-0088：打工经济上线后的两顶「暴富」帽，全部追加在末尾 ----
+  if (id === 'golden_helmet') {
+    // 黄金安全帽：厚檐 + 圆顶 + 中脊。檐压得比其它帽子更低，才读成「工地安全帽」
+    if (dir === 'up') {
+      // 背面：只留后箍与调节旋钮
+      icon.rect(6, 2, 8, 1, SHADE);
+      icon.rect(4, 3, 12, 1, BASE);
+      icon.rect(4, 4, 12, 1, BASE);
+      icon.rect(4, 5, 12, 1, SHADE);
+      icon.rect(3, 6, 14, 2, DEEP);
+      icon.rect(9, 4, 2, 2, TRIM);
+      return finished(icon);
+    }
+    const brimRight = dir === 'side';
+    icon.rect(7, 1, 6, 1, TRIM);
+    icon.rect(5, 2, 10, 1, BASE);
+    icon.rect(4, 3, 12, 1, BASE);
+    icon.rect(4, 4, 12, 1, SHADE);
+    // 中脊：一条比本体亮一档的竖线，安全帽的识别点
+    icon.rect(9, 2, 2, 3, TRIM);
+    icon.rect(3, 5, 14, 1, BASE);
+    if (brimRight) {
+      // 侧面：檐向前（右）探出两格
+      icon.rect(2, 6, 16, 2, DEEP);
+      icon.rect(13, 6, 6, 1, SHADE);
+    } else {
+      icon.rect(2, 6, 16, 2, DEEP);
+      icon.rect(2, 6, 16, 1, SHADE);
+    }
+    return finished(icon);
+  }
+
+  if (id === 'crown') {
+    // 皇冠：三尖 + 冠带 + 三颗宝石。尖顶只两格宽，20px 下才不会被读成锯齿
+    if (dir === 'up') {
+      icon.rect(5, 4, 10, 1, BASE);
+      icon.rect(4, 5, 12, 3, BASE);
+      icon.rect(4, 8, 12, 1, DEEP);
+      icon.rect(6, 2, 2, 2, SHADE);
+      icon.rect(12, 2, 2, 2, SHADE);
+      icon.rect(9, 3, 2, 1, TRIM);
+      return finished(icon);
+    }
+    const shift = dir === 'side' ? 1 : 0;
+    // 冠带
+    icon.rect(4 + shift, 6, 12, 3, BASE);
+    icon.rect(4 + shift, 8, 12, 1, DEEP);
+    // 三尖：中尖最高，两侧对称
+    icon.rect(5 + shift, 3, 2, 3, BASE);
+    icon.rect(9 + shift, 1, 2, 5, BASE);
+    icon.rect(13 + shift, 3, 2, 3, BASE);
+    // 宝石：中尖顶与冠带
+    icon.rect(9 + shift, 1, 1, 1, TRIM);
+    icon.rect(8 + shift, 7, 1, 1, TRIM);
+    icon.rect(11 + shift, 7, 1, 1, TRIM);
+    return finished(icon);
+  }
 
   if (id === 'grad') {
     // 学士帽：方板（三行才不是一块木板）+ 帽箍 + 流苏。方板比头宽一圈，是这个尺度下最好读的帽型
@@ -385,6 +457,49 @@ function finished(icon: Icon): Icon {
 function drawEyewear(id: string, dir: CosmeticDirection): Icon {
   const icon = new Icon();
 
+  // ---- ADR-0088：赛博墨镜与金丝眼镜 ----
+  if (id === 'cyber_shades') {
+    // 赛博墨镜：一条横贯的深色镜带 + 左上高光 + 侧边竖条，强调「一体式」
+    if (dir === 'side') {
+      icon.rect(6, 7, 8, 4, OUTLINE);
+      icon.rect(7, 7, 3, 1, TRIM);
+      icon.rect(2, 9, 5, 1, DEEP);
+      return finished(icon);
+    }
+    icon.rect(2, 7, 16, 4, OUTLINE);
+    icon.rect(2, 7, 16, 1, DEEP);
+    icon.rect(3, 8, 3, 1, TRIM);
+    icon.rect(13, 8, 3, 1, TRIM);
+    // 两端竖条：读成镜腿的正面投影
+    icon.rect(1, 7, 1, 4, DEEP);
+    icon.rect(18, 7, 1, 4, DEEP);
+    return finished(icon);
+  }
+
+  if (id === 'gold_rim_glasses') {
+    // 金丝眼镜：细框空心圆 + 中桥 + 细镜腿，比圆框墨镜再细一档
+    const thin = (x0: number): void => {
+      icon.rect(x0 + 1, 7, 4, 1, BASE);
+      icon.rect(x0, 8, 1, 3, BASE);
+      icon.rect(x0 + 5, 8, 1, 3, BASE);
+      icon.rect(x0 + 1, 11, 4, 1, BASE);
+    };
+    if (dir === 'side') {
+      icon.rect(7, 7, 6, 1, BASE);
+      icon.rect(7, 7, 1, 5, BASE);
+      icon.rect(12, 7, 1, 5, BASE);
+      icon.rect(7, 11, 6, 1, BASE);
+      icon.rect(2, 9, 5, 1, DEEP);
+      return finished(icon);
+    }
+    thin(2);
+    thin(13);
+    icon.rect(7, 9, 5, 1, TRIM);
+    icon.rect(1, 8, 1, 1, DEEP);
+    icon.rect(18, 8, 1, 1, DEEP);
+    return finished(icon);
+  }
+
   if (dir === 'side') {
     // 侧面只看得到近侧那片，加一条镜腿
     if (id === 'sun') {
@@ -443,6 +558,57 @@ function drawEyewear(id: string, dir: CosmeticDirection): Icon {
 
 function drawNeckwear(id: string, dir: CosmeticDirection): Icon {
   const icon = new Icon();
+
+  // ---- ADR-0088：大金链与红围巾 ----
+  if (id === 'gold_chain') {
+    // 大金链：粗节链环 + 胸口吊牌。链环用「深-亮-深」三段，才读成有厚度的链子
+    if (dir === 'up') {
+      icon.band(8, 6, DEEP);
+      icon.band(9, 6, TRIM);
+      icon.band(10, 5, DEEP);
+      return finished(icon);
+    }
+    if (dir === 'side') {
+      icon.rect(6, 8, 8, 2, DEEP);
+      icon.rect(6, 8, 8, 1, TRIM);
+      icon.rect(9, 10, 3, 3, BASE);
+      icon.rect(10, 11, 1, 1, DEEP);
+      return finished(icon);
+    }
+    icon.band(8, 7, DEEP);
+    icon.band(9, 7, TRIM);
+    icon.band(10, 6, DEEP);
+    // 吊牌：方形金牌 + 中间压暗的「￥」感缺口
+    icon.rect(8, 11, 4, 4, BASE);
+    icon.rect(9, 12, 2, 2, DEEP);
+    icon.rect(8, 11, 4, 1, TRIM);
+    return finished(icon);
+  }
+
+  if (id === 'red_scarf') {
+    // 红围巾：绕颈一圈 + 胸前垂尾。单色染色只靠明度分「绕圈」与「垂尾」
+    if (dir === 'up') {
+      icon.band(8, 6, BASE);
+      icon.band(9, 6, DEEP);
+      icon.band(10, 5, SHADE);
+      return finished(icon);
+    }
+    if (dir === 'side') {
+      icon.rect(6, 8, 9, 2, BASE);
+      icon.rect(6, 9, 9, 1, DEEP);
+      icon.rect(12, 10, 3, 5, BASE);
+      icon.rect(12, 14, 3, 2, DEEP);
+      return finished(icon);
+    }
+    icon.band(8, 7, BASE);
+    icon.band(9, 7, DEEP);
+    icon.band(10, 6, SHADE);
+    // 垂尾：偏左一条，末端加宽一格
+    icon.rect(5, 11, 4, 5, BASE);
+    icon.rect(5, 15, 5, 2, DEEP);
+    icon.rect(5, 12, 4, 1, SHADE);
+    return finished(icon);
+  }
 
   if (id === 'scarf') {
     if (dir === 'side') {

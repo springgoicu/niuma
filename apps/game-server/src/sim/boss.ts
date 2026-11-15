@@ -1,5 +1,6 @@
 import {
   BOSS_MAX_HP,
+  BOSS_SHOCK,
   encodeBoss,
   type BossPacket,
 } from '@niuma/shared-types';
@@ -18,6 +19,13 @@ export interface BossHitResult {
   attackerId: number;
   /** 仅 1 → 0 的那一次为真：客户端据此只弹一次「老板倒下」横幅 */
   justDied: boolean;
+  /**
+   * 这一脚是否正好跨过 25% 的血线（ADR-0088）。
+   *
+   * 用「新血量是 2500 的整数倍」判定，而不是另存一份阈值下标：
+   * 跨日重置、进程重启续血、单测直接写血量，三种情况都不需要额外同步一份状态。
+   */
+  shock: boolean;
 }
 
 /** 落盘用的最小状态：血量和下一个回满点，别的都能重算 */
@@ -98,7 +106,13 @@ export class BossRuntime {
     this.syncDay(nowMs);
     if (this.currentHp <= 0) return null;
     this.currentHp -= 1;
-    return { hp: this.currentHp, attackerId, justDied: this.currentHp === 0 };
+    return {
+      hp: this.currentHp,
+      attackerId,
+      justDied: this.currentHp === 0,
+      // 7500 / 5000 / 2500 三条线各触发一次；归零那一脚由尾刀大奖接管，不再叠冲击波
+      shock: this.currentHp > 0 && this.currentHp % BOSS_SHOCK.Every === 0,
+    };
   }
 }
 

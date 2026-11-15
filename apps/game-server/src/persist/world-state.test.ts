@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BOSS_MAX_HP } from '@niuma/shared-types';
 import { ProfileBook, PROFILE_TTL_MS } from './profiles';
-import { openWorldStateStore, WorldStateStore, type WorldStateParts } from './world-state';
+import {
+  openWorldStateStore,
+  WORLD_STATE_VERSION,
+  WorldStateStore,
+  type WorldStateParts,
+} from './world-state';
 
 const DEVICE = 'a1b2c3d4e5f60718';
 const OTHER = '00112233445566aa';
@@ -29,6 +34,7 @@ const PARTS: WorldStateParts = {
     nextMatchId: 42,
     lastMatch: { matchId: 40, endedAt: NOW - 1_000, top: [{ name: '牛马', rank: 1, hp: 33 }] },
   },
+  villas: { villas: [] },
 };
 
 function storeAt(path: string, overrides: Partial<WorldStateParts> = {}): WorldStateStore {
@@ -66,7 +72,7 @@ describe('WorldStateStore 往返', () => {
 
     expect(existsSync(path)).toBe(true);
     const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-    expect(raw.version).toBe(1);
+    expect(raw.version).toBe(WORLD_STATE_VERSION);
     expect(raw.tzOffsetMin).toBe(480);
 
     const reopened = storeAt(path);
@@ -144,6 +150,8 @@ describe('读档容错', () => {
     expect(loaded?.boss.hp).toBe(BOSS_MAX_HP);
     expect(loaded?.ring.matchId).toBe(0);
     expect(loaded?.ring.nextMatchId).toBe(1);
+    // v1 档没有豪宅段：按空豪宅接管，不当成坏档隔离
+    expect(loaded?.villas.villas).toEqual([]);
     store.dispose();
   });
 

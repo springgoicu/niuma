@@ -7,6 +7,7 @@ import {
   VENT_FACING,
   VENT_KNOCKBACK_PX,
   VENT_STUN_MS,
+  bossCritChance,
   bossHitPoint,
   clampToRing,
   effectiveVentCooldownMs,
@@ -55,6 +56,23 @@ export interface VentHitObserver {
   onKnockdown?(attacker: Player, target: Player, now: number): void;
   /** 老板被最后一击打倒：一局一次，由 `justDied` 保证幂等 */
   onBossKill?(attacker: Player, now: number): void;
+  /**
+   * 每次真实命中老板（ADR-0088）：掉落、暴击与冲击波阈值都在这一侧裁决。
+   *
+   * 传到观察者的只有「打到了、打到第几血、是不是暴击」，掉多少币由经济层决定——
+   * 命中结算不碰钱包，两个模块各自只回答一个问题。
+   */
+  onBossHit?(attacker: Player, now: number, info: BossHitInfo): void;
+}
+
+export interface BossHitInfo {
+  /** 本次是否暴击：掉落翻倍 */
+  crit: boolean;
+  /** 结算后的老板血量 */
+  hp: number;
+  justDied: boolean;
+  /** 本次是否跨过 25% 血线 */
+  shock: boolean;
 }
 
 /**
@@ -70,6 +88,8 @@ export function resolveVents(
   now: number,
   observer?: VentHitObserver,
   duel?: DuelCombatPort,
+  /** 可注入随机源：暴击判定在单测里必须确定 */
+  random: () => number = Math.random,
 ): void {
   for (const attacker of world.players.values()) {
     if (!attacker.ventPending) continue;
@@ -94,7 +114,7 @@ export function resolveVents(
       // 擂台内没有对手就空放，绝不把拳风穿到老板或场外；
       // 场外只有「扇形内没有可命中玩家」才轮到老板。
       if (!attackerInRing && !duel?.isDueling(attacker)) {
-        resolveBossHit(world, attacker, now, transport, observer);
+        resolveBossHit(world, attacker, now, transport, observer, random);
       }
       continue;
     }
@@ -212,6 +232,7 @@ function resolveBossHit(
   now: number,
   transport: Transport,
   observer?: VentHitObserver,
+  random: () => number = Math.random,
 ): void {
   const hit = bossHitPoint(attacker.x, attacker.y);
   if (!withinVentCone(attacker.x, attacker.y, attacker.direction, hit.x, hit.y)) return;
@@ -222,6 +243,14 @@ function resolveBossHit(
     attackerId: result.attackerId,
     died: result.justDied,
     reset: false,
+  });
+  // 暴击在这里摇一次：掉落倍率与「暴击！」飘字读的是同一颗骰子
+  const crit = random() < bossCritChance(attacker.stats.critLv);
+  observer?.onBossHit?.(attacker, now, {
+    crit,
+    hp: result.hp,
+    justDied: result.justDied,
+    shock: result.shock,
   });
   // 只有最后一击带 justDied：一局最多发一次老板倒下奖励
   if (result.justDied) observer?.onBossKill?.(attacker, now);

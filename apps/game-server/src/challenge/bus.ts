@@ -51,6 +51,12 @@ export interface ChallengeBusOptions {
   findPlayer(id: number): Player | undefined;
   /** 可注入随机源：占位玩法的裁决在测试里必须确定 */
   random?: () => number;
+  /**
+   * 一局结算完成（无论赌注是否为 0）：每日悬赏的「赢一局」挂在这里。
+   *
+   * `winner` 为 null 表示平局 / 超时 / 取消——那种情况不算赢，不发进度。
+   */
+  onSettled?(winner: Player | null, loser: Player | null, gameType: number, now: number): void;
 }
 
 /**
@@ -385,6 +391,15 @@ export class ChallengeBus {
     }
     const handler = this.handlers.get(match.gameType);
     handler?.onCancel?.(match, endReason, this.contextFor(match, now));
+    // 悬赏进度：只有明确的胜者才算「赢一局」，平局 / 超时不算
+    const winner =
+      winnerId !== 0 && winnerId === match.a.id
+        ? match.a
+        : winnerId !== 0 && winnerId === match.b.id
+          ? match.b
+          : null;
+    const loser = winner === match.a ? match.b : winner === match.b ? match.a : null;
+    this.options.onSettled?.(winner, loser, match.gameType, now);
     this.broadcastMatch(match, now, P2P_MATCH_PHASE.Finished, winnerId, endReason);
   }
 

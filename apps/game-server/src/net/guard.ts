@@ -26,10 +26,10 @@ export const PACKET_MALFORMED = 1;
 export const PACKET_UNKNOWN = 2;
 
 /**
- * 闸门表覆盖到当前最大上行 opcode（`C2S_ROOM_LAYOUT = 0x4e`）之后两档。
+ * 闸门表覆盖到当前最大上行 opcode（`C2S_EVENT_CLAIM = 0x56`）之后两档。
  * 表长必须严格大于最大 opcode，否则 `op >= TABLE_SIZE` 会把新包判成 UNKNOWN。
  */
-const TABLE_SIZE = 0x52;
+const TABLE_SIZE = 0x58;
 
 /** 1 = 该 opcode 是定长包 */
 const known = new Uint8Array(TABLE_SIZE);
@@ -93,6 +93,11 @@ defineExact(OpCode.C2S_APARTMENT, 3); // [op][action u8][arg u8]
 defineExact(OpCode.C2S_APARTMENT_INVITE, 3); // [op][targetId u16]
 // 家具布局：`[op][count u8]` + count × 2 字节
 defineVariable(OpCode.C2S_ROOM_LAYOUT, 2, 1, 1);
+
+// ---- 打工产出 / 世界事件 / 每日悬赏（ADR-0088）：三个单字节参数的上行包 ----
+defineExact(OpCode.C2S_WORK_CLAIM, 2); // [op][combo u8]
+defineExact(OpCode.C2S_QUEST_CLAIM, 2); // [op][questId u8]
+defineExact(OpCode.C2S_EVENT_CLAIM, 2); // [op][index u8]
 
 // ---- 变长包：头部 + 声明长度 ----
 // HELLO 没有长度字段：昵称长度 + 固定外观段是下限，尾部各扩展段按魔数自解析。

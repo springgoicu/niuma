@@ -39,9 +39,11 @@ const EXTRA_COUNT: Record<SpeciesName, number> = { cow: 4, horse: 3 };
  * v9（ADR-0061）：配件目录追加 7 件国风件（头饰 3 / 颈饰 2 / 发型 2），列号不变但
  * `cos/` 下多出 28 张 PNG，旧 manifest 的 cosmeticFiles 缺这些键，必须靠版本号失效。
  * v10（ADR-0084）：头饰追加护士帽，`cos/` 再多 4 张 PNG；旧缓存没有该键必须失效。
+ * v11（ADR-0088）：头饰 +2 / 眼镜 +2 / 颈饰 +2，`cos/` 再多 24 张 PNG；
+ * 同轮新增 `fx/aura-gold.png`（脚底金光的参考稿），旧 manifest 缺这些键必须失效。
  * 这些列的内容变了，缓存中的旧图集必须失效——版本号与列号是同一份契约。
  */
-const ATLAS_VERSION = 10;
+const ATLAS_VERSION = 11;
 
 interface RenderOptions {
   tail: number;
@@ -494,6 +496,35 @@ function cosmeticIcon(kind: CosmeticKind, id: string, dir: string): Uint8Array |
   return drawCosmetic(kind, id, art);
 }
 
+/**
+ * 脚底金光（ADR-0088）：24×10 的椭圆光斑，中心亮、边缘透明。
+ *
+ * 与配件不同，它不参与 tint：金钱高光必须恒为金色，染成别的色就只是「脚下一团光」。
+ * 二次衰减让边缘收得干净，叠在接触阴影上不会有硬边。
+ */
+function buildGoldAura(): Uint8Array {
+  const width = 24;
+  const height = 10;
+  const data = new Uint8Array(width * height * 4);
+  const cx = (width - 1) / 2;
+  const cy = (height - 1) / 2;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const dx = (x - cx) / cx;
+      const dy = (y - cy) / cy;
+      const distance = dx * dx + dy * dy;
+      if (distance > 1) continue;
+      const falloff = (1 - distance) * (1 - distance);
+      const i = (y * width + x) * 4;
+      data[i] = 245;
+      data[i + 1] = 196;
+      data[i + 2] = 81;
+      data[i + 3] = Math.round(190 * falloff);
+    }
+  }
+  return data;
+}
+
 async function main(): Promise<void> {
   // 输出目录整体重建：换版本后旧产物（如 v5 的 body-N / back-*）留着会被误读成仍在用的图层
   await rm(OUT_DIR, { recursive: true, force: true });
@@ -586,6 +617,13 @@ async function main(): Promise<void> {
     }
   }
   manifest.cosmeticFiles = cosmeticFiles;
+
+  // 脚底金光（ADR-0088）：24×10 的金色椭圆光斑，作为「黄金安全帽」特效的参考稿。
+  // 渲染层按同一组参数逐帧程序化绘制（两帧呼吸），因此这张图不进图集列、不参与切片。
+  const fxDir = resolve(OUT_DIR, 'fx');
+  await mkdir(fxDir, { recursive: true });
+  await writeFile(resolve(fxDir, 'aura-gold.png'), encodePng(24, 10, buildGoldAura()));
+  (manifest as Record<string, unknown>).fx = { auraGold: 'fx/aura-gold.png' };
 
   await writeFile(resolve(OUT_DIR, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   await writeLayoutModule();

@@ -12,6 +12,7 @@ export * from './appearance-codec';
 export * from './protocol';
 export * from './buffs';
 export * from './economy';
+export * from './work';
 export * from './challenge';
 export * from './board';
 export * from './notice';

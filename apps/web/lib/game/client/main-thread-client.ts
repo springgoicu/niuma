@@ -287,6 +287,18 @@ export class MainThreadGameClient implements GameClient {
     this.session?.saveRoomLayout(placements);
   }
 
+  claimWork(combo: number): void {
+    this.session?.claimWork(combo);
+  }
+
+  claimQuest(questId: number): void {
+    this.session?.claimQuest(questId);
+  }
+
+  claimEvent(index: number): void {
+    this.session?.claimEvent(index);
+  }
+
   navigateTo(id: NavTargetId): void {
     this.session?.navigateTo(id);
   }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
+import { LogOut, Maximize, Minimize, Shuffle, Target } from 'lucide-react';
 import {
   BOARD_METRIC,
   CAREER_REPORT_INTERVAL_MS,
@@ -14,6 +14,8 @@ import {
   P2P_INVITE_REASON_LABEL,
   SHOP_KIND,
   WALLET_REASON,
+  BOSS_SHOCK_PHASE,
+  isNightShift,
   findCosmeticSkuById,
   furnitureById,
   type ChatSendPacket,
@@ -51,7 +53,7 @@ import { createGameClient } from '@/lib/game/client/create-game-client';
 import type { GameClient } from '@/lib/game/client/game-client';
 import type { ActionKey } from '@/lib/game/input';
 import { isEditableTarget } from '@/lib/game/input-keyboard';
-import { serverNow } from '@/lib/game/server-clock';
+import { serverNow, serverTzOffsetMin } from '@/lib/game/server-clock';
 import { loadSnapshot, resumeForPark } from '@/lib/game/snapshot';
 import type { ParkEntry } from '@/lib/park';
 import {
@@ -87,6 +89,9 @@ import { RingHud } from './RingHud';
 import { ShopButton } from './ShopButton';
 import { WalletBadge } from './WalletBadge';
 import { WelcomeBanner } from './WelcomeBanner';
+import { BountyDialog } from './BountyDialog';
+import { BossShockFlash, WorldEventBanner } from './WorldEventBanner';
+import { WorkGrindOverlay } from './WorkGrindOverlay';
 import { Joystick, TouchActions } from './TouchControls';
 import { useImmersiveStage, useIsPortrait, useIsTouch, useVisualViewportSize } from '@/lib/use-touch-stage';
 
@@ -197,6 +202,25 @@ export function GameViewport({
   const setRing = useGameUi((state) => state.setRing);
   const hint = useGameUi((state) => state.hint);
   const status = useGameUi((state) => state.status);
+  // ---- 打工产出与随机事件（ADR-0088）----
+  const workOpen = useGameUi((state) => state.workOpen);
+  const setWorkOpen = useGameUi((state) => state.setWorkOpen);
+  const questOpen = useGameUi((state) => state.questOpen);
+  const setQuestOpen = useGameUi((state) => state.setQuestOpen);
+  const wallet = useGameUi((state) => state.wallet);
+  const quests = useGameUi((state) => state.quests);
+  const seated = useGameUi((state) => state.seated);
+  /** 有可领的悬赏就在按钮上点一颗金点：不发通知、不抢焦点 */
+  const questReady = (quests?.entries ?? []).some(
+    (entry) => !entry.claimed && entry.progress >= entry.target,
+  );
+
+  // 起身即收工：站着不该继续把按键吞进搬砖终端（座位被打断时服务端也会拒结算）
+  useEffect(() => {
+    if (workOpen && !seated) setWorkOpen(false);
+  }, [workOpen, seated, setWorkOpen]);
+  /** 夜班判定与提示文案共用同一把尺子：园区时区的小时数由服务器时钟推算 */
+  const workHour = new Date(serverNow() + serverTzOffsetMin() * 60_000).getUTCHours();
 
   /**
    * 打开聊天：先清掉仍按住的移动键（输入框接管键盘后角色不该继续滑行），
@@ -539,6 +563,26 @@ export function GameViewport({
         onArenaPool: (packet) => useGameUi.getState().setArenaPool(packet),
         onRoomState: (packet) => useGameUi.getState().setRoom(packet),
         onRoomInvite: (packet) => useGameUi.getState().setRoomInvite(packet),
+        // ---- 打工产出与随机事件（ADR-0088）----
+        onWorkOpen: () => useGameUi.getState().setWorkOpen(true),
+        onWorkResult: (packet) => {
+          // 金额由服务端算好，这里只负责把结果说清楚：夜班 / 工效已经在倍率里体现
+          useGameUi
+            .getState()
+            .setHint(`搬砖 +${packet.amount} 币${packet.night ? '（夜班 ×1.5）' : ''}`);
+        },
+        onQuestState: (packet) => useGameUi.getState().setQuests(packet),
+        onWorldEvent: (packet) => useGameUi.getState().setWorldEvent(packet),
+        onEventClaim: (packet) => {
+          if (packet.mine) useGameUi.getState().setHint(`抢到 ${packet.amount} 币`);
+        },
+        onBossShock: (packet) => {
+          const ui = useGameUi.getState();
+          ui.setBossShock(packet);
+          if (packet.phase === BOSS_SHOCK_PHASE.Warn) {
+            ui.setHint('画饼冲击波！按 Space 跳起');
+          }
+        },
       },
       // Enter 与点选都发生在主线程：键盘监听不经过渲染线程，命中判定在渲染线程
       onRequestChat: openChat,
@@ -738,6 +782,23 @@ export function GameViewport({
    */
   const hudToolButtons = (
     <>
+      {/* 每日悬赏（ADR-0088）：右侧滑入面板，可领时按钮上挂一颗金点 */}
+      <button
+        type="button"
+        onClick={() => setQuestOpen(!questOpen)}
+        aria-pressed={questOpen}
+        aria-label="每日悬赏"
+        title="每日悬赏"
+        className={`${hudButtonClassName({ compact: isTouch, active: questOpen })} relative`}
+      >
+        <Target size={14} aria-hidden />
+        {questReady && (
+          <span
+            aria-hidden
+            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-[#f5c451] shadow-[0_0_6px_rgba(245,196,81,0.9)]"
+          />
+        )}
+      </button>
       {/* 摸鱼百宝箱（ADR-0085）：随时买消耗品，与金币徽标的属性页分工 */}
       <ShopButton compact={isTouch} />
       <NoticeBoard compact={isTouch} />
@@ -1029,6 +1090,27 @@ export function GameViewport({
               </div>
             </div>
           )}
+          {/* 世界事件横幅与冲击波警示（ADR-0088）：横幅走顶部、冲击波只染屏幕边缘 */}
+          <WorldEventBanner />
+          <BossShockFlash />
+
+          {/* 每日悬赏：右侧滑入，进度全部来自服务端快照 */}
+          {questOpen && (
+            <BountyDialog
+              onClaim={(questId) => clientRef.current?.claimQuest(questId)}
+              onClose={() => setQuestOpen(false)}
+            />
+          )}
+
+          {/* 加班搬砖：下三分之一的终端浮窗，中央画面与老板血条都露着 */}
+          <WorkGrindOverlay
+            open={workOpen && seated}
+            workEffLv={wallet.stats.workEffLv}
+            night={isNightShift(workHour)}
+            onClaim={(combo) => clientRef.current?.claimWork(combo)}
+            onClose={() => setWorkOpen(false)}
+          />
+
           {/* 代码工位（F2 彩蛋）：整层盖住 HUD 与摇杆，Esc 回园区；世界与连接照常跑 */}
           {studioOpen && <CodeStudio onClose={closeStudio} />}
         </>

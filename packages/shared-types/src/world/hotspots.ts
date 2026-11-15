@@ -12,6 +12,7 @@
  * 坐标全部来自各建筑模块的常量，不许在这里重写一份手写坐标。
  */
 
+import { WORK_DESK_RANGE, workDeskHotspotId } from '../work';
 import {
   APARTMENT,
   APARTMENT_DOOR,
@@ -19,6 +20,7 @@ import {
   APARTMENT_EXIT,
   APARTMENT_EXIT_RANGE,
 } from './apartment';
+import { WORKSTATIONS } from './campus';
 import { DICE_TABLES } from './dice-hall';
 import { BULLETIN_BOARD, SHRINE_ALTAR, TEA_STATION, WELCOME_LANDMARKS } from './layout';
 import { RING_BENCHES, RING_SIGNUP, RING_SIGNUP_RANGE } from './ring';
@@ -39,7 +41,9 @@ export type HotspotKind =
   | 'villaGate'
   | 'villaTree'
   | 'apartmentDoor'
-  | 'apartmentExit';
+  | 'apartmentExit'
+  /** 工位（ADR-0088）：坐着按 F 开始加班搬砖 */
+  | 'workDesk';
 
 export interface HotspotDef {
   readonly id: string;
@@ -51,6 +55,8 @@ export interface HotspotDef {
   readonly label: string;
   /** 座位组：赌桌 / 观战长椅用它与 `SeatInstance.group` 对齐 */
   readonly seatGroupId?: string;
+  /** 工位热区专用：指向 `WORKSTATIONS` 下标，客户端据此判断「我坐的是不是这一桌」 */
+  readonly deskIndex?: number;
 }
 
 function villaGateHotspot(spec: VillaSpec): HotspotDef {
@@ -80,6 +86,18 @@ function villaTreeHotspot(spec: VillaSpec): HotspotDef {
  * 客户端仍会按 `HOTSPOT_PRIORITY` 再排一次序。
  */
 export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
+  // ---- 工位（ADR-0088）：8 条由 WORKSTATIONS 生成，坐标不手写 ----
+  ...WORKSTATIONS.map(
+    (station, index): HotspotDef => ({
+      id: workDeskHotspotId(index),
+      kind: 'workDesk',
+      x: station.desk.x,
+      y: station.desk.y,
+      radius: WORK_DESK_RANGE,
+      label: 'work',
+      deskIndex: index,
+    }),
+  ),
   // ---- 既有的四处轻互动：坐标沿用各地标常量 ----
   {
     id: 'rank-board',
@@ -181,6 +199,7 @@ export const HOTSPOT_PRIORITY: readonly HotspotKind[] = [
   'board',
   'shrine',
   'tea',
+  'workDesk',
   'diceTable',
   'ring',
   'arenaSeat',

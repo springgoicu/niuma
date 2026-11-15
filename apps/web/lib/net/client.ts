@@ -7,6 +7,7 @@ import {
   decodeAppearanceBroadcast,
   decodeBoard,
   decodeBoss,
+  decodeBossShock,
   decodeCareerBroadcast,
   decodeChatBroadcast,
   decodeChatHistory,
@@ -41,10 +42,17 @@ import {
   decodeWelcome,
   decodeDiceState,
   decodeVillaState,
+  decodeQuestState,
+  decodeWorkResult,
+  decodeWorldEvent,
+  decodeEventClaimResult,
   decodeArenaPool,
   decodeRoomState,
   decodeRoomInvite,
   encodeDiceBet,
+  encodeWorkClaim,
+  encodeQuestClaim,
+  encodeEventClaim,
   encodeVillaRequest,
   encodeArenaBet,
   encodeApartmentRequest,
@@ -120,6 +128,11 @@ import {
   type RoomStatePacket,
   type RoomInvitePacket,
   type FurniturePlacement,
+  type BossShockPacket,
+  type EventClaimResult,
+  type QuestStatePacket,
+  type WorkResultPacket,
+  type WorldEventPacket,
 } from '@niuma/shared-types';
 import { ensureDeviceId } from '../game/device-id';
 
@@ -220,6 +233,16 @@ export interface NetHandlers {
   onShoutReject?(packet: ShoutRejectPacket): void;
   /** 道具没生效：只回给操作者本人 */
   onItemReject?(packet: ItemRejectPacket): void;
+  /** 搬砖结果（ADR-0088）：服务端算的金额与倍率，客户端只用它做飘字 */
+  onWorkResult?(packet: WorkResultPacket): void;
+  /** 每日悬赏进度快照：入场补发 + 每次进度变化 / 领取 */
+  onQuestState?(packet: QuestStatePacket): void;
+  /** 世界事件横幅：阶段切换时一条，客户端本地倒数 */
+  onWorldEvent?(packet: WorldEventPacket): void;
+  /** 红包被抢走：本人 mine=true，旁观者 mine=false */
+  onEventClaim?(packet: EventClaimResult): void;
+  /** 画饼冲击波：预警 2 秒 / 结算时各一条 */
+  onBossShock?(packet: BossShockPacket): void;
 }
 
 function defaultUrl(): string {
@@ -552,6 +575,21 @@ export class NetClient {
       case OpCode.S2C_ROOM_INVITE:
         this.handlers.onRoomInvite?.(decodeRoomInvite(data));
         break;
+      case OpCode.S2C_WORK_RESULT:
+        this.handlers.onWorkResult?.(decodeWorkResult(data));
+        break;
+      case OpCode.S2C_QUEST_STATE:
+        this.handlers.onQuestState?.(decodeQuestState(data));
+        break;
+      case OpCode.S2C_WORLD_EVENT:
+        this.handlers.onWorldEvent?.(decodeWorldEvent(data));
+        break;
+      case OpCode.S2C_EVENT_CLAIM:
+        this.handlers.onEventClaim?.(decodeEventClaimResult(data));
+        break;
+      case OpCode.S2C_BOSS_SHOCK:
+        this.handlers.onBossShock?.(decodeBossShock(data));
+        break;
       case OpCode.S2C_QUEUE_REJECTED:
         this.terminal = true;
         this.handlers.onRejected(decodeQueueRejected(data).reason);
@@ -708,6 +746,29 @@ export class NetClient {
   sendShopBuy(request: ShopBuyRequest): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeShopBuy(request));
+  }
+
+  /**
+   * 搬砖结算（ADR-0088）：只报「这一轮敲完了、连击多少」。
+   *
+   * 坐姿、工位、间隔与金额全部由服务端裁决，客户端连一个金额字段都不发，
+   * 从协议层面就不给刷钱留口子。
+   */
+  sendWorkClaim(combo: number): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeWorkClaim(combo));
+  }
+
+  /** 领取每日悬赏：进度与「今天领过没有」都由服务端判 */
+  sendQuestClaim(questId: number): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeQuestClaim(questId));
+  }
+
+  /** 抢红包：只发序号，位置与是否已被领走由服务端复核 */
+  sendEventClaim(index: number): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeEventClaim(index));
   }
 
   /** 大喇叭：文案已在编码侧截到 30 字，服务端还会再过一遍审核 */

@@ -1,5 +1,5 @@
 import { P2P_GAME_TYPE, P2P_INVITE_REASON, P2P_INVITE_TTL_MS } from '@niuma/shared-types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import { EconomyService } from '../economy/service';
 import { Player } from '../sim/world';
 import { ChallengeBus } from './bus';

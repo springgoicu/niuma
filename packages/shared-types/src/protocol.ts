@@ -116,6 +116,16 @@ import {
 import { displayWidth } from './name';
 import { DANMAKU_META_BYTES, normalizeDanmakuColor, normalizeDanmakuMode } from './danmaku';
 import {
+  BOSS_SHOCK,
+  QUEST_PROGRESS_MAX,
+  WORLD_EVENT,
+  type BossShockPacket,
+  type EventClaimResult,
+  type QuestEntry,
+  type QuestStatePacket,
+  type WorldEventPacket,
+} from './work';
+import {
   dequantizeCoord,
   fromSyncCoord,
   packState,
@@ -2766,3 +2776,205 @@ export function decodeRoomInvite(data: Uint8Array): RoomInvitePacket {
   const fromName = length <= reader.remaining ? reader.utf8(length) : '';
   return { fromId, doorNo, fromName };
 }
+
+// ---------------------------------------------------------------------------
+// 打工产出 / Boss 2.0 / 世界事件 / 每日悬赏（ADR-0088）
+//
+// 上行全部定长且只有一两个字节；下行的悬赏状态与事件横幅同样很小，
+// 20Hz 的 Tick 路径上一帧都不会多发。坐标为量化坐标，与其它下行包同一口径。
+// ---------------------------------------------------------------------------
+
+/** 搬砖结算：`[op][combo u8]`，2 字节定长 */
+export function encodeWorkClaim(combo: number): Uint8Array {
+  const writer = new ByteWriter(2);
+  writer.u8(OpCode.C2S_WORK_CLAIM).u8(Math.max(0, Math.min(0xff, Math.floor(combo) || 0)));
+  return writer.finish();
+}
+
+export function decodeWorkClaim(data: Uint8Array): number {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_WORK_CLAIM) throw new Error('not a work claim packet');
+  return reader.u8();
+}
+
+/** 每级工效倍率写进 1 字节的十分位：10 = 1.0×、15 = 1.5× */
+export const WORK_MULT_SCALE = 10;
+/** 搬砖结果 flags：bit0 = 夜班加成生效 */
+export const WORK_FLAG_NIGHT = 1;
+
+export interface WorkResultPacket {
+  amount: number;
+  /** 十分位倍率（工效 × 夜班），只用于「本轮 ≈ N 币」的说明与日志 */
+  mult: number;
+  night: boolean;
+}
+
+/** 搬砖结果：`[op][amount u16][mult u8][flags u8]`，5 字节定长 */
+export function encodeWorkResult(packet: WorkResultPacket): Uint8Array {
+  const writer = new ByteWriter(5);
+  writer
+    .u8(OpCode.S2C_WORK_RESULT)
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(packet.amount) || 0)))
+    .u8(Math.max(0, Math.min(0xff, Math.floor(packet.mult) || 0)))
+    .u8(packet.night ? WORK_FLAG_NIGHT : 0);
+  return writer.finish();
+}
+
+export function decodeWorkResult(data: Uint8Array): WorkResultPacket {
+  if (data.byteLength !== 5) throw new Error(`work result must be 5 bytes, got ${data.byteLength}`);
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_WORK_RESULT) throw new Error('not a work result packet');
+  const amount = reader.u16();
+  const mult = reader.u8();
+  const flags = reader.u8();
+  return { amount, mult, night: (flags & WORK_FLAG_NIGHT) !== 0 };
+}
+
+/** 领取悬赏：`[op][questId u8]`，2 字节定长 */
+export function encodeQuestClaim(questId: number): Uint8Array {
+  const writer = new ByteWriter(2);
+  writer.u8(OpCode.C2S_QUEST_CLAIM).u8(Math.max(0, Math.min(0xff, Math.floor(questId) || 0)));
+  return writer.finish();
+}
+
+export function decodeQuestClaim(data: Uint8Array): number {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_QUEST_CLAIM) throw new Error('not a quest claim packet');
+  return reader.u8();
+}
+
+/**
+ * 悬赏状态：`[op][dayLen u8][day][count u8]` + count × 6 字节条目。
+ *
+ * 条目自带 `target`：客户端不必再按 id 反查 `QUEST_DEFS` 才知道进度条画到几分之几。
+ * 日期字符串照抄 `YYYY-MM-DD`（10 字节），客户端据此判定「这份进度是不是今天的」。
+ */
+export function encodeQuestState(packet: QuestStatePacket): Uint8Array {
+  const day = packet.day.slice(0, 10);
+  const dayBytes = textEncoder.encode(day);
+  const entries = packet.entries.slice(0, 0xff);
+  const writer = new ByteWriter(3 + dayBytes.length + entries.length * 6);
+  writer.u8(OpCode.S2C_QUEST_STATE).u8(dayBytes.length).raw(dayBytes).u8(entries.length);
+  for (const entry of entries) {
+    writer
+      .u8(entry.id & 0xff)
+      .u16(Math.max(0, Math.min(QUEST_PROGRESS_MAX, Math.floor(entry.progress) || 0)))
+      .u16(Math.max(0, Math.min(QUEST_PROGRESS_MAX, Math.floor(entry.target) || 0)))
+      .u8(entry.claimed ? 1 : 0);
+  }
+  return writer.finish();
+}
+
+export function decodeQuestState(data: Uint8Array): QuestStatePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_QUEST_STATE) throw new Error('not a quest state packet');
+  const dayLength = reader.u8();
+  const day = dayLength <= reader.remaining ? reader.utf8(dayLength) : '';
+  const count = reader.remaining > 0 ? reader.u8() : 0;
+  const entries: QuestEntry[] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < 6) break;
+    const id = reader.u8();
+    const progress = reader.u16();
+    const target = reader.u16();
+    const claimed = reader.u8() !== 0;
+    entries.push({ id, progress, target, claimed });
+  }
+  return { day, entries };
+}
+
+/** 世界事件横幅：`[op][kind u8][phase u8][remainingSec u16][seed u16][amount u16]`，8 字节 */
+export function encodeWorldEvent(packet: WorldEventPacket): Uint8Array {
+  const writer = new ByteWriter(8);
+  writer
+    .u8(OpCode.S2C_WORLD_EVENT)
+    .u8(packet.kind & 0xff)
+    .u8(packet.phase & 0xff)
+    .u16(Math.max(0, Math.min(0xffff, Math.round(packet.remainingSec))))
+    .u16(packet.seed & 0xffff)
+    .u16(Math.max(0, Math.min(0xffff, Math.round(packet.amount))));
+  return writer.finish();
+}
+
+export function decodeWorldEvent(data: Uint8Array): WorldEventPacket {
+  if (data.byteLength !== 8) throw new Error(`world event must be 8 bytes, got ${data.byteLength}`);
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_WORLD_EVENT) throw new Error('not a world event packet');
+  return {
+    kind: reader.u8(),
+    phase: reader.u8(),
+    remainingSec: reader.u16(),
+    seed: reader.u16(),
+    amount: reader.u16(),
+  };
+}
+
+/** 抢红包：`[op][index u8]`，2 字节定长 */
+export function encodeEventClaim(index: number): Uint8Array {
+  const writer = new ByteWriter(2);
+  writer.u8(OpCode.C2S_EVENT_CLAIM).u8(Math.max(0, Math.min(0xff, Math.floor(index) || 0)));
+  return writer.finish();
+}
+
+export function decodeEventClaim(data: Uint8Array): number {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_EVENT_CLAIM) throw new Error('not an event claim packet');
+  return reader.u8();
+}
+
+/** 红包拾取结果 flags：bit0 = 这一包是发给领取者本人的 */
+export const EVENT_CLAIM_FLAG_MINE = 1;
+
+/** 红包拾取广播：`[op][index u8][amount u16][flags u8]`，5 字节定长 */
+export function encodeEventClaimResult(packet: EventClaimResult): Uint8Array {
+  const writer = new ByteWriter(5);
+  writer
+    .u8(OpCode.S2C_EVENT_CLAIM)
+    .u8(packet.index & 0xff)
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(packet.amount) || 0)))
+    .u8(packet.mine ? EVENT_CLAIM_FLAG_MINE : 0);
+  return writer.finish();
+}
+
+export function decodeEventClaimResult(data: Uint8Array): EventClaimResult {
+  if (data.byteLength !== 5) throw new Error(`event claim result must be 5 bytes, got ${data.byteLength}`);
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_EVENT_CLAIM) throw new Error('not an event claim result packet');
+  const index = reader.u8();
+  const amount = reader.u16();
+  const flags = reader.u8();
+  return { index, amount, mine: (flags & EVENT_CLAIM_FLAG_MINE) !== 0 };
+}
+
+/** 画饼冲击波：`[op][phase u8][x u16][y u16][radius u16][remainingMs u16][hits u8]`，10 字节 */
+export function encodeBossShock(packet: BossShockPacket): Uint8Array {
+  const writer = new ByteWriter(10);
+  writer
+    .u8(OpCode.S2C_BOSS_SHOCK)
+    .u8(packet.phase & 0xff)
+    .u16(quantizeCoord(packet.x))
+    .u16(quantizeCoord(packet.y))
+    .u16(Math.max(0, Math.min(0xffff, Math.round(packet.radius))))
+    .u16(Math.max(0, Math.min(0xffff, Math.round(packet.remainingMs))))
+    .u8(Math.max(0, Math.min(0xff, Math.floor(packet.hits) || 0)));
+  return writer.finish();
+}
+
+export function decodeBossShock(data: Uint8Array): BossShockPacket {
+  if (data.byteLength !== 10) throw new Error(`boss shock must be 10 bytes, got ${data.byteLength}`);
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_BOSS_SHOCK) throw new Error('not a boss shock packet');
+  return {
+    phase: reader.u8(),
+    x: dequantizeCoord(reader.u16()),
+    y: dequantizeCoord(reader.u16()),
+    radius: reader.u16(),
+    remainingMs: reader.u16(),
+    hits: reader.u8(),
+  };
+}
+
+/** 冲击波预警的默认半径：服务端写入包体前与客户端兜底共用 */
+export const BOSS_SHOCK_RADIUS = BOSS_SHOCK.Radius;
+/** 红包雨的默认持续时间：客户端横幅倒计时兜底 */
+export const WORLD_EVENT_RED_PACKET_MS = WORLD_EVENT.RedPacketDurationMs;

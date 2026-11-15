@@ -93,6 +93,18 @@ import {
   type RoomInvitePacket,
   type RoomStatePacket,
   type VillaStatePacket,
+  type BossShockPacket,
+  type EventClaimResult,
+  type QuestStatePacket,
+  type WorkResultPacket,
+  type WorldEventPacket,
+  type RedPacketSpot,
+  WORLD_EVENT,
+  WORLD_EVENT_KIND,
+  WORLD_EVENT_PHASE,
+  isWorkDeskSeat,
+  redPacketSpots,
+  workDeskIndexOfSeat,
   type SeatInstance,
   type SeatKind,
   type SeatStateEntry,
@@ -277,6 +289,19 @@ export interface SessionCallbacks {
   onRoomState?(packet: RoomStatePacket): void;
   /** 朋友邀你去串门 */
   onRoomInvite?(packet: RoomInvitePacket): void;
+  // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
+  /** 坐到自己工位上按 F：宿主打开「加班搬砖」终端小游戏 */
+  onWorkOpen?(): void;
+  /** 一轮搬砖的结算金额与倍率：宿主做飘字与提示 */
+  onWorkResult?(packet: WorkResultPacket): void;
+  /** 每日悬赏进度快照（入场补发 / 进度变化 / 领取后各一条） */
+  onQuestState?(packet: QuestStatePacket): void;
+  /** 世界事件横幅：阶段切换时一条，宿主按 remainingSec 本地倒数 */
+  onWorldEvent?(packet: WorldEventPacket): void;
+  /** 红包被抢走：本人 mine=true，旁观者 mine=false */
+  onEventClaim?(packet: EventClaimResult): void;
+  /** 画饼冲击波：预警 2 秒 / 命中结算各一条 */
+  onBossShock?(packet: BossShockPacket): void;
 }
 
 /** 一次会话绑定的园区：构造后不再变化，重连与落盘都以它为准 */
@@ -381,6 +406,18 @@ export class GameSession {
   private readonly entitySeat = new Map<number, number>();
   /** 本地所坐 / 所躺的座位（0 表示未入座）：预测后由服务端广播校正 */
   private localSeat = 0;
+
+  // ---- 世界事件：红包雨（ADR-0088）----
+  /** 当前事件种类与阶段：红包只剩 Active 阶段能抢 */
+  private worldEventKind = 0;
+  private worldEventPhase = 0;
+  /** 撒点种子（-1 表示当前没有红包）与缓存坐标 */
+  private redPacketSeed = -1;
+  private redPacketSpotsCache: RedPacketSpot[] = [];
+  /** 本地已抢到的红包下标：服务端回包与本地预判共用一个集合 */
+  private readonly claimedPackets = new Set<number>();
+  /** 自动拾取的节流时刻（performance.now 口径） */
+  private autoPickAt = 0;
   /** 已发出入座 / 上床请求且尚未起身：只有此时服务端的占座结果才会吸附本地角色 */
   private seatIntent = false;
   /** 环境提示：按位置 / 朝向持续算出；瞬时文案只让它暂时让位，不阻断判定 */
@@ -657,6 +694,23 @@ export class GameSession {
       onLoudspeaker: (packet) => this.callbacks.onLoudspeaker?.(packet),
       onShoutReject: (packet) => this.callbacks.onShoutReject?.(packet),
       onItemReject: (packet) => this.callbacks.onItemReject?.(packet),
+      onWorkResult: (packet) => {
+        // 金额由服务端算：本地只在角色头顶飘一条 +N
+        this.renderer.showCoinFloat(this.localId, packet.amount);
+        this.callbacks.onWorkResult?.(packet);
+      },
+      onQuestState: (packet) => this.callbacks.onQuestState?.(packet),
+      onWorldEvent: (packet) => this.handleWorldEvent(packet),
+      onEventClaim: (packet) => {
+        this.claimedPackets.add(packet.index);
+        this.renderer.claimRedPacket(packet.index);
+        if (packet.mine) this.renderer.showCoinFloat(this.localId, packet.amount);
+        this.callbacks.onEventClaim?.(packet);
+      },
+      onBossShock: (packet) => {
+        this.renderer.showBossShock(packet);
+        this.callbacks.onBossShock?.(packet);
+      },
     }, this.options.wsUrl, this.env.deviceId);
 
     this.name = profile.name;
@@ -1143,9 +1197,14 @@ export class GameSession {
    */
   private updateSeatHint(eid: number): void {
     if (this.localSeat !== 0) {
-      // 观战长椅上坐下不是「只能起身」：这里正是押注入口（ADR-0087）
-      const group = seatById(this.localSeat)?.group;
-      this.contextHint = group === 'arena-bench' ? HINT.arenaBet : '移动即可起身';
+      if (isWorkDeskSeat(this.localSeat)) {
+        // 工位上坐着时 F 就是开工（ADR-0088），「移动即可起身」在这里是最没用的一句话
+        this.contextHint = HINT.work;
+      } else {
+        // 观战长椅上坐下不是「只能起身」：这里正是押注入口（ADR-0087）
+        const group = seatById(this.localSeat)?.group;
+        this.contextHint = group === 'arena-bench' ? HINT.arenaBet : '移动即可起身';
+      }
     } else {
       const x = Position.x[eid]!;
       const y = Position.y[eid]!;
@@ -1158,6 +1217,7 @@ export class GameSession {
             propOut: this.interactTarget,
             seatedGroup: this.localSeat !== 0 ? seatById(this.localSeat)?.group ?? null : null,
             roomId: this.inRoom ? 1 : 0,
+            seatDeskIndex: this.localSeat !== 0 ? workDeskIndexOfSeat(this.localSeat) : -1,
           });
     }
     this.publishHint();
@@ -1604,6 +1664,15 @@ export class GameSession {
     if (this.elapsed < this.interactAt) return;
     const x = Position.x[eid]!;
     const y = Position.y[eid]!;
+    // 红包雨优先于一切热区：站在红包上按 F 一定是抢钱，不该先弹面板（ADR-0088）
+    if (
+      this.pickRedPacket(
+        this.nearestRedPacketIndex(x, y, WORLD_EVENT.RedPacketPickRange),
+      )
+    ) {
+      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+      return;
+    }
     // 八角笼报名 / 取消 / 领奖离场要读阶段与名额，仍由会话层裁决；
     // 放在最前是为了不让设施感应圈抢走 F
     if (isNearRing(x, y)) {
@@ -1647,6 +1716,14 @@ export class GameSession {
         // 茶台 F 打开属性强化面板（ADR-0085 → ADR-0087 增加装扮页签）
         this.showHint('赛博茶水强化站：属性与装扮都在这里');
         this.callbacks.onShopOpen?.('stats');
+        return;
+      case 'workDesk':
+        // 搬砖要求「坐在这一桌的工位上」：站着只提示先坐下，不发包也不开界面
+        if (this.localSeat === 0 || workDeskIndexOfSeat(this.localSeat) !== def.deskIndex) {
+          this.showHint(HINT.workNeedSeat);
+          return;
+        }
+        this.callbacks.onWorkOpen?.();
         return;
       case 'diceTable':
         this.callbacks.onDiceOpen?.(hotspotIndex(def.id));
@@ -1723,6 +1800,97 @@ export class GameSession {
       return;
     }
     if (packet.died) this.callbacks.onBossDown?.(byLocal);
+  }
+
+  /**
+   * 世界事件（ADR-0088）：红包雨开场时按种子铺点，其余阶段收起。
+   *
+   * 撒点用共享纯函数而不是服务端实体：一包 8 字节就把 25 个红包铺好，
+   * 也避免为「可拾取物」在 AOI 里新开一种实体类型。
+   */
+  private handleWorldEvent(packet: WorldEventPacket): void {
+    this.worldEventKind = packet.kind;
+    this.worldEventPhase = packet.phase;
+    const raining =
+      packet.kind === WORLD_EVENT_KIND.RedPacketRain &&
+      packet.phase !== WORLD_EVENT_PHASE.Resolve;
+    if (raining) {
+      // 新种子或重新预热（重连后入场补发）都视为一场新的红包雨
+      if (packet.seed !== this.redPacketSeed || packet.phase === WORLD_EVENT_PHASE.Announce) {
+        this.redPacketSeed = packet.seed;
+        this.redPacketSpotsCache = redPacketSpots(packet.seed);
+        this.claimedPackets.clear();
+      }
+      // 预热期只播横幅不铺红包：3 秒前就把 25 个红包摆出来会抢掉倒计时的注意力
+      this.renderer.setRedPacketSeed(
+        packet.phase === WORLD_EVENT_PHASE.Active ? packet.seed : null,
+      );
+    } else {
+      this.redPacketSeed = -1;
+      this.redPacketSpotsCache = [];
+      this.claimedPackets.clear();
+      this.renderer.setRedPacketSeed(null);
+    }
+    this.callbacks.onWorldEvent?.(packet);
+  }
+
+  /** 范围内最近的未抢红包下标；不在红包雨进行中就返回 -1 */
+  private nearestRedPacketIndex(x: number, y: number, range: number): number {
+    if (this.worldEventKind !== WORLD_EVENT_KIND.RedPacketRain) return -1;
+    if (this.worldEventPhase !== WORLD_EVENT_PHASE.Active) return -1;
+    let best = -1;
+    let bestDistance = range * range;
+    for (let i = 0; i < this.redPacketSpotsCache.length; i += 1) {
+      if (this.claimedPackets.has(i)) continue;
+      const spot = this.redPacketSpotsCache[i]!;
+      const dx = spot.x - x;
+      const dy = spot.y - y;
+      const distance = dx * dx + dy * dy;
+      if (distance > bestDistance) continue;
+      best = i;
+      bestDistance = distance;
+    }
+    return best;
+  }
+
+  /**
+   * 抢红包：F 与自动拾取共用。
+   *
+   * 先本地标记再发包——服务端的距离门是 72 + 120 余量，能按到就一定过；
+   * 万一被拒，下一次事件会带着新种子重新铺点，不会留下一个永远捡不到的红包。
+   */
+  private pickRedPacket(index: number): boolean {
+    if (index < 0) return false;
+    this.claimedPackets.add(index);
+    this.renderer.claimRedPacket(index);
+    this.net?.sendEventClaim(index);
+    return true;
+  }
+
+  /** 走近就捡：34px 内每 400ms 一次，站在红包上不必再按 F */
+  private autoPickRedPacket(eid: number): void {
+    if (this.worldEventKind !== WORLD_EVENT_KIND.RedPacketRain) return;
+    if (this.worldEventPhase !== WORLD_EVENT_PHASE.Active) return;
+    if (this.elapsed < this.autoPickAt) return;
+    const index = this.nearestRedPacketIndex(Position.x[eid]!, Position.y[eid]!, 34);
+    if (index < 0) return;
+    this.autoPickAt = this.elapsed + 400;
+    this.pickRedPacket(index);
+  }
+
+  /** 终端小游戏完成一轮：只上报连击数，金额由服务端裁决 */
+  claimWork(combo: number): void {
+    this.net?.sendWorkClaim(combo);
+  }
+
+  /** 领取每日悬赏：进度与当日已领都由服务端判 */
+  claimQuest(questId: number): void {
+    this.net?.sendQuestClaim(questId);
+  }
+
+  /** 手动抢红包（界面上的按钮走这条路） */
+  claimEvent(index: number): void {
+    this.pickRedPacket(index);
   }
 
   /**
@@ -2542,6 +2710,8 @@ export class GameSession {
       this.renderer.updateCamera(Position.x[localEid]!, Position.y[localEid]!);
       this.movementSendTime += dtMs;
       this.sendMove(localEid);
+      // 红包雨：走到红包上自动捡，省掉「每捡一个按一次 F」
+      this.autoPickRedPacket(localEid);
       this.snapshotAt += dtMs;
       if (this.snapshotAt >= SNAPSHOT_INTERVAL_MS) {
         this.snapshotAt = 0;

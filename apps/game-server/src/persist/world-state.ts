@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BossSaveState } from '../sim/boss';
 import type { RingLastMatchState, RingSaveState } from '../sim/ring';
+import type { VillaSaveState } from '../sim/villas';
 import { ProfileBook, type ProfileRecord } from './profiles';
 
 /**

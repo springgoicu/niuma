@@ -23,10 +23,13 @@ import {
   decodeHello,
   decodeLikeRequest,
   decodeMove,
+  decodeEventClaim,
   decodeP2PAction,
   decodeP2PInvite,
   decodeP2PRespond,
   decodePing,
+  decodeQuestClaim,
+  decodeWorkClaim,
   decodeSetAppearance,
   decodeSetName,
   decodeSetStatus,
@@ -48,6 +51,7 @@ import {
   encodeStatusBroadcast,
   encodeTipBroadcast,
   encodeWelcome,
+  encodeWorkResult,
   encodeVillaState,
   encodeArenaPool,
   encodeDiceState,
@@ -68,6 +72,9 @@ import {
   MAX_LIKES,
   readOpCode,
   WALLET_REASON,
+  BOSS_REWARD,
+  QUEST_ID,
+  bossHitCoins,
   APARTMENT_ACTION,
   RING_FEE,
   RING_SIDE,
@@ -84,7 +91,7 @@ import {
   type SeatStateEntry,
 } from '@niuma/shared-types';
 import { AdmissionController, type HelloPayload } from './admission/controller';
-import { createGameClock } from './clock';
+import { createGameClock, serverHourOf } from './clock';
 import type { ServerConfig } from './config';
 import { ChallengeBus, P2P_PACKET_INTERVAL_MS } from './challenge/bus';
 import { diceHandler } from './challenge/handlers/dice';
@@ -93,6 +100,10 @@ import { rpsHandler } from './challenge/handlers/rps';
 import { EconomyService } from './economy/service';
 import { openWorldStateStore } from './persist/world-state';
 import { BossRuntime } from './sim/boss';
+import { BossShockRuntime } from './sim/boss-shock';
+import { DailyQuestRuntime } from './sim/quests';
+import { WorldEventScheduler } from './sim/world-events';
+import { resolveWorkClaim } from './sim/work';
 import { EgressMeter, RingSampler } from './metrics';
 import { PACKET_MALFORMED, PACKET_UNKNOWN, checkPacket } from './net/guard';
 import { createOriginGuard } from './net/origin';
@@ -305,6 +316,29 @@ export function startGameServer(config: ServerConfig) {
     }
   }
 
+  /**
+   * 每日悬赏（ADR-0088）：进度只在服务端累计，客户端只负责展示与领取。
+   *
+   * 与经济服务共用同一个 `transport.send`：领奖时先发钱包快照、再发悬赏状态，
+   * 前端收到两条包后的顺序与「先加钱、再打勾」一致。
+   */
+  const quests = new DailyQuestRuntime(
+    economy,
+    (wsId, packet) => transport.send(wsId, packet),
+    clock.tzOffsetMin,
+  );
+
+  /** 画饼冲击波：预警与结算都挂在主 Tick，不另开计时器 */
+  const bossShock = new BossShockRuntime(world, transport, grid);
+
+  /** 全局随机事件：红包雨 / 突击查岗，10 分钟一场 */
+  const worldEvents = new WorldEventScheduler({
+    world,
+    transport,
+    economy,
+    now: clock.now(),
+  });
+
   /** 热区距离门：交互包必须落在热区半径 + 240ms 延迟余量的范围内 */
   function nearHotspot(id: string, player: Player): boolean {
     const hotspot = hotspotById(id);
@@ -397,6 +431,11 @@ export function startGameServer(config: ServerConfig) {
     send: (player, packet) => transport.send(player.wsId, packet),
     economy,
     findPlayer: (id) => world.get(id),
+    // 每日悬赏「赢一局对局」：骰子 / 猜拳 / 切磋共用同一条结算回调
+    onSettled: (winner, _loser, _gameType, now) => {
+      if (!winner || winner.wsId === 0) return;
+      quests.note(winner, QUEST_ID.MatchWin, 1, now);
+    },
   });
   challenge.register(diceHandler);
   challenge.register(rpsHandler);
@@ -463,10 +502,27 @@ export function startGameServer(config: ServerConfig) {
       if (attacker.wsId === 0 || target.id === attacker.id) return;
       economy.grantCoins(attacker, ECONOMY_REWARD.Knockdown, WALLET_REASON.KnockdownReward);
     },
-    onBossKill(attacker: Parameters<typeof clinic.observeHit>[0]): void {
+    onBossHit(
+      attacker: Parameters<typeof clinic.observeHit>[0],
+      now: number,
+      info: { crit: boolean; hp: number; justDied: boolean; shock: boolean },
+    ): void {
+      if (attacker.wsId === 0) return;
+      // 每次真实命中都掉钱：2~5 币，暴击翻倍（ADR-0088）
+      const coins = bossHitCoins(Math.random(), info.crit);
+      economy.grantCoins(attacker, coins, WALLET_REASON.BossHit);
+      // 悬赏「踢老板 10 脚」只数真实命中，空挥不进
+      quests.note(attacker, QUEST_ID.BossHits, 1, now);
+      // 跨过 25% 血线：全服 2 秒预警，未起跳的人被震趴
+      if (info.shock) bossShock.arm(now);
+    },
+    onBossKill(attacker: Parameters<typeof clinic.observeHit>[0], now: number): void {
       if (attacker.wsId === 0) return;
       // boss.hit 只有 justDied 那一次会回调到这里，一局最多一笔
-      economy.grantCoins(attacker, ECONOMY_REWARD.BossKill, WALLET_REASON.BossReward);
+      economy.grantCoins(attacker, BOSS_REWARD.Blade, WALLET_REASON.BossReward);
+      // 全服高光弹幕：与道具大喇叭同一个下行包，官方播报 fromId = 0
+      broadcastLoud(`尾刀！${attacker.name} 一脚把老板踢进了年度总结计划书，+${BOSS_REWARD.Blade} 币`);
+      quests.note(attacker, QUEST_ID.BossHits, 1, now);
     },
   };
   if (detention) {
@@ -580,6 +636,9 @@ export function startGameServer(config: ServerConfig) {
     );
     // 回一条 init 钱包快照：客户端把本地乐观值换成服务端权威值后落盘
     economy.syncOnJoin(player);
+    // 悬赏状态与当前事件横幅的入场补发：晚进来的人也要看到今天的进度与正在进行的活动
+    quests.push(player, now);
+    worldEvents.sendTo(player, now);
     // 热区建筑的入场补发：赌桌公共局、豪宅牌匾、锁门动态碰撞、八角笼彩池
     transport.send(player.wsId, encodeDiceState({ tables: dice.snapshot(player, now) }));
     transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, now)));
@@ -943,6 +1002,39 @@ export function startGameServer(config: ServerConfig) {
       return;
     }
 
+    // ---- 打工产出 / 世界事件 / 每日悬赏（ADR-0088）----
+    if (op === OpCode.C2S_WORK_CLAIM) {
+      // 只消费一个展示用的连击数：金额一律由服务端按坐姿、间隔、工效与夜班算
+      decodeWorkClaim(data);
+      const hour = serverHourOf(now, clock.tzOffsetMin);
+      const outcome = resolveWorkClaim(player, now, hour, Math.random());
+      if (!outcome) return;
+      economy.grantCoins(player, outcome.amount, WALLET_REASON.WorkPay);
+      transport.send(
+        player.wsId,
+        encodeWorkResult({ amount: outcome.amount, mult: outcome.mult, night: outcome.night }),
+      );
+      // 悬赏「搬砖 2 轮」：只有真的结算成功才计
+      quests.note(player, QUEST_ID.WorkRounds, 1, now);
+      return;
+    }
+
+    if (op === OpCode.C2S_QUEST_CLAIM) {
+      // 领取与商店共用同一道互动闸门：1 秒内重复点只算一次
+      if (now - player.lastP2PAt < P2P_PACKET_INTERVAL_MS) return;
+      player.lastP2PAt = now;
+      quests.claim(player, decodeQuestClaim(data), now);
+      return;
+    }
+
+    if (op === OpCode.C2S_EVENT_CLAIM) {
+      // 25 个人抢同一个池：闸门只挡连点，抢没抢到由调度器判
+      if (now - player.lastP2PAt < P2P_PACKET_INTERVAL_MS) return;
+      player.lastP2PAt = now;
+      worldEvents.claim(player, decodeEventClaim(data), now);
+      return;
+    }
+
     // ---- 牛马币互动（ADR-0082 / ADR-0083）----
     // 邀请 / 打赏 / 道具 / 购买共用同一道限频闸门：正常操作远慢于 500ms
     const interactive =
@@ -1046,7 +1138,7 @@ export function startGameServer(config: ServerConfig) {
       const request = decodeDiceBet(data);
       if (!nearHotspot(`dice-table-${request.table}`, player)) return;
       if (dice.placeBet(player, request.table, request.side, request.amount, now)) {
-        broadcastDice(world, transport, now);
+        broadcastDice(dice, world, transport, now);
       }
       return;
     }
@@ -1381,7 +1473,7 @@ export function startGameServer(config: ServerConfig) {
     const diceChanged = dice.tick(now, world);
     if (diceChanged || now - lastDiceBroadcastAt >= 1000) {
       lastDiceBroadcastAt = now;
-      broadcastDice(world, transport, now);
+      broadcastDice(dice, world, transport, now);
     }
 
     // 豪宅：房主改名 / 上线要让牌匾跟着换字；每秒对齐一次可收币数
@@ -1398,6 +1490,11 @@ export function startGameServer(config: ServerConfig) {
     // 入座者免伤（ADR-0065），因此这里不再产生座位释放条目。
     // 命中观察者与执法模块是同一个实例：没有保安 / 关闭执法时不存在，攻击自然不计数
     resolveVents(world, grid, transport, now, ventObserver, challenge.duelPort);
+
+    // 冲击波在憋气结束后结算；调度器推进事件阶段。两者都是「一次数值比较」的早退，
+    // 空闲时对 50ms 帧没有任何开销。
+    bossShock.tick(now);
+    worldEvents.tick(now);
 
     // 邀请超时与占位对局裁决都挂在同一个 Tick：内部有空表早退，稳态零开销
     challenge.tick(now);

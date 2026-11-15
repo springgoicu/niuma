@@ -102,6 +102,15 @@ export const WALLET_REASON = {
   HouseUpgrade: 26,
   /** 购买家具 */
   Furniture: 27,
+  // ---- 打工产出 / 世界事件（ADR-0088），只追加不复用 ----
+  /** 工位搬砖工资 */
+  WorkPay: 28,
+  /** 红包雨抢到的红包 */
+  RedPacket: 29,
+  /** 命中老板的掉落 */
+  BossHit: 30,
+  /** 突击查岗全勤奖 */
+  InspectionBonus: 31,
 } as const;
 export type WalletReason = (typeof WALLET_REASON)[keyof typeof WALLET_REASON];
 
@@ -134,6 +143,10 @@ export const WALLET_REASON_LABEL: Record<number, string> = {
   [WALLET_REASON.Cosmetic]: '购买装扮',
   [WALLET_REASON.HouseUpgrade]: '户型升级',
   [WALLET_REASON.Furniture]: '购买家具',
+  [WALLET_REASON.WorkPay]: '搬砖工资',
+  [WALLET_REASON.RedPacket]: '抢到红包',
+  [WALLET_REASON.BossHit]: '踢老板掉落',
+  [WALLET_REASON.InspectionBonus]: '查岗全勤',
 };
 
 /** 固定收益：一处定义，服务端发币与商店文案共用 */
@@ -165,14 +178,14 @@ export const STAT_SKUS: readonly StatSku[] = [
   {
     key: 'workEffLv',
     name: '工效',
-    blurb: '工位产出与挂机结算的预备属性。',
+    blurb: '每级让工位搬砖多产 8%，夜班再 ×1.5。',
     basePrice: 100,
     stepPrice: 60,
   },
   {
     key: 'critLv',
     name: '暴击',
-    blurb: '后续伤害浮动的预备属性。',
+    blurb: '每级 +5% 踢老板暴击（掉落翻倍），封顶 35%。',
     basePrice: 140,
     stepPrice: 90,
   },
@@ -344,6 +357,13 @@ export const COSMETIC_SKUS: readonly CosmeticSku[] = [
   { id: 10, slot: 'hair', key: 'afro', name: '爆炸头', price: 240 },
   { id: 11, slot: 'hair', key: 'slick', name: '大背头', price: 200 },
   { id: 12, slot: 'hair', key: 'topknot', name: '高马尾髻', price: 260 },
+  // ---- ADR-0088：打工经济上线后的一批「暴富」件，全部追加在末尾 ----
+  { id: 13, slot: 'head', key: 'golden_helmet', name: '黄金安全帽', price: 520 },
+  { id: 14, slot: 'head', key: 'crown', name: '皇冠', price: 680 },
+  { id: 15, slot: 'eyes', key: 'cyber_shades', name: '赛博墨镜', price: 380 },
+  { id: 16, slot: 'eyes', key: 'gold_rim_glasses', name: '金丝眼镜', price: 320 },
+  { id: 17, slot: 'neck', key: 'gold_chain', name: '大金链', price: 560 },
+  { id: 18, slot: 'neck', key: 'red_scarf', name: '红围巾', price: 240 },
 ];
 
 export function findCosmeticSkuById(id: number): CosmeticSku | undefined {

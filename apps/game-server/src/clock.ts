@@ -56,10 +56,21 @@ export function nextServerMidnight(nowMs: number, tzOffsetMin: number): number {
   return nextDay - tzOffsetMin * MINUTE_MS;
 }
 
-/** 园区本地小时（0–23）：聊天时间戳与营业时间判断共用 */
+/** 园区本地小时（0–23）：聊天时间戳、夜班加成与营业时间判断共用 */
 export function serverHourOf(nowMs: number, tzOffsetMin: number): number {
   const shifted = nowMs + tzOffsetMin * MINUTE_MS;
   return new Date(shifted).getUTCHours();
+}
+
+/**
+ * 园区本地日期键 `YYYY-MM-DD`（ADR-0088）。
+ *
+ * 每日悬赏与「今日已领」都以它为唯一的换日口径：与老板零点重置、考勤今日字段
+ * 共用同一个偏移，玩家不会看到「悬赏已重置但老板还没回满」的分裂状态。
+ */
+export function serverDayKey(nowMs: number, tzOffsetMin: number): string {
+  const shifted = nowMs + tzOffsetMin * MINUTE_MS;
+  return new Date(shifted).toISOString().slice(0, 10);
 }
 
 export function createGameClock(tzOffsetMin: number, now: () => number = Date.now): GameClock {

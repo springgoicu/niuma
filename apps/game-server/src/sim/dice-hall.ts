@@ -207,9 +207,14 @@ function diceRollGuard(seed: number): boolean {
 }
 
 /** 广播给所有在线连接：一包两张桌，按人填自己的注额 */
-export function broadcastDice(world: World, transport: Transport, now = Date.now()): void {
+export function broadcastDice(
+  dice: DiceHallRuntime,
+  world: World,
+  transport: Transport,
+  now = Date.now(),
+): void {
   for (const player of world.players.values()) {
     if (player.wsId === 0) continue;
-    transport.send(player.wsId, encodeDiceState({ tables: world.dice.snapshot(player, now) }));
+    transport.send(player.wsId, encodeDiceState({ tables: dice.snapshot(player, now) }));
   }
 }

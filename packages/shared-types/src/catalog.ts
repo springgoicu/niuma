@@ -40,8 +40,19 @@ export const HEADWEAR_IDS = [
   'police_cap',
   // 护士帽（ADR-0084）同样只给服务端 NPC 用，追加在末尾避免旧档字节漂移
   'nurse_cap',
+  // ADR-0088：黄金安全帽 / 皇冠（只许追加，旧档字节值语义不变）
+  'golden_helmet',
+  'crown',
 ] as const;
-export const EYEWEAR_IDS = ['none', 'round', 'sun', 'monocle'] as const;
+export const EYEWEAR_IDS = [
+  'none',
+  'round',
+  'sun',
+  'monocle',
+  // ADR-0088：赛博墨镜 / 金丝眼镜
+  'cyber_shades',
+  'gold_rim_glasses',
+] as const;
 export const NECKWEAR_IDS = [
   'none',
   'scarf',
@@ -50,6 +61,9 @@ export const NECKWEAR_IDS = [
   'chinese_knot',
   'jade_pendant',
   'epaulette',
+  // ADR-0088：大金链 / 红围巾
+  'gold_chain',
+  'red_scarf',
 ] as const;
 export const HAIR_IDS = ['none', 'buzz', 'bangs', 'ponytail', 'afro', 'slick', 'topknot', 'braid'] as const;
 

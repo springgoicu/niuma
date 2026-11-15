@@ -221,6 +221,13 @@ export interface ContextHintOptions {
   seatedGroup?: string | null;
   /** 当前所在房间频道：0 = 园区，非 0 = 公寓屋内 */
   roomId?: number;
+  /**
+   * 当前坐着的工位下标；不是工位椅时传 -1（或省略）。
+   *
+   * 工位提示分两句：坐对了是「开始加班搬砖」，只是路过是「先坐下」。
+   * 服务端只认「坐在本工位上」，提示必须先说清楚，不能让人按 F 按出空。
+   */
+  seatDeskIndex?: number;
 }
 
 /** 热区 → 提示文案：label 已在共享表里声明，这里只做一次映射 */
@@ -246,6 +253,8 @@ export function hintForHotspot(def: HotspotDef): string {
       return HINT.apartment;
     case 'apartmentExit':
       return HINT.apartmentExit;
+    case 'workDesk':
+      return HINT.work;
     default:
       return HINT.interact;
   }
@@ -278,9 +287,17 @@ export function selectContextHint(
     if (candidate.kind === 'arenaSeat') return options.seatedGroup === 'arena-bench';
     if (candidate.kind === 'apartmentDoor') return roomId === 0;
     if (candidate.kind === 'apartmentExit') return roomId !== 0;
+    // 工位只在「坐的是这一桌」时才抢提示：没坐下时该让位给「按 Z 坐下」
+    if (candidate.kind === 'workDesk') return options.seatDeskIndex === candidate.deskIndex;
     return true;
   });
-  if (def) return hintForHotspot(def);
+  if (def) {
+    // 工位需要「坐的是不是这一桌」：提示与服务端校验必须是同一句话
+    if (def.kind === 'workDesk') {
+      return options.seatDeskIndex === def.deskIndex ? HINT.work : HINT.workNeedSeat;
+    }
+    return hintForHotspot(def);
+  }
   if (isNearBoss(x, y)) return HINT.boss;
   const prop = options.propOut ?? { kind: 'vending', x: 0, y: 0 };
   if (nearestInteractivePropInto(prop, x, y)) return HINT.interact;

@@ -47,6 +47,13 @@ export const HINT = {
   apartment: '[F] 进入牛马公寓',
   /** 公寓屋内出口 */
   apartmentExit: '[F] 出门回园区',
+  // ---- 打工产出与随机事件（ADR-0088） ----
+  /** 工位：坐好之后按 F 开工 */
+  work: '[F] 开始加班搬砖',
+  /** 站在工位旁但没坐下：先坐下才能开工 */
+  workNeedSeat: '先坐到自己工位上再搬砖',
+  /** 红包雨：站在红包上按 F 抢 */
+  redPacket: '[F] 抢红包',
 } as const;
 
 export type HintCopy = (typeof HINT)[keyof typeof HINT];
@@ -92,6 +99,10 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.villaTree]: { action: 'interact', label: '收摇钱树', key: 'F' },
   [HINT.apartment]: { action: 'interact', label: '进公寓', key: 'F' },
   [HINT.apartmentExit]: { action: 'interact', label: '出门', key: 'F' },
+  [HINT.work]: { action: 'interact', label: '搬砖', key: 'F' },
+  // 没坐下时不可执行：只提醒，不给按钮
+  [HINT.workNeedSeat]: null,
+  [HINT.redPacket]: { action: 'interact', label: '抢红包', key: 'F' },
 };
 
 /** 可互动提示返回按钮描述；劝阻、状态与未知文案返回 null */
@@ -132,6 +143,9 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.villaTree]: '点「互动」收摇钱树',
   [HINT.apartment]: '点「互动」进公寓',
   [HINT.apartmentExit]: '点「互动」出门',
+  [HINT.work]: '点「互动」搬砖',
+  [HINT.workNeedSeat]: '先坐到自己工位上再搬砖',
+  [HINT.redPacket]: '点「互动」抢红包',
 };
 
 /** 无按键的提示（已到达某地、附近没有设施等）原样透传，不做通用替换 */

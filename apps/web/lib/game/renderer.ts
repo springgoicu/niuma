@@ -23,8 +23,10 @@ import {
   type DiceStatePacket,
   type RoomStatePacket,
   type VillaStatePacket,
+  type BossShockPacket,
 } from '@niuma/shared-types';
 import { ClinicView } from './clinic-view';
+import { WorldEventFx } from './world-event-fx';
 import { loadAtlas, type Atlas } from './atlas';
 import { BossView } from './boss';
 import { BulletinView } from './bulletin';
@@ -97,6 +99,9 @@ import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
 import { WaterFx, makeWadingTexture } from './water-fx';
 import { WelcomeView } from './welcome';
+
+/** 黄金安全帽的目录键：脚底金光的唯一触发条件（ADR-0088） */
+const GOLDEN_HELMET_ID = 'golden_helmet';
 
 /**
  * 世界倍率：1 纹素画 1.5 个 CSS 像素，角色站立 48 纹素 ≈ 72 CSS 像素（DPR 2）。
@@ -811,6 +816,16 @@ export class GameRenderer {
   private stunStars?: StunStars;
   /** 持续型 Buff 表现：脚底风 / 护盾环 / 绿色贴纸（ADR-0085） */
   private buffFx?: BuffFx;
+  /** 世界事件地面层：红包雨与画饼冲击波（ADR-0088） */
+  private readonly worldEventFx = new WorldEventFx();
+  /**
+   * 脚底金光（ADR-0088）：黄金安全帽的附带特效。
+   *
+   * 外观编码是 32 字节定长，没有 aura 槽位；把金光绑在头饰上是唯一不改协议的方案，
+   * 好处是远端玩家也看得到——否则只有本人能看见自己的光。
+   */
+  private readonly goldAura = new Graphics();
+  private readonly goldHelmets = new Set<number>();
   /** 园区小动物与蝴蝶：纯客户端氛围，`?critters=0` 时整层不构造（ADR-0042） */
   private critters?: CritterField;
   /** 河道小鱼：与 critters 共用图集，`?fish=0` 时只关鱼（ADR-0045） */
@@ -997,6 +1012,8 @@ export class GameRenderer {
     this.props = new PropsView();
     this.props.build(this.sortLayer, this.app.renderer);
     this.world.addChild(this.props.base);
+    // 脚底金光压在铺装之上、角色之下：光环不该盖住腿，也不该被地面吃掉
+    this.world.addChild(this.goldAura);
 
     // 室内陈设补完（会议室 / 宿舍 / 工作区 / 卫生间）：与季节无关，始终挂上。
     // 墙上的窗、钟、镜与衣柜这类「贴墙家具」都没有碰撞——贴墙位置本来就在墙体里
@@ -1115,6 +1132,9 @@ export class GameRenderer {
     this.buffFx = new BuffFx();
     this.world.addChild(this.buffFx.container);
 
+    // 世界事件（ADR-0088）：红包与冲击波都画在世界坐标里，跟着相机一起缩放
+    this.world.addChild(this.worldEventFx.container);
+
     // 氛围层：地面小动物进 y 排序层（会被树冠挡住），蝴蝶单独一层浮在景物之上、昵称之下。
     // `?critters=0` 时整层不构造：烘焙与撒点都发生在构造函数里，关掉就是真的零开销。
     if (crittersEnabled && this.critterArt) {
@@ -1230,12 +1250,16 @@ export class GameRenderer {
     this.sortLayer.add(y, view.root);
     this.labels.addChild(view.labels);
     this.pendingInit.delete(id);
+    // 脚底金光按头饰判定：入场首帧就要亮，否则戴冠的人会先秃一帧
+    if (appearance.cosmetics?.headwear === GOLDEN_HELMET_ID) this.goldHelmets.add(id);
+    else this.goldHelmets.delete(id);
   }
 
   removeEntity(id: number): void {
     const view = this.views.get(id);
     if (view) {
       this.views.delete(id);
+      this.goldHelmets.delete(id);
       this.beacons.delete(view);
       this.p2pFx.drop(id);
       view.destroy();
@@ -1312,6 +1336,9 @@ export class GameRenderer {
 
   setAppearance(id: number, appearance: CharacterAppearance): void {
     this.views.get(id)?.setAppearance(appearance);
+    // 换帽子立刻换光环：戴上皇冠的人不该继续踩着金光，摘掉则相反
+    if (appearance.cosmetics?.headwear === GOLDEN_HELMET_ID) this.goldHelmets.add(id);
+    else this.goldHelmets.delete(id);
   }
 
   /** 状态变更：本机与视野内的远端角色走同一条路径，空串即清除 */
@@ -1346,6 +1373,42 @@ export class GameRenderer {
   /** 对局结束：清掉切磋血条，亮牌继续按自己的 4s 时长淡出 */
   clearDuelHuds(): void {
     this.p2pFx.clearDuelHuds();
+  }
+
+  /**
+   * 脚底金光：戴黄金安全帽的人踩着一圈金色光斑，两帧交替呼吸。
+   *
+   * 一个 Graphics 重画全层：同时戴着的人个位数，比每人备一个 Sprite 更省。
+   */
+  private drawGoldAura(now: number): void {
+    const gfx = this.goldAura;
+    gfx.clear();
+    if (this.goldHelmets.size === 0) return;
+    const pulse = 0.55 + 0.45 * Math.abs(Math.sin(now / 420));
+    for (const id of this.goldHelmets) {
+      const view = this.views.get(id);
+      if (!view) continue;
+      const x = Math.round(view.root.position.x);
+      const y = Math.round(view.root.position.y);
+      gfx.ellipse(x, y + 2, 17, 6).fill({ color: 0xf5c451, alpha: 0.12 * pulse });
+      gfx.ellipse(x, y + 2, 11, 4).fill({ color: 0xfff3c4, alpha: 0.2 * pulse });
+    }
+  }
+
+  /** 红包雨：按事件种子铺 25 个红包；`null` 表示事件结束、整层收起（ADR-0088） */
+  setRedPacketSeed(seed: number | null): void {
+    if (seed === null) this.worldEventFx.clearSpots();
+    else this.worldEventFx.setSpots(seed);
+  }
+
+  /** 某个红包被抢走：本地立刻抹掉，不等下一帧回包 */
+  claimRedPacket(index: number): void {
+    this.worldEventFx.claim(index);
+  }
+
+  /** 画饼冲击波：预警 2 秒红圈 / 命中帧扩散闪白 */
+  showBossShock(packet: BossShockPacket): void {
+    this.worldEventFx.showShock(packet, performance.now());
   }
 
   /**
@@ -1534,6 +1597,8 @@ export class GameRenderer {
     this.stunStars?.update(now, this.views);
     this.buffFx?.update(now, this.views);
     this.p2pFx.update(now);
+    this.worldEventFx.update(now);
+    this.drawGoldAura(now);
 
     // 警灯只遍历保安集合：普通实体与真人不会被每帧白算一次
     for (const view of this.beacons) view.updateBeacon(now);

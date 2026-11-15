@@ -1316,6 +1316,25 @@ export function seatById(id: number): SeatInstance | undefined {
 }
 
 /**
+ * 工位座位 id 表（ADR-0088）。
+ *
+ * `SEAT_DRAFTS` 的第一段就是 `WORKSTATIONS`，因此工位椅恒为 `1..WORKSTATIONS.length`；
+ * 这段顺序被注释钉死为「新增座位只能追加在末尾」，所以这里可以直接按 id 区间判断，
+ * 不必再给座位加一个字段（加字段会让 `niuma:session:v1` 的旧档语义变复杂）。
+ */
+export const WORK_DESK_SEAT_IDS: ReadonlyArray<number> = WORKSTATIONS.map((_, index) => index + 1);
+
+/** 这张椅子是不是工位椅：坐姿搬砖的服务端校验与客户端提示都读它 */
+export function isWorkDeskSeat(seatId: number): boolean {
+  return Number.isInteger(seatId) && seatId >= 1 && seatId <= WORKSTATIONS.length;
+}
+
+/** 工位椅 → 工位下标（0 起）；不是工位椅返回 -1 */
+export function workDeskIndexOfSeat(seatId: number): number {
+  return isWorkDeskSeat(seatId) ? seatId - 1 : -1;
+}
+
+/**
  * 找最近的可用座位：`isFree` 由调用方提供（服务端查占用表，客户端查本地镜像），
  * `accept` 用来按种类过滤（Z 只找坐位，X 只找床），不传即不过滤。
  * 没有可用座位时返回 undefined，调用方退化为地面坐 / 地面躺。

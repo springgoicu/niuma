@@ -39,6 +39,11 @@ import type {
   RoomStatePacket,
   VillaRequest,
   VillaStatePacket,
+  BossShockPacket,
+  EventClaimResult,
+  QuestStatePacket,
+  WorkResultPacket,
+  WorldEventPacket,
 } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
@@ -112,6 +117,10 @@ export type MainToWorker =
   | { t: 'apartment'; request: ApartmentRequest }
   | { t: 'apartmentInvite'; targetId: number }
   | { t: 'roomLayout'; placements: FurniturePlacement[] }
+  /** 打工产出与随机事件（ADR-0088）：上行只带意图 */
+  | { t: 'claimWork'; combo: number }
+  | { t: 'claimQuest'; questId: number }
+  | { t: 'claimEvent'; index: number }
   | { t: 'navigate'; id: NavTargetId }
   | { t: 'cancelNav' }
   | { t: 'pick'; x: number; y: number }
@@ -189,6 +198,13 @@ export type WorkerToMain =
   | { t: 'arenaPool'; packet: ArenaPoolPacket }
   | { t: 'room'; packet: RoomStatePacket }
   | { t: 'roomInvite'; packet: RoomInvitePacket }
+  /** 打工产出与随机事件（ADR-0088） */
+  | { t: 'workOpen' }
+  | { t: 'workResult'; packet: WorkResultPacket }
+  | { t: 'questState'; packet: QuestStatePacket }
+  | { t: 'worldEvent'; packet: WorldEventPacket }
+  | { t: 'eventClaim'; packet: EventClaimResult }
+  | { t: 'bossShock'; packet: BossShockPacket }
   /** 工牌点赞变化：主线程更新工牌与已赞集合 */
   | { t: 'like'; packet: LikePacket }
   /** 发声请求：`AudioContext` 只能在主线程，所以连听者坐标一起带回来 */

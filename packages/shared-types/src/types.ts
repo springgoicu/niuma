@@ -248,6 +248,30 @@ export const OpCode = {
   S2C_ROOM_STATE: 0x4f,
   /** 串门邀请通知：`[op][fromId u16][doorNo u16][len u8][name]` */
   S2C_ROOM_INVITE: 0x50,
+  // ---- 打工产出 / Boss 2.0 / 全局随机事件 / 每日悬赏（ADR-0088），从 0x51 继续追加 ----
+  /**
+   * 搬砖结算：`[op][combo u8]`，2 字节定长。
+   *
+   * `combo` 只做展示与日志，不参与发钱：金额一律由服务端按工效 / 夜班 / 随机数算。
+   */
+  C2S_WORK_CLAIM: 0x51,
+  /** 搬砖结果：`[op][amount u16][mult u8][flags u8]`，5 字节定长 */
+  S2C_WORK_RESULT: 0x52,
+  /** 领取每日悬赏：`[op][questId u8]`，2 字节定长 */
+  C2S_QUEST_CLAIM: 0x53,
+  /** 悬赏状态：`[op][len u8][day][count u8]` + count × `[id u8][progress u16][claimed u8]` */
+  S2C_QUEST_STATE: 0x54,
+  /** 世界事件横幅：`[op][kind u8][phase u8][remainingSec u16][seed u16][amount u16]` */
+  S2C_WORLD_EVENT: 0x55,
+  /** 抢红包：`[op][index u8]`，2 字节定长 */
+  C2S_EVENT_CLAIM: 0x56,
+  /** 画饼冲击波：`[op][phase u8][x u16][y u16][radius u16][remainingMs u16][hits u8]` */
+  S2C_BOSS_SHOCK: 0x57,
+  /**
+   * 抢红包结果：`[op][index u8][amount u16][flags u8]`，5 字节定长。
+   * 广播给视野内的人（让旁观者看到红包被抢走），`flags bit0` 表示领取者就是收包人本人。
+   */
+  S2C_EVENT_CLAIM: 0x58,
 } as const;
 
 /** 老板血量包：flags bit0 = 本次归零，bit1 = 跨日重置 */
