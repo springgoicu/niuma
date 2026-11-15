@@ -133,8 +133,8 @@ describe('中央迎宾广场与出生点', () => {
       expect(isBlocked(4096, y)).toBe(false);
     }
 
-    // 导览牌 96×92 的占地：九点采样不进任何路径多边形，路径顶点也不落进牌面
-    expect(directory).toEqual({ x: 4310, y: 4432, width: 96, height: 92 });
+    // 导览牌 96×120 的占地（ADR-0089 加高并南移后）：九点采样不进任何路径多边形，路径顶点也不落进牌面
+    expect(directory).toEqual({ x: 4310, y: 4460, width: 96, height: 120 });
     const board = {
       x: directory.x - directory.width / 2,
       y: directory.y - directory.height,

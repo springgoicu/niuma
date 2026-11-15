@@ -11,7 +11,8 @@ describe('世界指路牌牌面（ADR-0078）', () => {
     const grounds = NAV_TARGETS.filter((target) => target.area === 'grounds');
     expect(plates.map((plate) => plate.label)).toEqual(grounds.map((target) => target.name));
     // 删目标只会少一块牌，不会再出现「找不到就指向北」的静默兜底
-    expect(plates).toHaveLength(3);
+    expect(plates).toHaveLength(grounds.length);
+    expect(plates).toHaveLength(7);
   });
 
   it('箭头方位取真实读数，不写死', () => {
@@ -32,8 +33,10 @@ describe('世界指路牌牌面（ADR-0078）', () => {
   });
 
   it('超过画布容量时退回顶对齐，不把已有的牌挤到看不清', () => {
-    expect(signPlateTop(0, 6, DIRECTORY.height)).toBe(16);
-    expect(signPlateTop(5, 6, DIRECTORY.height)).toBe(16 + 5 * SIGN_PLATE_ROW);
+    // 120 高放得下 6 块；8 块（假想目标继续增加）才走顶对齐兜底
+    expect(signPlateTop(0, 6, DIRECTORY.height)).toBeGreaterThanOrEqual(16);
+    expect(signPlateTop(0, 8, DIRECTORY.height)).toBe(16);
+    expect(signPlateTop(7, 8, DIRECTORY.height)).toBe(16 + 7 * SIGN_PLATE_ROW);
     // 负数下标收敛到第一块
     expect(signPlateTop(-1, 3, DIRECTORY.height)).toBe(signPlateTop(0, 3, DIRECTORY.height));
   });

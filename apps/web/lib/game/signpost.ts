@@ -8,7 +8,7 @@ import { navReadings, type NavOctant } from './nav';
  * 曾经手写的五条 id 清单删掉后，删目标只会少一块牌，不会让箭头静默指北。
  */
 
-/** 单块目的地牌的行高：96×92 画布上 13px 刚好放下箭头与 8px 汉字 */
+/** 单块目的地牌的行高：96×120 画布上 13px 刚好放下箭头与 8px 汉字（ADR-0089） */
 export const SIGN_PLATE_ROW = 13;
 
 /** 标题牌「园区导览」占 0–14，目的地牌从 16 起 */
@@ -25,10 +25,11 @@ export interface SignPlate {
 
 /**
  * 第 `index` 块目的地牌的上沿。`count` 块整体在标题牌与底牌之间垂直居中，
- * 3 块不会被顶到标题下面、也不会压住「你在这里」。
+ * 园区级目标（当前 7 块）不会被顶到标题下面、也不会压住「你在这里」。
  *
- * 超过画布容量（`count * 13 > 可用高度`）时退回顶对齐：宁可让多出来的牌
- * 被画布裁掉，也不把已列的目标挤到看不清。
+ * 超过画布容量（`count * 13 > 可用高度`，96×120 下是 6 块）时退回顶对齐：
+ * 宁可让多出来的牌被画布裁掉，也不把已列的目标挤到看不清。真到那一天，
+ * 该做的是按 ADR-0089 继续加高画布，而不是压字号。
  */
 export function signPlateTop(index: number, count: number, height: number): number {
   const span = Math.max(0, height - PLATE_BOTTOM - PLATE_TOP);

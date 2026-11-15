@@ -38,7 +38,7 @@ function setup(random = () => 0.2) {
 }
 
 describe('ChallengeBus', () => {
-  it('接受后冻结双方赌注，赢家拿走两份', () => {
+  it('接受后冻结双方赌注，赢家拿走税后奖池', () => {
     const { a, b, bus } = setup();
     expect(bus.invite(a, { targetId: b.id, gameType: P2P_GAME_TYPE.Duel, wager: 20, extra: 0 }, 1000)).toBe(
       P2P_INVITE_REASON.None,
@@ -48,10 +48,25 @@ describe('ChallengeBus', () => {
     expect(a.coins).toBe(80);
     expect(b.coins).toBe(80);
     expect(a.busyMatchId).toBeGreaterThan(0);
-    bus.tick(1010 + duelHandler.durationMs);
-    // random 固定偏向 a，因此 a 拿到 40 币奖池
-    expect(a.coins).toBe(120);
+    // 切磋靠剩余血量决胜：100 HP、每下 12 伤害，连打 9 下把 b 打空
+    for (let hit = 0; hit < 9; hit += 1) {
+      bus.duelPort.hit(a, b, 1020 + hit);
+    }
+    // 奖池 40 抽 5% 园区税：赢家只拿回 38
+    expect(a.coins).toBe(80 + 38);
     expect(b.coins).toBe(80);
+    expect(a.busyMatchId).toBe(0);
+    expect(b.busyMatchId).toBe(0);
+  });
+
+  it('打满全场仍平分秋色时按平局全额退款', () => {
+    const { a, b, bus } = setup();
+    bus.invite(a, { targetId: b.id, gameType: P2P_GAME_TYPE.Duel, wager: 20, extra: 0 }, 1000);
+    bus.respond(b, { inviteId: b.pendingInviteId, accept: true }, 1010);
+    // 谁也不挨打：到点按剩余血量裁决，同分判平，托管原路退回
+    bus.tick(1010 + duelHandler.durationMs);
+    expect(a.coins).toBe(100);
+    expect(b.coins).toBe(100);
     expect(a.busyMatchId).toBe(0);
     expect(b.busyMatchId).toBe(0);
   });
@@ -81,7 +96,8 @@ describe('ChallengeBus', () => {
     bus.invite(a, { targetId: b.id, gameType: P2P_GAME_TYPE.Duel, wager: 20, extra: 0 }, 1000);
     bus.respond(b, { inviteId: b.pendingInviteId, accept: true }, 1010);
     bus.onDisconnect(a, 1200);
-    expect(b.coins).toBe(120);
+    // 对手掉线判胜同样只派奖池的 95%：80 + 38
+    expect(b.coins).toBe(118);
     expect(a.coins).toBe(80);
     expect(bus.activeCount).toBe(0);
     expect(b.busyMatchId).toBe(0);

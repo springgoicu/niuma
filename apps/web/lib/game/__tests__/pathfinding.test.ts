@@ -5,8 +5,8 @@ import { NAV_CELL, findPath } from '../pathfinding';
 const MAX_STEP = NAV_CELL * Math.SQRT2 + 0.001;
 
 describe('园区自动寻路（ADR-0040）', () => {
-  it('从出生点到 8 个导览目标都能找到路径', () => {
-    expect(NAV_TARGETS).toHaveLength(8);
+  it('从出生点到 12 个导览目标都能找到路径', () => {
+    expect(NAV_TARGETS).toHaveLength(12);
     for (const target of NAV_TARGETS) {
       const path = findPath(SPAWN_CENTER.x, SPAWN_CENTER.y, target.arrive.x, target.arrive.y);
       expect(path, target.id).not.toBeNull();
@@ -33,7 +33,7 @@ describe('园区自动寻路（ADR-0040）', () => {
     }
   });
 
-  it('广场中心到 8 个导览目标同样可达', () => {
+  it('广场中心到 12 个导览目标同样可达', () => {
     for (const target of NAV_TARGETS) {
       expect(findPath(WORLD_CENTER.x, WORLD_CENTER.y, target.arrive.x, target.arrive.y)).not.toBeNull();
     }

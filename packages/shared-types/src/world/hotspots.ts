@@ -226,6 +226,9 @@ export function isWithinHotspot(
 ): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
   const reach = def.radius + Math.max(0, slack);
+  // 半径不是有限数时一律判不在范围内：Infinity 会让整张图都「够得着」，
+  // 提示与按键都会退化成「随处可按」
+  if (!Number.isFinite(reach)) return false;
   const dx = x - def.x;
   const dy = y - def.y;
   return dx * dx + dy * dy <= reach * reach;

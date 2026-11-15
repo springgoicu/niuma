@@ -72,7 +72,7 @@ export interface RingSettleEntry {
 }
 
 /**
- * 三人擂台状态机：idle → waiting → running → award → idle。
+ * 红蓝 1v1 擂台状态机：idle → waiting → running → award → idle。
  * 只活在服务端内存；入场、扣血、倒计时、名次与传送全由这里裁决。
  *
  * `RING_ROUND_MS` 是本局上限而不是固定时长：只要站着的只剩 1 人（冠军已定），
@@ -122,7 +122,7 @@ export class RingRuntime {
     return true;
   }
 
-  /** 第 1 人等待，第 2 人落地启动 120 秒；第 3 人可在 running 中途补入。 */
+  /** 红蓝各一人：第 1 人等待，第 2 人落地启动 120 秒；满员后报名一律判 full。 */
   enter(player: Player, now: number): RingEnterResult {
     const verdict = this.canEnter(player);
     if (verdict !== true) return verdict;
@@ -303,7 +303,7 @@ export class RingRuntime {
    * 冠军已定：本局至少 2 人参战，且站着的只剩 1 人（或全部倒下）。
    *
    * 断线剩 1 人时 `members.length === 1`，不算分出胜负——那种情况仍走完计时，
-   * 免得白送一个冠军；判定本身只扫 ≤3 个成员，不需要额外状态。
+   * 免得白送一个冠军；判定本身只扫 ≤2 个成员，不需要额外状态。
    */
   private isDecided(): boolean {
     if (this.members.length < 2) return false;

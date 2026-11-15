@@ -22,20 +22,18 @@ function packet(overrides: Partial<RingPacket> = {}): RingPacket {
 
 const A = { id: 11, slot: 0, name: '甲', hp: RING_MAX_HP, eliminated: false, rank: 0 };
 const B = { id: 12, slot: 1, name: '乙', hp: 6, eliminated: false, rank: 0 };
-const C = { id: 13, slot: 2, name: '丙', hp: 0, eliminated: true, rank: 0 };
 
 describe('ringSeats', function () {
-  it('固定返回三个席位，空位也占一行', function () {
+  it('固定返回红蓝两个席位，空位也占一行', function () {
     const seats = ringSeats(packet({ members: [A] }));
-    expect(seats).toHaveLength(3);
+    expect(seats).toHaveLength(2);
     expect(seats[0]!.member?.name).toBe('甲');
     expect(seats[1]!.member).toBeNull();
-    expect(seats[2]!.member).toBeNull();
   });
 
   it('按 slot 落座，不按到达顺序', function () {
-    const seats = ringSeats(packet({ members: [B, A, C] }));
-    expect(seats.map((seat) => seat.member?.name ?? null)).toEqual(['甲', '乙', '丙']);
+    const seats = ringSeats(packet({ members: [B, A] }));
+    expect(seats.map((seat) => seat.member?.name ?? null)).toEqual(['甲', '乙']);
   });
 });
 
@@ -126,12 +124,11 @@ describe('RingPacket 的阶段与成员组合', function () {
       remainingMs: 0,
       members: [
         { ...A, rank: 1 },
-        { ...C, rank: 3 },
+        { ...B, rank: 2, hp: 0, eliminated: true },
       ],
     });
     const seats = ringSeats(award);
     expect(seats[0]!.member?.rank).toBe(1);
-    expect(seats[1]!.member).toBeNull();
-    expect(seats[2]!.member?.eliminated).toBe(true);
+    expect(seats[1]!.member?.eliminated).toBe(true);
   });
 });

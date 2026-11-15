@@ -62,15 +62,16 @@ describe('擂台入场与开赛', () => {
     expect(ring.endsAt).toBe(T0 + 2_000 + RING_ROUND_MS);
   });
 
-  it('第 3 人可在倒计时中途补入，落到空槽', () => {
+  it('红蓝各一人即满员：第三人报名一律判满员', () => {
     const { world, ring, players } = setup();
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
-    enter(ring, players[2]!, T0 + 30_000);
+    expect(ring.canEnter(players[2]!)).toEqual({ ok: false, reason: 'full' });
+    expect(ring.enter(players[2]!, T0 + 30_000)).toEqual({ ok: false, reason: 'full' });
     expect(ring.phase).toBe(RING_PHASE.Running);
-    expect(ring.count).toBe(3);
+    expect(ring.count).toBe(2);
     const packet = ring.snapshot(T0 + 30_000, world);
-    expect(packet.members.map((member) => member.slot ?? -1)).toEqual([0, 1, 2]);
+    expect(packet.members.map((member) => member.slot ?? -1)).toEqual([0, 1]);
   });
 
   it('满员、重复与远处都拒绝报名', () => {
@@ -81,8 +82,7 @@ describe('擂台入场与开赛', () => {
 
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
-    enter(ring, players[2]!, T0);
-    expect(ring.canEnter(players[3]!)).toEqual({ ok: false, reason: 'full' });
+    expect(ring.canEnter(players[2]!)).toEqual({ ok: false, reason: 'full' });
     expect(ring.canEnter(players[0]!)).toEqual({ ok: false, reason: 'already' });
   });
 });
@@ -145,44 +145,39 @@ describe('擂台结算与颁奖', () => {
     expect(ring.isFrozen(players[2]!.id)).toBe(false);
   });
 
-  it('三人局先倒一人不结束，剩下的两人继续打', () => {
+  it('一方倒地立刻结算名次：站着的拿冠军，倒地者排第二并上台', () => {
     const { world, ring, players } = setup();
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
-    enter(ring, players[2]!, T0);
     for (let hit = 0; hit < RING_MAX_HP; hit += 1) {
-      ring.applyHit(players[0]!, players[2]!, T0 + 100 + hit);
+      ring.applyHit(players[0]!, players[1]!, T0 + 100 + hit);
     }
-    ring.tick(T0 + 200, world);
+    // 淘汰只标血量，结算统一留在 tick 的唯一入口
     expect(ring.phase).toBe(RING_PHASE.Running);
 
-    // 只剩 1 人站立的那一拍才结算：乙冠军，甲（后倒）亚军，丙季军
-    for (let hit = 0; hit < RING_MAX_HP; hit += 1) {
-      ring.applyHit(players[1]!, players[0]!, T0 + 300 + hit);
-    }
-    ring.tick(T0 + 400, world);
+    ring.tick(T0 + 200, world);
     expect(ring.phase).toBe(RING_PHASE.Award);
-    const packet = ring.snapshot(T0 + 400, world);
-    expect(rankOf(packet.members, players[1]!.id)).toBe(1);
-    expect(rankOf(packet.members, players[0]!.id)).toBe(2);
-    expect(rankOf(packet.members, players[2]!.id)).toBe(3);
+    const packet = ring.snapshot(T0 + 200, world);
+    expect(rankOf(packet.members, players[0]!.id)).toBe(1);
+    expect(rankOf(packet.members, players[1]!.id)).toBe(2);
+    // 名次照旧换台阶：冠军位与亚军位逐个对上
+    expect(players[0]!.x).toBe(RING_PODIUM_SLOTS[0]!.x);
+    expect(players[0]!.y).toBe(RING_PODIUM_SLOTS[0]!.y);
+    expect(players[1]!.x).toBe(RING_PODIUM_SLOTS[1]!.x);
+    expect(players[1]!.y).toBe(RING_PODIUM_SLOTS[1]!.y);
   });
 
-  it('按剩余血量排前三，并逐个传送到对应台阶', () => {
+  it('按剩余血量排前二，并逐个传送到对应台阶', () => {
     const { world, ring, players } = setup();
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
-    enter(ring, players[2]!, T0 + 10_000);
-    // 甲满血 10，乙挨 1 下 9，丙挨 2 下 8：名次直接由血量决定
+    // 甲满血 10，乙挨 1 下 9：名次直接由血量决定
     ring.applyHit(players[0]!, players[1]!, T0 + 10_001);
-    ring.applyHit(players[1]!, players[2]!, T0 + 10_002);
-    ring.applyHit(players[0]!, players[2]!, T0 + 10_003);
 
     ring.tick(ring.endsAt, world);
     const packet = ring.snapshot(ring.endsAt, world);
     expect(rankOf(packet.members, players[0]!.id)).toBe(1);
     expect(rankOf(packet.members, players[1]!.id)).toBe(2);
-    expect(rankOf(packet.members, players[2]!.id)).toBe(3);
 
     for (const member of packet.members) {
       const player = world.get(member.id)!;
@@ -192,20 +187,18 @@ describe('擂台结算与颁奖', () => {
     }
   });
 
-  it('同分时站立者优先，其次先入场者优先', () => {
+  it('同分时先入场者优先', () => {
     const { world, ring, players } = setup();
-    enter(ring, players[0]!, T0);
+    // 乙先报名（红方），甲晚 1 秒补位；血量相同就比入场时刻
     enter(ring, players[1]!, T0);
-    enter(ring, players[2]!, T0);
-    // 甲、乙各掉 1 血，丙满血：血量差距先决定名次
-    ring.applyHit(players[1]!, players[0]!, T0 + 1);
-    ring.applyHit(players[0]!, players[1]!, T0 + 2);
+    enter(ring, players[0]!, T0 + 1_000);
+    ring.applyHit(players[1]!, players[0]!, T0 + 2_000);
+    ring.applyHit(players[0]!, players[1]!, T0 + 2_001);
 
     ring.tick(ring.endsAt, world);
     const packet = ring.snapshot(ring.endsAt, world);
-    expect(rankOf(packet.members, players[2]!.id)).toBe(1);
+    expect(rankOf(packet.members, players[1]!.id)).toBe(1);
     expect(rankOf(packet.members, players[0]!.id)).toBe(2);
-    expect(rankOf(packet.members, players[1]!.id)).toBe(3);
   });
 
   it('颁奖期间冻结移动判定，4 秒后送回出口并清空席位', () => {
@@ -283,8 +276,8 @@ describe('擂台快照', () => {
     enter(ring, players[1]!, T0);
     expect(ring.snapshot(T0, world).remainingMs).toBe(RING_ROUND_MS);
     expect(ring.snapshot(T0 + 60_000, world).remainingMs).toBe(RING_ROUND_MS - 60_000);
-    enter(ring, players[2]!, T0 + 60_000);
-    expect(ring.snapshot(T0 + 60_000, world).members).toHaveLength(3);
+    // 1v1 满员：中途不会再有第三人挤进来改名单
+    expect(ring.snapshot(T0 + 60_000, world).members).toHaveLength(2);
     ring.tick(ring.endsAt, world);
     expect(ring.snapshot(ring.endsAt, world).remainingMs).toBe(0);
   });

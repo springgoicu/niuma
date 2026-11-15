@@ -16,7 +16,7 @@ export interface RingSeat {
   member: RingSlot | null;
 }
 
-/** 三个固定席位：按 slot 排列，空位也占一行，HUD 不会因为少人跳排版 */
+/** 红蓝两个固定席位：按 slot 排列，空位也占一行，HUD 不会因为少人跳排版 */
 export function ringSeats(packet: RingPacket): RingSeat[] {
   const seats: RingSeat[] = [];
   for (let slot = 0; slot < RING_CAPACITY; slot += 1) {
