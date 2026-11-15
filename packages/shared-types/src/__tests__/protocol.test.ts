@@ -35,6 +35,7 @@ import {
   SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
   VENT_PACKET_BYTES,
+  RING_CAPACITY,
   RING_PHASE,
   JAIL_PACKET_BYTES,
   JAIL_PHASE,
@@ -414,7 +415,7 @@ describe('发泄结算包', () => {
 });
 
 describe('擂台快照包', () => {
-  it('round-trip 阶段、对局、剩余时间与三个席位', () => {
+  it('round-trip 阶段、对局、剩余时间与红蓝两个席位', () => {
     const packet = encodeRing({
       phase: RING_PHASE.Award,
       matchId: 7,
@@ -422,7 +423,6 @@ describe('擂台快照包', () => {
       members: [
         { id: 1, name: '甲', hp: 6, eliminated: false, rank: 1 },
         { id: 2, name: '乙', hp: 0, eliminated: true, rank: 2 },
-        { id: 3, name: '丙', hp: 0, eliminated: true, rank: 3 },
       ],
     });
     expect(packet[0]).toBe(OpCode.S2C_RING);
@@ -433,7 +433,6 @@ describe('擂台快照包', () => {
       members: [
         { id: 1, slot: 0, name: '甲', hp: 6, eliminated: false, rank: 1 },
         { id: 2, slot: 1, name: '乙', hp: 0, eliminated: true, rank: 2 },
-        { id: 3, slot: 2, name: '丙', hp: 0, eliminated: true, rank: 3 },
       ],
     });
   });
@@ -448,7 +447,7 @@ describe('擂台快照包', () => {
         phase: RING_PHASE.Running,
         matchId: 1,
         remainingMs: 1,
-        members: Array.from({ length: 4 }, (_, i) => ({
+        members: Array.from({ length: RING_CAPACITY + 1 }, (_, i) => ({
           id: i + 1,
           name: '牛',
           hp: 10,
@@ -456,7 +455,7 @@ describe('擂台快照包', () => {
           rank: 0,
         })),
       }),
-    ).toThrow(/supports 3 members/);
+    ).toThrow(new RegExp(`supports ${RING_CAPACITY} members`));
 
     const packet = encodeRing({
       phase: RING_PHASE.Running,
@@ -1565,7 +1564,8 @@ describe('匿名设备段与 PONG 时钟段（ADR-0081）', () => {
   });
 
   it('HELLO 带设备号时只在尾部多 9 字节，老段照常量解析', () => {
-    const plain = encodeHello('牛', DEFAULT_APPEARANCE.cow);
+    // 基线走同一条能力段：设备段之外一个字节都不多
+    const plain = encodeHello('牛', DEFAULT_APPEARANCE.cow, undefined, '', SYNC_FORMAT_COMPACT);
     const withDevice = encodeHello(
       '牛',
       DEFAULT_APPEARANCE.cow,
@@ -1586,7 +1586,24 @@ describe('匿名设备段与 PONG 时钟段（ADR-0081）', () => {
     expect(decodeHello(encodeHello('牛', DEFAULT_APPEARANCE.cow)).deviceId).toBe('');
   });
 
-  it('设备号写成非法 hex 时整段被忽略，也不会让后面的经济段错位', () => {
+  it('设备号写成非法 hex 时不写段，篡改设备段也不会让经济段错位', () => {
+    // 编码端：不是 16 位小写 hex 就整段不写（本地随机数读坏了按匿名新设备处理）
+    const noDevice = encodeHello(
+      '牛',
+      DEFAULT_APPEARANCE.cow,
+      undefined,
+      '',
+      SYNC_FORMAT_COMPACT,
+      undefined,
+      undefined,
+      'not-a-device',
+      ECONOMY,
+    );
+    const decodedNoDevice = decodeHello(noDevice);
+    expect(decodedNoDevice.deviceId).toBe('');
+    expect(decodedNoDevice.economy).toEqual(ECONOMY);
+
+    // 解码端：8 字节任意值都能读成 hex，段长只按魔数判断，篡改不会把经济段读错位
     const packet = encodeHello(
       '牛',
       DEFAULT_APPEARANCE.cow,
@@ -1598,11 +1615,10 @@ describe('匿名设备段与 PONG 时钟段（ADR-0081）', () => {
       DEVICE,
       ECONOMY,
     );
-    // 把设备号首字节改成 'Z'：段还在，但内容不再是合法 hex
     const at = packet.lastIndexOf(DEVICE_EXTENSION_MAGIC);
     packet[at + 1] = 'Z'.charCodeAt(0);
     const decoded = decodeHello(packet);
-    expect(decoded.deviceId).toBe('');
+    expect(decoded.deviceId).toHaveLength(16);
     expect(decoded.syncFormat).toBe(SYNC_FORMAT_COMPACT);
     expect(decoded.economy).toEqual(ECONOMY);
   });

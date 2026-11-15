@@ -108,11 +108,16 @@ export const RING_BENCH_SEAT_DRAFTS: ReadonlyArray<Omit<SeatInstance, 'id' | 'de
   }),
 );
 
-/** 观战长椅底座碰撞：40×16，与园区里其它长椅同尺寸 */
+/**
+ * 观战长椅底座碰撞：40×16，与园区里其它长椅同尺寸。
+ *
+ * 底边贴在长椅脚底（`bench.y`），和 `propSolid` 对 bench 的口径一致：
+ * 精灵锚点是 (0.5, 1)，坐点在椅前 12px，碰撞盒若按中心摆会在坐点下方留出隐形墙。
+ */
 export const RING_BENCH_SOLIDS: ReadonlyArray<SolidRect> = RING_BENCHES.map((bench) => ({
   kind: 'prop' as const,
   x: bench.x - 20,
-  y: bench.y - 8,
+  y: bench.y - 16,
   w: 40,
   h: 16,
 }));

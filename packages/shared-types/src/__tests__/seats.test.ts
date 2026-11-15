@@ -5,9 +5,11 @@ import {
   CLINIC_BED_SEAT_IDS,
   DESK_H,
   DESK_W,
+  DICE_TABLES,
   DIRECTION,
   PLAYER_RADIUS,
   POSE,
+  RING_BENCHES,
   SIT_RANGE,
   WORLD_LAYOUT,
   chairOffset,
@@ -65,20 +67,16 @@ describe('座位布局', () => {
     }
   });
 
-  it('每张长椅都有可坐的 bench 座位：坐点在椅前、面朝镜头、追加在末尾', () => {
+  it('每张长椅都有可坐的 bench 座位：坐点在椅前、面朝镜头', () => {
     const benches = props.filter((prop) => prop.kind === 'bench');
     const benchSeats = seats.filter((seat) => seat.kind === 'bench');
     expect(benches.length).toBeGreaterThan(0);
-    expect(benchSeats.length).toBe(benches.length);
-    // 长椅座位仍是既有 id：急救站病床（ADR-0084）追加在长椅之后，不能挤动已存 seatId
-    const clinicBeds = seats.slice(seats.length - CLINIC_BED_SEAT_IDS.length);
-    expect(clinicBeds.map((seat) => seat.id)).toEqual([...CLINIC_BED_SEAT_IDS]);
-    expect(clinicBeds.every((seat) => seat.kind === 'bed')).toBe(true);
-    const benchBlock = seats.slice(
-      seats.length - CLINIC_BED_SEAT_IDS.length - benchSeats.length,
-      seats.length - CLINIC_BED_SEAT_IDS.length,
-    );
-    expect(benchBlock.every((seat) => seat.kind === 'bench')).toBe(true);
+    // 园区长椅各配一个坐点；八角笼 4 张观战长椅的坐点由擂台模块追加（ADR-0087）
+    expect(benchSeats.length).toBe(benches.length + RING_BENCHES.length);
+    // 长椅座位仍是既有 id：急救站病床（ADR-0084）与赌桌 / 观战长椅只能追加在它之后
+    expect(seats.filter((seat) => CLINIC_BED_SEAT_IDS.includes(seat.id)).map((seat) => seat.id)).toEqual([
+      ...CLINIC_BED_SEAT_IDS,
+    ]);
 
     for (const prop of benches) {
       const seat = benchSeats.find((item) => item.x === prop.x && item.y === prop.y + BENCH_SEAT_OFFSET);
@@ -88,6 +86,15 @@ describe('座位布局', () => {
       expect(seatPose(seat!.kind)).toBe(POSE.Sit);
       // 坐点必须在长椅自身 40×16 碰撞盒之外，否则入座后会被判成卡在障碍里
       expect(isBlocked(seat!.x, seat!.y, PLAYER_RADIUS)).toBe(false);
+    }
+
+    // 观战长椅：同一套坐点口径，组名留给「坐上才能押注」的资格判定
+    const arenaSeats = benchSeats.filter((seat) => seat.group === 'arena-bench');
+    expect(arenaSeats).toHaveLength(RING_BENCHES.length);
+    for (const seat of arenaSeats) {
+      expect(seat.facing).toBe(DIRECTION.Down);
+      expect(seat.desk).toBe(-1);
+      expect(isBlocked(seat.x, seat.y, PLAYER_RADIUS)).toBe(false);
     }
   });
 
@@ -230,8 +237,9 @@ describe('座位朝向与家具一致', () => {
   });
 
   it('宿舍区的两张凳子面朝沙发前的茶几，而不是朝向随机', () => {
-    const stools = seats.filter((seat) => seat.kind === 'stool');
-    expect(stools.length).toBeGreaterThanOrEqual(2);
+    // 赌桌圆凳也是 stool，但它们是围着桌子的独立座位组；这里只看宿舍区那两张
+    const stools = seats.filter((seat) => seat.kind === 'stool' && !seat.group);
+    expect(stools).toHaveLength(2);
     const tables = props.filter((prop) => prop.kind === 'coffeeTable');
     expect(tables).toHaveLength(1);
     for (const stool of stools) {
@@ -273,12 +281,13 @@ describe('地图碰撞与装饰', () => {
 
   it('每张工位桌的碰撞盒就是它的朝向占地', () => {
     const deskSolids = solids.filter((solid) => solid.kind === 'desk');
-    expect(deskSolids.length).toBe(desks.length);
     for (const desk of desks) {
       const { w, h } = deskFootprint(desk.facing);
       const expected = { kind: 'desk' as const, x: desk.x - w / 2, y: desk.y - h / 2, w, h };
       expect(deskSolids).toContainEqual(expected);
     }
+    // 工位桌之外只有两处家具用 desk 占位：两张赌桌与急救站导医柜台（ADR-0084 / 0087）
+    expect(deskSolids).toHaveLength(desks.length + DICE_TABLES.length + 1);
   });
 
   it('有占地的道具：碰撞盒底边贴精灵底座，正面不留隐形墙', () => {

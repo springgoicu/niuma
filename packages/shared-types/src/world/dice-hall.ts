@@ -56,10 +56,15 @@ export interface DiceTableSpec {
   readonly h: number;
 }
 
-/** 两张桌横向并排，桌心相距 210：6 人一圈坐下不会和邻桌挤在一起 */
+/**
+ * 两张桌横向并排，桌心相距 180：6 人一圈坐下不会和邻桌挤在一起。
+ *
+ * 桌心离亭子东西边各留 120，把左右两张圆凳从「东西居中廊柱」的 14px 柱脚外侧让开
+ * （廊柱在 x+28 / x+392，柱脚半宽 7）：旧值 105/315 会让最外侧凳子压进柱脚。
+ */
 export const DICE_TABLES: ReadonlyArray<DiceTableSpec> = [
-  { id: 0, group: 'dice-a', name: '翡翠桌', x: DICE_HALL.x + 105, y: DICE_HALL_CENTER.y, w: 100, h: 68 },
-  { id: 1, group: 'dice-b', name: '鎏金桌', x: DICE_HALL.x + 315, y: DICE_HALL_CENTER.y, w: 100, h: 68 },
+  { id: 0, group: 'dice-a', name: '翡翠桌', x: DICE_HALL.x + 120, y: DICE_HALL_CENTER.y, w: 100, h: 68 },
+  { id: 1, group: 'dice-b', name: '鎏金桌', x: DICE_HALL.x + 300, y: DICE_HALL_CENTER.y, w: 100, h: 68 },
 ];
 
 /** 桌面碰撞：两张桌各自一块，桌沿外留出座位的落地空间 */

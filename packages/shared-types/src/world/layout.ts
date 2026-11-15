@@ -82,7 +82,6 @@ import {
   RING_BENCH_SOLIDS,
   RING_EXIT,
   RING_FENCE_SOLIDS,
-  RING_SIGNUP,
 } from './ring';
 import {
   DICE_HALL,
@@ -850,8 +849,8 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   park: { x: 4096, y: 3020 },
   // 发泄区垫内左下角：老板左脚外侧，离脚底碰撞 80px / 20px，站过去就能出招
   bossArena: { x: BOSS_ARENA.x + 50, y: BOSS_ARENA.y + BOSS_ARENA.h - 20 },
-  // 八角笼南门内的报名区：落地就能按 F 上台，出门走北门或颁奖后自动回南门外
-  ring: { x: RING_SIGNUP.x, y: RING_SIGNUP.y },
+  // 八角笼南门外：围绳外 32px，仍落在 96px 报名感应圈里，落地就能按 F，不会把人顶进场内
+  ring: { x: RING_EXIT.x, y: RING_EXIT.y },
   // 赌场两张桌之间的空地：站过去就同时够得着两张桌的提示
   diceHall: { x: DICE_HALL_CENTER.x, y: DICE_HALL_CENTER.y },
   // 两栋小院的院门外台阶

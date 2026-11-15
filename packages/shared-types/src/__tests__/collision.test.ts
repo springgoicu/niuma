@@ -150,7 +150,9 @@ describe('地形布局', () => {
     expect(regionAt(CENTER.x, CENTER.y)).toBe('中央迎宾广场');
     expect(regionAt(lake.x + lake.w / 2, lake.y + lake.h / 2)).toBe('摸鱼湖');
     expect(regionAt(3566, 3656)).toBe('工作区');
-    expect(regionAt(2800, 3500)).toBe('园区野地');
+    // 西带原来是野地，现在是赌场亭（ADR-0087）；野地口径另取一块空地验证
+    expect(regionAt(2800, 3500)).toBe('摸鱼大赌场');
+    expect(regionAt(2700, 4400)).toBe('园区野地');
   });
 
   it('树木不会长进广场、办公区、水面与道路上', () => {

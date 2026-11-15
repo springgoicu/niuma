@@ -62,9 +62,15 @@ function villa(
   };
 }
 
+/**
+ * 两栋院地上下相邻，中间留 50px 通道。
+ *
+ * 一号院北墙离四角院落南沿（y 4716）留 24px，不再啃进卫生间；两院之间留 50px，
+ * 玩家（半径 9）能站在自家门口进出——20px 的夹缝会把人卡在两道院墙中间。
+ */
 export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
-  villa(0, 'villa-1', '摸鱼一号院', { x: 4670, y: 4700, w: 220, h: 170 }),
-  villa(1, 'villa-2', '摸鱼二号院', { x: 4670, y: 4890, w: 220, h: 160 }),
+  villa(0, 'villa-1', '摸鱼一号院', { x: 4670, y: 4740, w: 220, h: 170 }),
+  villa(1, 'villa-2', '摸鱼二号院', { x: 4670, y: 4960, w: 220, h: 160 }),
 ];
 
 export function villaById(id: number): VillaSpec | undefined {

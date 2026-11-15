@@ -1,0 +1,147 @@
+
+> niuma@0.1.0 dev C:\Users\myspr\Documents\project\other\niuma
+> pnpm run assets && turbo run dev --parallel
+
+
+> niuma@0.1.0 assets C:\Users\myspr\Documents\project\other\niuma
+> pnpm --filter @niuma/pixel-assets run generate
+
+
+> @niuma/pixel-assets@0.0.0 generate C:\Users\myspr\Documents\project\other\niuma\packages\pixel-assets
+> bun scripts/generate.ts
+
+[pixel-assets] atlas 2176x256 · 34 cols · 2 species · 2741ms -> C:\Users\myspr\Documents\project\other\niuma\apps\web\public\sprites
+ WARNING  --parallel is deprecated and will be removed in a future major version. Instead, define task behavior in your turbo.json task definitions using `persistent` and `with`.
+
+   • turbo 2.11.10
+   • Packages in scope: @niuma/game-server, @niuma/pixel-assets, @niuma/shared-types, @niuma/web
+   • Running dev in 4 packages
+   • Remote caching disabled
+
+@niuma/game-server:dev: cache bypass, force executing 149dcff1125704fa
+@niuma/web:dev: cache bypass, force executing 14b780fc6a9e23a5
+@niuma/game-server:dev: 
+@niuma/game-server:dev: > @niuma/game-server@0.0.0 dev C:\Users\myspr\Documents\project\other\niuma\apps\game-server
+@niuma/game-server:dev: > bun --watch src/index.ts
+@niuma/game-server:dev: 
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\constants.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\danmaku.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\boss.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\work.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\vent.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\hotspots.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\collision.ts is not in the project directory and will not be watched
+@niuma/web:dev: 
+@niuma/web:dev: > @niuma/web@0.0.0 dev C:\Users\myspr\Documents\project\other\niuma\apps\web
+@niuma/web:dev: > next dev --turbopack -p 3000
+@niuma/web:dev: 
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\catalog.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\villas.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\notice.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ring.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\board.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\appearance-codec.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\challenge.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\economy.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\park.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\dice-hall.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\geometry.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\buffs.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\apartment.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\role.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\name.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\device.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\protocol.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\layout.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\normalize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\nickname.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\campus.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\like.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ribbon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\career.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\lexicon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\quantize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\matcher.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: [state] path=data/world-state.json restored=no boss=10000/10000 match=0 profiles=0
+@niuma/game-server:dev: [moderation] lexicon source=builtin political=2 profanity=78
+@niuma/game-server:dev: [npc] count=5 guards=3 seed=3713316289
+@niuma/game-server:dev: [jail] enabled guards=3
+@niuma/game-server:dev: [game] http://localhost:3001  ws://localhost:3001/ws
+@niuma/game-server:dev: [game] 共享运行态写入 data/world-state.json（其余仍在内存）
+@niuma/web:dev:    ▲ Next.js 15.5.28 (Turbopack)
+@niuma/web:dev:    - Local:        http://localhost:3000
+@niuma/web:dev:    - Network:      http://192.168.1.9:3000
+@niuma/web:dev:    - Experiments (use with caution):
+@niuma/web:dev:      · optimizePackageImports
+@niuma/web:dev: 
+@niuma/web:dev:  ✓ Starting...
+@niuma/web:dev: Attention: Next.js now collects completely anonymous telemetry regarding usage.
+@niuma/web:dev: This information is used to shape Next.js' roadmap and prioritize features.
+@niuma/web:dev: You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+@niuma/web:dev: https://nextjs.org/telemetry
+@niuma/web:dev: 
+@niuma/web:dev:  ✓ Ready in 19.4s
+@niuma/web:dev:  ○ Compiling / ...
+@niuma/web:dev:  ✓ Compiled / in 14.2s
+@niuma/web:dev:  GET / 200 in 18054ms
+@niuma/web:dev:  GET / 200 in 1377ms
+@niuma/web:dev:  GET / 200 in 2991ms
+@niuma/web:dev:  ○ Compiling /create ...
+@niuma/web:dev:  ✓ Compiled /create in 14.5s
+@niuma/web:dev:  GET /create 200 in 321ms
+@niuma/web:dev:  GET /play 200 in 272ms
+@niuma/web:dev:  GET / 200 in 1122ms
+@niuma/web:dev:  ○ Compiling /api/version ...
+@niuma/web:dev:  ✓ Compiled /api/version in 586ms
+@niuma/web:dev:  GET /api/version 200 in 1094ms
+@niuma/web:dev:  GET /create 200 in 428ms
+@niuma/web:dev:  ○ Compiling /manifest.webmanifest ...
+@niuma/web:dev:  ✓ Compiled /manifest.webmanifest in 622ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 1013ms
+@niuma/web:dev:  ○ Compiling /enter ...
+@niuma/web:dev:  ✓ Compiled /enter in 616ms
+@niuma/web:dev:  GET /enter 200 in 790ms
+@niuma/web:dev:  GET /play?park=main 200 in 302ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 460ms
+@niuma/web:dev:  GET /play?park=main 200 in 226ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 503ms
+@niuma/web:dev:  ✓ Compiled /api/geo in 301ms
+@niuma/web:dev:  GET /api/geo 200 in 639ms
+@niuma/web:dev:  GET /api/version 200 in 565ms
+@niuma/web:dev:  GET /api/version 200 in 458ms
+@niuma/web:dev:  GET /api/version 200 in 392ms
+@niuma/web:dev:  GET /api/version 200 in 425ms
+@niuma/web:dev:  GET /play?park=main 200 in 373ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 692ms
+@niuma/web:dev:  GET /api/version 200 in 536ms
+@niuma/web:dev:  ✓ Compiled in 117ms
+@niuma/web:dev:  GET /play?park=main 200 in 309ms
+@niuma/web:dev:  GET /api/version 200 in 507ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 486ms
+@niuma/web:dev:  GET /api/version 200 in 418ms
+@niuma/web:dev:  ✓ Compiled in 961ms
+@niuma/web:dev:  GET /play?park=main 200 in 488ms
+@niuma/web:dev:  GET /api/version 200 in 876ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 722ms
+@niuma/web:dev:  ✓ Compiled in 22ms
+@niuma/web:dev:  GET /play?park=main 200 in 405ms
+@niuma/web:dev:  GET /api/version 200 in 476ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 465ms
+@niuma/web:dev:  ✓ Compiled in 383ms
+@niuma/web:dev:  GET /play?park=main 200 in 512ms
+@niuma/web:dev:  GET /api/version 200 in 663ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 479ms
+@niuma/web:dev:  GET /api/version 200 in 433ms
+@niuma/web:dev:  GET /api/version 200 in 531ms
+@niuma/web:dev:  GET /api/version 200 in 397ms
+@niuma/web:dev:  GET /api/version 200 in 448ms
+@niuma/web:dev:  GET /api/version 200 in 396ms
+@niuma/web:dev:  GET /api/version 200 in 428ms
+@niuma/web:dev:  GET /api/version 200 in 462ms
+@niuma/web:dev:  ✓ Compiled in 517ms
+@niuma/web:dev:  GET /play?park=main 200 in 339ms
+@niuma/web:dev:  GET /manifest.webmanifest 200 in 478ms

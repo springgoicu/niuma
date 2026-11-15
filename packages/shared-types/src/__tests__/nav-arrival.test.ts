@@ -29,9 +29,23 @@ function distanceToRect(
 }
 
 describe('园区导览到达点（ADR-0040 / ADR-0078）', () => {
-  it('8 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
-    expect(NAV_TARGETS).toHaveLength(8);
-    expect(new Set(NAV_TARGETS.map((target) => target.id)).size).toBe(8);
+  it('12 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
+    // 四间房 + 供案 + 游乐园 + 发泄区 + 八角笼 + 赌场 + 两栋小院 + 公寓（ADR-0087）
+    expect(NAV_TARGETS.map((target) => target.id)).toEqual([
+      'workroom',
+      'meeting',
+      'restroom',
+      'lounge',
+      'shrine',
+      'park',
+      'bossArena',
+      'ring',
+      'diceHall',
+      'villa1',
+      'villa2',
+      'apartment',
+    ]);
+    expect(new Set(NAV_TARGETS.map((target) => target.id)).size).toBe(NAV_TARGETS.length);
     for (const target of NAV_TARGETS) {
       expect(target.name.length).toBeGreaterThan(0);
       expect(isOnLand(target.arrive.x, target.arrive.y, PLAYER_RADIUS)).toBe(true);
