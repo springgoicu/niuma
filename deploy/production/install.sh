@@ -355,9 +355,13 @@ echo "   只放开部署需要的 6 条命令"
 
 # ==================== 9. Webhook 服务 ====================
 step "9. 自动发版 Webhook"
-install -m 755 "$TPL_DIR/webhook.mjs" /opt/niuma/webhook.mjs
+# 属主必须是部署用户：第 5 步把 /opt/niuma 目录给了 $AS_USER，就是为了让
+# deploy.sh 发版时能直接覆写这两个文件（它跑在 ubuntu 下，没有 sudo 写权限）。
+# 这里若用 root 身份 install 而不指定 -o/-g，文件会变成 root:root，目录虽可写、
+# 但 cp 覆写既有文件会被拒，deploy.sh 只能打印「无权写入 /opt/niuma」。
+install -m 755 -o "$AS_USER" -g "$AS_USER" "$TPL_DIR/webhook.mjs" /opt/niuma/webhook.mjs
 # 状态速查：玩家随时在线时也要能一条命令看清负载，不必记长参数
-install -m 755 "$TPL_DIR/status.sh" /opt/niuma/status.sh
+install -m 755 -o "$AS_USER" -g "$AS_USER" "$TPL_DIR/status.sh" /opt/niuma/status.sh
 cat > /usr/local/bin/niuma-status <<'STATUS_EOF'
 #!/bin/sh
 # niuma 运行状态速查，实现在 /opt/niuma/status.sh（随部署更新）
