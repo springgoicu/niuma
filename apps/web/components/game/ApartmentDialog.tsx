@@ -46,11 +46,12 @@ export function ApartmentDialog({
   const spec = houseTierSpec(tier);
   const next = HOUSE_TIERS[tier + 1] ?? null;
   const [selected, setSelected] = useState<number>(FURNITURE_SKUS[0]!.id);
-  const [placements, setPlacements] = useState<FurniturePlacement[]>(room?.placements ?? []);
+  // 服务端下发的布局是只读数组：拷一份再进 state，摆家具时不改进来的快照
+  const [placements, setPlacements] = useState<FurniturePlacement[]>([...(room?.placements ?? [])]);
   const [inviteId, setInviteId] = useState('');
 
   useEffect(() => {
-    if (room) setPlacements(room.placements);
+    if (room) setPlacements([...room.placements]);
   }, [room]);
 
   const owned = new Set(wallet.unlockedCosmetics);

@@ -135,6 +135,7 @@ import {
   isBulletinHit,
   nearestInteractivePropInto,
   hintForHotspot,
+  isNearBulletin,
   pickLine,
   pickVentLine,
   pickVentVictimLine,

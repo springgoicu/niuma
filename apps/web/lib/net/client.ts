@@ -74,7 +74,7 @@ import {
   encodeSetAppearance,
   encodeShopBuy,
   encodeShout,
-  encodeTip,
+  encodeTipRequest,
   encodeUseItem,
   encodeSetName,
   encodeSetStatus,
@@ -735,7 +735,7 @@ export class NetClient {
 
   sendTip(request: TipRequest): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeTip(request));
+    this.socket.send(encodeTipRequest(request));
   }
 
   sendUseItem(request: UseItemRequest): void {

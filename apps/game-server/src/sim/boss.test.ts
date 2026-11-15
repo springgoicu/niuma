@@ -26,8 +26,18 @@ describe('老板每日血量', () => {
 
   it('每次命中扣 1 点，不影响别人下一次命中的出招者归属', () => {
     const boss = runtimeAt();
-    expect(boss.hit(1, NOON)).toEqual({ hp: BOSS_MAX_HP - 1, attackerId: 1, justDied: false });
-    expect(boss.hit(2, NOON + 50)).toEqual({ hp: BOSS_MAX_HP - 2, attackerId: 2, justDied: false });
+    expect(boss.hit(1, NOON)).toEqual({
+      hp: BOSS_MAX_HP - 1,
+      attackerId: 1,
+      justDied: false,
+      shock: false,
+    });
+    expect(boss.hit(2, NOON + 50)).toEqual({
+      hp: BOSS_MAX_HP - 2,
+      attackerId: 2,
+      justDied: false,
+      shock: false,
+    });
     expect(boss.hp).toBe(BOSS_MAX_HP - 2);
   });
 
@@ -35,7 +45,7 @@ describe('老板每日血量', () => {
     const boss = runtimeAt();
     for (let i = 0; i < BOSS_MAX_HP - 1; i += 1) boss.hit(1, NOON);
     const last = boss.hit(2, NOON);
-    expect(last).toEqual({ hp: 0, attackerId: 2, justDied: true });
+    expect(last).toEqual({ hp: 0, attackerId: 2, justDied: true, shock: false });
 
     // 同一 Tick 里后面的人继续出招：不再产生事件
     for (let i = 0; i < 8; i += 1) expect(boss.hit(3, NOON)).toBeNull();
@@ -60,7 +70,12 @@ describe('老板每日血量', () => {
     expect(boss.hp).toBe(0);
 
     const afterReset = boss.hit(9, MIDNIGHT);
-    expect(afterReset).toEqual({ hp: BOSS_MAX_HP - 1, attackerId: 9, justDied: false });
+    expect(afterReset).toEqual({
+      hp: BOSS_MAX_HP - 1,
+      attackerId: 9,
+      justDied: false,
+      shock: false,
+    });
   });
 
   it('服务端休眠或时钟跳跃跨过多天时，一次 syncDay 回到满血', () => {

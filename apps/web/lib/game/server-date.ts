@@ -9,6 +9,12 @@
  * 所以不需要时区库，也不会出现 23 / 25 小时的一天。
  */
 
+/**
+ * 园区时区偏移（分钟）的出口：偏移由对时链路（`server-clock`）维护，
+ * 这里只转发一次，日历侧不另存第二份真相。
+ */
+export { serverTzOffsetMin } from './server-clock';
+
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 

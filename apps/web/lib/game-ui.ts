@@ -112,8 +112,8 @@ interface GameUiState {
   /** 打赏 / 道具子面板的目标；null 表示没开 */
   actionTarget: { id: number; name: string; mode: 'tip' | 'item' } | null;
   shopOpen: boolean;
-  /** 商店当前页签（ADR-0085）：茶台 F 与金币徽标落到属性页，购物车按钮落到消耗品页 */
-  shopTab: 'stats' | 'items';
+  /** 商店当前页签（ADR-0085 / ADR-0087）：属性 / 消耗品 / 装扮三页 */
+  shopTab: 'stats' | 'items' | 'cosmetics';
   /** 大喇叭输入面板：买下之后才允许打开 */
   shoutOpen: boolean;
   /** 置顶金色横幅：`key` 自增，组件按它重播入场动画 */

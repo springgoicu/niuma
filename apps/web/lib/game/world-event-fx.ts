@@ -35,7 +35,9 @@ export class WorldEventFx {
   private shockStage = 0;
   private shockX = 0;
   private shockY = 0;
-  private shockRadius = BOSS_SHOCK.Radius;
+  // 显式标注 number：`BOSS_SHOCK.Radius` 是 `as const` 的字面量类型 320，
+  // 不标注就收不下降级写回的真实半径
+  private shockRadius: number = BOSS_SHOCK.Radius;
 
   constructor() {
     this.container.addChild(this.gfx);
@@ -91,7 +93,7 @@ export class WorldEventFx {
       // 红包本体：竖长钱包 + 深色封口 + 中间金色圆点
       this.gfx.rect(x - 5, y - 8, 10, 14).fill({ color: 0xd8322c, alpha: 0.95 });
       this.gfx.rect(x - 5, y - 8, 10, 4).fill({ color: 0x8f1d1a, alpha: 0.95 });
-      this.gfx.circle(x, y).fill({ color: 0xf5c451, alpha: 1 });
+      this.gfx.circle(x, y, 2).fill({ color: 0xf5c451, alpha: 1 });
       // 闪光：两个十字亮片，用相位错开，读成「闪一下」
       const twinkle = (phase + i * 0.13) % 1;
       if (twinkle < 0.5) {
