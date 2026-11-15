@@ -180,10 +180,11 @@ describe('地标光源派生', () => {
     expect(resident).toBeLessThanOrEqual(MAX_LIGHTS);
     // 至少留两盏余量：动态光源（节日验收、后续小改）不至于一加就掉
     expect(MAX_LIGHTS - resident).toBeGreaterThanOrEqual(2);
-    // 场所光自身也不该无限膨胀：30 盏 = 六栋公寓 6 + 两院 2 + 擂台 2 + 赌场 2 + 赌桌 2
-    // + 诊所 2 + 广场 4 + 广场中心 1 + 茶台 1 + 卫生间 1 + 五座区门 5 + 企业走廊 1 + 发泄室 1
-    expect(venueLights().length).toBeLessThanOrEqual(32);
-    expect(venueLights().length).toBeGreaterThanOrEqual(26);
+    // 场所光自身也不该无限膨胀：25 盏 = 公寓 1（ADR-0101 只剩一栋） + 两院 2 + 擂台 2 + 赌场 2
+    // + 赌桌 2 + 诊所 2 + 广场 4 + 广场中心 1 + 茶台 1 + 卫生间 1 + 五座区门 5
+    // + 企业走廊 1 + 发泄室 1
+    expect(venueLights().length).toBeLessThanOrEqual(27);
+    expect(venueLights().length).toBeGreaterThanOrEqual(21);
   });
 
   it('夜间动线的五个关键点都有光：广场中心、区门、赌桌、企业走廊、急救站门', () => {

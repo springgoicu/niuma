@@ -15,11 +15,12 @@ export interface WindowSeat {
 }
 
 /**
- * 牛马公寓的窗口占用（ADR-0098）。
+ * 牛马公寓的窗口占用（ADR-0098 / ADR-0101）。
  *
  * 进屋 = 人从园区挪到这栋楼的一个空闲窗口探头，出门 = 回到门口台阶。
  * 楼里没有可走的空间，所以这里只维护一张「谁占了哪个窗口」的表：
- * 每栋 4×5 = 20 个窗口，一窗一人，占满就拒客。
+ * 唯一一栋 4×5 = 20 个窗口，一窗一人，占满就拒客。`slot` 恒为 0，
+ * 协议字段保留只是不再区分楼栋。
  *
  * 这是本运行周期的临时态，不落盘：断线即释放（与旧的房间频道一致）。
  */
@@ -30,9 +31,9 @@ export class ApartmentRuntime {
   private readonly seats = new Map<number, WindowSeat>();
 
   /**
-   * 进屋探头：占这栋楼第一个空窗。
+   * 进屋探头：占唯一一栋的第一个空窗。
    *
-   * 已经有人在里面、或该栋 20 个窗口全满时返回 null（调用方提示「窗口都住满了」）。
+   * 已经有人在里面、或 20 个窗口全满时返回 null（调用方提示「窗口都住满了」）。
    */
   enter(player: Player, slot: number): WindowSeat | null {
     if (player.roomId !== 0) return null;
@@ -48,7 +49,7 @@ export class ApartmentRuntime {
     return seat;
   }
 
-  /** 出门：释放窗口并回到自己那栋楼的门口台阶 */
+  /** 出门：释放窗口并回到门口台阶 */
   exit(player: Player): boolean {
     const seat = this.seats.get(player.id);
     if (!seat) return false;

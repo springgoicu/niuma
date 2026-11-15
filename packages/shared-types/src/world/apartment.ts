@@ -1,14 +1,15 @@
 /**
- * 牛马公寓（APARTMENT）：园区生活区的六栋公寓楼，门牌 301–306 各一栋。
+ * 牛马公寓（APARTMENT）：园区生活区的一栋公寓楼，门牌 301。
  *
  * 这里的公寓只有一件事：门口按 F，人就不在了，改从这栋楼的一个**空闲窗口**探头；
  * 任意时刻再按 F 回到门口台阶。楼内没有可走的空间，所以楼体是一整块实心碰撞，
- * 服务端只记「谁在哪栋哪个窗口」，客户端照着窗口表画头与亮窗。
+ * 服务端只记「谁在哪个窗口」，客户端照着窗口表画头与亮窗。
  *
  * 窗口表是唯一真相：`drawFacade` 画窗框、服务端分配窗口、探头定位全部读
  * `APARTMENT_WINDOWS`，改一个数不会三方不一致。
  *
- * ADR-0095 定下六栋楼绕广场铺开；ADR-0098 把室内房间与家具撤掉，改成窗口探头。
+ * ADR-0095 曾定下六栋楼绕广场铺开；ADR-0098 把室内房间与家具撤掉，改成窗口探头；
+ * ADR-0101 收敛回唯一一栋，腾出的空地留成门前口袋花园（纯装饰、零碰撞）。
  */
 
 import type { SolidRect } from './campus';
@@ -21,9 +22,7 @@ export const APARTMENT_H = 240;
 /** 门口感应半径（屋外，按下进屋） */
 export const APARTMENT_DOOR_RANGE = 64;
 
-/** 楼栋数：一栋一门牌 */
-export const APARTMENT_ROOM_COUNT = 6;
-/** 门牌号基数：301–306 */
+/** 门牌号基数：301（唯一一栋门牌） */
 export const APARTMENT_DOOR_BASE = 301;
 
 /** 立面窗格：4 层 × 5 列，每栋 20 个窗口，一个窗口只站一个人 */
@@ -57,9 +56,9 @@ export interface ApartmentWindow {
 }
 
 export interface ApartmentSpec {
-  /** 0..5，同时是 `Player.roomId - 1` */
+  /** 0（唯一一栋），同时是 `Player.roomId - 1` */
   readonly slot: number;
-  /** 门牌号 301–306 */
+  /** 门牌号 301 */
   readonly doorNo: number;
   /** 楼体（整块实心） */
   readonly rect: WorldRect;
@@ -73,38 +72,28 @@ export interface ApartmentSpec {
 }
 
 /**
- * 栋间巷道净宽（ADR-0099）：40 → 48。
- *
- * 楼体是整块实心，巷道两侧全是墙，40px 只给直径 18 的角色留 22px 余量、两人交错只剩 4px；
- * 48 把余量拉到 30px，贴墙斜走时不再一路发黏。只挪中列，西排与东排都不动。
+ * 唯一一栋楼的落点：生活区西排，避开四角院落、游乐园、赌场、急救站、两栋小院、
+ * 影音室、小黑屋、南院、八角笼、发泄区、三湖、摸鱼亭、主路与各支路（布局测试钉死）。
+ * 坐标手写、禁随机：两端必须逐像素一致。
  */
-export const APARTMENT_ALLEY = 48;
+const APARTMENT_RECTS: ReadonlyArray<WorldRect> = [
+  // 301 生活区西排
+  { x: 3200, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
+];
+
+/** 楼栋数：只留 301 一栋，`slot` 恒为 0 */
+export const APARTMENT_ROOM_COUNT = APARTMENT_RECTS.length;
 
 /**
- * 六栋楼的落点：绕中央广场四向铺开，楼体之间留出 300px 级草地。
+ * 门前口袋花园：撤掉五栋后留下的空地，纯装饰、零碰撞（ADR-0101）。
  *
- * 全部避开四角院落、游乐园、赌场、急救站、两栋小院、影音室、小黑屋、
- * 南院、八角笼、发泄区、三湖、摸鱼亭、主路与各支路（布局测试钉死）。
- * 坐标手写、禁随机：两端必须逐像素一致。
- *
- * 中列的 x 由「西排东沿 + 巷道净宽」派生，改巷道只改 `APARTMENT_ALLEY` 一处。
+ * 北沿咬住 301 楼体南墙外 16px，南沿停在生活大街路缘上方 8px，
+ * 西沿与楼体齐平，东沿离南向主路路缘 20px。石板小径与灌木都落在这块地里。
  */
-const ALLEY_COLUMN_X = 3200 + APARTMENT_W + APARTMENT_ALLEY;
+export const APARTMENT_GARDEN: WorldRect = { x: 3200, y: 4936, w: 820, h: 356 };
 
-const APARTMENT_RECTS: ReadonlyArray<WorldRect> = [
-  // 301 生活区西北排
-  { x: 3200, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
-  // 302 中排（与 301 同一排，中间留 48px 巷子）
-  { x: ALLEY_COLUMN_X, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
-  // 303 东排：南向主路以东
-  { x: 4240, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
-  // 304 第二排西
-  { x: 3200, y: 5040, w: APARTMENT_W, h: APARTMENT_H },
-  // 305 第二排中
-  { x: ALLEY_COLUMN_X, y: 5040, w: APARTMENT_W, h: APARTMENT_H },
-  // 306 第二排东
-  { x: 4240, y: 5040, w: APARTMENT_W, h: APARTMENT_H },
-];
+/** 花园石板小径：门口台阶 → 生活大街，32px 宽、整数纹素，中线对齐 301 门牌 */
+export const APARTMENT_GARDEN_PATH: WorldRect = { x: 3334, y: 4952, w: 32, h: 340 };
 
 /**
  * 世界坐标窗口表：下标 = slot，内层下标 = 窗口编号 0..19。
@@ -134,7 +123,7 @@ function buildWindows(rect: WorldRect): ReadonlyArray<ApartmentWindow> {
   return out;
 }
 
-/** 六栋公寓楼：下标即 slot */
+/** 唯一一栋公寓楼：下标即 slot（恒为 0） */
 export const APARTMENT_SPECS: ReadonlyArray<ApartmentSpec> = APARTMENT_RECTS.map((rect, slot) => {
   const doorX = rect.x + rect.w / 2;
   return {
@@ -166,7 +155,7 @@ export function doorNoOf(slot: number): number {
   return APARTMENT_DOOR_BASE + Math.max(0, Math.min(APARTMENT_ROOM_COUNT - 1, slot));
 }
 
-/** slot → 规格；越界夹回 0..5 */
+/** slot → 规格；越界夹回 0 */
 export function apartmentBySlot(slot: number): ApartmentSpec {
   const index = Number.isFinite(slot)
     ? Math.max(0, Math.min(APARTMENT_ROOM_COUNT - 1, Math.floor(slot)))
@@ -174,7 +163,7 @@ export function apartmentBySlot(slot: number): ApartmentSpec {
   return APARTMENT_SPECS[index] ?? APARTMENT_SPECS[0]!;
 }
 
-/** 门牌号 301–306 → 规格；非法门牌返回 undefined */
+/** 门牌号 301 → 规格；其余门牌返回 undefined */
 export function apartmentByDoorNo(doorNo: number): ApartmentSpec | undefined {
   if (!Number.isFinite(doorNo)) return undefined;
   const slot = Math.floor(doorNo) - APARTMENT_DOOR_BASE;

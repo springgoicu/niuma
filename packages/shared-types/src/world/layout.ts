@@ -101,7 +101,7 @@ import {
   DICE_TABLES,
 } from './dice-hall';
 import { VILLA_SPECS, VILLA_WALL_SOLIDS } from './villas';
-import { APARTMENT_SPECS, APARTMENT_WALL_SOLIDS } from './apartment';
+import { APARTMENT_GARDEN, APARTMENT_SPECS, APARTMENT_WALL_SOLIDS } from './apartment';
 import {
   CLINIC_ACCESS_PAVING,
   CLINIC_BEDS,
@@ -1011,6 +1011,8 @@ function isPlantable(x: number, y: number): boolean {
   for (const spec of VILLA_SPECS) if (rectContains(rectExpanded(spec.rect, 36), x, y)) return false;
   // 公寓留白 60：门牌与门口台阶在楼体南沿外 24–50px，树不能站在门口
   for (const spec of APARTMENT_SPECS) if (rectContains(rectExpanded(spec.rect, 60), x, y)) return false;
+  // 门前口袋花园（ADR-0101）：石板小径与灌木位整片留给装饰，散树不再长进来
+  if (rectContains(rectExpanded(APARTMENT_GARDEN, 12), x, y)) return false;
   // 竹林留白：这两片交给竹子，普通树不再混长进来
   for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
   // 发泄区地面与老板占地内不长树（发泄室内部，兜底）
@@ -1046,6 +1048,8 @@ const FLOWER_FIELDS: FlowerPatch[] = [
   { rect: { x: 2680, y: 5340, w: 200, h: 150 }, palette: 1 },
   { rect: { x: 4900, y: 4560, w: 200, h: 150 }, palette: 2 },
   { rect: { x: 2900, y: 5180, w: 160, h: 110 }, palette: 1 },
+  // 公寓门前口袋花园里的一畦花圃（ADR-0101）：避开石板小径与楼体
+  { rect: { x: 3520, y: 5000, w: 180, h: 140 }, palette: 0 },
 ];
 
 function buildGroves(): TreeCluster[] {
@@ -1495,7 +1499,7 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...DICE_TABLE_SOLIDS,
     // 豪宅小院：四面院墙（南墙留门洞，锁门时另加动态门栅）
     ...VILLA_WALL_SOLIDS,
-    // 牛马公寓：整圈封闭的外墙
+    // 牛马公寓：唯一一栋，整圈封闭的外墙
     ...APARTMENT_WALL_SOLIDS,
     // 绩效八角笼：围栏（南北门洞）+ 4 张观战长椅底座
     ...RING_FENCE_SOLIDS,
@@ -1507,7 +1511,7 @@ export const WORLD_LAYOUT: WorldLayout = {
     // 墨绿绒地面：和办公楼与住宅拉开色相，进门就知道换地方了
     { name: '摸鱼大赌场', rect: DICE_HALL, floor: 'felt' },
     ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: spec.house, floor: 'walnut' as const })),
-    // 六栋单户公寓楼（ADR-0095）：同名同地板，区域名与树带都按 rect 逐栋展开
+    // 唯一一栋单户公寓楼（ADR-0095 / ADR-0101）：区域名与树带都按 rect 展开
     ...APARTMENT_SPECS.map((spec) => ({ name: '牛马公寓', rect: spec.rect, floor: 'plaster' as const })),
   ],
   paved: [

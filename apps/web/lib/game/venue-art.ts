@@ -4,6 +4,8 @@ import { Container, Graphics, Sprite, type Application, type Texture } from 'pix
 import {
   AMUSEMENT_PARK,
   AMUSEMENT_STREET,
+  APARTMENT_GARDEN,
+  APARTMENT_GARDEN_PATH,
   APARTMENT_SPECS,
   BOSS_ARENA,
   CLINIC_ACCESS_PAVING,
@@ -91,6 +93,7 @@ export class VenueArt {
     this.paintClinicApron(flat);
     this.paintRingApron(flat);
     this.paintApartmentDoors(flat);
+    this.paintApartmentGarden(flat);
     this.paintVillaGardens(flat);
     this.paintPlazaGround(flat);
     this.paintTeaAndShrine(flat);
@@ -660,6 +663,40 @@ export class VenueArt {
       g.rect(spec.door.x - 16, spec.door.y - 2, 32, 6).fill({ color: c.seam, alpha: 0.55 });
       g.rect(spec.door.x - 18, spec.door.y + 4, 36, 4).fill({ color: c.alt, alpha: 0.5 });
     }
+  }
+
+  /**
+   * 公寓门前口袋花园（ADR-0101）：四面低石沿 + 夜里石径中段的一段烘焙暖光。
+   *
+   * 石沿画在草地上，纯装饰、零碰撞；南北两缘在石板小径处各留 40px 缺口，
+   * 「从门口一路走到生活大街」在视觉上不撞墙。夜里不添灯，用 `pool()` 提亮地面。
+   */
+  private paintApartmentGarden(g: Graphics): void {
+    const c = VENUE_COLORS.apartment;
+    const garden = APARTMENT_GARDEN;
+    const path = APARTMENT_GARDEN_PATH;
+    const edge = 6;
+    const gapHalf = 20;
+    const band = (x: number, y: number, w: number, h: number): void => {
+      if (w <= 0 || h <= 0) return;
+      g.rect(x, y, w, h).fill(TOWN_MATERIALS.stoneDark);
+      g.rect(x, y, w, Math.max(1, h - 2)).fill(TOWN_MATERIALS.stone);
+      g.rect(x, y, w, 1).fill(TOWN_MATERIALS.stoneLight);
+    };
+
+    // 南北两缘：石径两侧各一段，缺口正好 40px
+    const westTo = path.x - gapHalf - garden.x;
+    const eastFrom = path.x + path.w + gapHalf;
+    band(garden.x, garden.y, westTo, edge);
+    band(eastFrom, garden.y, garden.x + garden.w - eastFrom, edge);
+    band(garden.x, garden.y + garden.h - edge, westTo, edge);
+    band(eastFrom, garden.y + garden.h - edge, garden.x + garden.w - eastFrom, edge);
+    // 东西两沿：整条通到两头，和南北缘在转角叠一层
+    band(garden.x, garden.y, edge, garden.h);
+    band(garden.x + garden.w - edge, garden.y, edge, garden.h);
+
+    // 夜里石径中段的一圈暖光：不新增灯位，靠地面提亮
+    this.pool(g, path.x + path.w / 2, garden.y + garden.h * 0.58, 46, 20, c.glow);
   }
 
   private paintVillaGardens(g: Graphics): void {

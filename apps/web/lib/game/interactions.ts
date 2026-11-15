@@ -262,7 +262,7 @@ export interface ContextHintOptions {
   seatId?: number;
   /** 当前所在房间频道：0 = 园区，非 0 = 公寓屋内 */
   roomId?: number;
-  /** 当前所在楼栋（0..5）：出口热区只认自己那栋（ADR-0095），未知传 -1 */
+  /** 当前所在楼栋（ADR-0101 后恒为 0）：出口热区只认这一栋，未知传 -1 */
   roomSlot?: number;
 }
 

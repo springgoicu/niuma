@@ -57,7 +57,8 @@ describe('五区注册表（ADR-0097）', () => {
   });
 
   it('每个场所都在自己申报的区里，没有「无区场所」', () => {
-    expect(VENUES.length).toBeGreaterThan(20);
+    // ADR-0101 把六栋公寓并成一栋后是 20 处：合并楼栋不该顺手弄丢别的场所
+    expect(VENUES.length).toBeGreaterThanOrEqual(20);
     expect(new Set(VENUES.map((venue) => venue.id)).size).toBe(VENUES.length);
     for (const venue of VENUES) {
       const center = { x: venue.rect.x + venue.rect.w / 2, y: venue.rect.y + venue.rect.h / 2 };

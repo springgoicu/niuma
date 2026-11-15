@@ -42,7 +42,8 @@ export const PLAZA_LIGHT_COUNT = 4;
 export function venueLights(): LightSpec[] {
   const lights: LightSpec[] = [];
 
-  // 六栋公寓：每栋门廊一盏，暖光小半径，只照亮门口一级台阶
+  // 唯一一栋公寓（ADR-0101）：门廊一盏，暖光小半径，只照亮门口一级台阶；
+  // 门前花园不添灯，夜里靠 `venue-art` 烘焙的石径暖光斑提亮
   for (const spec of APARTMENT_SPECS) {
     lights.push({
       x: spec.door.x,

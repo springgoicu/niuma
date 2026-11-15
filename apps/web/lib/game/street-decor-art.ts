@@ -158,6 +158,22 @@ function paintGround(g: Graphics, plan: StreetDecorPlan, winter: boolean): void 
       }
       continue;
     }
+    if (bit.kind === 'stone') {
+      // 花园石板小径：比路肩碎石更平整的石板，同色阶两档明度，缝里偶见苔绿
+      g.roundRect(bit.x - STREET_STEP_SIZE.w / 2, bit.y - STREET_STEP_SIZE.h, STREET_STEP_SIZE.w, STREET_STEP_SIZE.h, 2).fill(
+        stoneDark,
+      );
+      g.roundRect(
+        bit.x - STREET_STEP_SIZE.w / 2 + 1,
+        bit.y - STREET_STEP_SIZE.h + 1,
+        STREET_STEP_SIZE.w - 2,
+        STREET_STEP_SIZE.h - 2,
+        1,
+      ).fill(stone);
+      g.rect(bit.x - 3, bit.y - STREET_STEP_SIZE.h + 1, 4, 1).fill(stoneLight);
+      if (bit.variant === 1) g.rect(bit.x + 2, bit.y - 3, 2, 2).fill(0x7fbf8f);
+      continue;
+    }
     // 路肩碎石：一块圆角石板 + 顶边受光，variant 1 多带一块小石子
     const cx = bit.x;
     const cy = bit.y;

@@ -6,9 +6,9 @@ import type { DepthSink } from './sort-layer';
 import { WINTER_COLORS } from './terrain-palette';
 
 /**
- * 牛马公寓的美术层（ADR-0087 / ADR-0095 / ADR-0098）。
+ * 牛马公寓的美术层（ADR-0087 / ADR-0095 / ADR-0098 / ADR-0101）。
  *
- * 六栋单户公寓楼绕中央广场铺开：外立面全部走 y 排序层（各自一个深度键）。
+ * 唯一一栋单户公寓楼（门牌 301）：外立面走 y 排序层（一个深度键）。
  * 楼里没有可走的空间，所以这里只剩立面本身——窗格、门厅与门牌号。
  * 窗口里探出的头由 `WindowPeekView` 画在排序层之上，占用窗口的亮灯也在那边。
  */
@@ -128,7 +128,7 @@ export class ApartmentView {
     g.rect(w / 2 - 36, -57, 72, 1).fill(0xd8fff4);
     g.rect(w / 2 - 36, -52, 72, 2).fill({ color: C.outline, alpha: 0.45 });
 
-    // 屋顶机组：水箱 + 两台空调外机 + 一根排气管，六栋楼同一套剪影
+    // 屋顶机组：水箱 + 两台空调外机 + 一根排气管，整栋楼同一套剪影
     const roofY = -h + 8;
     g.rect(12, roofY, 26, 12).fill(C.outline);
     g.rect(13, roofY + 1, 24, 10).fill(C.roofUnit);

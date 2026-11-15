@@ -1,6 +1,8 @@
 'use client';
 
 import {
+  APARTMENT_GARDEN,
+  APARTMENT_GARDEN_PATH,
   PLAZA_CENTER,
   PLAZA_RADIUS,
   TREE_MIN_GAP,
@@ -45,6 +47,29 @@ export const STREET_DECOR_BANDS: ReadonlyArray<WorldRect> = [
   { x: 4860, y: 3160, w: 600, h: 400 },
 ];
 
+/**
+ * 公寓门前的口袋花园（ADR-0101）：小径两侧各一条灌木带。
+ *
+ * 落点仍走 `propsAllowed`，所以会自动让开石板小径、花圃、树与生活大街路缘；
+ * 这里只给「撒点范围」，不写第二份灌木坐标。
+ */
+export const APARTMENT_GARDEN_BANDS: ReadonlyArray<WorldRect> = [
+  // 小径西侧：东沿停在石径左缘外 24px
+  {
+    x: APARTMENT_GARDEN.x + 16,
+    y: APARTMENT_GARDEN.y + 16,
+    w: APARTMENT_GARDEN_PATH.x - APARTMENT_GARDEN.x - 40,
+    h: APARTMENT_GARDEN.h - 32,
+  },
+  // 小径东侧：西沿停在石径右缘外 24px，一路铺到花园东沿
+  {
+    x: APARTMENT_GARDEN_PATH.x + APARTMENT_GARDEN_PATH.w + 24,
+    y: APARTMENT_GARDEN.y + 16,
+    w: APARTMENT_GARDEN.x + APARTMENT_GARDEN.w - 16 - (APARTMENT_GARDEN_PATH.x + APARTMENT_GARDEN_PATH.w + 24),
+    h: APARTMENT_GARDEN.h - 32,
+  },
+];
+
 /** 立式小物的种类；顺序即纹理帧号，两端只认这一份 */
 export const STREET_DECOR_KINDS = ['shrub', 'shrubTall', 'postbox', 'hydrant', 'bin'] as const;
 export type StreetDecorKind = (typeof STREET_DECOR_KINDS)[number];
@@ -69,8 +94,8 @@ export interface StreetProps {
 }
 
 export interface StreetGroundBit {
-  /** step：路肩碎石；grate：排水篦子 */
-  readonly kind: 'step' | 'grate';
+  /** step：路肩碎石；grate：排水篦子；stone：花园石板小径 */
+  readonly kind: 'step' | 'grate' | 'stone';
   readonly x: number;
   readonly y: number;
   readonly variant: 0 | 1;
@@ -95,6 +120,10 @@ const PLANTER_CLEARANCE = 34;
 const WATER_CLEARANCE = 40;
 /** 单条带的路肩碎石上限：撒满整条路缘会读成「石子路」，只在草缘点缀 */
 const STEP_BUDGET = 64;
+/** 花园石板小径：三列 9×7 石板，列距 10、行距 8，缝宽 1px */
+export const GARDEN_PATH_COLS = 3;
+/** 花园灌木比过渡带更密：门前是一片小院，不是散点绿化 */
+const GARDEN_SHRUB_STEP = 44;
 
 /** 树木缓存：布局是静态的，导入时算一次，撒点时不再重复 flatMap */
 const TREES: ReadonlyArray<{ x: number; y: number }> = [
@@ -219,10 +248,9 @@ function nearPaved(x: number, y: number): boolean {
   return false;
 }
 
-function scatterShrubs(band: WorldRect, index: number): StreetProps[] {
+function scatterShrubs(band: WorldRect, index: number, step = 76): StreetProps[] {
   const out: StreetProps[] = [];
   const seed = 0x51de + index * 0x9e37;
-  const step = 76;
   const top = Math.floor(band.y / step);
   const bottom = Math.ceil((band.y + band.h) / step);
   const from = Math.floor(band.x / step);
@@ -272,6 +300,27 @@ function scatterSteps(band: WorldRect, index: number): StreetGroundBit[] {
 }
 
 /**
+ * 公寓门前石板小径：沿 `APARTMENT_GARDEN_PATH` 三列密铺，列距 10、行距 8。
+ *
+ * 纯函数、确定性：错缝只由行号奇偶决定，任何设备算出的落点完全一致。
+ * 石板只画不挡，`APARTMENT_GARDEN_PATH` 本身就是花园的中线，踩上去没有任何代价。
+ */
+export function apartmentGardenPath(): StreetGroundBit[] {
+  const out: StreetGroundBit[] = [];
+  const { x, y, w, h } = APARTMENT_GARDEN_PATH;
+  const colStep = Math.floor((w - 2) / GARDEN_PATH_COLS);
+  const rowStep = STREET_STEP_SIZE.h + 1;
+  for (let row = 0; row * rowStep + STREET_STEP_SIZE.h + 2 <= h - 2; row += 1) {
+    const by = y + 2 + row * rowStep + STREET_STEP_SIZE.h;
+    for (let col = 0; col < GARDEN_PATH_COLS; col += 1) {
+      const cx = x + 2 + colStep * col + Math.floor(STREET_STEP_SIZE.w / 2);
+      out.push({ kind: 'stone', x: cx, y: by, variant: ((row + col) % 2) as 0 | 1 });
+    }
+  }
+  return out;
+}
+
+/**
  * 整份装饰计划：纯数据、纯函数，可在 `bun:test` 里逐条断言。
  * 同一份布局在任何设备上算出的结果完全一致，顺序稳定（按 y、x 排序）。
  */
@@ -284,6 +333,13 @@ export function streetDecorPlan(): StreetDecorPlan {
     props.push(...scatterShrubs(band, index));
     ground.push(...scatterSteps(band, index));
   }
+
+  // 公寓门前口袋花园（ADR-0101）：小径两侧灌木 + 三列石板小径
+  for (let index = 0; index < APARTMENT_GARDEN_BANDS.length; index += 1) {
+    const band = APARTMENT_GARDEN_BANDS[index]!;
+    props.push(...scatterShrubs(band, STREET_DECOR_BANDS.length + index, GARDEN_SHRUB_STEP));
+  }
+  ground.push(...apartmentGardenPath());
 
   for (const anchor of STREET_ANCHORS) {
     if (!propsAllowed(anchor.x, anchor.y, PATH_CLEARANCE)) continue;

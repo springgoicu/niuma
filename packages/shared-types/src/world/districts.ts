@@ -99,7 +99,7 @@ export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
     id: 'living',
     name: '生活区',
     scene: 'indoor',
-    // 六栋公寓 + 生活大街 + 宿舍 + 影音室 + 两栋小院
+    // 公寓 + 门前花园 + 生活大街 + 宿舍 + 影音室 + 两栋小院
     rects: [{ x: 3140, y: 4640, w: 1680, h: 1120 }],
     gate: { x: 4096, y: 4700 },
     color: 0xb9a78f,
@@ -254,8 +254,8 @@ export const VENUES: ReadonlyArray<VenueSpec> = [
   ...VILLA_SPECS.map((spec) =>
     venue(`villa${spec.id + 1}`, spec.name, 'living', 'indoor', spec.rect, spec.id === 0 ? 'villa1' : 'villa2'),
   ),
-  // 六栋公寓各自具名成场所：区域名仍统一显示「牛马公寓」，小地图按楼填色
-  ...APARTMENT_SPECS.map((spec) => venue(`apartment-${spec.slot}`, '牛马公寓', 'living', 'indoor', spec.rect, 'apartment')),
+  // 唯一一栋公寓（ADR-0101）：区域名「牛马公寓」，小地图按楼填色
+  venue('apartment', '牛马公寓', 'living', 'indoor', APARTMENT_SPECS[0]!.rect, 'apartment'),
 ];
 
 /** 点落在哪个场所：按 `VENUES` 顺序先命中者胜 */
@@ -310,7 +310,7 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   // 两栋小院的院门外台阶
   villa1: { x: VILLA_SPECS[0]!.gate.x, y: VILLA_SPECS[0]!.gate.y + 24 },
   villa2: { x: VILLA_SPECS[1]!.gate.x, y: VILLA_SPECS[1]!.gate.y + 24 },
-  // 公寓门口台阶：六栋楼各有自己的门，导览统一送到 301 栋
+  // 公寓门口台阶：唯一一栋，导览直接送到 301 门口
   apartment: { x: APARTMENT_SPECS[0]!.outside.x, y: APARTMENT_SPECS[0]!.outside.y },
   // 影音室：东门内侧的走道（三排座椅东侧），进门两步就能坐下
   theater: { x: HOME_THEATER.x + HOME_THEATER.w - 60, y: HOME_THEATER.y + 160 },

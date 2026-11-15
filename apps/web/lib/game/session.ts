@@ -534,7 +534,7 @@ export class GameSession {
   private ringReceivedAt = 0;
   /** 是否在公寓窗口里探头（ADR-0098）：提示条换成「出门」，位移与动作全部冻结 */
   private inRoom = false;
-  /** 探头所在楼栋（0..5，来自窗口快照）：头部画在这栋楼的窗口上 */
+  /** 探头所在楼栋（ADR-0101 后恒为 0，来自窗口快照）：头部画在这栋楼的窗口上 */
   private roomSlot = -1;
   /** 上次上报给 UI 的本地姿态与入座状态，用来去重 */
   private localPose = -1;

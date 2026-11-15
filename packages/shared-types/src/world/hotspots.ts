@@ -164,7 +164,7 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
   // ---- 豪宅小院：门口与摇钱树 ----
   ...VILLA_SPECS.map(villaGateHotspot),
   ...VILLA_SPECS.map(villaTreeHotspot),
-  // ---- 牛马公寓（ADR-0098）：六栋楼各一条门热区，进屋只在窗口探头、不再有出口热区 ----
+  // ---- 牛马公寓（ADR-0098 / ADR-0101）：唯一一栋一条门热区，进屋只在窗口探头、不再有出口热区 ----
   ...APARTMENT_SPECS.map(
     (spec): HotspotDef => ({
       id: apartmentDoorHotspotId(spec.slot),
@@ -285,10 +285,10 @@ export function isWithinAnyHotspotOfKind(
 }
 
 /**
- * 站在哪栋楼的门口：返回最近的门口 slot，离所有门都太远返回 -1。
+ * 站在公寓门口：返回最近的门口 slot，离门太远返回 -1。
  *
- * 进屋要按「脚下这扇门」决定探头出现在哪栋楼上，所以服务端不能只判
- * 「附近有没有任意一栋的门」（旧 `isWithinAnyHotspotOfKind` 的做法）。
+ * 进屋要按「脚下这扇门」决定探头出现在哪栋楼上（ADR-0101 后只剩 301，
+ * slot 恒为 0），所以服务端不能只判「附近有没有任意一栋的门」。
  */
 export function apartmentDoorSlotAt(x: number, y: number, slack = 0): number {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return -1;

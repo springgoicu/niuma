@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  APARTMENT_GARDEN,
+  APARTMENT_GARDEN_PATH,
+  APARTMENT_SPECS,
   ISLAND,
   TREE_MIN_GAP,
   WORLD_LAYOUT,
@@ -9,10 +12,14 @@ import {
   rectContains,
 } from '@niuma/shared-types';
 import {
+  APARTMENT_GARDEN_BANDS,
+  GARDEN_PATH_COLS,
   STREET_ANCHORS,
   STREET_DECOR_BANDS,
   STREET_DECOR_KINDS,
   STREET_GRATE_ANCHORS,
+  STREET_STEP_SIZE,
+  apartmentGardenPath,
   streetDecorPlan,
 } from '../street-decor';
 
@@ -144,6 +151,48 @@ describe('过渡带装饰计划', () => {
       expect(isOnLand(band.x + band.w, band.y + band.h)).toBe(true);
       expect(band.x).toBeGreaterThan(ISLAND.bounds.x);
       expect(band.y).toBeGreaterThan(ISLAND.bounds.y);
+    }
+  });
+});
+
+describe('公寓门前口袋花园（ADR-0101）', () => {
+  it('石板小径三列密铺，每一块都落在小径矩形里', () => {
+    const stones = apartmentGardenPath();
+    expect(stones.length).toBeGreaterThan(0);
+    expect(stones.every((bit) => bit.kind === 'stone')).toBe(true);
+    // 行数 × 三列：列数由常量派生，落点数量必须是它的整数倍
+    expect(stones.length % GARDEN_PATH_COLS).toBe(0);
+    for (const bit of stones) {
+      const left = bit.x - Math.floor(STREET_STEP_SIZE.w / 2);
+      const top = bit.y - STREET_STEP_SIZE.h;
+      expect(rectContains(APARTMENT_GARDEN_PATH, left, top), `${bit.x},${bit.y} 石板探出小径`).toBe(true);
+      expect(
+        rectContains(APARTMENT_GARDEN_PATH, left + STREET_STEP_SIZE.w - 1, top + STREET_STEP_SIZE.h - 1),
+      ).toBe(true);
+    }
+  });
+
+  it('花园灌木落在花园里，且不长到石板小径与楼体上', () => {
+    const gardenProps = PLAN.props.filter((prop) => rectContains(APARTMENT_GARDEN, prop.x, prop.y));
+    expect(gardenProps.length).toBeGreaterThanOrEqual(6);
+    expect(gardenProps.length).toBeLessThanOrEqual(80);
+    for (const prop of gardenProps) {
+      expect(['shrub', 'shrubTall']).toContain(prop.kind);
+      expect(rectContains(APARTMENT_GARDEN_PATH, prop.x, prop.y)).toBe(false);
+      for (const spec of APARTMENT_SPECS) expect(rectContains(spec.rect, prop.x, prop.y)).toBe(false);
+    }
+    // 两条灌木带自身也必须落在花园里
+    for (const band of APARTMENT_GARDEN_BANDS) {
+      expect(rectContains(APARTMENT_GARDEN, band.x, band.y)).toBe(true);
+    }
+  });
+
+  it('花园石板进了同一份装饰计划，且不新增碰撞', () => {
+    const stones = PLAN.ground.filter((bit) => bit.kind === 'stone');
+    expect(stones.length).toBe(apartmentGardenPath().length);
+    for (const bit of stones) {
+      expect(insideSolid(bit.x, bit.y)).toBe(false);
+      expect(onPath(bit.x, bit.y)).toBe(false);
     }
   });
 });
