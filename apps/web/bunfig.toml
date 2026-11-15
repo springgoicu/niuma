@@ -1,0 +1,6 @@
+# bun 的测试配置（只作用于 `bun test`，不影响 build / dev）
+#
+# preload 里的时区固定是部署门禁的一部分：多文件跑测试时 worker 的本地时区会
+# 退化成 UTC，导致「本地日期」类断言整体差 8 小时。细节见 test/tz-setup.ts。
+[test]
+preload = ["./test/tz-setup.ts"]
