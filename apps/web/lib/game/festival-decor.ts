@@ -48,7 +48,7 @@ export interface FestivalAnchor {
 export const BUNTING_LAMP_GAP = 232;
 /** 灯头相对灯柱脚底的 y 偏移；与 `scene-lights.ts` 的灯头光心同一约定 */
 export const BUNTING_HANG_DY = 38;
-/** 门楣彩旗挂在门线上方 76px：越过牌坊横枋，又不会挡住匾额 */
+/** 门楣彩旗挂在门线上方 76px：越过门架横梁，又不会挡住门牌 */
 export const GATE_BUNTING_HANG_DY = 76;
 /** 树梢灯笼挂在树冠下三分之一 */
 export const TREE_LANTERN_HANG_DY = 44;
@@ -206,10 +206,10 @@ function pairAnchors(): FestivalAnchor[] {
 }
 
 /**
- * 门楣彩旗：三座自建牌坊挂在横枋上；卫生间没有牌坊，按门洞中心
- * （= 东侧门柱再向左 30px）补一条等宽的短彩旗，视觉上仍是「门楣一朵红」。
+ * 门楣彩旗：三座木构门架挂在横梁上；卫生间没有门架，按门洞中心
+ * （= 东侧门柱再向左 30px）补一条等宽的短彩旗，视觉上仍是「门楣一串彩」。
  *
- * ADR-0091 之后 `DOOR_PLAQUES` 还包含 7 处入口小门牌，它们没有横枋可挂，
+ * ADR-0091 之后 `DOOR_PLAQUES` 还包含 7 处入口小门牌，它们没有横梁可挂，
  * 只取 `frame === 'gate'` 的三座，彩旗数量仍是 4 条。
  */
 function gateAnchors(): FestivalAnchor[] {

@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  HOME_THEATER,
-  LOUNGE,
-  SOUTH_YARD,
-  THEATER_SCREEN,
-  THEATER_SEATS,
-  THEATER_SPEAKERS,
-} from '../world/campus';
+import { HOME_THEATER, LOUNGE, THEATER_SCREEN, THEATER_SEATS, THEATER_SPEAKERS } from '../world/campus';
 import {
   AMUSEMENT_PARK,
   PARK_ATTRACTIONS,
@@ -85,11 +78,20 @@ describe('宿舍区客厅（双人沙发）', () => {
 });
 
 describe('家庭影音室', () => {
-  it('独立落在校园与庭院之间，不压两边的院子', () => {
+  it('独立落在生活区南排，不压别的楼', () => {
     expect(isOnLand(HOME_THEATER.x, HOME_THEATER.y, 20)).toBe(true);
     expect(rectContains(WORLD_LAYOUT.office, HOME_THEATER.x + 10, HOME_THEATER.y + 10)).toBe(false);
-    expect(rectContains(SOUTH_YARD, HOME_THEATER.x + 10, HOME_THEATER.y + 10)).toBe(false);
-    expect(HOME_THEATER.y + HOME_THEATER.h).toBeLessThan(SOUTH_YARD.y);
+    // 影厅西边是涟漪湖方向的开阔草带，东边隔一条小路是宿舍区
+    expect(HOME_THEATER.x + HOME_THEATER.w).toBeLessThan(LOUNGE.x);
+    for (const building of buildings) {
+      if (building.name === '家庭影音室') continue;
+      const overlap =
+        building.rect.x < HOME_THEATER.x + HOME_THEATER.w &&
+        building.rect.x + building.rect.w > HOME_THEATER.x &&
+        building.rect.y < HOME_THEATER.y + HOME_THEATER.h &&
+        building.rect.y + building.rect.h > HOME_THEATER.y;
+      expect(overlap, `影厅压到 ${building.name}`).toBe(false);
+    }
     expect(buildings.some((building) => building.name === '家庭影音室')).toBe(true);
     expect(regionAt(HOME_THEATER.x + 230, HOME_THEATER.y + 160)).toBe('家庭影音室');
   });
@@ -140,11 +142,19 @@ describe('家庭影音室', () => {
 });
 
 describe('游乐园与入口滑梯', () => {
-  it('整块场地在陆地上、不压湖也不进庭院', () => {
+  it('整块场地在陆地上、不压湖也不压建筑', () => {
     expect(isOnLand(AMUSEMENT_PARK.x, AMUSEMENT_PARK.y, 20)).toBe(true);
     expect(isOnLand(AMUSEMENT_PARK.x + AMUSEMENT_PARK.w, AMUSEMENT_PARK.y + AMUSEMENT_PARK.h, 20)).toBe(true);
     expect(isWaterAt(AMUSEMENT_PARK.x + 200, AMUSEMENT_PARK.y + 200)).toBe(false);
-    expect(rectContains(SOUTH_YARD, AMUSEMENT_PARK.x, AMUSEMENT_PARK.y)).toBe(false);
+    for (const building of buildings) {
+      if (building.name === '游乐园') continue;
+      const overlap =
+        building.rect.x < AMUSEMENT_PARK.x + AMUSEMENT_PARK.w &&
+        building.rect.x + building.rect.w > AMUSEMENT_PARK.x &&
+        building.rect.y < AMUSEMENT_PARK.y + AMUSEMENT_PARK.h &&
+        building.rect.y + building.rect.h > AMUSEMENT_PARK.y;
+      expect(overlap, `游乐园压到 ${building.name}`).toBe(false);
+    }
     expect(buildings.some((building) => building.name === '游乐园')).toBe(true);
     expect(regionAt(AMUSEMENT_PARK.x + 500, AMUSEMENT_PARK.y + 300)).toBe('游乐园');
   });

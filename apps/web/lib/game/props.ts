@@ -121,20 +121,20 @@ const COLOR = {
   brass: 0xd8a33f,
   brassLight: 0xf2c879,
   paperAged: 0xf4e6c8,
-  // 国风园林（ADR-0061）：竹、太湖石、青石景
+  // 庭院植被与叠石（ADR-0096）：竹丛、圆润巨石、层叠石板
   bambooStalk: 0x7fbf6a,
   bambooStalkDark: 0x4a8a46,
   bambooNode: 0xa9dc8c,
   bambooLeaf: 0x63b364,
   bambooLeafLight: 0x9ad98b,
-  taihuBody: 0xb8c4d0,
-  taihuBodyDark: 0x7c8896,
-  taihuBodyLight: 0xdfe8f0,
-  taihuMoss: 0x6fbf8a,
-  qingshi: 0x8d9aa6,
-  qingshiDark: 0x5f6b78,
-  qingshiLight: 0xb9c6d2,
-  stoneBase: 0xa9b1a6,
+  taihuBody: 0xcfc7b6,
+  taihuBodyDark: 0xa79f8e,
+  taihuBodyLight: 0xf0eadb,
+  taihuMoss: 0x8fae7a,
+  qingshi: 0xb5ad9c,
+  qingshiDark: 0x8f8877,
+  qingshiLight: 0xd8d1c0,
+  stoneBase: 0xb5ad9c,
   // 石鼓凳：汉白玉鼓身，比木凳更冷更亮
   drumStone: 0xe9e3d6,
   drumStoneDark: 0xb0a794,
@@ -532,30 +532,24 @@ function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
       return;
     }
     case 'taihu': {
-      // 太湖石盆景（ADR-0061）：石座 + 被水蚀出孔洞的瘦皱石头。
-      // 孔洞用「暗色填 + 1px 更暗的角」表达：真正的透明洞在这个尺度会漏出草地色，读成脏点。
+      // 庭院叠石（ADR-0096）：石座 + 圆润巨石 / 层叠石板，不再是太湖石的透光孔造型
       box(g, 4, h - 6, 22, 5, COLOR.stoneBase, COLOR.outline);
       if (variant === 0) {
+        // 圆润巨石：主石 + 两侧矮石，靠三段收边读出体积
         box(g, 9, 7, 13, 22, COLOR.taihuBody, COLOR.outline);
         box(g, 7, 15, 4, 11, COLOR.taihuBody, COLOR.outline);
         box(g, 20, 12, 4, 12, COLOR.taihuBody, COLOR.outline);
         rect(g, 10, 8, 4, 1, COLOR.taihuBodyLight);
         rect(g, 10, 9, 1, 7, COLOR.taihuBodyLight);
-        // 三处透光孔
-        for (const [x, y, hw, hh] of [
-          [12, 12, 3, 3],
-          [17, 18, 3, 4],
-          [13, 23, 3, 3],
-        ] as const) {
-          rect(g, x, y, hw, hh, COLOR.taihuBodyDark);
-          rect(g, x, y, 1, 1, COLOR.outline);
-        }
-        // 石根青苔
+        // 石面一道斜裂纹：擦痕替代原来的透光孔
+        rect(g, 15, 16, 3, 1, COLOR.taihuBodyDark);
+        rect(g, 14, 17, 2, 3, COLOR.taihuBodyDark);
+        // 石根一圈草色
         rect(g, 8, 27, 4, 2, COLOR.taihuMoss);
         rect(g, 19, 25, 3, 2, COLOR.taihuMoss);
         return;
       }
-      // 青石叠景：三块横石由下往上收，石缝里塞青苔
+      // 层叠石板：三块横石由下往上收，石缝里塞草色
       box(g, 3, 22, 24, 7, COLOR.qingshi, COLOR.outline);
       box(g, 6, 15, 18, 8, COLOR.qingshi, COLOR.outline);
       box(g, 10, 8, 11, 8, COLOR.qingshi, COLOR.outline);

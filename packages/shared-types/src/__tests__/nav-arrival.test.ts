@@ -1,12 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { LOUNGE, MEETING_ROOM, RESTROOM, SOUTH_YARD_PAVING, WORKROOM } from '../world/campus';
+import {
+  LOUNGE,
+  MEETING_ROOM,
+  RESTROOM,
+  SHRINE_ALTAR,
+  VENT_ROOM,
+  WORKROOM,
+} from '../world/campus';
 import { BOSS_ARENA } from '../world/boss';
 import { RING_ARENA, RING_EXIT, RING_NEAR_PX } from '../world/ring';
 import { isBlocked, PLAYER_RADIUS } from '../world/collision';
-import { isOnLand, isWaterAt, NAV_TARGETS, SHRINE_ALTAR, type NavTargetId } from '../world/layout';
+import {
+  DISTRICTS,
+  NAV_TARGETS,
+  isOnLand,
+  isWaterAt,
+  regionAt,
+  type NavTargetId,
+} from '../world/layout';
 import { rectContains } from '../world/geometry';
 
-/** 四间房：到达点必须落在自己房间里，且不能退回几何中心 */
+/** 房间类目标：到达点必须落在自己房间里 */
 const ROOM_OF: Partial<Record<NavTargetId, { x: number; y: number; w: number; h: number }>> = {
   meeting: MEETING_ROOM,
   restroom: RESTROOM,
@@ -14,8 +28,8 @@ const ROOM_OF: Partial<Record<NavTargetId, { x: number; y: number; w: number; h:
   workroom: WORKROOM,
 };
 
-/** 户外设施：到达点必须是陆地、不下水，且离岸至少一个身位 */
-const OUTDOOR: NavTargetId[] = ['park', 'bossArena', 'ring'];
+/** 户外设施：到达点必须是陆地、不下水 */
+const OUTDOOR: NavTargetId[] = ['park', 'ring', 'diceHall'];
 
 /** 点到矩形的最短距离：用来断言擂台落点在报名半径内 */
 function distanceToRect(
@@ -28,22 +42,22 @@ function distanceToRect(
   return Math.hypot(dx, dy);
 }
 
-describe('园区导览到达点（ADR-0040 / ADR-0078）', () => {
+describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
   it('12 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
-    // 四间房 + 供案 + 游乐园 + 发泄区 + 八角笼 + 赌场 + 两栋小院 + 公寓（ADR-0087）
+    // 企业区 4 + 游乐区 3 + 生活区 4 + 服务区 1
     expect(NAV_TARGETS.map((target) => target.id)).toEqual([
       'workroom',
       'meeting',
-      'restroom',
-      'lounge',
       'shrine',
-      'park',
       'bossArena',
-      'ring',
+      'park',
       'diceHall',
+      'ring',
+      'apartment',
+      'lounge',
       'villa1',
       'villa2',
-      'apartment',
+      'restroom',
     ]);
     expect(new Set(NAV_TARGETS.map((target) => target.id)).size).toBe(NAV_TARGETS.length);
     for (const target of NAV_TARGETS) {
@@ -54,11 +68,11 @@ describe('园区导览到达点（ADR-0040 / ADR-0078）', () => {
 
   it('到达点不撞墙、桌、隔断、器械底座与有占地的道具', () => {
     for (const target of NAV_TARGETS) {
-      expect(isBlocked(target.arrive.x, target.arrive.y)).toBe(false);
+      expect(isBlocked(target.arrive.x, target.arrive.y), target.id).toBe(false);
     }
   });
 
-  it('室内四间：到达点落在房间矩形内，且不退化成房间中心', () => {
+  it('室内目标：到达点落在房间矩形内，且不退化成房间中心', () => {
     for (const target of NAV_TARGETS) {
       const room = ROOM_OF[target.id];
       if (!room) continue;
@@ -67,7 +81,7 @@ describe('园区导览到达点（ADR-0040 / ADR-0078）', () => {
     }
   });
 
-  it('园区地标：到达点在陆地，不落进水面', () => {
+  it('户外地标：到达点在陆地，不落进水面', () => {
     for (const id of OUTDOOR) {
       const target = NAV_TARGETS.find((item) => item.id === id);
       if (!target) throw new Error(`缺少导览目标：${id}`);
@@ -75,20 +89,18 @@ describe('园区导览到达点（ADR-0040 / ADR-0078）', () => {
     }
   });
 
-  it('发泄区：到达点在垫内，也在研发园铺装上', () => {
+  it('发泄区：到达点在企业楼发泄室的橡胶垫内', () => {
     const bossArena = NAV_TARGETS.find((item) => item.id === 'bossArena');
     if (!bossArena) throw new Error('缺少发泄区导览目标');
     expect(rectContains(BOSS_ARENA, bossArena.arrive.x, bossArena.arrive.y)).toBe(true);
-    expect(rectContains(SOUTH_YARD_PAVING, bossArena.arrive.x, bossArena.arrive.y)).toBe(true);
+    expect(rectContains(VENT_ROOM, bossArena.arrive.x, bossArena.arrive.y)).toBe(true);
   });
 
   it('擂台：到达点在围绳外，且落在报名半径内', () => {
     const ring = NAV_TARGETS.find((item) => item.id === 'ring');
     if (!ring) throw new Error('缺少擂台导览目标');
-    // 非参赛者不能踏入围绳：落点必须在场外，否则寻路会把人顶在绳边
     expect(rectContains(RING_ARENA, ring.arrive.x, ring.arrive.y)).toBe(false);
     expect(distanceToRect(RING_ARENA, ring.arrive.x, ring.arrive.y)).toBeLessThanOrEqual(RING_NEAR_PX);
-    // 到达点就是场边报名点，落地即可按 F
     expect(ring.arrive).toEqual({ x: RING_EXIT.x, y: RING_EXIT.y });
   });
 
@@ -97,8 +109,25 @@ describe('园区导览到达点（ADR-0040 / ADR-0078）', () => {
     if (!shrine) throw new Error('缺少财神供案导览目标');
     expect(rectContains(WORKROOM, shrine.arrive.x, shrine.arrive.y)).toBe(true);
     expect(shrine.arrive.x).toBe(SHRINE_ALTAR.x);
-    // 案面底边以南、房间南沿以北：站过去就正对香炉
     expect(shrine.arrive.y).toBeGreaterThan(SHRINE_ALTAR.y);
     expect(shrine.arrive.y).toBeLessThan(WORKROOM.y + WORKROOM.h);
+  });
+
+  it('每个目标都属于一个大区，区域名与其大区一致', () => {
+    for (const target of NAV_TARGETS) {
+      expect(DISTRICTS.some((district) => district.id === target.district)).toBe(true);
+      const scene = target.scene;
+      expect(['indoor', 'outdoor', 'semi']).toContain(scene);
+      // 目标落在自己的场所 / 大区里，不会被别处抢走区域名
+      const place = regionAt(target.x, target.y);
+      expect(place === target.name || place.length > 0).toBe(true);
+    }
+  });
+
+  it('五座区门都能站人', () => {
+    for (const district of DISTRICTS) {
+      expect(isOnLand(district.gate.x, district.gate.y, PLAYER_RADIUS), district.id).toBe(true);
+      expect(isBlocked(district.gate.x, district.gate.y), district.id).toBe(false);
+    }
   });
 });

@@ -29,7 +29,10 @@ const C = {
   roofLight: 0x49505a,
   gateIron: 0x2f3439,
   gateIronLight: 0x5b636b,
-  plaque: 0x141416,
+  // 院门牌匾：奶油牌面 + 木边 + 墨绿字（ADR-0096）
+  plaque: 0xfff6e0,
+  plaqueEdge: 0x8a6446,
+  plaqueInk: 0x2f5d4a,
   gold: 0xf2c879,
   goldDark: 0xa8802f,
   coin: 0xffd166,
@@ -111,13 +114,13 @@ export class VillasView {
       const plaque = new Graphics();
       plaque.rect(-52, -50, 104, 26).fill(C.outline);
       plaque.rect(-50, -48, 100, 22).fill(C.plaque);
-      plaque.rect(-50, -48, 100, 2).fill(C.goldDark);
+      plaque.rect(-50, -48, 100, 2).fill(C.plaqueEdge);
       gate.addChild(plaque);
 
       const name = new Text({
         text: spec.name,
         resolution: this.devicePxPerTexel,
-        style: { fontFamily: CJK_FONT, fontSize: 7, fontWeight: '600', fill: C.gold, letterSpacing: 1 },
+        style: { fontFamily: CJK_FONT, fontSize: 7, fontWeight: '600', fill: C.plaqueInk, letterSpacing: 1 },
       });
       name.anchor.set(0.5, 0.5);
       name.position.set(0, -43);
@@ -127,7 +130,7 @@ export class VillasView {
       const text = new Text({
         text: `待售 ${VILLA_PRICE}`,
         resolution: this.devicePxPerTexel,
-        style: { fontFamily: CJK_FONT, fontSize: 9, fontWeight: '600', fill: C.gold },
+        style: { fontFamily: CJK_FONT, fontSize: 9, fontWeight: '600', fill: C.plaqueInk },
       });
       text.anchor.set(0.5, 0.5);
       text.position.set(0, -33);

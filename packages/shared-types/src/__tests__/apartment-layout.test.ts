@@ -66,13 +66,14 @@ describe('牛马公寓布局（ADR-0095）', () => {
     expect(apartmentByDoorNo(307)).toBeUndefined();
   });
 
-  it('楼体两两不相交，栋间留出不小于 300px 的草地', () => {
+  it('楼体两两不相交，栋间留出不小于 40px 的巷子', () => {
+    // ADR-0097：公寓改成生活区的两排联排，巷宽够玩家（半径 9）并排进出即可
     for (let i = 0; i < APARTMENT_SPECS.length; i += 1) {
       for (let j = i + 1; j < APARTMENT_SPECS.length; j += 1) {
         const a = APARTMENT_SPECS[i]!.rect;
         const b = APARTMENT_SPECS[j]!.rect;
         expect(rectsOverlap(a, b), `${i + 1} 栋与 ${j + 1} 栋重叠`).toBe(false);
-        expect(rectGap(a, b), `${i + 1} 栋与 ${j + 1} 栋贴得太近`).toBeGreaterThanOrEqual(300);
+        expect(rectGap(a, b), `${i + 1} 栋与 ${j + 1} 栋贴得太近`).toBeGreaterThanOrEqual(40);
       }
     }
   });

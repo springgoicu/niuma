@@ -6,7 +6,7 @@ import { VILLA_SPECS } from '../world/villas';
 /**
  * 场所门牌（ADR-0091）：12 处导览目标各有一块中文门牌。
  *
- * 四角房沿用大牌坊（`gate`），其余 7 处入口立小门牌（`board`）；
+ * 四角房沿用木构门架（`gate`），其余 7 处入口立小门牌（`board`）；
  * 两栋小院的院名写在院门牌匾上，不占 `DOOR_PLAQUES`。
  */
 const PLAQUE_IDS = DOOR_PLAQUES.map((plaque) => plaque.id);
@@ -32,15 +32,12 @@ describe('场所门牌（ADR-0091）', () => {
     }
   });
 
-  it('只有四角房保留大牌坊，只有工作区保留对联', () => {
+  it('只有企业楼保留大门架，其余都是入口小门牌', () => {
+    // ADR-0097：企业楼大门是唯一一座木构牌坊，楼内房间与其它场所都用小门牌
     expect(DOOR_PLAQUES.filter((plaque) => plaque.frame === 'gate').map((plaque) => plaque.id)).toEqual([
       'workroom',
-      'meeting',
-      'lounge',
     ]);
-    expect(DOOR_PLAQUES.filter((plaque) => plaque.couplets !== null).map((plaque) => plaque.id)).toEqual([
-      'workroom',
-    ]);
+    expect(DOOR_PLAQUES.filter((plaque) => plaque.frame === 'board')).toHaveLength(9);
   });
 
   it('每个门牌落点都能站人，且不压在导览到达点上', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { SOUTH_YARD, SOUTH_YARD_PAVING } from '../world/campus';
+import { VENT_ROOM, WALL_THICKNESS } from '../world/campus';
+import { pointInPolygon } from '../world/geometry';
 import {
   BOSS,
   BOSS_ARENA,
@@ -12,34 +13,50 @@ import {
   isBlocked,
   isInBossArena,
   isOnLand,
-  pointInPolygon,
   rectContains,
   regionAt,
   withinVentCone,
 } from '../index';
 
 /**
- * 发泄区（ADR-0070）的几何契约：区不压地标、不长树、老板挡得住人，
- * 但正面必须留出伸手就能踢到肚子的身位。
+ * 发泄区（ADR-0070 / ADR-0097）的几何契约：橡胶地铺在企业楼南排的发泄室里、
+ * 老板挡得住人，但正面必须留出伸手就能踢到肚子的身位。
  */
 
 const { solids, props, paths, lakes, looseTrees, groves } = WORLD_LAYOUT;
 
-function overlaps(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean {
+function overlaps(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 describe('发泄区地面', () => {
-  it('落在陆地上，且不压广场与南侧主路', () => {
-    expect(isOnLand(BOSS_ARENA.x + 20, BOSS_ARENA.y + 20, 20)).toBe(true);
-    expect(isOnLand(BOSS_ARENA.x + BOSS_ARENA.w - 20, BOSS_ARENA.y + BOSS_ARENA.h - 20, 20)).toBe(true);
-    // 广场圆与南侧主路都在区西侧，区心不应被判定为广场
+  it('铺在企业楼发泄室里，四边都给玩家留出走动空间', () => {
+    for (const [x, y] of [
+      [BOSS_ARENA.x, BOSS_ARENA.y],
+      [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y],
+      [BOSS_ARENA.x, BOSS_ARENA.y + BOSS_ARENA.h],
+      [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y + BOSS_ARENA.h],
+    ] as const) {
+      expect(rectContains(VENT_ROOM, x, y)).toBe(true);
+      expect(isOnLand(x, y, 20)).toBe(true);
+    }
+    // 垫子与房间外墙之间至少留 20px（外墙厚 10px）
+    expect(BOSS_ARENA.x - VENT_ROOM.x).toBeGreaterThanOrEqual(WALL_THICKNESS + 10);
+    expect(VENT_ROOM.x + VENT_ROOM.w - (BOSS_ARENA.x + BOSS_ARENA.w)).toBeGreaterThanOrEqual(WALL_THICKNESS + 10);
+    expect(BOSS_ARENA.y - VENT_ROOM.y).toBeGreaterThanOrEqual(WALL_THICKNESS + 10);
+    expect(VENT_ROOM.y + VENT_ROOM.h - (BOSS_ARENA.y + BOSS_ARENA.h)).toBeGreaterThanOrEqual(WALL_THICKNESS + 10);
+  });
+
+  it('区域名是发泄区，不再显示成企业区或工作区', () => {
     expect(isInBossArena(BOSS.x, BOSS.y - 20)).toBe(true);
     expect(regionAt(BOSS.x, BOSS.y - 20)).toBe('发泄区');
     expect(regionAt(BOSS.x, BOSS.y - 20)).not.toBe('中央迎宾广场');
   });
 
-  it('区内不长树，也不压任何既有碰撞体', () => {
+  it('区内不长树、不摆道具，也不与任何碰撞体重叠', () => {
     for (const tree of [...groves.flatMap((grove) => grove.trees), ...looseTrees]) {
       expect(rectContains(BOSS_ARENA, tree.x, tree.y)).toBe(false);
     }
@@ -51,38 +68,20 @@ describe('发泄区地面', () => {
       if (isBossFoot) continue;
       expect(overlaps(BOSS_ARENA, solid), JSON.stringify(solid)).toBe(false);
     }
+    // 发泄室在楼里，土路不会穿进室内
     for (const path of paths) {
-      const corners: Array<[number, number]> = [
+      for (const [x, y] of [
         [BOSS_ARENA.x, BOSS_ARENA.y],
         [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y],
         [BOSS_ARENA.x, BOSS_ARENA.y + BOSS_ARENA.h],
         [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y + BOSS_ARENA.h],
-      ];
-      for (const [x, y] of corners) expect(pointInPolygon(x, y, path.polygon)).toBe(false);
+      ] as const) {
+        expect(pointInPolygon(x, y, path.polygon)).toBe(false);
+      }
     }
     for (const lake of lakes) {
       expect(overlaps(BOSS_ARENA, lake.rect)).toBe(false);
     }
-  });
-
-  it('嵌在研发园铺装中央，四边留出铺装余量', () => {
-    // 垫子整体落在研发园（含铺装）内，四边至少留 40px 铺装，不贴草坪
-    const corners: Array<[number, number]> = [
-      [BOSS_ARENA.x, BOSS_ARENA.y],
-      [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y],
-      [BOSS_ARENA.x, BOSS_ARENA.y + BOSS_ARENA.h],
-      [BOSS_ARENA.x + BOSS_ARENA.w, BOSS_ARENA.y + BOSS_ARENA.h],
-    ];
-    for (const [x, y] of corners) {
-      expect(rectContains(SOUTH_YARD, x, y)).toBe(true);
-      expect(rectContains(SOUTH_YARD_PAVING, x, y)).toBe(true);
-    }
-    expect(BOSS_ARENA.x - SOUTH_YARD_PAVING.x).toBeGreaterThanOrEqual(40);
-    expect(SOUTH_YARD_PAVING.x + SOUTH_YARD_PAVING.w - (BOSS_ARENA.x + BOSS_ARENA.w)).toBeGreaterThanOrEqual(40);
-    expect(BOSS_ARENA.y - SOUTH_YARD_PAVING.y).toBeGreaterThanOrEqual(40);
-    expect(SOUTH_YARD_PAVING.y + SOUTH_YARD_PAVING.h - (BOSS_ARENA.y + BOSS_ARENA.h)).toBeGreaterThanOrEqual(40);
-    // 北缘留 140px：从南向主路进院先走两步再上垫，不是一脚踩空
-    expect(BOSS_ARENA.y - SOUTH_YARD_PAVING.y).toBeGreaterThanOrEqual(120);
   });
 });
 

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { JAIL, JAIL_ANCHOR, isBlocked } from '@niuma/shared-types';
+import { JAIL, JAIL_ANCHOR, JAIL_DOOR, JAIL_DOOR_PAVING, isBlocked } from '@niuma/shared-types';
 import { findEscortPath, warmEscortGrid } from './escort-path';
 
-const OUTSIDE = { x: 4270, y: 4950 };
-const ROAD = { x: 4096, y: 4950 };
+/** 保安从服务广场走过来：门前铺装再往西 100px */
+const ROAD = { x: JAIL_DOOR_PAVING.x - 100, y: JAIL_DOOR_PAVING.y + 30 };
+const OUTSIDE = { x: JAIL_DOOR_PAVING.x + 20, y: JAIL_DOOR_PAVING.y + 30 };
 const INSIDE_NORTH = { x: JAIL_ANCHOR.x, y: JAIL.y + 60 };
 
 /** 4px 采样：光看拐点不够，两拐点之间的连线也不能穿墙 */
@@ -27,8 +28,8 @@ function pathLength(points: Array<{ x: number; y: number }>): number {
   return length;
 }
 
-describe('押送寻路（ADR-0072）', () => {
-  it('从南向主路穿过西门走到反省点', () => {
+describe('押送寻路（ADR-0072 / ADR-0097）', () => {
+  it('从服务广场穿过西门走到反省点', () => {
     warmEscortGrid();
     const path = findEscortPath(ROAD, JAIL_ANCHOR);
     expect(path).not.toBeNull();
@@ -36,11 +37,10 @@ describe('押送寻路（ADR-0072）', () => {
     // 首尾是精确点，不是网格中心
     expect(points[0]).toEqual(ROAD);
     expect(points[points.length - 1]).toEqual(JAIL_ANCHOR);
-    // 直线正好穿过门洞（4920–4980），所以允许被简化成两段
     expectSegmentsClear(points);
   });
 
-  it('从主路进屋北侧：不能斜穿北墙，必须从西门进', () => {
+  it('从广场进屋北侧：不能斜穿北墙，必须从西门进', () => {
     const path = findEscortPath(ROAD, INSIDE_NORTH);
     expect(path).not.toBeNull();
     const points = path!;
@@ -49,7 +49,6 @@ describe('押送寻路（ADR-0072）', () => {
     // 一端在墙外、一端在墙内，中间必然经过西墙门洞
     expect(points.some((point) => point.x < JAIL.x)).toBe(true);
     expect(points.some((point) => point.x > JAIL.x + 40)).toBe(true);
-    // ADR-0077：房间收到 320×240 后进屋路径变短，仍必须明显长于一条直线穿墙
     expect(pathLength(points)).toBeGreaterThan(300);
   });
 
@@ -61,14 +60,14 @@ describe('押送寻路（ADR-0072）', () => {
     expect(path).not.toBeNull();
     const points = path!;
     expectSegmentsClear(points);
-    // 起终点被院落挤到最近的可走格，直线约 400px；ADR-0077 房间变矮后绕行仍明显更长
+    // 直线约 400px，绕西门必须明显更长
     expect(pathLength(points)).toBeGreaterThan(600);
   });
 
   it('门框与墙体本身不可走，门口铺装可走', () => {
     expect(isBlocked(OUTSIDE.x, OUTSIDE.y)).toBe(false);
-    expect(isBlocked(JAIL.x, 4912)).toBe(true);
-    expect(isBlocked(JAIL.x, 4988)).toBe(true);
+    expect(isBlocked(JAIL.x, JAIL_DOOR.from - 12)).toBe(true);
+    expect(isBlocked(JAIL.x, JAIL_DOOR.to + 12)).toBe(true);
   });
 
   it('起终点相同也返回可消费的两点路径', () => {

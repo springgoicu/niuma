@@ -14,10 +14,12 @@ import {
   CLINIC_RECT,
   DICE_HALL,
   DICE_HALL_CENTER,
+  DISTRICTS,
   PLAZA_CENTER,
   PLAZA_RADIUS,
   RING_ARENA,
   TEA_STATION,
+  VENT_ROOM,
   VILLA_SPECS,
   WORLD_LAYOUT,
 } from '@niuma/shared-types';
@@ -132,6 +134,27 @@ export function venueLights(): LightSpec[] {
     color: VENUE_COLORS.tea.glow,
     intensity: 0.34,
     flicker: 0.14,
+  });
+
+  // 五座区门（ADR-0097）：每座门头一盏低强度暖灯，夜里读得出「这是哪个区的门」
+  for (const district of DISTRICTS) {
+    lights.push({
+      x: district.gate.x,
+      y: district.gate.y - 24,
+      radius: 56,
+      color: district.color,
+      intensity: 0.28,
+      flicker: 0.06,
+    });
+  }
+
+  // 发泄室：顶灯一盏，冷白低强度，只照亮橡胶地中央
+  lights.push({
+    x: VENT_ROOM.x + VENT_ROOM.w / 2,
+    y: VENT_ROOM.y + 24,
+    radius: 96,
+    color: 0xffe7c0,
+    intensity: 0.3,
   });
 
   // 卫生间：唯一一间此前完全没有灯的室内，补一盏冷白顶灯（flicker 0，照明不抖）。

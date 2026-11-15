@@ -12,7 +12,8 @@ import {
   type SolidRect,
 } from '../world/layout';
 
-const EAST_GATE = { x: 5200, y: 4755 };
+/** 服务广场上的空地：救护车从站内开出来后停在这里 */
+const SQUARE_EXIT = { x: 5160, y: 3980 };
 
 function overlaps(
   a: { x: number; y: number; w: number; h: number },
@@ -35,12 +36,12 @@ function clearLine(from: { x: number; y: number }, to: { x: number; y: number })
 
 const westFence: SolidRect[] = CLINIC_FENCE_SOLIDS.filter((bar) => bar.w < bar.h && bar.x < CLINIC_RECT.x);
 
-describe('护士站围挡（ADR-0092）', () => {
+describe('护士站围挡（ADR-0092 / ADR-0097）', () => {
   it('西侧人行门洞可通行，进门就是站台铺装', () => {
-    expect(clearLine({ x: 4960, y: 4350 }, { x: 5020, y: 4350 })).toBe(true);
+    expect(clearLine({ x: 4980, y: 3750 }, { x: 5080, y: 3750 })).toBe(true);
     // 门洞正中心留出玩家半径净空：9 + 56 + 9 的通道随便走
-    expect(isBlocked(4995, 4340, PLAYER_RADIUS)).toBe(false);
-    expect(isBlocked(4995, 4360, PLAYER_RADIUS)).toBe(false);
+    expect(isBlocked(5035, 3730, PLAYER_RADIUS)).toBe(false);
+    expect(isBlocked(5035, 3770, PLAYER_RADIUS)).toBe(false);
   });
 
   it('门洞与进站铺装同高，铺装直接接到门口', () => {
@@ -52,23 +53,23 @@ describe('护士站围挡（ADR-0092）', () => {
   });
 
   it('北、东、西三面挡人，撞上去是滑行而不是穿模', () => {
-    expect(isBlocked(5100, 4255)).toBe(true);
-    expect(isBlocked(5245, 4350)).toBe(true);
-    expect(isBlocked(4995, 4300)).toBe(true);
-    expect(isBlocked(4995, 4420)).toBe(true);
+    expect(isBlocked(5160, CLINIC_RECT.y - 5)).toBe(true);
+    expect(isBlocked(CLINIC_RECT.x + CLINIC_RECT.w + 5, 3760)).toBe(true);
+    expect(isBlocked(CLINIC_RECT.x - 5, 3690)).toBe(true);
+    expect(isBlocked(CLINIC_RECT.x - 5, 3820)).toBe(true);
     // 从站外北侧往站内走，被北栏拦住
-    expect(resolveMotion(5100, 4230, 5100, 4300).y).toBeLessThan(CLINIC_RECT.y);
+    expect(resolveMotion(5160, CLINIC_RECT.y - 40, 5160, CLINIC_RECT.y + 40).y).toBeLessThan(CLINIC_RECT.y);
     // 从站外西侧往站内走，被西栏拦住（门洞以外）
-    expect(resolveMotion(4960, 4300, 5030, 4300).x).toBeLessThan(CLINIC_RECT.x);
+    expect(resolveMotion(5000, 3690, 5080, 3690).x).toBeLessThan(CLINIC_RECT.x);
   });
 
   it('南侧救护车通道敞开：两辆车都能直着开出站', () => {
     for (const spot of CLINIC_AMBULANCE_SPOTS) {
-      expect(clearLine(spot, EAST_GATE)).toBe(true);
+      expect(clearLine(spot, SQUARE_EXIT)).toBe(true);
     }
     expect(isBlocked(CLINIC_VEHICLE_ENTRY.x, CLINIC_VEHICLE_ENTRY.y, PLAYER_RADIUS)).toBe(false);
-    // 通道口到站内的落点/车位一路畅通，救护车不必贴墙磨
-    expect(clearLine(CLINIC_VEHICLE_ENTRY, { x: 5080, y: 4396 })).toBe(true);
+    // 通道口到站内的落点一路畅通，救护车不必贴墙磨
+    expect(clearLine(CLINIC_VEHICLE_ENTRY, { x: 5090, y: 3800 })).toBe(true);
   });
 
   it('围挡不压铺装，也不和柜台、病床、落点、车位抢位置', () => {

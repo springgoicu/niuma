@@ -49,39 +49,32 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(readings.find((reading) => reading.distance === shortest)!.target.id).toBe(nearest.target.id);
   });
 
-  it('出生点到四角房分别落在西北 / 东北 / 东南 / 西南四个象限', () => {
+  it('出生点到五区目标分别落在预期的象限', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     const octant = (id: string) => readings.find((reading) => reading.target.id === id)!.octant;
+    // 企业区在正西偏北，服务区在东北，生活区在正南
     expect(octant('workroom')).toBe(7);
-    expect(octant('meeting')).toBe(1);
-    expect(octant('restroom')).toBe(3);
-    expect(octant('lounge')).toBe(5);
-    // 中央广场到三间 460×360 的房间等距；卫生间收到 340×300 后中心略远，仍在同一档
-    // 室内组 = 四间房 + 工作区里的财神供案
-    expect(NAV_TARGETS.filter((target) => target.area === 'indoor')).toHaveLength(5);
-    const bigRooms = readings
-      .filter((reading) => ['workroom', 'meeting', 'lounge'].includes(reading.target.id))
-      .map((reading) => reading.distance);
-    expect(Math.max(...bigRooms) - Math.min(...bigRooms)).toBeLessThan(1);
-    const roomDistances = readings
-      .filter((reading) => ['workroom', 'meeting', 'lounge', 'restroom'].includes(reading.target.id))
-      .map((reading) => reading.distance);
-    expect(Math.max(...roomDistances) - Math.min(...roomDistances)).toBeLessThan(120);
+    expect(octant('meeting')).toBe(7);
+    expect(octant('restroom')).toBe(1);
+    expect(octant('lounge')).toBe(4);
+    expect(octant('park')).toBe(0);
+    // 每个目标都带大区与场景，导览卡据此分组
+    expect(NAV_TARGETS.filter((target) => target.district === 'corporate')).toHaveLength(4);
+    expect(NAV_TARGETS.filter((target) => target.district === 'amusement')).toHaveLength(3);
+    expect(NAV_TARGETS.filter((target) => target.district === 'living')).toHaveLength(4);
+    expect(NAV_TARGETS.filter((target) => target.district === 'service')).toHaveLength(1);
+    for (const target of NAV_TARGETS) {
+      expect(['indoor', 'outdoor', 'semi']).toContain(target.scene);
+    }
   });
 
-  it('户外 7 个目标都朝向岛外方向，不会指回出生点脚下', () => {
+  it('五个大区都至少有一个导览目标，且都远于一步', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
-    const outdoor = readings.filter((reading) => reading.target.area === 'grounds');
-    expect(outdoor.map((reading) => reading.target.id)).toEqual([
-      'park',
-      'bossArena',
-      'ring',
-      'diceHall',
-      'villa1',
-      'villa2',
-      'apartment',
-    ]);
-    for (const reading of outdoor) expect(reading.distance).toBeGreaterThan(MOVE_SPEED);
+    for (const district of ['corporate', 'amusement', 'living', 'service'] as const) {
+      const inDistrict = readings.filter((reading) => reading.target.district === district);
+      expect(inDistrict.length, district).toBeGreaterThan(0);
+      for (const reading of inDistrict) expect(reading.distance).toBeGreaterThan(MOVE_SPEED);
+    }
   });
 
   it('朝目标走 120px，步行秒数不会变大', () => {

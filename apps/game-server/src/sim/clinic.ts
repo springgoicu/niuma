@@ -7,13 +7,16 @@ import {
   CLINIC_BEDS,
   CLINIC_DROP,
   CLINIC_NURSE_SPOTS,
+  CLINIC_RECT,
   CLINIC_REGION_RECT,
   CLINIC_VEHICLE_ENTRY,
   DIRECTION,
   ENTITY_ROLE_NURSE,
   MOVE_SPEED,
   PATIENT_STATE,
+  PLAZA_CENTER,
   POSE,
+  SERVICE_SQUARE,
   TICK_MS,
   clampWorldX,
   clampWorldY,
@@ -44,11 +47,11 @@ const DROP_RADIUS = 64;
 /** 出警 / 返航的防卡死上限：超过就瞬时脱困 */
 const UNSTUCK_MS = 8000;
 /**
- * 出警 / 送回的固定绕行航点（不做寻路）：
- * 先到研发园东侧空地，再沿研发园南缘到南向主路，避开办公楼与小黑屋。
+ * 出警 / 送回的固定绕行航点（不做寻路，ADR-0097）：
+ * 先穿服务广场南沿，再走东主路进中央广场，避开急救站围挡与公寓楼群。
  */
-const AMBULANCE_EAST_GATE = { x: 5200, y: 4755 } as const;
-const AMBULANCE_ROAD_GATE = { x: 4096, y: 4755 } as const;
+const AMBULANCE_EAST_GATE = { x: CLINIC_RECT.x + CLINIC_RECT.w / 2, y: SERVICE_SQUARE.y + SERVICE_SQUARE.h - 40 } as const;
+const AMBULANCE_ROAD_GATE = { x: PLAZA_CENTER.x + 320, y: PLAZA_CENTER.y } as const;
 /** 两辆都在任务时，新伤员最多在内存队列里等 6 秒 */
 const QUEUE_TIMEOUT_MS = 6000;
 /** 病床治疗时长 */

@@ -13,6 +13,8 @@
 
 export type VenueId =
   | 'workroom'
+  | 'vent'
+  | 'street'
   | 'meeting'
   | 'lounge'
   | 'restroom'
@@ -46,6 +48,10 @@ export interface VenueColors {
 
 export const VENUE_COLORS: Record<VenueId, VenueColors> = {
   workroom: { main: 0xd9ab7c, alt: 0xcf9d70, seam: 0xb5835a, accent: 0x8fe3c7, glow: 0xffd08a },
+  /** 发泄室（ADR-0097）：深灰橡胶地 + 警示黄边，和办公室的木地板拉开色相 */
+  vent: { main: 0x4a4f5a, alt: 0x555b66, seam: 0x333844, accent: 0xe8c46a, glow: 0xffd08a },
+  /** 五区街面：浅石青的公共铺装，五区门前共用一档，靠区色收边区分 */
+  street: { main: 0xcdc7ba, alt: 0xc2bbad, seam: 0x9a9285, accent: 0xffe6a8, glow: 0xffd08a },
   meeting: { main: 0xc99a6d, alt: 0xbd8c60, seam: 0xa8774f, accent: 0xffe49a, glow: 0xffd08a },
   lounge: { main: 0xe8c9a6, alt: 0xdcbb96, seam: 0xcaa680, accent: 0x9fd3ff, glow: 0xffd08a },
   restroom: { main: 0xf3f8fb, alt: 0xe3edf3, seam: 0xbfd0dc, accent: 0x9fd3ff, glow: 0xe8f4ff },

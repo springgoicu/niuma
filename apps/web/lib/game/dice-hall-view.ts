@@ -10,13 +10,14 @@ import {
   DICE_TABLES,
   type DiceStatePacket,
 } from '@niuma/shared-types';
+import { TOWN_MATERIALS } from './venue-palette';
 import type { DepthSink } from './sort-layer';
 
 /**
- * 摸鱼大赌场的美术层（ADR-0087）。
+ * 摸鱼大赌场的美术层（ADR-0087 / ADR-0096）。
  *
  * 亭台地面走 `WORLD_LAYOUT.paved`（地形层已经铺好），这里只画「站在地上能看见」
- * 的部分：吧台、六根红柱、两张绿绒赌桌、檐下灯串与冬季积雪。
+ * 的部分：吧台、六根深木柱、两张绿绒赌桌、檐下灯串与冬季积雪。
  * 每件都以**底边中心**为锚点进 y 排序层，人走到桌后会被桌子挡住，和树、长椅同一套规则。
  */
 
@@ -28,8 +29,10 @@ const C = {
   wood: 0x7a4a2c,
   woodLight: 0xa4703f,
   woodDark: 0x4e2d1a,
-  pillar: 0xa8322a,
-  pillarLight: 0xd4534a,
+  pillar: TOWN_MATERIALS.timber,
+  pillarLight: TOWN_MATERIALS.timberLight,
+  pillarCap: TOWN_MATERIALS.paint,
+  pillarCapShade: TOWN_MATERIALS.paintShade,
   roof: 0x1f5e48,
   roofLight: 0x2f8763,
   gold: 0xf2c879,
@@ -139,6 +142,9 @@ export class DiceHallView {
       g.rect(-7, -58, 14, 58).fill(C.woodDark);
       g.rect(-5, -58, 10, 58).fill(C.pillar);
       g.rect(-5, -58, 3, 58).fill(C.pillarLight);
+      // 白漆柱箍：深木柱身的一道小镇细节
+      g.rect(-6, -54, 12, 4).fill(C.pillarCap);
+      g.rect(-6, -51, 12, 1).fill(C.pillarCapShade);
       g.rect(-9, -62, 18, 6).fill(C.roof);
       g.rect(-9, -62, 18, 2).fill(C.roofLight);
       g.rect(-9, -2, 18, 4).fill(C.woodDark);

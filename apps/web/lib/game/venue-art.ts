@@ -3,26 +3,33 @@
 import { Container, Graphics, Sprite, type Application, type Texture } from 'pixi.js';
 import {
   AMUSEMENT_PARK,
+  AMUSEMENT_STREET,
   APARTMENT_SPECS,
+  BOSS_ARENA,
   CLINIC_ACCESS_PAVING,
   CLINIC_RECT,
+  COMPANY_FORECOURT,
   DICE_HALL,
   DICE_HALL_CENTER,
+  DISTRICTS,
+  LIVING_AVENUE,
   MOPING_PAVILION,
   PAVILION_CENTER,
   PLAZA_CENTER,
   PLAZA_RADIUS,
   RING_ARENA,
   RING_BENCHES,
+  SERVICE_SQUARE,
   SHRINE_ALTAR,
   TEA_STATION,
+  VENT_ROOM,
   VILLA_SPECS,
   WORLD_LAYOUT,
   type WorldRect,
 } from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
 import type { DepthSink } from './sort-layer';
-import { VENUE_COLORS, darken, lighten } from './venue-palette';
+import { TOWN_MATERIALS, VENUE_COLORS, darken, lighten } from './venue-palette';
 import { PLAZA_LAMP_COUNT, venueLights } from './venue-lights';
 import { bannerSway, leafAlpha, leafX, leafY, neonPulse, seedUnit, waterGlint } from './venue-motion';
 
@@ -67,12 +74,73 @@ export class VenueArt {
     this.paintTeaAndShrine(flat);
     this.paintLakeShore(flat);
     this.paintParkGround(flat);
+    // ADR-0097：五区街面收边、发泄室橡胶地与五座区门
+    this.paintDistrictStreets(flat);
+    this.paintVentRoom(flat);
 
     base.addChild(flat);
 
     this.depthApartmentDoors(depth);
     this.depthVillaGardens(depth);
     this.depthRingCorners(depth);
+    this.depthDistrictGates(depth);
+  }
+
+  /** 五座区门：木构门架 + 区色匾额，夜里各有一盏低强度门灯（光位在 venue-lights） */
+  private depthDistrictGates(depth: DepthSink): void {
+    for (const district of DISTRICTS) {
+      const root = new Container();
+      root.position.set(district.gate.x, district.gate.y);
+      const g = new Graphics();
+      // 两根门柱 + 横枋：与牌坊同一套木料，不另起色系
+      g.rect(-46, -72, 6, 72).fill(TOWN_MATERIALS.timberDark);
+      g.rect(40, -72, 6, 72).fill(TOWN_MATERIALS.timberDark);
+      g.rect(-46, -72, 2, 72).fill(TOWN_MATERIALS.timberLight);
+      g.rect(40, -72, 2, 72).fill(TOWN_MATERIALS.timberLight);
+      g.rect(-54, -88, 108, 16).fill(TOWN_MATERIALS.timber);
+      g.rect(-54, -88, 108, 2).fill(TOWN_MATERIALS.timberLight);
+      // 匾额：区色底 + 奶白描边，远看就知道是哪个区的门
+      g.rect(-30, -84, 60, 10).fill(district.color);
+      g.rect(-30, -84, 60, 1).fill(lighten(district.color, 0.5));
+      g.rect(-30, -75, 60, 1).fill(darken(district.color, 0.7));
+      root.addChild(g);
+      depth.add(district.gate.y, root);
+      this.roots.push(root);
+    }
+  }
+
+  /** 五区街面：公共铺装的浅色收边 + 区门前一小块区色门垫 */
+  private paintDistrictStreets(g: Graphics): void {
+    const street = VENUE_COLORS.street;
+    for (const rect of [AMUSEMENT_STREET, SERVICE_SQUARE, LIVING_AVENUE, COMPANY_FORECOURT]) {
+      g.rect(rect.x, rect.y, rect.w, 2).fill({ color: street.seam, alpha: 0.3 });
+      g.rect(rect.x, rect.y + rect.h - 2, rect.w, 2).fill({ color: street.seam, alpha: 0.24 });
+      g.rect(rect.x, rect.y, 2, rect.h).fill({ color: street.seam, alpha: 0.18 });
+      g.rect(rect.x + rect.w - 2, rect.y, 2, rect.h).fill({ color: street.seam, alpha: 0.18 });
+    }
+    for (const district of DISTRICTS) {
+      pool(g, district.gate.x, district.gate.y + 10, 46, 20, district.color);
+      g.rect(district.gate.x - 34, district.gate.y - 2, 68, 3).fill({ color: district.color, alpha: 0.45 });
+    }
+  }
+
+  /** 发泄室：橡胶地 + 警示黄边 + 沙袋架阴影，进门一眼看出「这里是动手的地方」 */
+  private paintVentRoom(g: Graphics): void {
+    const c = VENUE_COLORS.vent;
+    const mat = BOSS_ARENA;
+    g.rect(mat.x, mat.y, mat.w, mat.h).fill({ color: c.main, alpha: 0.55 });
+    g.rect(mat.x, mat.y, mat.w, 3).fill({ color: c.accent, alpha: 0.5 });
+    g.rect(mat.x, mat.y + mat.h - 3, mat.w, 3).fill({ color: c.accent, alpha: 0.4 });
+    // 防滑纹：每 24px 一道短竖线，只压在垫子上下两沿
+    for (let x = mat.x + 16; x < mat.x + mat.w - 8; x += 24) {
+      g.rect(x, mat.y + 8, 2, 6).fill({ color: c.seam, alpha: 0.4 });
+      g.rect(x, mat.y + mat.h - 14, 2, 6).fill({ color: c.seam, alpha: 0.32 });
+    }
+    // 西侧沙袋架：三个矩形影子，读起来像挂着一排沙袋
+    for (let i = 0; i < 3; i += 1) {
+      g.rect(VENT_ROOM.x + 40 + i * 34, VENT_ROOM.y + 90, 26, 6).fill({ color: c.seam, alpha: 0.4 });
+    }
+    pool(g, VENT_ROOM.x + 150, VENT_ROOM.y + 130, 60, 28, c.accent);
   }
 
   /** 构造期把挂件塞进 y 排序层：脚底 y 定层级，人走过去会被挡住 */
@@ -263,10 +331,10 @@ export class VenueArt {
     const c = VENUE_COLORS.park;
     // 门口一块迎宾圆垫：奶油色双环，和薄荷地胶拉开一档
     pool(g, AMUSEMENT_PARK.x + AMUSEMENT_PARK.w / 2, AMUSEMENT_PARK.y + AMUSEMENT_PARK.h - 24, 62, 26, c.accent);
-    // 亭子地面：朱红柱脚各一圈暖影，砂地因此有「有人在这儿坐过」的痕迹
+    // 亭子地面：木柱脚各一圈暖影，砂地因此有「有人在这儿坐过」的痕迹
     const pavilion = MOPING_PAVILION;
-    g.ellipse(PAVILION_CENTER.x, PAVILION_CENTER.y + 40, 74, 40).fill({ color: 0x7f3427, alpha: 0.1 });
-    g.rect(pavilion.x + 6, pavilion.y + 6, pavilion.width - 12, 2).fill({ color: 0xa84634, alpha: 0.3 });
+    g.ellipse(PAVILION_CENTER.x, PAVILION_CENTER.y + 40, 74, 40).fill({ color: 0x6b4a32, alpha: 0.1 });
+    g.rect(pavilion.x + 6, pavilion.y + 6, pavilion.width - 12, 2).fill({ color: 0x96714f, alpha: 0.3 });
   }
 }
 

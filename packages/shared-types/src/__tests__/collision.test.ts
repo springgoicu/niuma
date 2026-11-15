@@ -14,6 +14,7 @@ import {
   isWaterAt,
   regionAt,
 } from '../world/layout';
+import { MEETING_ROOM } from '../world/campus';
 
 const CENTER = WORLD_CENTER;
 const OFFICE = WORLD_LAYOUT.office;
@@ -22,33 +23,50 @@ const NORTH = OFFICE.y;
 const EAST = OFFICE.x + OFFICE.w;
 const WEST = OFFICE.x;
 
-describe('开放式办公区', () => {
-  it('四个方向都没有围栏挡路', () => {
-    // ADR-0028：栏板删除后，办公区四边只是树篱与花箱的软分区，本身不产生碰撞
-    expect(isBlocked(CENTER.x, NORTH)).toBe(false);
-    expect(isBlocked(CENTER.x, SOUTH)).toBe(false);
-    expect(isBlocked(WEST, CENTER.y)).toBe(false);
-    expect(isBlocked(EAST, CENTER.y)).toBe(false);
-    expect(resolveMotion(CENTER.x, NORTH - 60, CENTER.x, NORTH + 60).y).toBeGreaterThan(NORTH);
-    expect(resolveMotion(CENTER.x, SOUTH - 60, CENTER.x, SOUTH + 60).y).toBeGreaterThan(SOUTH);
+describe('中央广场与五向出街', () => {
+  it('广场四向出口都没有围栏挡路', () => {
+    // ADR-0097：广场是市政中心，四向各接一条街，广场边缘本身不产生碰撞
+    const reach = 420;
+    expect(isBlocked(CENTER.x, CENTER.y - reach)).toBe(false);
+    expect(isBlocked(CENTER.x, CENTER.y + reach)).toBe(false);
+    expect(isBlocked(CENTER.x - reach, CENTER.y)).toBe(false);
+    expect(isBlocked(CENTER.x + reach, CENTER.y)).toBe(false);
+    expect(resolveMotion(CENTER.x, CENTER.y - 200, CENTER.x, CENTER.y - reach).y).toBeLessThan(
+      CENTER.y - reach + 40,
+    );
+    expect(resolveMotion(CENTER.x, CENTER.y + 200, CENTER.x, CENTER.y + reach).y).toBeGreaterThan(
+      CENTER.y + reach - 40,
+    );
   });
 
-  it('工位桌仍然挡人，南园树篱只是视觉分区', () => {
+  it('企业楼自身有墙，楼门前的走廊与大门是通的', () => {
+    // 会议室与发泄室的外墙挡人（工作区是开放区，本身无墙）
+    expect(isBlocked(MEETING_ROOM.x + 40, MEETING_ROOM.y + 2)).toBe(true);
+    expect(isBlocked(WEST + 40, SOUTH - 2)).toBe(true);
+    // 大门就是走廊东端：站在门外（楼体东侧）与站在走廊里都是空的
+    expect(isBlocked(EAST + 10, OFFICE.y + 380)).toBe(false);
+    expect(isBlocked(EAST - 40, OFFICE.y + 380)).toBe(false);
+  });
+
+  it('工位桌仍然挡人，小件装饰不产生隐形墙', () => {
     for (const desk of WORLD_LAYOUT.desks.slice(0, 8)) {
       expect(isBlocked(desk.x, desk.y)).toBe(true);
     }
+    // ADR-0097 拆掉南院树篱后，五区不再用整圈树篱做软分区
     const hedges = WORLD_LAYOUT.props.filter((prop) => prop.kind === 'hedge');
-    expect(hedges.length).toBeGreaterThan(40);
-    for (const hedge of hedges) expect(isBlocked(hedge.x, hedge.y)).toBe(false);
+    expect(hedges).toHaveLength(0);
+    const lamps = WORLD_LAYOUT.props.filter((prop) => prop.kind === 'lamp');
+    expect(lamps.length).toBeGreaterThan(20);
+    for (const lamp of lamps) expect(isBlocked(lamp.x, lamp.y)).toBe(false);
   });
 
-  it('四角房间之间留出十字通道，可以横穿院落', () => {
-    // 南北通道：北门 → 中庭 → 南侧庭院（x 4096 全程无碰撞，拱门立柱让开主路）
-    const vertical = resolveMotion(CENTER.x, NORTH - 60, CENTER.x, SOUTH + 60);
-    expect(vertical.y).toBeGreaterThan(SOUTH);
-    // 东西通道：西侧土路 → 中庭 → 东侧土路
-    const horizontal = resolveMotion(WEST - 60, CENTER.y, EAST + 60, CENTER.y);
-    expect(horizontal.x).toBeGreaterThan(EAST);
+  it('十字主路可以横穿广场，不被任何建筑挡住', () => {
+    // 南北通道：北入口 → 广场 → 南向生活区（x 4096 全程无碰撞，拱门立柱让开主路）
+    const vertical = resolveMotion(CENTER.x, CENTER.y - 500, CENTER.x, CENTER.y + 500);
+    expect(vertical.y).toBeGreaterThan(CENTER.y + 460);
+    // 东西通道：企业区前庭 → 广场 → 服务广场
+    const horizontal = resolveMotion(CENTER.x - 500, CENTER.y, CENTER.x + 500, CENTER.y);
+    expect(horizontal.x).toBeGreaterThan(CENTER.x + 460);
   });
 });
 
@@ -145,13 +163,18 @@ describe('出生点与坐标兜底', () => {
 });
 
 describe('地形布局', () => {
-  it('区域名按中央广场 / 湖 / 房间 / 办公区的优先级命中', () => {
+  it('区域名按中央广场 / 场所 / 大区的优先级命中', () => {
     const lake = WORLD_LAYOUT.lakes[0]!.rect;
     expect(regionAt(CENTER.x, CENTER.y)).toBe('中央迎宾广场');
     expect(regionAt(lake.x + lake.w / 2, lake.y + lake.h / 2)).toBe('摸鱼湖');
-    expect(regionAt(3566, 3656)).toBe('工作区');
-    // 西带原来是野地，现在是赌场亭（ADR-0087）；野地口径另取一块空地验证
-    expect(regionAt(2800, 3500)).toBe('摸鱼大赌场');
+    // 企业楼里的工作区 / 楼前庭的企业区（避开茶台与神龛的具名小区域）
+    expect(regionAt(2900, 3400)).toBe('工作区');
+    expect(regionAt(3566, 3656)).toBe('企业区');
+    // 游乐区：赌场亭具名，街面兜底到区名
+    expect(regionAt(2810, 2810)).toBe('摸鱼大赌场');
+    expect(regionAt(3500, 3060)).toBe('游乐区');
+    // 服务区与野地
+    expect(regionAt(4700, 4450)).toBe('服务区');
     expect(regionAt(2700, 4400)).toBe('园区野地');
   });
 

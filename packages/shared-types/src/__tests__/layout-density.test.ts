@@ -10,7 +10,6 @@ import {
   rectExpanded,
   type TreeInstance,
 } from '../index';
-import { SOUTH_YARD } from '../world/campus';
 
 /**
  * 空地密度（ADR-0028 / ADR-0047）：岛缩小后不允许再出现「走一段只有草」的走廊。
@@ -50,7 +49,6 @@ function covered(x: number, y: number): boolean {
   for (const field of WORLD_LAYOUT.flowerFields) if (rectContains(field.rect, x, y)) return true;
   if (isOnPlaza(x, y)) return true;
   if (rectContains(WORLD_LAYOUT.office, x, y)) return true;
-  if (rectContains(SOUTH_YARD, x, y)) return true;
   for (const building of WORLD_LAYOUT.buildings) if (rectContains(building.rect, x, y)) return true;
   for (const area of WORLD_LAYOUT.paved) if (rectContains(rectExpanded(area, 24), x, y)) return true;
   for (const prop of PROPS) {

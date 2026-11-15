@@ -779,13 +779,13 @@ export class GameRenderer {
   private welcome?: WelcomeView;
   /** 放假告示板的动态文本：红色横幅与常驻跑马灯（ADR-0059） */
   private bulletin?: BulletinView;
-  /** 摸鱼亭：八角重檐凉亭，后景/前景双深度键（ADR-0061） */
+  /** 摸鱼亭：木构双坡顶凉亭，后景/前景双深度键（ADR-0096） */
   private pavilion?: PavilionView;
-  /** 迎宾拱门与四角院落门柱上的红色宫灯（ADR-0061） */
+  /** 迎宾拱门与四角院落门柱上的铁艺挂灯（ADR-0096） */
   private lanterns?: LanternView;
-  /** 赛博财神供案：案面、财神像、三足香炉与三缕青烟（ADR-0061） */
+  /** 石砌祈福龛：石座、拱形龛、白蜡烛与三缕白雾（ADR-0096） */
   private shrine?: ShrineView;
-  /** 老干部紫砂茶台：紫砂壶、白瓷杯与蒸汽（ADR-0061） */
+  /** 木吧台饮品站：保温壶、白瓷杯与蒸汽（ADR-0096） */
   private tea?: TeaStationView;
   /** 护士急救站：站台、病床、停车位与两辆救护车（ADR-0084） */
   private clinic?: ClinicView;
@@ -799,7 +799,7 @@ export class GameRenderer {
   private readonly p2pFx = new P2PFx();
   /** 擂台覆盖层：领奖台与彩带必须压在排序层之后，才不会被角色吃掉 */
   private readonly ringOverlay = new Container();
-  /** 场所门牌：四角房大牌坊 + 7 处入口小横匾（ADR-0061 / ADR-0091） */
+  /** 场所门牌：四角房木构门架 + 7 处入口小门牌（ADR-0091 / ADR-0096） */
   private plaques?: PlaqueView;
   /** 摸鱼大赌场：亭台、两张绿绒赌桌与亮牌骰子（ADR-0087） */
   private dice?: DiceHallView;
@@ -954,7 +954,7 @@ export class GameRenderer {
       });
       this.lightmap.register(propLights(WORLD_LAYOUT.props));
       this.lightmap.register(this.interior?.lights ?? []);
-      // 从 `buildLayers` 里构造的视图现场收集的光位（摸鱼亭四角 + 拱门/门柱宫灯 + 节日彩旗）
+      // 从 `buildLayers` 里构造的视图现场收集的光位（摸鱼亭四角 + 拱门/门柱挂灯 + 节日彩旗）
       this.lightmap.register(this.pavilion?.lights ?? []);
       this.lightmap.register(this.lanterns?.lights ?? []);
       this.lightmap.register(this.festival?.lights ?? []);
@@ -1058,15 +1058,15 @@ export class GameRenderer {
     this.bulletin = new BulletinView(this.metrics.devicePxPerTexel);
     this.bulletin.build(this.sortLayer);
 
-    // 摸鱼亭（ADR-0061）：台基走地面层，亭身拆后景/前景两条深度键，人能走进去坐下
+    // 摸鱼亭（ADR-0096）：台基走地面层，亭身拆后景/前景两条深度键，人能走进去坐下
     this.pavilion = new PavilionView();
     this.pavilion.build(this.sortLayer, this.props.base);
 
-    // 固定宫灯（ADR-0061）：拱门横梁两端 + 四角院落门柱，入夜由光图层统一点亮
+    // 固定挂灯（ADR-0096）：拱门横梁两端 + 四角院落门柱，入夜由光图层统一点亮
     this.lanterns = new LanternView();
     this.lanterns.build(this.sortLayer);
 
-    // 职场玄学两处（ADR-0061）：供案与茶台都是小件，按脚底 y 进同一套遮挡关系
+    // 祈福龛与饮品台（ADR-0096）：两件都是小件，按脚底 y 进同一套遮挡关系
     this.shrine = new ShrineView(this.app.renderer);
     this.shrine.build(this.sortLayer);
     this.tea = new TeaStationView(this.app.renderer);
@@ -1088,7 +1088,7 @@ export class GameRenderer {
     this.ring = new RingView(this.app.renderer, this.metrics.devicePxPerTexel);
     this.ring.build(this.sortLayer, this.props.base, this.ringOverlay);
 
-    // 场所门牌（ADR-0061 / ADR-0091）：墙体是平铺色带没有立面，四角房立牌坊、其余入口立小横匾
+    // 场所门牌（ADR-0091 / ADR-0096）：墙体是平铺色带没有立面，四角房立木构门架、其余入口立小门牌
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
 
@@ -1105,8 +1105,8 @@ export class GameRenderer {
     this.park = new ParkView(this.app.renderer, this.metrics.devicePxPerTexel);
     this.park.build(this.sortLayer, this.props.base);
 
-    // 节日装饰（ADR-0063）：跨路彩旗、门楣挂饰与树梢灯笼；纯装饰、不参与碰撞。
-    // 必须排在牌匾之后入层：门楣彩旗与牌坊同一条深度键，后入者压在横枋之上；
+    // 节日装饰（ADR-0063 / ADR-0096）：跨路彩旗、门楣挂饰与树梢灯串；纯装饰、不参与碰撞。
+    // 必须排在门牌之后入层：门楣彩旗与门架同一条深度键，后入者压在横梁之上；
     // `?festival=0` 时连纹理都不烘，运行时零开销
     if (readFestivalEnabled(search)) {
       this.festival = new FestivalArt({ winter: this.season.winter });

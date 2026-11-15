@@ -63,14 +63,14 @@ function villa(
 }
 
 /**
- * 两栋院地上下相邻，中间留 50px 通道。
+ * 两栋院地左右相邻，中间留 40px 通道（ADR-0097 搬进生活区东侧）。
  *
- * 一号院北墙离四角院落南沿（y 4716）留 24px，不再啃进卫生间；两院之间留 50px，
- * 玩家（半径 9）能站在自家门口进出——20px 的夹缝会把人卡在两道院墙中间。
+ * 院门都朝南，门前是同一条草地；两院之间留 40px，玩家（半径 9）能站在
+ * 自家门口进出——20px 的夹缝会把人卡在两道院墙中间。
  */
 export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
-  villa(0, 'villa-1', '摸鱼一号院', { x: 4670, y: 4740, w: 220, h: 170 }),
-  villa(1, 'villa-2', '摸鱼二号院', { x: 4670, y: 4960, w: 220, h: 160 }),
+  villa(0, 'villa-1', '摸鱼一号院', { x: 4300, y: 5390, w: 220, h: 170 }),
+  villa(1, 'villa-2', '摸鱼二号院', { x: 4560, y: 5390, w: 220, h: 170 }),
 ];
 
 export function villaById(id: number): VillaSpec | undefined {

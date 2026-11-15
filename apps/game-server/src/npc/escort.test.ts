@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { DEFAULT_APPEARANCE, JAIL, MOVE_SPEED, POSE, TICK_MS, isBlocked } from '@niuma/shared-types';
+import {
+  DEFAULT_APPEARANCE,
+  JAIL,
+  JAIL_DOOR,
+  JAIL_DOOR_PAVING,
+  MOVE_SPEED,
+  POSE,
+  TICK_MS,
+  isBlocked,
+} from '@niuma/shared-types';
 import type { EscortEvent } from '../sim/detention';
 import { World, type Player } from '../sim/world';
 import { createAgent, type EscortTask } from './brain';
@@ -20,11 +29,13 @@ interface Fixture {
   task: EscortTask;
 }
 
+/** 保安站在服务广场的门前铺装、目标就在抓取半径（26px）内，第一帧必定 grab */
+const GUARD_START = { x: JAIL_DOOR_PAVING.x - 30, y: JAIL_DOOR_PAVING.y + 30 };
+
 function setup(): Fixture {
   const world = new World();
-  // 保安站在门外铺装、目标就在抓取半径（26px）内，第一帧必定 grab
-  const guard = world.createNpc('保安', DEFAULT_APPEARANCE.cow, 4270, 4950, '', NOW)!;
-  const target = world.create('目标', DEFAULT_APPEARANCE.cow, 1, 4290, 4950, '', NOW)!;
+  const guard = world.createNpc('保安', DEFAULT_APPEARANCE.cow, GUARD_START.x, GUARD_START.y, '', NOW)!;
+  const target = world.create('目标', DEFAULT_APPEARANCE.cow, 1, GUARD_START.x + 20, GUARD_START.y, '', NOW)!;
   const agent = createAgent(createRng(7), guard, 1.3, DEFAULT_NPC_CONFIG, NOW);
   const task: EscortTask = {
     targetId: target.id,
@@ -101,8 +112,8 @@ describe('押送状态机（ADR-0072）', () => {
     const event = stepEscort(agent, task, world, NOW + TICK_MS);
 
     expect(event?.kind).toBe('abort');
-    expect(guard.x).toBe(4270);
-    expect(guard.y).toBe(4950);
+    expect(guard.x).toBe(GUARD_START.x);
+    expect(guard.y).toBe(GUARD_START.y);
   });
 });
 
@@ -145,10 +156,10 @@ describe('执法链兜底（ADR-0080）', () => {
   it('拖行落点走碰撞求解，不把被押者写进墙里', () => {
     warmEscortGrid();
     const world = new World();
-    // 保安贴着小黑屋西墙（门洞在 y 4920–4980，这里选实墙段），拖行方向朝西，
-    // 被押者默认落在保安东侧 22px，正好穿进墙里
-    const guard = world.createNpc('保安', DEFAULT_APPEARANCE.cow, 4310, 4850)!;
-    const target = world.create('目标', DEFAULT_APPEARANCE.cow, 2, 4300, 4850, '', NOW)!;
+    // 保安站在小黑屋里贴着西门上方的实墙段（门洞在 y+130..y+190），拖行方向朝西，
+    // 被押者默认落在保安西侧 22px，正好穿进墙里
+    const guard = world.createNpc('保安', DEFAULT_APPEARANCE.cow, JAIL.x + 25, JAIL_DOOR.from - 40)!;
+    const target = world.create('目标', DEFAULT_APPEARANCE.cow, 2, JAIL.x + 35, JAIL_DOOR.from - 40, '', NOW)!;
     const agent = createAgent(createRng(7), guard, 1, DEFAULT_NPC_CONFIG, NOW);
     const task: EscortTask = {
       targetId: target.id,
@@ -165,7 +176,7 @@ describe('执法链兜底（ADR-0080）', () => {
       towY: 0,
     };
 
-    expect(isBlocked(guard.x - task.towX * ESCORT.TOW_OFFSET_PX, guard.y)).toBe(true);
+    expect(isBlocked(guard.x + task.towX * ESCORT.TOW_OFFSET_PX, guard.y)).toBe(true);
 
     stepEscort(agent, task, world, NOW + TICK_MS);
 

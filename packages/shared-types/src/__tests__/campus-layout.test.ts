@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CAMPUS_RECT,
+  COMPANY_CORRIDOR,
   LOUNGE,
   MEETING_ROOM,
   RESTROOM,
@@ -9,19 +10,18 @@ import {
   RESTROOM_W,
   ROOM_H,
   ROOM_W,
+  VENT_ROOM,
   WALL_THICKNESS,
   WORKROOM,
 } from '../world/campus';
-import {
-  WORLD_CENTER,
-  WORLD_LAYOUT,
-  regionAt,
-} from '../world/layout';
+import { WORLD_CENTER, WORLD_LAYOUT, regionAt } from '../world/layout';
 import { rectContains, rectExpanded, type WorldRect } from '../world/geometry';
 
 /**
- * 四角院落（ADR-0044）：一院四房、门朝中庭、工作区无墙、卫生间三区、
- * 上下铺成对、四区各一块 logo 立牌。这里只断言空间关系，不重复测渲染。
+ * 企业楼与三处独立房间（ADR-0097）：
+ * - 企业楼是一栋 920×760 的两层小楼：北排工作区 / 会议室，中间一条走廊，南排一整间发泄室；
+ * - 宿舍区、影音室、卫生间、小黑屋各自独立成栋，落在各自的大区里；
+ * - 工作区仍是唯一无墙的房间，卫生间仍是男 / 洗手池 / 女 三区。
  */
 
 const { solids, seats, props } = WORLD_LAYOUT;
@@ -40,43 +40,56 @@ function inside(rect: WorldRect, x: number, y: number): boolean {
   return rectContains(rect, x, y);
 }
 
-describe('四角院落（ADR-0044）', () => {
-  it('四间房各贴院落一角：三间 460×360，卫生间 340×300 贴在东南角', () => {
-    for (const room of [WORKROOM, MEETING_ROOM, LOUNGE]) {
+describe('企业楼（ADR-0097）', () => {
+  it('北排两间 460×360 并排，中间走廊，南排整间发泄室 920×360', () => {
+    for (const room of [WORKROOM, MEETING_ROOM]) {
       expect(room.w).toBe(ROOM_W);
       expect(room.h).toBe(ROOM_H);
-      expect(rectContains(rectExpanded(CAMPUS_RECT, 1), room.x, room.y)).toBe(true);
     }
-    // ADR-0077：卫生间单独收小，但两个外沿仍与院落东南角对齐
-    expect(RESTROOM.w).toBe(RESTROOM_W);
-    expect(RESTROOM.h).toBe(RESTROOM_H);
-    expect(RESTROOM.w).toBeLessThan(ROOM_W);
-    expect(RESTROOM.h).toBeLessThan(ROOM_H);
-    // 西北 / 东北 / 西南 / 东南
+    // 工作区贴楼西北角，会议室贴东北角，两间左右相接
     expect(WORKROOM.x).toBe(CAMPUS_RECT.x);
     expect(WORKROOM.y).toBe(CAMPUS_RECT.y);
-    expect(MEETING_ROOM.x + MEETING_ROOM.w).toBe(CAMPUS_RECT.x + CAMPUS_RECT.w);
+    expect(MEETING_ROOM.x).toBe(WORKROOM.x + WORKROOM.w);
     expect(MEETING_ROOM.y).toBe(CAMPUS_RECT.y);
-    expect(LOUNGE.x).toBe(CAMPUS_RECT.x);
-    expect(LOUNGE.y + LOUNGE.h).toBe(CAMPUS_RECT.y + CAMPUS_RECT.h);
-    expect(RESTROOM.x + RESTROOM.w).toBe(CAMPUS_RECT.x + CAMPUS_RECT.w);
-    expect(RESTROOM.y + RESTROOM.h).toBe(CAMPUS_RECT.y + CAMPUS_RECT.h);
+    expect(MEETING_ROOM.x + MEETING_ROOM.w).toBe(CAMPUS_RECT.x + CAMPUS_RECT.w);
+    // 走廊正好夹在南北两排之间
+    expect(COMPANY_CORRIDOR.y).toBe(CAMPUS_RECT.y + ROOM_H);
+    expect(COMPANY_CORRIDOR.h).toBe(40);
+    // 发泄室占满整排，宽 = 楼宽
+    expect(VENT_ROOM.w).toBe(CAMPUS_RECT.w);
+    expect(VENT_ROOM.h).toBe(ROOM_H);
+    expect(VENT_ROOM.y).toBe(COMPANY_CORRIDOR.y + COMPANY_CORRIDOR.h);
+    expect(VENT_ROOM.y + VENT_ROOM.h).toBe(CAMPUS_RECT.y + CAMPUS_RECT.h);
   });
 
-  it('工作区是唯一没有墙的房间', () => {
-    expect(solids.filter((solid) => solid.kind === 'wall' && rectsOverlap(solid, WORKROOM))).toHaveLength(0);
-    for (const room of [MEETING_ROOM, LOUNGE, RESTROOM]) {
+  it('宿舍区与卫生间各自独立，不贴在企业楼里', () => {
+    expect(rectsOverlap(LOUNGE, CAMPUS_RECT)).toBe(false);
+    expect(rectsOverlap(RESTROOM, CAMPUS_RECT)).toBe(false);
+    expect(RESTROOM.w).toBe(RESTROOM_W);
+    expect(RESTROOM.h).toBe(RESTROOM_H);
+  });
+
+  it('工作区只有楼体外墙，朝走廊一侧整段敞开', () => {
+    const workWalls = solids.filter((solid) => solid.kind === 'wall' && rectsOverlap(solid, WORKROOM));
+    // 北墙 + 西墙（东侧与会议室共用，南侧朝走廊敞口）
+    expect(workWalls.length).toBeGreaterThan(0);
+    for (let x = WORKROOM.x + 20; x < WORKROOM.x + WORKROOM.w - 20; x += 40) {
+      expect(wallAt(x, WORKROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(false);
+    }
+    for (const room of [MEETING_ROOM, VENT_ROOM, LOUNGE, RESTROOM]) {
       expect(solids.filter((solid) => solid.kind === 'wall' && rectsOverlap(solid, room)).length).toBeGreaterThan(0);
     }
   });
 
-  it('三间房的门都朝中庭，门洞位置没有墙', () => {
-    // 会议室南墙、宿舍区与卫生间北墙各留一扇 60px 门洞
+  it('会议室与发泄室的门都开向楼内走廊，宿舍区与卫生间朝区内广场', () => {
+    // 会议室南墙、发泄室北墙各留一扇 60px 门洞
     expect(wallAt(MEETING_ROOM.x + 360, MEETING_ROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(false);
+    expect(wallAt(VENT_ROOM.x + 330, VENT_ROOM.y + WALL_THICKNESS / 2)).toBe(false);
     expect(wallAt(LOUNGE.x + 230, LOUNGE.y + WALL_THICKNESS / 2)).toBe(false);
     expect(wallAt(RESTROOM.x + 180, RESTROOM.y + WALL_THICKNESS / 2)).toBe(false);
     // 同一面墙的门洞之外仍然是实体墙
     expect(wallAt(MEETING_ROOM.x + 40, MEETING_ROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(true);
+    expect(wallAt(VENT_ROOM.x + 40, VENT_ROOM.y + WALL_THICKNESS / 2)).toBe(true);
     expect(wallAt(LOUNGE.x + 40, LOUNGE.y + WALL_THICKNESS / 2)).toBe(true);
     expect(wallAt(RESTROOM.x + 40, RESTROOM.y + WALL_THICKNESS / 2)).toBe(true);
   });
@@ -91,7 +104,6 @@ describe('四角院落（ADR-0044）', () => {
     }
 
     const toilets = seats.filter((seat) => seat.kind === 'toilet' && inside(RESTROOM, seat.x, seat.y));
-    // ADR-0077：每侧从 3 格收到 2 格
     expect(toilets).toHaveLength(4);
     const west = toilets.filter((seat) => seat.x < RESTROOM.x + RESTROOM.w / 2);
     const east = toilets.filter((seat) => seat.x > RESTROOM.x + RESTROOM.w / 2);
@@ -110,9 +122,8 @@ describe('四角院落（ADR-0044）', () => {
     expect(innerWalls).toHaveLength(4);
   });
 
-  it('卫生间每侧两格坑位（ADR-0053 / ADR-0077）：隔断夹出两格，格子之间互不重叠', () => {
+  it('卫生间每侧两格坑位：隔断夹出两格，格子之间互不重叠', () => {
     expect(RESTROOM_STALLS).toHaveLength(4);
-    // 每侧一片隔断，各自进碰撞表；最后一格贴内隔墙，没有隔断
     const partitions = solids.filter(
       (solid) =>
         solid.kind === 'fixture' &&
@@ -124,7 +135,6 @@ describe('四角院落（ADR-0044）', () => {
     );
     expect(partitions).toHaveLength(2);
     for (const stall of RESTROOM_STALLS) {
-      // 第一格贴西墙内侧、最后一格贴内隔墙：两端都正好落在房间净宽内
       expect(stall.x).toBeGreaterThanOrEqual(RESTROOM.x + WALL_THICKNESS);
       expect(stall.x + stall.w).toBeLessThanOrEqual(RESTROOM.x + RESTROOM.w - WALL_THICKNESS);
       if (stall.partition) expect(solids).toContainEqual(stall.partition);
@@ -158,9 +168,9 @@ describe('四角院落（ADR-0044）', () => {
     }
   });
 
-  it('四区门口各有一块 logo 立牌，图标互不重复且不挡路', () => {
+  it('每处场所门口都有一块 logo 立牌，图标不出四种且不挡路', () => {
     const logos = props.filter((prop) => prop.kind === 'logo');
-    expect(logos).toHaveLength(4);
+    expect(logos).toHaveLength(5);
     expect(new Set(logos.map((logo) => logo.variant)).size).toBe(4);
     for (const logo of logos) {
       expect(logo.variant).toBeGreaterThanOrEqual(0);
@@ -171,13 +181,14 @@ describe('四角院落（ADR-0044）', () => {
       }
     }
     const near = (room: WorldRect) => logos.some((logo) => inside(rectExpanded(room, 80), logo.x, logo.y));
-    for (const room of [WORKROOM, MEETING_ROOM, LOUNGE, RESTROOM]) expect(near(room)).toBe(true);
+    for (const room of [WORKROOM, MEETING_ROOM, VENT_ROOM, LOUNGE, RESTROOM]) expect(near(room)).toBe(true);
   });
 
-  it('区域名按中央广场 / 房间优先于办公区命中', () => {
+  it('区域名按中央广场 / 场所优先于大区命中', () => {
     expect(regionAt(WORLD_CENTER.x, WORLD_CENTER.y)).toBe('中央迎宾广场');
     expect(regionAt(WORKROOM.x + 230, WORKROOM.y + 180)).toBe('工作区');
     expect(regionAt(MEETING_ROOM.x + 230, MEETING_ROOM.y + 180)).toBe('会议室');
+    expect(regionAt(VENT_ROOM.x + 230, VENT_ROOM.y + 180)).toBe('发泄区');
     expect(regionAt(LOUNGE.x + 230, LOUNGE.y + 180)).toBe('宿舍区');
     expect(regionAt(RESTROOM.x + 230, RESTROOM.y + 180)).toBe('卫生间');
   });

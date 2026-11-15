@@ -14,14 +14,17 @@ import { DIRECTION } from '../constants';
 import type { SeatInstance, SolidRect } from './campus';
 import { rectContains, rectExpanded, type WorldRect } from './geometry';
 
-/** 擂台地面：发泄区西侧，北沿与老板垫对齐，南沿留出围观通道。 */
-export const RING_ARENA: WorldRect = { x: 3440, y: 5300, w: 300, h: 260 };
+/**
+ * 擂台地面（ADR-0097）：游乐大街中段的路南，夹在赌场亭与游乐园南门之间。
+ * 北沿与赌场亭同一条街，南沿留出围观通道。
+ */
+export const RING_ARENA: WorldRect = { x: 3140, y: 2760, w: 300, h: 260 };
 
 /** 场边出场点：南门外侧，颁奖结束后统一落在这里。 */
-export const RING_EXIT = { x: 3590, y: 5592 } as const;
+export const RING_EXIT = { x: RING_ARENA.x + 150, y: RING_ARENA.y + RING_ARENA.h + 32 } as const;
 
 /** 报名区：南门内侧的台面，踏进来按 F 就算上台。 */
-export const RING_SIGNUP = { x: 3590, y: 5516 } as const;
+export const RING_SIGNUP = { x: RING_ARENA.x + 150, y: RING_ARENA.y + 216 } as const;
 export const RING_SIGNUP_RANGE = 72;
 
 /** 靠近判定：从围栏外 96px 内就能按 F 报名，不必贴到栏杆。 */
@@ -61,8 +64,8 @@ export const RING_SIDE_NAME: Record<number, string> = {
 
 /** 两个起跑位：红角在左、蓝角在右，先报名的是红方（擂主）。 */
 export const RING_START_SLOTS = [
-  { x: 3505, y: 5428 },
-  { x: 3675, y: 5428 },
+  { x: RING_ARENA.x + 65, y: RING_ARENA.y + 128 },
+  { x: RING_ARENA.x + 235, y: RING_ARENA.y + 128 },
 ] as const;
 
 /**
@@ -91,10 +94,10 @@ export const RING_FENCE_SOLIDS: ReadonlyArray<SolidRect> = (() => {
 
 /** 4 张观战长椅：西侧两张、东侧两张，全部面朝擂台 */
 export const RING_BENCHES: ReadonlyArray<{ x: number; y: number }> = [
-  { x: 3380, y: 5352 },
-  { x: 3380, y: 5444 },
-  { x: 3800, y: 5352 },
-  { x: 3800, y: 5444 },
+  { x: RING_ARENA.x - 60, y: RING_ARENA.y + 52 },
+  { x: RING_ARENA.x - 60, y: RING_ARENA.y + 144 },
+  { x: RING_ARENA.x + 360, y: RING_ARENA.y + 52 },
+  { x: RING_ARENA.x + 360, y: RING_ARENA.y + 144 },
 ];
 
 /** 观战长椅的座位组名：热区 `seatGroupId` 与「坐上才能押注」的资格判定共用这一处（ADR-0093） */
@@ -135,9 +138,9 @@ export function isInRingSignup(x: number, y: number, range = RING_SIGNUP_RANGE):
 
 /** 领奖台：金位在中央最高阶，银/铜在左右两侧。 */
 export const RING_PODIUM_SLOTS = [
-  { x: 3590, y: 5360 },
-  { x: 3500, y: 5375 },
-  { x: 3680, y: 5375 },
+  { x: RING_ARENA.x + 150, y: RING_ARENA.y + 60 },
+  { x: RING_ARENA.x + 60, y: RING_ARENA.y + 75 },
+  { x: RING_ARENA.x + 240, y: RING_ARENA.y + 75 },
 ] as const;
 
 /** 擂台阶段：0 空闲 / 1 等第 2 人 / 2 进行中 / 3 颁奖。 */

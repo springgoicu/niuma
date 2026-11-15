@@ -12,7 +12,7 @@ import { localDateKey } from '../local-date';
 /**
  * 职场玄学两处（ADR-0061）的纯函数契约。
  *
- * 这些断言都不碰 Pixi：作揖包络、感应区、当日首香与灯笼光源表都是纯数据，
+ * 这些断言都不碰 Pixi：作揖包络、感应区、当日首香与挂灯光源表都是纯数据，
  * 能在 CI 里钉住，而不用等到「打开浏览器按一下」才发现按不出来。
  */
 
@@ -88,7 +88,7 @@ describe('铁艺挂灯光源表', () => {
     expect(LANTERN_HEIGHT).toBeGreaterThanOrEqual(20);
   });
 
-  it('外景光源 + 摸鱼亭四角 + 固定宫灯 + 供案两盏 + 节日彩旗仍在 64 盏预算内', () => {
+  it('外景光源 + 摸鱼亭四角 + 固定挂灯 + 祈福龛两盏 + 节日彩旗仍在 64 盏预算内', () => {
     // 超限时 `LightRegistry.add` 会静默返回 -1，灯就凭空消失了，必须在这里钉死
     const outdoor = propLights(WORLD_LAYOUT.props).length;
     const festival = festivalLights(festivalDecorPlan()).length;

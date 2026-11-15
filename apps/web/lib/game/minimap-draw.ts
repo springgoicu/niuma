@@ -1,4 +1,12 @@
-import { ISLAND, WORLD_CENTER, WORLD_LAYOUT, type Point, type TreeInstance, type WorldRect } from '@niuma/shared-types';
+import {
+  DISTRICTS,
+  ISLAND,
+  WORLD_CENTER,
+  WORLD_LAYOUT,
+  type Point,
+  type TreeInstance,
+  type WorldRect,
+} from '@niuma/shared-types';
 import { MINIMAP_COLORS as M } from './terrain-palette';
 
 /**
@@ -165,6 +173,15 @@ function drawTerrain(ctx: MiniMapContext, camX: number, camY: number): void {
 
   for (const grove of WORLD_LAYOUT.groves) drawTreeDots(ctx, grove.trees, camX, camY, M.forestDot);
   drawTreeDots(ctx, WORLD_LAYOUT.looseTrees, camX, camY, M.forestDot);
+
+  // 五区色块（ADR-0097）：在建筑与铺装之上薄薄铺一层区色，
+  // 让小地图先读出「这是哪一片」，而不是只看到一堆同色方块。
+  ctx.globalAlpha = 0.18;
+  for (const district of DISTRICTS) {
+    ctx.fillStyle = `#${district.color.toString(16).padStart(6, '0')}`;
+    for (const rect of district.rects) fillWorldRect(ctx, rect, camX, camY);
+  }
+  ctx.globalAlpha = 1;
 }
 
 /**

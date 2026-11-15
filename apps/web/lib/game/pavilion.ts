@@ -8,19 +8,20 @@ import {
   PAVILION_TABLE,
 } from '@niuma/shared-types';
 import { LANTERN_LIGHT, paintLantern } from './lighting/lanterns';
+import { TOWN_MATERIALS } from './venue-palette';
 import type { LightSpec } from './lighting/light-registry';
 import type { DepthSink } from './sort-layer';
 
 /**
- * 摸鱼亭（ADR-0061）：八角重檐凉亭，蹲在摸鱼湖东北岸的凸角上。
+ * 摸鱼亭（ADR-0096，替代 ADR-0061 的中式重檐凉亭）：木构双坡顶凉亭，蹲在摸鱼湖东北岸的凸角上。
  *
  * 三个必须成立的观感：
- * 1. **青瓦重檐 + 飞檐微翘**：下檐宽、上檐窄，两级都用梯形而不是圆弧——
- *    20px 粒度的像素画里，圆弧只会糊成一团灰；
+ * 1. **木瓦双坡 + 白漆封檐**：下坡宽、上坡窄，两级仍用梯形而不是圆弧——
+ *    20px 粒度的像素画里，圆弧只会糊成一团灰；檐口不再上翘，改平直封檐板；
  * 2. **亭子能走进去**：整座亭子拆成「后景」与「前景」两条深度键。
  *    后柱与屋顶压在后沿 y 上，前柱压在前沿 y 上；人站在亭内时后景在身后、
  *    前景在身前，于是既不会被屋顶盖住，也不会「穿」过前柱；
- * 3. **四角宫灯**：挂在四根檐角，光源坐标与绘制同源（`lights` 由这里收集，
+ * 3. **四角挂灯**：挂在四根檐角，光源坐标与绘制同源（`lights` 由这里收集，
  *    renderer 在 `lightmap.register()` 之前一次性取走）。
  *
  * 台基走地面层（与室内地板同一条通路），因为它不该参与 y 排序——
@@ -28,29 +29,30 @@ import type { DepthSink } from './sort-layer';
  */
 
 const C = {
-  // 青瓦
-  tile: 0x5f7d8c,
-  tileDark: 0x3f5866,
-  tileDeep: 0x2f4450,
-  tileLight: 0x8aa7b4,
-  tileRidge: 0xa9c2cc,
-  // 朱红廊柱与额枋
-  pillar: 0xb33a2a,
-  pillarDark: 0x7d2418,
-  pillarLight: 0xd9563f,
-  beam: 0x8a3a24,
-  beamLight: 0xc25a3c,
-  // 汉白玉石桌与台基
-  stone: 0xe4ded0,
-  stoneDark: 0xb0a894,
-  stoneLight: 0xf7f3e6,
+  // 木瓦屋面
+  roof: 0x8a6a4e,
+  roofDark: 0x6b4f38,
+  roofDeep: 0x543d2c,
+  roofLight: 0xa8876a,
+  roofRidge: 0xc3a684,
+  // 白漆柱与封檐、栏杆
+  paint: TOWN_MATERIALS.paint,
+  paintShade: TOWN_MATERIALS.paintShade,
+  // 深木柱头与额枋
+  beam: TOWN_MATERIALS.timber,
+  beamLight: TOWN_MATERIALS.timberLight,
+  beamDark: TOWN_MATERIALS.timberDark,
+  // 石桌与台基
+  stone: TOWN_MATERIALS.stone,
+  stoneDark: TOWN_MATERIALS.stoneDark,
+  stoneLight: TOWN_MATERIALS.stoneLight,
   terrace: 0xc2bba8,
   terraceEdge: 0x8f887a,
   terraceLight: 0xdad3c0,
   terraceSeam: 0xa79f8e,
-  // 金色宝顶
-  gold: 0xe8c46a,
-  goldDark: 0xb08a34,
+  // 铜球宝顶
+  brass: TOWN_MATERIALS.brass,
+  brassDark: 0xa07c34,
 } as const;
 
 /** 檐口相对亭心的横向半宽：下檐比上檐宽一圈，重檐才读得出「重」 */
@@ -64,43 +66,44 @@ const LOW_TOP = -126;
 const HIGH_BOTTOM = -126;
 const HIGH_TOP = -158;
 
-/** 宫灯在檐角下的下垂量：灯身中心落在檐口下方 12px */
+/** 挂灯在檐角下的下垂量：灯身中心落在檐口下方 12px */
 const LANTERN_DROP = 12;
 
 function rect(g: Graphics, x: number, y: number, w: number, h: number, color: number): void {
   g.rect(x, y, w, h).fill(color);
 }
 
-/** 一级屋檐：底面宽、顶面窄的梯形 + 檐下一道压暗，读成瓦口 */
+/** 一级屋面：底面宽、顶面窄的木瓦坡面 + 白漆封檐，读成「屋顶」 */
 function eave(g: Graphics, halfBottom: number, halfTop: number, yBottom: number, yTop: number): void {
-  g.poly([-halfBottom, yBottom, halfBottom, yBottom, halfTop, yTop, -halfTop, yTop]).fill(C.tileDark);
-  g.poly([-halfBottom + 2, yBottom - 2, halfBottom - 2, yBottom - 2, halfTop, yTop, -halfTop, yTop]).fill(C.tile);
-  // 檐口：一条亮瓦当 + 一条更深的滴水线
-  rect(g, -halfBottom, yBottom, halfBottom * 2, 2, C.tileRidge);
-  rect(g, -halfBottom, yBottom + 2, halfBottom * 2, 1, C.tileDeep);
+  g.poly([-halfBottom, yBottom, halfBottom, yBottom, halfTop, yTop, -halfTop, yTop]).fill(C.roofDark);
+  g.poly([-halfBottom + 2, yBottom - 2, halfBottom - 2, yBottom - 2, halfTop, yTop, -halfTop, yTop]).fill(C.roof);
+  // 封檐板：白漆一条 + 一档暗边，檐口平直不上翘
+  rect(g, -halfBottom, yBottom, halfBottom * 2, 2, C.paint);
+  rect(g, -halfBottom, yBottom + 2, halfBottom * 2, 1, C.paintShade);
   // 瓦垄：竖向 1px 线，间隔 10px
   for (let x = -halfBottom + 6; x <= halfBottom - 6; x += 10) {
-    g.rect(x, yTop, 1, yBottom - yTop - 2).fill(C.tileLight);
+    g.rect(x, yTop, 1, yBottom - yTop - 2).fill(C.roofLight);
   }
-  // 飞檐微翘：两端各挑一小块向上翘的角
-  g.poly([-halfBottom, yBottom, -halfBottom - 10, yBottom - 7, -halfBottom + 2, yBottom - 3]).fill(C.tileRidge);
-  g.poly([halfBottom, yBottom, halfBottom + 10, yBottom - 7, halfBottom - 2, yBottom - 3]).fill(C.tileRidge);
+  // 檐口两端封头
+  rect(g, -halfBottom - 2, yBottom - 2, 2, 5, C.roofDeep);
+  rect(g, halfBottom, yBottom - 2, 2, 5, C.roofDeep);
 }
 
-/** 一根朱红廊柱：亮边 + 本体 + 暗边 + 柱础石 */
+/** 一根白漆方柱：暗侧 + 白漆本体 + 深木柱头 + 石柱础 */
 function column(g: Graphics, x: number, yTop: number, yBottom: number): void {
-  rect(g, x - 3, yTop, 6, yBottom - yTop, C.pillarDark);
-  rect(g, x - 2, yTop, 3, yBottom - yTop, C.pillar);
-  rect(g, x, yTop, 1, yBottom - yTop, C.pillarLight);
-  // 额枋：柱顶一截更深的横木
-  rect(g, x - 4, yTop, 8, 3, C.beam);
+  const h = yBottom - yTop;
+  rect(g, x - 3, yTop, 6, h, C.paintShade);
+  rect(g, x - 2, yTop, 4, h, C.paint);
+  // 柱头：柱顶一截深木横木
+  rect(g, x - 4, yTop, 8, 3, C.beamDark);
+  rect(g, x - 4, yTop, 8, 2, C.beam);
   rect(g, x - 4, yTop, 8, 1, C.beamLight);
   // 柱础
   rect(g, x - 4, yBottom - 4, 8, 4, C.stoneDark);
   rect(g, x - 4, yBottom - 4, 8, 1, C.stone);
 }
 
-/** 一盏宫灯：复用 `lighting/lanterns.ts` 的同一套像素画，亭子与门柱不会画歪 */
+/** 一盏铁艺挂灯：复用 `lighting/lanterns.ts` 的同一套像素画，亭子与门柱不会画歪 */
 function lantern(g: Graphics, x: number, hang: number): void {
   paintLantern(g, x, hang - 4);
 }
@@ -109,7 +112,7 @@ export class PavilionView {
   private readonly terrace = new Container();
   private readonly rear = new Container();
   private readonly front = new Container();
-  /** 四角宫灯的地面光池：半径 48 的暖红漫射（ADR-0061） */
+  /** 四角挂灯的地面光池：半径 48 的暖白漫射（ADR-0096） */
   readonly lights: LightSpec[] = [];
 
   constructor() {
@@ -132,7 +135,7 @@ export class PavilionView {
     this.terrace.addChild(g);
   }
 
-  /** 后景：后排四柱 + 靠背栏杆 + 汉白玉石桌 + 两级屋檐与宝顶 */
+  /** 后景：后排四柱 + 白色靠背栏杆 + 石桌 + 两级屋面与铜球宝顶 */
   private drawRear(): void {
     const g = new Graphics();
 
@@ -142,17 +145,14 @@ export class PavilionView {
       column(g, dx, -92 + 4, dy + 2);
     }
 
-    // 靠背栏杆：只连后排三根柱，给「观湖」一个能凭的边
-    rect(g, -82, -34, 4, 4, C.pillarDark);
-    rect(g, -82, -34, 4, 1, C.pillarLight);
-    rect(g, 78, -34, 4, 4, C.pillarDark);
-    rect(g, 78, -34, 4, 1, C.pillarLight);
-    rect(g, -82, -38, 164, 2, C.beam);
-    rect(g, -82, -38, 164, 1, C.beamLight);
-    rect(g, -82, -30, 164, 1, C.beam);
-    for (let x = -70; x <= 70; x += 14) rect(g, x, -37, 1, 7, C.beam);
+    // 白色靠背栏杆：只连后排三根柱，给「观湖」一个能凭的边
+    rect(g, -82, -38, 164, 2, C.paint);
+    rect(g, -82, -38, 164, 1, C.paintShade);
+    rect(g, -82, -30, 164, 2, C.paint);
+    rect(g, -82, -30, 164, 1, C.paintShade);
+    for (let x = -70; x <= 70; x += 14) rect(g, x, -36, 2, 6, C.paint);
 
-    // 汉白玉石桌：圆形台面 + 鼓形桌腿 + 一圈石沿
+    // 石桌：圆形台面 + 鼓形桌腿 + 一圈石沿
     const tableR = PAVILION_TABLE.radius;
     g.circle(0, -26, tableR).fill(C.stoneDark);
     g.circle(0, -28, tableR - 1).fill(C.stone);
@@ -161,30 +161,30 @@ export class PavilionView {
     rect(g, -5, -16, 10, 15, C.stone);
     rect(g, -9, -2, 18, 2, C.stoneDark);
 
-    // 下檐
+    // 下坡屋面
     eave(g, EAVE_LOW, EAVE_MID, LOW_BOTTOM, LOW_TOP);
-    // 上檐
+    // 上坡屋面
     eave(g, EAVE_MID + 8, EAVE_TOP, HIGH_BOTTOM, HIGH_TOP);
-    // 宝顶：金色珠 + 一截短刹
-    rect(g, -2, HIGH_TOP - 12, 4, 12, C.goldDark);
-    rect(g, -1, HIGH_TOP - 12, 2, 12, C.gold);
-    g.circle(0, HIGH_TOP - 15, 4).fill(C.goldDark);
-    g.circle(0, HIGH_TOP - 16, 3).fill(C.gold);
+    // 宝顶：铜球 + 一截短杆
+    rect(g, -2, HIGH_TOP - 12, 4, 12, C.brassDark);
+    rect(g, -1, HIGH_TOP - 12, 2, 12, C.brass);
+    g.circle(0, HIGH_TOP - 15, 4).fill(C.brassDark);
+    g.circle(0, HIGH_TOP - 16, 3).fill(C.brass);
 
-    // 后排两盏宫灯：挂在檐角下
+    // 后排两盏挂灯：挂在檐角下
     for (const dx of [-EAVE_LOW + 2, EAVE_LOW - 2]) lantern(g, dx, LOW_BOTTOM + 2 + LANTERN_DROP);
 
     this.rear.addChild(g);
   }
 
-  /** 前景：前排四柱 + 前檐角宫灯，压在亭内角色身前 */
+  /** 前景：前排四柱 + 前檐角挂灯，压在亭内角色身前 */
   private drawFront(): void {
     const g = new Graphics();
     for (const [dx, dy] of PAVILION_COLUMN_OFFSETS) {
       if (dy < 0) continue;
       column(g, dx, -92 + 4, dy + 2);
     }
-    // 前排宫灯
+    // 前排挂灯
     for (const dx of [-EAVE_MID - 6, EAVE_MID + 6]) lantern(g, dx, LOW_BOTTOM + 2 + LANTERN_DROP);
     this.front.addChild(g);
   }
@@ -198,7 +198,7 @@ export class PavilionView {
   }
 
   /**
-   * 四盏宫灯的地面光池：坐标与绘制同源，光池中心落在灯正下方的台基地面上。
+   * 四盏挂灯的地面光池：坐标与绘制同源，光池中心落在灯正下方的台基地面上。
    * 白天由 `lightmap` 的 `localLightGain` 压到 0，不需要这里判昼夜。
    */
   private collectLights(): void {

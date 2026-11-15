@@ -72,18 +72,18 @@ export interface ApartmentSpec {
  * 坐标手写、禁随机：两端必须逐像素一致。
  */
 const APARTMENT_RECTS: ReadonlyArray<WorldRect> = [
-  // 301 西北内圈：院落西侧、赌场以北
-  { x: 3000, y: 3140, w: APARTMENT_W, h: APARTMENT_H },
-  // 302 北：游乐园西侧草带
-  { x: 3200, y: 2560, w: APARTMENT_W, h: APARTMENT_H },
-  // 303 西：西主路以南、涟漪湖以北（让开路口那对花箱）
-  { x: 2990, y: 4260, w: APARTMENT_W, h: APARTMENT_H },
-  // 304 西南：涟漪湖以南
-  { x: 2980, y: 5150, w: APARTMENT_W, h: APARTMENT_H },
-  // 305 东北：沉思浅塘以南、东北支路以西
-  { x: 5150, y: 3150, w: APARTMENT_W, h: APARTMENT_H },
-  // 306 东：东主路以北的开阔草地
-  { x: 5250, y: 3690, w: APARTMENT_W, h: APARTMENT_H },
+  // 301 生活区西北排
+  { x: 3200, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
+  // 302 中排（与 301 同一排，中间留 40px 巷子）
+  { x: 3540, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
+  // 303 东排：南向主路以东
+  { x: 4240, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
+  // 304 第二排西
+  { x: 3200, y: 5040, w: APARTMENT_W, h: APARTMENT_H },
+  // 305 第二排中
+  { x: 3540, y: 5040, w: APARTMENT_W, h: APARTMENT_H },
+  // 306 第二排东
+  { x: 4240, y: 5040, w: APARTMENT_W, h: APARTMENT_H },
 ];
 
 function makeSpec(slot: number, rect: WorldRect): ApartmentSpec {

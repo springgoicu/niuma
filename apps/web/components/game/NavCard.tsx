@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, ChevronDown, Compass } from 'lucide-react';
-import { SPAWN_CENTER, regionAt, type NavTargetId } from '@niuma/shared-types';
+import { DISTRICTS, SPAWN_CENTER, districtAt, regionAt, type NavTargetId } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
-import { nearestReading, navReadings, OCTANT_NAMES } from '@/lib/game/nav';
+import { nearestReading, navReadings, sceneLabel, OCTANT_NAMES } from '@/lib/game/nav';
 import { HUD_DOCK_PORTRAIT_REM } from './Hud';
 
 /** 触摸端：离开北门口袋超过这个距离就自动收起，把画面还给摇杆与动作盘 */
@@ -44,16 +44,21 @@ export function NavCard({
   const manual = useRef(false);
 
   const readings = useMemo(() => navReadings(x, y), [x, y]);
+  // ADR-0097：导览卡按五区分组，空组不占位；组顺序即 DISTRICTS 的顺序
   const groups = useMemo(
-    () => [
-      { key: 'indoor', label: '室内', items: readings.filter((reading) => reading.target.area === 'indoor') },
-      { key: 'grounds', label: '园区', items: readings.filter((reading) => reading.target.area === 'grounds') },
-    ],
+    () =>
+      DISTRICTS.map((district) => ({
+        key: district.id,
+        label: district.name,
+        items: readings.filter((reading) => reading.target.district === district.id),
+      })).filter((group) => group.items.length > 0),
     [readings],
   );
   const nearest = nearestReading(readings);
   const navReading = navTarget ? readings.find((reading) => reading.target.id === navTarget.id) ?? null : null;
-  const region = regionAt(x, y);
+  const place = regionAt(x, y);
+  const district = districtAt(x, y);
+  const region = district && place !== district.name ? `${district.name} · ${place}` : place;
 
   useEffect(() => {
     if (!compact) return;
@@ -158,6 +163,9 @@ export function NavCard({
                             />
                           </span>
                           <span className="flex-1 truncate text-[11px] leading-none">{reading.target.name}</span>
+                          <span className="shrink-0 font-mono text-[8px] tracking-[0.08em] text-mist-500">
+                            {sceneLabel(reading.target.scene)}
+                          </span>
                           <span
                             className={`font-mono text-[9px] tabular-nums ${
                               navigating ? 'text-mint-400/80' : 'text-mist-400'

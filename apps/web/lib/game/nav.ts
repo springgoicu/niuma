@@ -1,9 +1,9 @@
-import { MOVE_SPEED, NAV_TARGETS, type NavTarget } from '@niuma/shared-types';
+import { DISTRICTS, MOVE_SPEED, NAV_TARGETS, type DistrictSpec, type NavTarget } from '@niuma/shared-types';
 
 /**
- * 园区导览的纯计算层（ADR-0036）：世界指路牌、HUD 导览卡与测试共用。
+ * 园区导览的纯计算层（ADR-0036 / ADR-0097）：世界指路牌、HUD 导览卡与测试共用。
  *
- * 数据只有一份 `NAV_TARGETS`（shared-types 由房间矩形中心派生），
+ * 数据只有一份：场所读数来自 `NAV_TARGETS`，区门读数来自 `DISTRICTS`。
  * 这里只做「从某点到目标」的方位、距离与步行秒数，不碰渲染也不碰 DOM。
  */
 
@@ -27,6 +27,15 @@ export interface NavReading {
   bearingDeg: number;
 }
 
+/** 一座区门的读数：世界指路牌只列这五块（ADR-0097） */
+export interface DistrictReading {
+  district: DistrictSpec;
+  distance: number;
+  seconds: number;
+  octant: NavOctant;
+  bearingDeg: number;
+}
+
 /** 把屏幕向量收进八向档位；零向量按「北」处理 */
 export function octantOf(dx: number, dy: number): NavOctant {
   if (dx === 0 && dy === 0) return 0;
@@ -42,20 +51,32 @@ export function bearingDegOf(dx: number, dy: number): number {
   return angle < 0 ? angle + 360 : angle;
 }
 
-/** 一次算出四个目标的读数，顺序与 `NAV_TARGETS` 一致 */
+function readingOf(x: number, y: number, tx: number, ty: number) {
+  const dx = tx - x;
+  const dy = ty - y;
+  const distance = Math.hypot(dx, dy);
+  return {
+    distance,
+    seconds: Math.max(1, Math.round(distance / MOVE_SPEED)),
+    octant: octantOf(dx, dy),
+    bearingDeg: bearingDegOf(dx, dy),
+  };
+}
+
+/** 一次算出所有场所目标的读数，顺序与 `NAV_TARGETS` 一致 */
 export function navReadings(x: number, y: number): NavReading[] {
-  return NAV_TARGETS.map((target) => {
-    const dx = target.x - x;
-    const dy = target.y - y;
-    const distance = Math.hypot(dx, dy);
-    return {
-      target,
-      distance,
-      seconds: Math.max(1, Math.round(distance / MOVE_SPEED)),
-      octant: octantOf(dx, dy),
-      bearingDeg: bearingDegOf(dx, dy),
-    };
-  });
+  return NAV_TARGETS.map((target) => ({
+    target,
+    ...readingOf(x, y, target.x, target.y),
+  }));
+}
+
+/** 一次算出五座区门的读数，顺序与 `DISTRICTS` 一致 */
+export function districtReadings(x: number, y: number): DistrictReading[] {
+  return DISTRICTS.map((district) => ({
+    district,
+    ...readingOf(x, y, district.gate.x, district.gate.y),
+  }));
 }
 
 /** 最近的目标：并列时按 NAV_TARGETS 的顺序取第一个，结果稳定 */
@@ -65,4 +86,9 @@ export function nearestReading(readings: readonly NavReading[]): NavReading | nu
     if (!best || reading.distance < best.distance) best = reading;
   }
   return best;
+}
+
+/** 场景徽标文案：导览卡与工牌共用一套说法 */
+export function sceneLabel(scene: NavTarget['scene']): string {
+  return scene === 'indoor' ? '室内' : scene === 'semi' ? '半开敞' : '室外';
 }

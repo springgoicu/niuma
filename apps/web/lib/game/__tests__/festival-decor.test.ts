@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { WORLD_LAYOUT, isOnLand, isWaterAt } from '@niuma/shared-types';
+import { LANTERN_LIGHT } from '../lighting/lanterns';
 import {
   BUNTING_LAMP_GAP,
   FESTIVAL_LIGHT_COUNT,
@@ -104,9 +105,10 @@ describe('广场与主路彩旗', () => {
 });
 
 describe('门楣与树梢', () => {
-  it('四处门楣各一条短彩旗，挂在门线上方', () => {
+  it('企业楼门架与卫生间门洞各一条短彩旗，挂在门线上方', () => {
+    // ADR-0097 之后只有企业楼保留木构门架，卫生间按门洞中心补一条，共 2 条
     const gates = PLAN.filter((anchor) => anchor.kind === 'gate-bunting');
-    expect(gates).toHaveLength(4);
+    expect(gates).toHaveLength(2);
     for (const gate of gates) {
       expect(gate.y).toBeLessThan(gate.depthY);
       expect(isOnLand(gate.x, gate.depthY)).toBe(true);

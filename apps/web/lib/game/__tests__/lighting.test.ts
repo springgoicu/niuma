@@ -154,14 +154,14 @@ describe('地标光源派生', () => {
 
   it('预算：道具 + 场所 + 节日常驻总数不超过 MAX_LIGHTS', () => {
     // 场馆自己的光位集中在 venue-lights.ts：超过上限时 LightRegistry 会静默丢弃，
-    // 因此这里先算总数。6 = 节日彩旗的 FESTIVAL_LIGHT_COUNT，11 = 室内 6 + 宫灯 2 + 亭 2 + 祭坛 2，
+    // 因此这里先算总数。6 = 节日彩旗的 FESTIVAL_LIGHT_COUNT，11 = 室内 6 + 挂灯 2 + 亭 2 + 祭坛 2，
     // 这些都在各自模块里另有断言，这里只按最坏情况给定额。
     const resident = lights.length + venueLights().length + 6 + 11;
     expect(resident).toBeLessThanOrEqual(MAX_LIGHTS);
-    // 场所光自身也不该无限膨胀：24 盏 = 六栋公寓 6 + 两院 2 + 擂台 2 + 赌场 2
-    // + 诊所 2 + 广场 8 + 茶台 1 + 卫生间 1
-    expect(venueLights().length).toBeLessThanOrEqual(26);
-    expect(venueLights().length).toBeGreaterThanOrEqual(20);
+    // 场所光自身也不该无限膨胀：30 盏 = 六栋公寓 6 + 两院 2 + 擂台 2 + 赌场 2
+    // + 诊所 2 + 广场 8 + 茶台 1 + 卫生间 1 + 五座区门 5 + 发泄室 1（ADR-0097）
+    expect(venueLights().length).toBeLessThanOrEqual(32);
+    expect(venueLights().length).toBeGreaterThanOrEqual(26);
   });
 
   it('场所光位都在世界范围内，色温不是纯白纯黑', () => {

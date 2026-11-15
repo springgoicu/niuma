@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   AMBULANCE_PACKET_BYTES,
   CLINIC_NURSE_SPOTS,
+  CLINIC_RECT,
   CLINIC_VEHICLE_ENTRY,
   DEFAULT_APPEARANCE,
   DIRECTION,
@@ -134,9 +135,9 @@ describe('护士站围挡后的救护车进站（ADR-0092）', () => {
       now: 0,
     });
 
-    const attacker = world.create('甲', DEFAULT_APPEARANCE.cow, 11, 5_060, 4_330)!;
+    const attacker = world.create('甲', DEFAULT_APPEARANCE.cow, 11, CLINIC_RECT.x + 40, CLINIC_RECT.y + 150)!;
     // 柜台背后（护士站位一侧）：正是打护士后被打倒的高频点
-    const victim = world.create('乙', DEFAULT_APPEARANCE.cow, 12, 5_060, 4_272)!;
+    const victim = world.create('乙', DEFAULT_APPEARANCE.cow, 12, CLINIC_RECT.x + 40, CLINIC_RECT.y + 80)!;
     grid.insert(attacker.id, attacker.x, attacker.y);
     grid.insert(victim.id, victim.x, victim.y);
 

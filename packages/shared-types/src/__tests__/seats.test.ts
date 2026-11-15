@@ -270,9 +270,11 @@ describe('地图碰撞与装饰', () => {
   });
 
   it('南北通道与东西通道不被任何碰撞体挡住', () => {
+    // ADR-0097：南北主路 x 4032–4160 从北入口穿广场到生活区，
+    // 东西主路 y 4032–4160 从企业区前庭穿广场到服务广场西缘
     const lanes = [
-      { x: 4032, y: 3404, w: 128, h: 1312 },
-      { x: 3336, y: 4032, w: 1520, h: 128 },
+      { x: 4032, y: 3400, w: 128, h: 900 },
+      { x: 3400, y: 4032, w: 1160, h: 128 },
     ];
     for (const lane of lanes) {
       for (const solid of solids) expect(rectsOverlap(solid, lane)).toBe(false);
@@ -322,8 +324,21 @@ describe('地图碰撞与装饰', () => {
     }
   });
 
-  it('四角房间与南侧庭院归入各自区域', () => {
-    for (const name of ['会议室', '卫生间', '研发园', '工作区', '宿舍区']) {
+  it('五区与各处场所都归入各自区域', () => {
+    for (const name of [
+      '企业区',
+      '游乐区',
+      '生活区',
+      '服务区',
+      '景观区',
+      '会议室',
+      '卫生间',
+      '发泄区',
+      '小黑屋',
+      '家庭影音室',
+      '工作区',
+      '宿舍区',
+    ]) {
       expect(WORLD_LAYOUT.regions.find((region) => region.name === name)).toBeDefined();
     }
   });

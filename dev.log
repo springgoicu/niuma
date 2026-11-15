@@ -1897,3 +1897,195 @@
 @niuma/web:dev:  ✓ Compiled in 318ms
 @niuma/game-server:dev: [event] 老板突击查岗 start seed=63670 spots=0
 @niuma/game-server:dev: [event] inspection bonus=0 called=0
+@niuma/web:dev:  ✓ Compiled in 56ms
+@niuma/web:dev:  ✓ Compiled in 42ms
+@niuma/web:dev:  ✓ Compiled in 41ms
+@niuma/game-server:dev: [event] 老板突击查岗 start seed=52180 spots=0
+@niuma/game-server:dev: [event] inspection bonus=0 called=0
+@niuma/web:dev:  ✓ Compiled in 510ms
+@niuma/web:dev:  ✓ Compiled in 232ms
+@niuma/web:dev:  ✓ Compiled in 255ms
+@niuma/game-server:dev: [event] 老板突击查岗 start seed=61563 spots=0
+@niuma/game-server:dev: [event] inspection bonus=0 called=0
+@niuma/game-server:dev: [event] 老板突击查岗 start seed=61339 spots=0
+@niuma/game-server:dev: [event] inspection bonus=0 called=0
+@niuma/web:dev:  ✓ Compiled in 390ms
+@niuma/web:dev:  ✓ Compiled in 379ms
+@niuma/web:dev:  ✓ Compiled in 80ms
+@niuma/web:dev:  ✓ Compiled in 59ms
+@niuma/web:dev:  ✓ Compiled in 27ms
+@niuma/web:dev:  ✓ Compiled in 37ms
+@niuma/web:dev:  ✓ Compiled in 1114ms
+@niuma/game-server:dev: [event] 天降财神红包雨 start seed=41396 spots=25
+@niuma/web:dev:  ✓ Compiled in 37ms
+@niuma/web:dev:  ✓ Compiled in 56ms
+@niuma/web:dev:  ✓ Compiled in 1124ms
+@niuma/web:dev:  ✓ Compiled in 1074ms
+@niuma/web:dev:  ✓ Compiled in 56ms
+@niuma/web:dev:  ✓ Compiled in 882ms
+@niuma/web:dev:  ✓ Compiled in 44ms
+@niuma/web:dev:  ✓ Compiled in 880ms
+@niuma/web:dev:  ✓ Compiled in 1878ms
+@niuma/web:dev:  ✓ Compiled in 1598ms
+@niuma/web:dev:  ✓ Compiled in 45ms
+@niuma/web:dev:  ✓ Compiled in 2.2s
+@niuma/web:dev:  ✓ Compiled in 154ms
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\catalog.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\appearance-codec.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\quantize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\like.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\name.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\device.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\notice.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\career.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\board.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\danmaku.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\economy.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\constants.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\geometry.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\vent.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\buffs.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\challenge.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\protocol.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\seat-gate.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\role.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\clinic.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\park.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\layout.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\hotspots.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\dice-hall.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\pavilion.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\districts.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ring.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\apartment.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\work.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\villas.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\boss.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ribbon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\collision.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\lexicon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\nickname.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\normalize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\matcher.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\campus.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: 45 | const UNSTUCK_MS = 8000;
+@niuma/game-server:dev: 46 | /**
+@niuma/game-server:dev: 47 |  * 出警 / 送回的固定绕行航点（不做寻路，ADR-0097）：
+@niuma/game-server:dev: 48 |  * 先穿服务广场南沿，再走东主路进中央广场，避开急救站围挡与公寓楼群。
+@niuma/game-server:dev: 49 |  */
+@niuma/game-server:dev: 50 | const AMBULANCE_EAST_GATE = { x: CLINIC_RECT.x + CLINIC_RECT.w / 2, y: SERVICE_SQUARE.y + SERVICE_SQUARE.h - 40 } as const;
+@niuma/game-server:dev:                                       ^
+@niuma/game-server:dev: ReferenceError: CLINIC_RECT is not defined
+@niuma/game-server:dev:       at C:\Users\myspr\Documents\project\other\niuma\apps\game-server\src\sim\clinic.ts:50:34
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\vent.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\geometry.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\quantize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ring.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\notice.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\boss.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\collision.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\board.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\dice-hall.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\park.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\like.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\challenge.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\pavilion.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\device.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\work.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\role.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\clinic.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\economy.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\apartment.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\districts.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\seat-gate.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\hotspots.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\buffs.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\layout.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ribbon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\danmaku.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\appearance-codec.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\career.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\protocol.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\catalog.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\constants.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\villas.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\name.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\lexicon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\normalize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\matcher.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\nickname.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\campus.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: 47 | const UNSTUCK_MS = 8000;
+@niuma/game-server:dev: 48 | /**
+@niuma/game-server:dev: 49 |  * 出警 / 送回的固定绕行航点（不做寻路，ADR-0097）：
+@niuma/game-server:dev: 50 |  * 先穿服务广场南沿，再走东主路进中央广场，避开急救站围挡与公寓楼群。
+@niuma/game-server:dev: 51 |  */
+@niuma/game-server:dev: 52 | const AMBULANCE_EAST_GATE = { x: CLINIC_RECT.x + CLINIC_RECT.w / 2, y: SERVICE_SQUARE.y + SERVICE_SQUARE.h - 40 } as const;
+@niuma/game-server:dev:                                       ^
+@niuma/game-server:dev: ReferenceError: CLINIC_RECT is not defined
+@niuma/game-server:dev:       at C:\Users\myspr\Documents\project\other\niuma\apps\game-server\src\sim\clinic.ts:52:34
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\catalog.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\quantize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\work.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\name.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\notice.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\economy.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\index.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\device.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\buffs.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\board.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\career.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\danmaku.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\role.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\challenge.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\like.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\constants.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\vent.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\geometry.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\clinic.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\seat-gate.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\hotspots.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\protocol.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\collision.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ribbon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\park.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\appearance-codec.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\pavilion.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\districts.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\dice-hall.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\villas.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\ring.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\apartment.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\boss.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\layout.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\types.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\nickname.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\lexicon.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\matcher.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\moderation\normalize.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: warn: File C:\Users\myspr\Documents\project\other\niuma\packages\shared-types\src\world\campus.ts is not in the project directory and will not be watched
+@niuma/game-server:dev: [state] path=data/world-state.json restored=no boss=10000/10000 match=0 profiles=0
+@niuma/game-server:dev: [moderation] lexicon source=builtin political=2 profanity=78
+@niuma/game-server:dev: [npc] count=5 guards=3 seed=3735145996
+@niuma/game-server:dev: [jail] enabled guards=3
+@niuma/game-server:dev: [game] http://localhost:3001  ws://localhost:3001/ws
+@niuma/game-server:dev: [game] 共享运行态写入 data/world-state.json（其余仍在内存）
+@niuma/web:dev:  ✓ Compiled in 5ms
+@niuma/web:dev:  ✓ Compiled in 627ms
+@niuma/web:dev:  ✓ Compiled in 318ms
+@niuma/web:dev:  ✓ Compiled in 418ms
+@niuma/web:dev:  ✓ Compiled in 20ms
+@niuma/web:dev:  ✓ Compiled in 746ms
+@niuma/web:dev:  ✓ Compiled in 30ms
+@niuma/web:dev:  ✓ Compiled in 368ms
+@niuma/web:dev:  ✓ Compiled in 2ms

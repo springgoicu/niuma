@@ -2,34 +2,36 @@
 
 import { Container, Graphics, Rectangle, Sprite, Texture, type Application } from 'pixi.js';
 import { TEA_STATION } from '@niuma/shared-types';
+import { TOWN_MATERIALS } from './venue-palette';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
 
 /**
- * 老干部紫砂茶台（ADR-0061）：把工作区饮水机旁那一格升级成「红泥紫砂壶 + 白瓷品茗杯」。
+ * 木吧台饮品站（ADR-0096，替代 ADR-0061 的紫砂茶台）：
+ * 把工作区饮水机旁那一格升级成「不锈钢保温壶 + 两只白瓷马克杯」。
  *
  * 三条取舍：
- * 1. **壶与杯必须能一眼分辨**：紫砂是暖褐红、白瓷是冷白，两者在 16px 尺度上只靠
- *    色相区别，所以杯子不加任何花纹，壶身只留一条高光带；
- * 2. **蒸汽只用两股**：三股以上在 46px 宽的台面上会糊成一片白雾，反而看不出是茶；
+ * 1. **壶与杯必须能一眼分辨**：不锈钢是冷灰带蓝相、白瓷是暖白，两者在 16px 尺度上只靠
+ *    色相区别，所以杯子不加任何花纹，壶身只留一条竖向高光；
+ * 2. **蒸汽只用两股**：三股以上在 46px 宽的台面上会糊成一片白雾，反而看不出在冒热气；
  * 3. **交互不在这里**：按 F 的判定在 `interactions.isNearTeaStation`，
  *    气泡与音效在 `session`，本模块只负责「看起来在冒热气」。
  */
 
 const C = {
-  rosewood: 0x8d4a30,
-  rosewoodLight: 0xb5673f,
-  rosewoodDark: 0x5f2d1c,
-  // 红泥紫砂
-  zisha: 0x8a4a34,
-  zishaLight: 0xb06a48,
-  zishaDark: 0x5e2f22,
-  // 白瓷
+  // 深木吧台
+  timber: TOWN_MATERIALS.timber,
+  timberLight: TOWN_MATERIALS.timberLight,
+  timberDark: TOWN_MATERIALS.timberDark,
+  // 不锈钢保温壶
+  steel: 0xc9ccd2,
+  steelLight: 0xe8ebef,
+  steelDark: 0x8f959e,
+  // 白瓷马克杯
   porcelain: 0xf7f4ea,
   porcelainEdge: 0xd3cdbd,
   porcelainShade: 0xe6e0d0,
-  // 茶汤与热气
-  tea: 0xc08a3a,
+  // 热气
   steam: 0xfffdf5,
 };
 
@@ -98,42 +100,40 @@ export class TeaStationView {
   }
 }
 
-/** 茶台本体：红木矮台 + 红泥紫砂壶 + 两只白瓷品茗杯 */
+/** 饮品台本体：深木吧台 + 不锈钢保温壶 + 两只白瓷马克杯 */
 function drawTeaTable(g: Graphics): void {
   g.ellipse(0, -1, 22, 4).fill({ color: 0x1e2846, alpha: 0.22 });
 
-  // 台腿与台面
-  rect(g, -20, -16, 4, 16, C.rosewoodDark);
-  rect(g, 16, -16, 4, 16, C.rosewoodDark);
-  rect(g, -22, -20, 44, 5, C.rosewoodDark);
-  rect(g, -21, -20, 42, 3, C.rosewood);
-  rect(g, -21, -21, 42, 1, C.rosewoodLight);
+  // 台腿与台面：深木吧台
+  rect(g, -20, -16, 4, 16, C.timberDark);
+  rect(g, 16, -16, 4, 16, C.timberDark);
+  rect(g, -22, -20, 44, 5, C.timberDark);
+  rect(g, -21, -20, 42, 3, C.timber);
+  rect(g, -21, -21, 42, 1, C.timberLight);
   // 台面木纹
-  rect(g, -18, -18, 34, 1, C.rosewoodLight);
+  rect(g, -18, -18, 34, 1, C.timberLight);
 
-  // 紫砂壶：壶身 + 壶盖 + 壶钮 + 壶嘴 + 壶把
-  rect(g, -13, -30, 14, 10, C.zishaDark);
-  rect(g, -12, -29, 12, 8, C.zisha);
-  rect(g, -11, -28, 9, 1, C.zishaLight);
-  rect(g, -10, -32, 8, 2, C.zishaDark);
-  rect(g, -9, -33, 6, 1, C.zisha);
-  rect(g, -7, -35, 2, 2, C.zishaLight);
-  // 壶嘴：向右上挑两格
-  rect(g, 1, -28, 3, 2, C.zishaDark);
-  rect(g, 3, -30, 2, 2, C.zisha);
-  // 壶把：左侧一圈，用三格拼出来
-  rect(g, -16, -29, 2, 1, C.zishaDark);
-  rect(g, -17, -28, 2, 4, C.zishaDark);
-  rect(g, -16, -25, 2, 1, C.zishaDark);
+  // 保温壶：壶身 + 竖向高光 + 壶盖 + 压杆 + 出水嘴 + 把手
+  rect(g, -13, -34, 15, 14, C.steelDark);
+  rect(g, -12, -33, 13, 12, C.steel);
+  rect(g, -11, -32, 3, 10, C.steelLight);
+  rect(g, -10, -37, 9, 4, C.steelDark);
+  rect(g, -9, -36, 7, 2, C.steel);
+  rect(g, -6, -40, 3, 3, C.steelDark);
+  rect(g, 2, -28, 3, 2, C.steelDark);
+  rect(g, -17, -30, 2, 1, C.steelDark);
+  rect(g, -18, -29, 2, 6, C.steelDark);
+  rect(g, -17, -24, 2, 1, C.steelDark);
 
-  // 两只白瓷品茗杯：杯口亮、杯身暗一档
+  // 两只白瓷马克杯：杯口亮、杯身暗一档，杯里一圈深色咖啡
   for (const x of [7, 13]) {
-    rect(g, x, -26, 5, 6, C.porcelainShade);
-    rect(g, x + 1, -26, 3, 5, C.porcelain);
-    rect(g, x, -26, 5, 1, C.porcelain);
-    rect(g, x + 1, -27, 3, 1, C.porcelainEdge);
-    // 茶汤：杯口一圈琥珀色
-    rect(g, x + 1, -26, 3, 1, C.tea);
+    rect(g, x, -27, 6, 7, C.porcelainShade);
+    rect(g, x + 1, -27, 4, 6, C.porcelain);
+    rect(g, x, -27, 6, 1, C.porcelain);
+    rect(g, x + 1, -28, 4, 1, C.porcelainEdge);
+    rect(g, x + 1, -27, 4, 1, C.timberDark);
+    // 杯耳
+    rect(g, x + 6, -25, 2, 3, C.porcelainEdge);
   }
 }
 

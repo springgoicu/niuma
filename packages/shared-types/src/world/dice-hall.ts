@@ -1,11 +1,11 @@
 /**
- * 摸鱼大赌场（DICE_HALL）：西带空地上的开放式豪华亭子 + 两张 6 人绿绒赌桌。
+ * 摸鱼大赌场（DICE_HALL）：游乐区西端的开放式豪华亭子 + 两张 6 人绿绒赌桌。
  *
  * 与 layout.ts 同一条纪律：坐标全部手写，不依赖 Math.random / Math.sin / Math.cos，
  * 服务端裁决、客户端渲染与布局测试共用这一份真相。
  *
- * 地块选在西主路以南、涟漪湖以北的草带（x 2620–3040 / y 3480–3880）：
- * 北离西主路 44px，南离湖岸 90px，西离岛界 60px，不压花海与竹林。
+ * ADR-0097 把赌场从西侧草地搬进游乐区：占游乐大街西端（x 2600–3020 / y 2620–3020），
+ * 南侧铺装直接落在街面上，往东一条街就是游乐园南门与八角笼。
  */
 
 import { DIRECTION } from '../constants';
@@ -13,25 +13,35 @@ import type { SeatInstance, SolidRect } from './campus';
 import type { WorldRect } from './geometry';
 
 /** 亭子整体占地：也是小地图上的建筑填色块 */
-export const DICE_HALL: WorldRect = { x: 2620, y: 3480, w: 420, h: 400 };
+export const DICE_HALL: WorldRect = { x: 2600, y: 2620, w: 420, h: 400 };
 
 /** 亭心：招牌与灯串围绕它对称摆放 */
 export const DICE_HALL_CENTER = { x: DICE_HALL.x + DICE_HALL.w / 2, y: DICE_HALL.y + 190 } as const;
 
-/** 南侧迎宾铺装：把亭子接到西主路的弯道上 */
-export const DICE_HALL_APRON: WorldRect = { x: 2738, y: 3860, w: 184, h: 76 };
+/** 南侧迎宾铺装：把亭子接到游乐大街 */
+export const DICE_HALL_APRON: WorldRect = {
+  x: DICE_HALL.x + 118,
+  y: DICE_HALL.y + 380,
+  w: 184,
+  h: 76,
+};
 
 /** 北侧吧台与霓虹招牌底座：只挡柜台那一截，人在柜前点单 */
-export const DICE_HALL_BAR: WorldRect = { x: 2700, y: 3514, w: 260, h: 30 };
+export const DICE_HALL_BAR: WorldRect = {
+  x: DICE_HALL.x + 80,
+  y: DICE_HALL.y + 34,
+  w: 260,
+  h: 30,
+};
 
 /** 六根朱红廊柱：南北各两根，东西居中各一根，中间留空让人走向赌桌 */
 export const DICE_HALL_COLUMNS: ReadonlyArray<{ x: number; y: number }> = [
-  { x: 2648, y: 3516 },
-  { x: 3012, y: 3516 },
-  { x: 2648, y: 3800 },
-  { x: 3012, y: 3800 },
-  { x: 2648, y: 3658 },
-  { x: 3012, y: 3658 },
+  { x: DICE_HALL.x + 28, y: DICE_HALL.y + 36 },
+  { x: DICE_HALL.x + 392, y: DICE_HALL.y + 36 },
+  { x: DICE_HALL.x + 28, y: DICE_HALL.y + 320 },
+  { x: DICE_HALL.x + 392, y: DICE_HALL.y + 320 },
+  { x: DICE_HALL.x + 28, y: DICE_HALL.y + 178 },
+  { x: DICE_HALL.x + 392, y: DICE_HALL.y + 178 },
 ];
 
 export const DICE_HALL_SOLIDS: ReadonlyArray<SolidRect> = [

@@ -228,54 +228,64 @@ export interface BuildingSpec {
   floor: FloorKind;
 }
 
-/** 房间统一尺寸：四角各一间，贴院落四角 */
+/** 房间统一尺寸：企业楼上下两排，每排两间 */
 export const ROOM_W = 460;
 export const ROOM_H = 360;
 
 /**
- * 卫生间单独收小（ADR-0077）：460×360 → 340×300，仍贴院落东南角。
+ * 卫生间单独收小（ADR-0077）：460×360 → 340×300。
  * 净宽 320 = 100（男）+ 10（隔墙）+ 100（洗手池）+ 10（隔墙）+ 100（女），
  * 每侧从 3 格坑位降到 2 格，房间不再是「半座空房」。
+ *
+ * ADR-0097：卫生间搬出企业楼，独立立在服务区广场北侧，门朝广场。
  */
 export const RESTROOM_W = 340;
 export const RESTROOM_H = 300;
 
 /**
- * 四角院落（也是 `WORLD_LAYOUT.office`）：北门正对，中心仍是世界中心 (4096,4096)。
- * 1520 = 460 + 600 + 460，1240 = 360 + 520 + 360 —— 中间的 600×520 就是中庭。
+ * 企业楼（也是 `WORLD_LAYOUT.office`，ADR-0097）：一栋 920×760 的两层小楼，
+ * 坐落在中央广场正西的前庭之后。北排两间（工作区 / 会议室），中间一条 40px 走廊，
+ * 南排一整间发泄室；走廊东端敞口，就是公司大门。
+ *
+ * 楼不再像旧四角院落那样围住广场：广场独立成市政中心，五个方向各接一条街。
  */
-export const CAMPUS_RECT: WorldRect = { x: 3336, y: 3476, w: 1520, h: 1240 };
+export const CAMPUS_RECT: WorldRect = { x: 2620, y: 3200, w: 920, h: 760 };
 
-/** 西北：开放工作区（无墙） */
+/** 北排西：开放工作区（无墙，两排背靠背工位） */
 export const WORKROOM: WorldRect = { x: CAMPUS_RECT.x, y: CAMPUS_RECT.y, w: ROOM_W, h: ROOM_H };
-/** 东北：会议室 */
+/** 北排东：会议室（南墙开门，朝走廊） */
 export const MEETING_ROOM: WorldRect = {
-  x: CAMPUS_RECT.x + CAMPUS_RECT.w - ROOM_W,
+  x: CAMPUS_RECT.x + ROOM_W,
   y: CAMPUS_RECT.y,
   w: ROOM_W,
   h: ROOM_H,
 };
-/** 西南：宿舍区（显示名；标识符沿用 LOUNGE，避免 HUD 与测试大改） */
-export const LOUNGE: WorldRect = {
+/** 楼内走廊：北排与南排之间 40px，东端敞口即大门 */
+export const COMPANY_CORRIDOR: WorldRect = {
   x: CAMPUS_RECT.x,
-  y: CAMPUS_RECT.y + CAMPUS_RECT.h - ROOM_H,
-  w: ROOM_W,
+  y: CAMPUS_RECT.y + ROOM_H,
+  w: CAMPUS_RECT.w,
+  h: 40,
+};
+/** 南排：发泄室（整排一间 920×360，橡胶地 + 老板） */
+export const VENT_ROOM: WorldRect = {
+  x: CAMPUS_RECT.x,
+  y: CAMPUS_RECT.y + ROOM_H + 40,
+  w: CAMPUS_RECT.w,
   h: ROOM_H,
 };
-/** 东南：卫生间（比其它三间小一圈，仍贴院落东南角） */
+/**
+ * 生活区宿舍：与企业楼分家，落到生活大街南侧（ADR-0097）。
+ * 显示名仍是「宿舍区」，标识符沿用 LOUNGE，避免 HUD 与测试大改。
+ */
+export const LOUNGE: WorldRect = { x: 3820, y: 5400, w: ROOM_W, h: ROOM_H };
+/** 服务区卫生间：独立小楼，门朝北面的服务广场 */
 export const RESTROOM: WorldRect = {
-  x: CAMPUS_RECT.x + CAMPUS_RECT.w - RESTROOM_W,
-  y: CAMPUS_RECT.y + CAMPUS_RECT.h - RESTROOM_H,
+  x: 4600,
+  y: 3660,
   w: RESTROOM_W,
   h: RESTROOM_H,
 };
-
-/**
- * 南侧休息庭院（原研发园）：会议室与卫生间搬进四角后只留铺装与休憩设施。
- * 北缘 5140 接南向主路，铺装内收 40 留给草缘。
- */
-export const SOUTH_YARD: WorldRect = { x: 3336, y: 5140, w: 1520, h: 560 };
-export const SOUTH_YARD_PAVING: WorldRect = { x: 3376, y: 5160, w: 1440, h: 520 };
 
 /* ------------------------------------------------------------------ *
  * 家庭影音室（本轮新增）
@@ -285,29 +295,49 @@ export const SOUTH_YARD_PAVING: WorldRect = { x: 3376, y: 5160, w: 1440, h: 520 
  * 门开在东墙，进门后是东侧走道，三排座椅面朝北墙的大屏幕。
  * ------------------------------------------------------------------ */
 
-export const HOME_THEATER: WorldRect = { x: 3380, y: 4790, w: 460, h: 320 };
-/** 东墙门洞：与南向主路接出来的支路同一条 y（4950） */
-export const HOME_THEATER_DOOR: DoorSpec = { side: 'east', from: 4920, to: 4980 };
-/** 门前铺装：从墙外接到 120px，再交给支路 */
-export const HOME_THEATER_DOOR_PAVING: WorldRect = { x: 3840, y: 4920, w: 120, h: 60 };
+export const HOME_THEATER: WorldRect = { x: 3200, y: 5400, w: 460, h: 320 };
+/** 东墙门洞：与生活大街接出来的支路同一条 y */
+export const HOME_THEATER_DOOR: DoorSpec = {
+  side: 'east',
+  from: HOME_THEATER.y + 130,
+  to: HOME_THEATER.y + 190,
+};
+/** 门前铺装：从墙外接到生活大街 */
+export const HOME_THEATER_DOOR_PAVING: WorldRect = {
+  x: HOME_THEATER.x + HOME_THEATER.w,
+  y: HOME_THEATER.y + 130,
+  w: 120,
+  h: 60,
+};
 
 /** 北墙大屏幕：260×60，居中压在三排座位上 */
-export const THEATER_SCREEN = { x: 3442, y: 4792, w: 260, h: 60 } as const;
+export const THEATER_SCREEN = {
+  x: HOME_THEATER.x + 62,
+  y: HOME_THEATER.y + 2,
+  w: 260,
+  h: 60,
+} as const;
 
 /**
  * 四只环绕音箱：前左 / 前右 / 后左 / 后右。
  * 只描述挂点（中心），具体像素画由 `interior-art.ts` 决定。
  */
 export const THEATER_SPEAKERS: ReadonlyArray<{ x: number; y: number }> = [
-  { x: HOME_THEATER.x + 22, y: 4840 },
-  { x: HOME_THEATER.x + 438, y: 4840 },
-  { x: HOME_THEATER.x + 22, y: 5070 },
-  { x: HOME_THEATER.x + 438, y: 5070 },
+  { x: HOME_THEATER.x + 22, y: HOME_THEATER.y + 50 },
+  { x: HOME_THEATER.x + 438, y: HOME_THEATER.y + 50 },
+  { x: HOME_THEATER.x + 22, y: HOME_THEATER.y + 280 },
+  { x: HOME_THEATER.x + 438, y: HOME_THEATER.y + 280 },
 ];
 
 /** 三排 × 五列影厅座椅：全部面朝北墙屏幕（Up），列距 56、排距 60 */
-const THEATER_SEAT_XS = [3460, 3516, 3572, 3628, 3684] as const;
-const THEATER_ROW_YS = [4900, 4960, 5020] as const;
+const THEATER_SEAT_XS = [
+  HOME_THEATER.x + 80,
+  HOME_THEATER.x + 136,
+  HOME_THEATER.x + 192,
+  HOME_THEATER.x + 248,
+  HOME_THEATER.x + 304,
+] as const;
+const THEATER_ROW_YS = [HOME_THEATER.y + 110, HOME_THEATER.y + 170, HOME_THEATER.y + 230] as const;
 
 export const THEATER_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = THEATER_ROW_YS.flatMap((y) =>
   THEATER_SEAT_XS.map((x) => ({ x, y, facing: DIRECTION.Up, kind: 'cinema' as const })),
@@ -324,14 +354,23 @@ export const THEATER_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = THEATER_R
  * y=4950 的支路全部不动，只把东墙与南墙收进来，三个反省位更紧凑。
  * ------------------------------------------------------------------ */
 
-export const JAIL: WorldRect = { x: 4320, y: 4790, w: 320, h: 240 };
-/** 西墙门洞：与南向主路接出来的支路同一条 y（4950） */
-export const JAIL_DOOR: DoorSpec = { side: 'west', from: 4920, to: 4980 };
-/** 门前铺装：从墙外接到支路末端的 80px */
-export const JAIL_DOOR_PAVING: WorldRect = { x: 4250, y: 4920, w: 80, h: 60 };
+export const JAIL: WorldRect = { x: 4600, y: 4040, w: 320, h: 240 };
+/** 西墙门洞：开向服务广场 */
+export const JAIL_DOOR: DoorSpec = {
+  side: 'west',
+  from: JAIL.y + 130,
+  to: JAIL.y + 190,
+};
+/** 门前铺装：从墙外接到服务广场的 80px */
+export const JAIL_DOOR_PAVING: WorldRect = {
+  x: JAIL.x - 80,
+  y: JAIL.y + 130,
+  w: 80,
+  h: 60,
+};
 
 /** 反省凳锚点：被押送者坐在这里，面朝北墙的警示海报 */
-export const JAIL_ANCHOR = { x: 4470, y: 4980 } as const;
+export const JAIL_ANCHOR = { x: JAIL.x + 150, y: JAIL.y + 190 } as const;
 /** 同时关 3 人时的左右空位：以反省点为中心各让 48px */
 export const JAIL_ANCHORS: ReadonlyArray<{ x: number; y: number }> = [
   { x: JAIL_ANCHOR.x - 48, y: JAIL_ANCHOR.y },
@@ -341,12 +380,18 @@ export const JAIL_ANCHORS: ReadonlyArray<{ x: number; y: number }> = [
 
 /** 墙厚：碰撞与视觉共用，玩家半径 9 贴墙时不会穿过 10px 墙体 */
 export const WALL_THICKNESS = 10;
-/** 门洞区间：会议室朝南（面向中庭），宿舍区与卫生间朝北 */
+/** 门洞区间：会议室朝南（面向楼内走廊），发泄室朝北（面向同一条走廊） */
 const MEETING_DOOR: DoorSpec = {
   side: 'south',
   from: MEETING_ROOM.x + 330,
   to: MEETING_ROOM.x + 390,
 };
+const VENT_DOOR: DoorSpec = {
+  side: 'north',
+  from: VENT_ROOM.x + 300,
+  to: VENT_ROOM.x + 360,
+};
+/** 卫生间朝北（面向服务广场），宿舍区朝北（面向生活大街） */
 const RESTROOM_DOOR: DoorSpec = {
   side: 'north',
   from: RESTROOM.x + 150,
@@ -446,7 +491,17 @@ function roomWalls(rect: WorldRect, door: DoorSpec): SolidRect[] {
   return walls;
 }
 
+/**
+ * 工作区：楼体北 / 西两面外墙 + 朝走廊的整段敞口（ADR-0097）。
+ * 门洞区间覆盖整条南沿，`roomWalls` 自然把南墙拆成零段——开放区仍然没有内墙。
+ */
+const workroomSolids = roomWalls(WORKROOM, {
+  side: 'south',
+  from: WORKROOM.x,
+  to: WORKROOM.x + WORKROOM.w,
+});
 const meetingSolids = roomWalls(MEETING_ROOM, MEETING_DOOR);
+const ventSolids = roomWalls(VENT_ROOM, VENT_DOOR);
 const restroomSolids = roomWalls(RESTROOM, RESTROOM_DOOR);
 const loungeSolids = roomWalls(LOUNGE, LOUNGE_DOOR);
 const theaterSolids = roomWalls(HOME_THEATER, HOME_THEATER_DOOR);
@@ -636,37 +691,37 @@ export const LOUNGE_COUCH_SECOND: Omit<SeatInstance, 'id' | 'desk'> = {
   variant: 1,
 };
 
-/** 四区门口的 logo 立牌：variant 与渲染端的四个图标一一对应，不参与碰撞 */
+/** 各处门口的 logo 立牌：variant 与渲染端的图标一一对应，不参与碰撞 */
 export const AREA_LOGOS: PropInstance[] = [
-  { kind: 'logo', variant: 0, x: CAMPUS_RECT.x + 478, y: CAMPUS_RECT.y + 370 },
-  { kind: 'logo', variant: 1, x: MEETING_ROOM.x + 344, y: MEETING_ROOM.y + 386 },
-  { kind: 'logo', variant: 2, x: LOUNGE.x + 270, y: LOUNGE.y - 16 },
+  { kind: 'logo', variant: 0, x: WORKROOM.x + 430, y: WORKROOM.y + 330 },
+  { kind: 'logo', variant: 1, x: MEETING_ROOM.x + 400, y: MEETING_ROOM.y + 330 },
+  { kind: 'logo', variant: 2, x: VENT_ROOM.x + 80, y: VENT_ROOM.y + 300 },
   { kind: 'logo', variant: 3, x: RESTROOM.x + 240, y: RESTROOM.y - 16 },
+  { kind: 'logo', variant: 2, x: LOUNGE.x + 270, y: LOUNGE.y - 16 },
 ];
 
 /**
- * 南侧休息庭院：灯柱四面、绿植四角、长椅与野餐桌沿边、单车与指路牌点缀。
- * 中央一块 420×320 的橡胶垫留给发泄区（ADR-0070），桌椅沿边让位。
- * 原先会议室/卫生间的陈设随房间搬走，这里只保留户外高频家具。
+ * 生活大街（ADR-0097）：公寓楼群南侧的东西向人行道，也是生活区的公共客厅。
+ * 灯柱、绿植、长椅、野餐桌、单车与导览牌沿街摆放，数量与旧南院一致，
+ * 长椅顺序不变，`seatId` 不会整体后移。
  */
-export const SOUTH_YARD_PROPS: PropInstance[] = [
-  { kind: 'lamp', x: 3416, y: 5200 },
-  { kind: 'lamp', x: 4776, y: 5200 },
-  { kind: 'lamp', x: 3416, y: 5620 },
-  { kind: 'lamp', x: 4776, y: 5620 },
-  { kind: 'plant', x: 3500, y: 5200 },
-  { kind: 'plant', x: 4690, y: 5200 },
-  { kind: 'plant', x: 3500, y: 5600 },
-  { kind: 'plant', x: 4690, y: 5600 },
-  { kind: 'bench', x: 3700, y: 5620 },
-  { kind: 'bench', x: 4490, y: 5620 },
-  // 中央长椅让位给发泄垫，挪到东侧花境旁；只改坐标，保持 bench 顺序与 seatId 稳定
-  { kind: 'bench', x: 4620, y: 5420 },
-  { kind: 'table', x: 3800, y: 5320 },
-  { kind: 'table', x: 4400, y: 5320 },
-  { kind: 'bike', x: 4740, y: 5600 },
-  { kind: 'sign', x: 4250, y: 5190 },
-  { kind: 'bin', x: 3416, y: 5480 },
+export const LIVING_PROPS: PropInstance[] = [
+  { kind: 'lamp', x: 3160, y: 5290 },
+  { kind: 'lamp', x: 3500, y: 5290 },
+  { kind: 'lamp', x: 3900, y: 5290 },
+  { kind: 'lamp', x: 4420, y: 5290 },
+  { kind: 'plant', x: 3240, y: 5290 },
+  { kind: 'plant', x: 3620, y: 5290 },
+  { kind: 'plant', x: 4100, y: 5290 },
+  { kind: 'plant', x: 4560, y: 5290 },
+  { kind: 'bench', x: 3340, y: 5320 },
+  { kind: 'bench', x: 4060, y: 5320 },
+  { kind: 'bench', x: 4520, y: 5320 },
+  { kind: 'table', x: 3000, y: 5400 },
+  { kind: 'table', x: 4560, y: 5400 },
+  { kind: 'bike', x: 3040, y: 5500 },
+  { kind: 'sign', x: 4160, y: 4740 },
+  { kind: 'bin', x: 3140, y: 5290 },
 ];
 
 /**
@@ -719,6 +774,7 @@ export const DOOR_PAVING: WorldRect[] = [
 export const CAMPUS_BUILDINGS: BuildingSpec[] = [
   { name: '工作区', rect: WORKROOM, floor: 'wood' },
   { name: '会议室', rect: MEETING_ROOM, floor: 'walnut' },
+  { name: '发泄区', rect: VENT_ROOM, floor: 'rubber' },
   { name: '宿舍区', rect: LOUNGE, floor: 'carpet' },
   { name: '卫生间', rect: RESTROOM, floor: 'tile' },
   { name: '家庭影音室', rect: HOME_THEATER, floor: 'cinema' },
@@ -726,11 +782,48 @@ export const CAMPUS_BUILDINGS: BuildingSpec[] = [
 ];
 
 /**
+ * 财神供案：工作区入口内侧偏西一列，正对开放区的东南入口（ADR-0097 随房间派生）。
+ * 底边压在南排工位桌之后（桌脚 y+266），不挡椅子也不挡进楼那条走廊。
+ */
+export const SHRINE_ALTAR = {
+  x: WORKROOM.x + 404,
+  y: WORKROOM.y + 324,
+  width: 56,
+  height: 44,
+} as const;
+
+/** 供案贴地碰撞：只挡下方 56×18 的案面+案腿，财神像与香炉在头顶 */
+export const SHRINE_ALTAR_SOLID: WorldRect = {
+  x: SHRINE_ALTAR.x - SHRINE_ALTAR.width / 2,
+  y: SHRINE_ALTAR.y - 18,
+  w: SHRINE_ALTAR.width,
+  h: 18,
+};
+
+/**
+ * 老干部紫砂茶台：工作区饮水机（cooler，x = WORKROOM.x + 164）东侧紧邻一格。
+ * 底边与饮水机齐平（+334），站过去就能续杯。
+ */
+export const TEA_STATION = { x: WORKROOM.x + 198, y: WORKROOM.y + 334, width: 46, height: 40 } as const;
+
+/** 茶台贴地碰撞：只挡下方 44×16 的桌面 */
+export const TEA_STATION_SOLID: WorldRect = {
+  x: TEA_STATION.x - 22,
+  y: TEA_STATION.y - 16,
+  w: 44,
+  h: 16,
+};
+
+/**
  * 有墙房间的墙体（含家庭影音室），加上卫生间两道内隔墙、
  * 四片坑位隔断与会议桌。工作区按需求不加墙，因此这里没有它的碰撞矩形。
  */
 export const CAMPUS_SOLIDS: SolidRect[] = [
+  ...workroomSolids,
   ...meetingSolids,
+  ...ventSolids,
+  // 走廊西端封口：楼体只留东端一个大门，西侧不能漏出一条缝
+  { kind: 'wall', x: CAMPUS_RECT.x, y: COMPANY_CORRIDOR.y, w: WALL_THICKNESS, h: COMPANY_CORRIDOR.h },
   ...restroomSolids,
   ...loungeSolids,
   ...theaterSolids,

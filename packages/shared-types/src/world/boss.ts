@@ -2,25 +2,27 @@
  * 发泄区与老板：服务端碰撞、客户端烘焙、交互感应与布局测试共用的唯一坐标真相。
  *
  * 坐标约定与 `WELCOME_LANDMARKS` 一致：`x` 是横向中心，`y` 是脚底（南沿），
- * 宽高是含头顶 UI 在内的整体包围盒。发泄区落在研发园（南侧休息庭院）铺装中央，
- * 从南向主路进院就能正对垫子（ADR-0070）。
+ * 宽高是含头顶 UI 在内的整体包围盒。ADR-0097 把发泄区收进企业楼南排的
+ * 发泄室（`VENT_ROOM`）：一张橡胶地铺满整间房，老板站在垫子南端，
+ * 推门进来就是正面。
  */
 
 import { rectContains, type WorldRect } from './geometry';
+import { VENT_ROOM } from './campus';
 
 /**
- * 发泄区地面：研发园铺装中央偏西，四角距铺装边缘 140 / 60 / 524 / 496。
- * 北沿离庭院入口 160，南沿离铺装底 60，两侧野餐桌与长椅留在垫外。
+ * 发泄区地面：发泄室内的橡胶垫，横向居中，南端给玩家留出出招身位。
+ * 房间内净 900×340，垫子 420×300 居中偏北，四边各留 30–250 的走动空间。
  */
-export const BOSS_ARENA: WorldRect = { x: 3900, y: 5300, w: 420, h: 320 };
+export const BOSS_ARENA: WorldRect = { x: VENT_ROOM.x + 250, y: VENT_ROOM.y + 26, w: 420, h: 300 };
 
 /**
  * 老板形象：200×256 texel，1:1 烘焙后按 nearest 放大。
- * 脚底距垫底 40、头顶距垫顶 24，与旧垫的站位比例一致；背对北侧入口。
+ * 脚底距垫底 40、头顶距垫顶 4；背对北侧门口。
  */
 export const BOSS = {
-  x: 4110,
-  y: 5580,
+  x: BOSS_ARENA.x + 210,
+  y: BOSS_ARENA.y + 260,
   width: 200,
   height: 256,
 } as const;
