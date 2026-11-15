@@ -74,6 +74,7 @@ import {
   PARK_GATE_PAVING,
   PARK_PROPS,
   PARK_RIDE_SOLIDS,
+  PARK_SOUTH_GATE,
 } from './park';
 import { BOSS_ARENA, BOSS_SOLID } from './boss';
 import {
@@ -82,6 +83,7 @@ import {
   RING_BENCH_SOLIDS,
   RING_EXIT,
   RING_FENCE_SOLIDS,
+  RING_SIGNUP,
 } from './ring';
 import {
   DICE_HALL,
@@ -93,7 +95,7 @@ import {
   DICE_TABLES,
 } from './dice-hall';
 import { VILLA_SPECS, VILLA_WALL_SOLIDS } from './villas';
-import { APARTMENT, APARTMENT_OUTSIDE, APARTMENT_WALL_SOLIDS } from './apartment';
+import { APARTMENT_SPECS, APARTMENT_WALL_SOLIDS } from './apartment';
 
 export {
   BENCH_SEAT_OFFSET,
@@ -334,6 +336,14 @@ const PAVILION_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = [
 /** 亭内汉白玉石桌：亭心一张，本体由 `pavilion.ts` 绘制，碰撞在下面单独登记 */
 export const PAVILION_TABLE = { x: PAVILION_CENTER.x, y: PAVILION_CENTER.y, radius: 22 } as const;
 
+/** 亭子的整体占地矩形（y 是底座南沿）：种树留白与区域名共用 */
+export const PAVILION_RECT: WorldRect = {
+  x: MOPING_PAVILION.x - MOPING_PAVILION.width / 2,
+  y: MOPING_PAVILION.y - MOPING_PAVILION.height,
+  w: MOPING_PAVILION.width,
+  h: MOPING_PAVILION.height,
+};
+
 /**
  * 赛博财神供案：工作区入口内侧偏西一列，正对开放区的东南入口。
  * 底边 y = 3800 压在南排工位桌之后（桌脚 3742），不挡椅子也不挡进门那条支路。
@@ -487,47 +497,29 @@ export const DOOR_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
 ];
 
 /**
- * 门头牌匾（ADR-0061）：三处门头各自起一座牌坊（两柱 + 横枋 + 匾），
- * 匾额挂在横枋之上。
+ * 场所门牌（ADR-0061 / ADR-0091）。
  *
- * 为什么不自建门头的就不做：仓库的墙体是**平铺 10px 色带**（`props.ts` 的
- * `fillSolidFlat`），没有立面可以挂牌匾；只有在门前立一座牌坊，匾额才有地方挂。
+ * 仓库的墙体是**平铺 10px 色带**（`props.ts` 的 `fillSolidFlat`），没有立面可以挂牌匾，
+ * 所以牌匾要么自带牌坊（`frame: 'gate'`），要么在入口立一块小门牌（`frame: 'board'`）。
+ *
+ * 为什么定义放在 `NAV_TARGETS` 之后：匾额文案一律取自导览目标的中文名，
+ * 不在第二处手写场所名；两栋小院用院门牌匾（`villas-view.ts`），不进这张表。
  */
 export interface DoorPlaque {
+  readonly id: Exclude<NavTargetId, 'villa1' | 'villa2'>;
+  /** 标准中文名，取自 `NAV_TARGETS` */
   readonly text: string;
-  /** 门头中心 x（牌坊对称轴） */
+  /** 门头中心 x（牌坊 / 门牌的对称轴） */
   readonly x: number;
   /** 进 y 排序层的脚底 y（= 门所在的那条线） */
   readonly depthY: number;
-  /** 黑底金字（工作区）/ 木底墨字（会议室、宿舍区） */
+  /** gate：自建牌坊（含对联）；board：入口小门牌 */
+  readonly frame: 'gate' | 'board';
+  /** 黑底金字（工作区与小门牌）/ 木底墨字（会议室、宿舍区） */
   readonly inkGold: boolean;
   /** 竖排对联：左 / 右；null 表示这座门头不做对联 */
   readonly couplets: readonly [string, string] | null;
 }
-
-export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
-  {
-    text: '难 得 糊 涂',
-    x: WORKROOM_GATE_X,
-    depthY: WORKROOM.y + ROOM_H,
-    inkGold: true,
-    couplets: ['有 事 烧 香', '无 事 摸 鱼'],
-  },
-  {
-    text: '画 饼 充 饥',
-    x: MEETING_ROOM.x + 360,
-    depthY: MEETING_ROOM.y + ROOM_H,
-    inkGold: false,
-    couplets: null,
-  },
-  {
-    text: '安 乐 窝',
-    x: LOUNGE.x + 230,
-    depthY: LOUNGE.y,
-    inkGold: false,
-    couplets: null,
-  },
-];
 
 /** 树干碰撞半径：>3 才挡得住人，<14 才能从树缝里穿过去 */
 export const TREE_TRUNK_RADIUS = 12;
@@ -864,8 +856,8 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   // 两栋小院的院门外台阶
   villa1: { x: VILLA_SPECS[0]!.gate.x, y: VILLA_SPECS[0]!.gate.y + 24 },
   villa2: { x: VILLA_SPECS[1]!.gate.x, y: VILLA_SPECS[1]!.gate.y + 24 },
-  // 公寓门口台阶
-  apartment: { x: APARTMENT_OUTSIDE.x, y: APARTMENT_OUTSIDE.y },
+  // 公寓门口台阶：六栋楼各有自己的门，导览统一送到 301 栋（导航目标只有一个）
+  apartment: { x: APARTMENT_SPECS[0]!.outside.x, y: APARTMENT_SPECS[0]!.outside.y },
 };
 
 const NAV_SOURCES: ReadonlyArray<{
@@ -886,7 +878,8 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'diceHall', name: '摸鱼大赌场', area: 'grounds', ...rectCenter(DICE_HALL) },
   { id: 'villa1', name: VILLA_SPECS[0]!.name, area: 'grounds', ...rectCenter(VILLA_SPECS[0]!.rect) },
   { id: 'villa2', name: VILLA_SPECS[1]!.name, area: 'grounds', ...rectCenter(VILLA_SPECS[1]!.rect) },
-  { id: 'apartment', name: '牛马公寓', area: 'grounds', ...rectCenter(APARTMENT) },
+  // 六栋楼绕广场铺开：导览读数按 301 栋算，避免报一个谁都不在的几何中心
+  { id: 'apartment', name: '牛马公寓', area: 'grounds', ...rectCenter(APARTMENT_SPECS[0]!.rect) },
 ];
 
 export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, area, x, y }) => ({
@@ -897,6 +890,123 @@ export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, ar
   y,
   arrive: NAV_ARRIVALS[id],
 }));
+
+/** 场所门牌的中文名：只从导览目标取，避免第二份手写场所名 */
+function navName(id: NavTargetId): string {
+  const target = NAV_TARGETS.find((item) => item.id === id);
+  if (!target) throw new Error(`NAV_TARGETS 缺少场所 ${id}`);
+  return target.name;
+}
+
+/**
+ * 12 处导览场所的门牌（ADR-0091）。
+ *
+ * - `gate`：工作区 / 会议室 / 宿舍区沿用自建牌坊，匾额换成标准中文名；
+ * - `board`：其余 7 处在入口立一块 60×30 的小门牌，纯装饰、不登记碰撞；
+ * - 两栋小院不在表内：院名直接写在院门牌匾上（`villas-view.ts`）。
+ *
+ * 所有落点都贴在门的侧前方，不压门洞、不挡导览到达点；坐标只从世界常量派生。
+ */
+export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
+  {
+    id: 'workroom',
+    text: navName('workroom'),
+    x: WORKROOM_GATE_X,
+    depthY: WORKROOM.y + ROOM_H,
+    frame: 'gate',
+    inkGold: true,
+    couplets: ['有 事 烧 香', '无 事 摸 鱼'],
+  },
+  {
+    id: 'meeting',
+    text: navName('meeting'),
+    x: MEETING_ROOM.x + 360,
+    depthY: MEETING_ROOM.y + ROOM_H,
+    frame: 'gate',
+    inkGold: false,
+    couplets: null,
+  },
+  {
+    // 门洞 4666–4726 的西侧，避开东门外那根 logo 立牌（x + 240）；离北墙 24px，牌脚不压墙
+    id: 'restroom',
+    text: navName('restroom'),
+    x: RESTROOM.x + 120,
+    depthY: RESTROOM.y - 24,
+    frame: 'board',
+    inkGold: true,
+    couplets: null,
+  },
+  {
+    id: 'lounge',
+    text: navName('lounge'),
+    x: LOUNGE.x + 230,
+    depthY: LOUNGE.y,
+    frame: 'gate',
+    inkGold: false,
+    couplets: null,
+  },
+  {
+    // 供案东侧 60px、再往前 24px：不压 56 宽的案面，也不挡正前方上香的那一步
+    id: 'shrine',
+    text: navName('shrine'),
+    x: SHRINE_ALTAR.x + 60,
+    depthY: SHRINE_ALTAR.y + 24,
+    frame: 'board',
+    inkGold: true,
+    couplets: null,
+  },
+  {
+    // 南门外东侧草地：离 120 宽的门前铺装 30px，不压围栏缺口
+    id: 'park',
+    text: navName('park'),
+    x: PARK_SOUTH_GATE.x + 90,
+    depthY: PARK_SOUTH_GATE.y + 20,
+    frame: 'board',
+    inkGold: true,
+    couplets: null,
+  },
+  {
+    // 垫子北缘外侧的铺装：正对南院入口，但不占垫内动线
+    id: 'bossArena',
+    text: navName('bossArena'),
+    x: BOSS_ARENA.x + 60,
+    depthY: BOSS_ARENA.y - 10,
+    frame: 'board',
+    inkGold: true,
+    couplets: null,
+  },
+  {
+    // 南门外东侧：离门洞中线 84px，避开围栏与两侧观战长椅
+    id: 'ring',
+    text: navName('ring'),
+    x: RING_SIGNUP.x + 84,
+    depthY: RING_ARENA.y + RING_ARENA.h + 12,
+    frame: 'board',
+    inkGold: true,
+    couplets: null,
+  },
+  {
+    // 南侧迎宾铺装东半边：不挡中间进亭动线
+    id: 'diceHall',
+    text: navName('diceHall'),
+    x: DICE_HALL.x + DICE_HALL.w - 130,
+    depthY: DICE_HALL_APRON.y + 14,
+    frame: 'board',
+    inkGold: true,
+    couplets: null,
+  },
+  {
+    // 301 栋门口台阶东侧 110px：避开正门热区与立面招牌
+    // 六栋楼各有一块自带门牌号的立面牌（见 apartment-view），这张表只登记一处
+    id: 'apartment',
+    text: navName('apartment'),
+    x: APARTMENT_SPECS[0]!.door.x + 110,
+    depthY: APARTMENT_SPECS[0]!.door.y,
+    frame: 'board',
+    inkGold: true,
+    couplets: null,
+  },
+];
 
 /**
  * 点到水域边界的最短距离平方：湖面共用一份判定。
@@ -978,7 +1088,7 @@ const REGIONS: RegionSpec[] = [
   // 新建筑（本轮）：赌场亭、两栋小院、牛马公寓
   { name: '摸鱼大赌场', rect: rectExpanded(DICE_HALL, 10) },
   ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: rectExpanded(spec.rect, 8) })),
-  { name: '牛马公寓', rect: rectExpanded(APARTMENT, 10) },
+  ...APARTMENT_SPECS.map((spec) => ({ name: '牛马公寓', rect: rectExpanded(spec.rect, 10) })),
   { name: '研发园', rect: SOUTH_YARD },
 ];
 
@@ -1020,6 +1130,11 @@ const GROVE_CENTERS: ReadonlyArray<Point> = [
   [4950, 4680],
   [2800, 5400],
   [2900, 5680],
+  // ADR-0095：六栋公寓楼各带 40px 树带，在此补回被楼体占掉的林荫
+  [4720, 3092],
+  [3160, 3732],
+  [4960, 4572],
+  [2800, 5412],
 ];
 
 /** 五边形偏移：前 2 / 3 / 4 个点两两距离都 ≥90，簇半径约 120 */
@@ -1068,6 +1183,8 @@ function isPlantable(x: number, y: number): boolean {
     if (rectContains(rectExpanded(building.rect, 40), x, y)) return false;
   }
   if (rectContains(rectExpanded(AMUSEMENT_PARK, 40), x, y)) return false;
+  // 摸鱼亭：亭柱、石桌与四张石鼓凳都在亭内，树干不能长进亭心
+  if (rectContains(rectExpanded(PAVILION_RECT, 40), x, y)) return false;
   // 护士急救站：站台 + 进站铺装外扩 60，树冠不能压到救护车出入口
   if (rectContains(rectExpanded(CLINIC_RECT, 60), x, y)) return false;
   if (rectContains(rectExpanded(CLINIC_ACCESS_PAVING, 40), x, y)) return false;
@@ -1075,7 +1192,7 @@ function isPlantable(x: number, y: number): boolean {
   if (rectContains(rectExpanded(DICE_HALL, 40), x, y)) return false;
   if (rectContains(rectExpanded(DICE_HALL_APRON, 24), x, y)) return false;
   for (const spec of VILLA_SPECS) if (rectContains(rectExpanded(spec.rect, 36), x, y)) return false;
-  if (rectContains(rectExpanded(APARTMENT, 40), x, y)) return false;
+  for (const spec of APARTMENT_SPECS) if (rectContains(rectExpanded(spec.rect, 40), x, y)) return false;
   // 竹林留白：这两片交给竹子，普通树不再混长进来（ADR-0061 的「替换部分普通树木」）
   for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
   if (rectContains(rectExpanded(SOUTH_YARD, 40), x, y)) return false;
@@ -1108,8 +1225,10 @@ function isPlantable(x: number, y: number): boolean {
 const FLOWER_FIELDS: FlowerPatch[] = [
   { rect: { x: 2680, y: 3300, w: 240, h: 150 }, palette: 2 },
   { rect: { x: 4680, y: 3280, w: 220, h: 150 }, palette: 1 },
-  { rect: { x: 5280, y: 3860, w: 180, h: 140 }, palette: 0 },
-  { rect: { x: 2760, y: 5250, w: 220, h: 160 }, palette: 1 },
+  // ADR-0095：306 栋落在东侧草带，这片花海南移到楼体与急救站之间的空地
+  { rect: { x: 5300, y: 4080, w: 180, h: 140 }, palette: 0 },
+  // ADR-0095：304 栋占了西南角草带，花海西移到湖岸与楼体之间
+  { rect: { x: 2680, y: 5340, w: 200, h: 150 }, palette: 1 },
   { rect: { x: 4900, y: 4560, w: 200, h: 150 }, palette: 2 },
   { rect: { x: 3150, y: 4950, w: 160, h: 130 }, palette: 1 },
 ];
@@ -1175,17 +1294,21 @@ function avenueTrees(planted: TreeInstance[]): TreeInstance[] {
   return out;
 }
 
+/** 孤树撒点格距：128 → 96（ADR-0077）→ 72（ADR-0095 补回公寓占掉的林荫） */
+const LOOSE_TREE_STEP = 72;
+
 /** 草地孤树：比树丛更稀，作为树丛之间的呼吸点 */
 function looseTrees(planted: TreeInstance[]): TreeInstance[] {
   const random = mulberry32(0x1f3a5c7d);
   const out: TreeInstance[] = [];
   const { x, y, w, h } = ISLAND.bounds;
-  // ADR-0077：岛缩到 3040×3368 后 128 栅格的候选太少，格距收到 96 保住林荫密度
-  for (let py = y + 180; py < y + h - 180; py += 96) {
-    for (let px = x + 180; px < x + w - 180; px += 96) {
+  // ADR-0077：岛缩到 3040×3368 后 128 栅格的候选太少，格距收到 96 保住林荫密度；
+  // ADR-0095：六栋公寓楼各带 40px 树带，又被收走一圈，格距再收到 72 把林荫补回来
+  for (let py = y + 180; py < y + h - 180; py += LOOSE_TREE_STEP) {
+    for (let px = x + 180; px < x + w - 180; px += LOOSE_TREE_STEP) {
       if (random() > 0.3) continue;
-      const tx = px + Math.round((random() - 0.5) * 96);
-      const ty = py + Math.round((random() - 0.5) * 96);
+      const tx = px + Math.round((random() - 0.5) * LOOSE_TREE_STEP);
+      const ty = py + Math.round((random() - 0.5) * LOOSE_TREE_STEP);
       if (!isPlantable(tx, ty)) continue;
       if (tooClose(tx, ty, planted, TREE_GAP)) continue;
       const tree: TreeInstance = { x: tx, y: ty, variant: Math.floor(random() * TREE_VARIANTS) % TREE_VARIANTS };
@@ -1480,10 +1603,11 @@ const BENCH_SEATS: SeatInstance[] = PROPS.filter((prop) => prop.kind === 'bench'
  */
 export const CLINIC_RECT = { x: 5000, y: 4260, w: 248, h: 210 } as const;
 export const CLINIC_REGION_RECT = { x: 4990, y: 4250, w: 260, h: 230 } as const;
-/** 从东侧主路尽端接进站内的无障碍铺装 */
-export const CLINIC_ACCESS_PAVING = { x: 4660, y: 4328, w: 340, h: 44 } as const;
+/** 从东侧主路尽端接进站内的无障碍铺装（高度与西侧人行门洞等宽，ADR-0092） */
+export const CLINIC_ACCESS_PAVING = { x: 4660, y: 4322, w: 340, h: 56 } as const;
 export const CLINIC_COUNTER = { x: 5012, y: 4278, w: 112, h: 30 } as const;
-export const CLINIC_SIGN = { x: 5006, y: 4254 } as const;
+/** 立牌：脚底 4250 正好贴在北侧围挡外沿，不插进栏杆 */
+export const CLINIC_SIGN = { x: 5006, y: 4216 } as const;
 export const CLINIC_NURSE_SPOTS = [
   { x: 5044, y: 4272 },
   { x: 5092, y: 4272 },
@@ -1499,6 +1623,44 @@ export const CLINIC_AMBULANCE_SPOTS = [
 ] as const;
 /** 救护车抵达后把伤员放下的站内落点 */
 export const CLINIC_DROP = { x: 5030, y: 4380 } as const;
+/** 南侧救护车通道口东沿：车位线最东到 5164、车体最东到 5160，再留 10px */
+const CLINIC_VEHICLE_GAP_RIGHT = 5170;
+/** 救护车进站航点：通道口正南，站内伤员先到这里再直插站心（ADR-0092） */
+export const CLINIC_VEHICLE_ENTRY = { x: 5080, y: 4502 } as const;
+
+/**
+ * 护士站围挡（ADR-0092）：北、东、西三面栏杆 + 西侧 56px 人行门 + 南侧救护车通道。
+ *
+ * 几何由 `CLINIC_RECT` 向外扩 10px 派生（栏杆站在铺装外沿，不压地砖），
+ * 厚度与擂台围栏同口径。人行门洞与 `CLINIC_ACCESS_PAVING` 等高对齐，铺装直接接到门口；
+ * 南面 x 4990–5170 敞开，两辆车从车位直奔东侧空地的直线都落在这一段内，
+ * 救护车不会被自己的围栏挡住。
+ */
+export const CLINIC_FENCE_SOLIDS: ReadonlyArray<SolidRect> = (() => {
+  const thickness = 10;
+  const { x, y, w, h } = CLINIC_RECT;
+  const right = x + w;
+  const bottom = y + h;
+  const gateTop = CLINIC_ACCESS_PAVING.y;
+  const gateBottom = gateTop + CLINIC_ACCESS_PAVING.h;
+  return [
+    // 北面：整段封闭，护士站位 4272 与栏杆之间还留 12px
+    { kind: 'wall' as const, x: x - thickness, y: y - thickness, w: w + thickness * 2, h: thickness },
+    // 东面：整段封闭
+    { kind: 'wall' as const, x: right, y, w: thickness, h },
+    // 西面：人行门洞上下两段
+    { kind: 'wall' as const, x: x - thickness, y, w: thickness, h: gateTop - y },
+    { kind: 'wall' as const, x: x - thickness, y: gateBottom, w: thickness, h: bottom - gateBottom },
+    // 南面：只封东南角，西侧整段敞开作救护车通道
+    {
+      kind: 'wall' as const,
+      x: CLINIC_VEHICLE_GAP_RIGHT,
+      y: bottom,
+      w: right - CLINIC_VEHICLE_GAP_RIGHT,
+      h: thickness,
+    },
+  ];
+})();
 
 const CLINIC_SEATS: SeatInstance[] = CLINIC_BEDS.map((bed, index) => ({
   id: SEAT_DRAFTS.length + BENCH_SEATS.length + index + 1,
@@ -1603,6 +1765,8 @@ export const WORLD_LAYOUT: WorldLayout = {
     { kind: 'prop', ...BOSS_SOLID },
     // 护士急救站（ADR-0084）：导医柜台 + 两张病床的头尾边
     ...CLINIC_SOLIDS,
+    // 护士站围挡（ADR-0092）：三面栏杆 + 西门人行门洞，南侧留救护车通道
+    ...CLINIC_FENCE_SOLIDS,
     // 摸鱼大赌场：亭柱、吧台、两张赌桌
     ...DICE_HALL_SOLIDS,
     ...DICE_TABLE_SOLIDS,
@@ -1617,9 +1781,11 @@ export const WORLD_LAYOUT: WorldLayout = {
   buildings: [
     ...CAMPUS_BUILDINGS,
     PARK_BUILDING,
-    { name: '摸鱼大赌场', rect: DICE_HALL, floor: 'wood' },
-    ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: spec.house, floor: 'wood' as const })),
-    { name: '牛马公寓', rect: APARTMENT, floor: 'concrete' },
+    // 墨绿绒地面：和四角院落的木地板拉开色相，进门就知道换地方了
+    { name: '摸鱼大赌场', rect: DICE_HALL, floor: 'felt' },
+    ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: spec.house, floor: 'walnut' as const })),
+    // 六栋单户公寓楼（ADR-0095）：同名同地板，区域名与树带都按 rect 逐栋展开
+    ...APARTMENT_SPECS.map((spec) => ({ name: '牛马公寓', rect: spec.rect, floor: 'plaster' as const })),
   ],
   paved: [
     SOUTH_YARD_PAVING,
@@ -1628,7 +1794,7 @@ export const WORLD_LAYOUT: WorldLayout = {
     CLINIC_ACCESS_PAVING,
     DICE_HALL_APRON,
     ...VILLA_SPECS.map((spec) => spec.rect),
-    APARTMENT,
+    ...APARTMENT_SPECS.map((spec) => spec.rect),
     ...DOOR_PAVING,
   ],
 };

@@ -208,10 +208,14 @@ function pairAnchors(): FestivalAnchor[] {
 /**
  * 门楣彩旗：三座自建牌坊挂在横枋上；卫生间没有牌坊，按门洞中心
  * （= 东侧门柱再向左 30px）补一条等宽的短彩旗，视觉上仍是「门楣一朵红」。
+ *
+ * ADR-0091 之后 `DOOR_PLAQUES` 还包含 7 处入口小门牌，它们没有横枋可挂，
+ * 只取 `frame === 'gate'` 的三座，彩旗数量仍是 4 条。
  */
 function gateAnchors(): FestivalAnchor[] {
   const anchors: FestivalAnchor[] = [];
   for (const plaque of DOOR_PLAQUES) {
+    if (plaque.frame !== 'gate') continue;
     anchors.push({
       kind: 'gate-bunting',
       x: plaque.x,
@@ -300,8 +304,8 @@ export function festivalDecorPlan(): readonly FestivalAnchor[] {
 }
 
 /**
- * 6 处真实光池：光心落在彩旗中央那盏大灯笼正下方的地面，
- * 半径 / 颜色 / 抖动全部复用 `LANTERN_LIGHT`，与拱门宫灯同一套口径。
+ * 6 处真实光池：光心落在彩旗中央那串小灯正下方的地面，
+ * 半径 / 颜色 / 抖动全部复用 `LANTERN_LIGHT`，与拱门挂灯同一套口径。
  */
 export function festivalLights(plan: readonly FestivalAnchor[]): LightSpec[] {
   const lights: LightSpec[] = [];

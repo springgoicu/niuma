@@ -16,6 +16,7 @@ import {
   hotspotById,
   isWithinHotspot,
   rollDice,
+  seatMatchesHotspot,
   splitPool,
   type DicePhase,
   type DiceTablePacket,
@@ -76,7 +77,7 @@ export class DiceHallRuntime {
     return this.tables.find((table) => table.id === id);
   }
 
-  /** 下注：只有下注窗口、未押过、够近、注额合法才受理 */
+  /** 下注：只有下注窗口、未押过、本桌在座、够近、注额合法才受理（ADR-0093） */
   placeBet(player: Player, tableId: number, side: number, amount: number, now: number): boolean {
     const table = this.table(tableId);
     if (!table) return false;
@@ -86,9 +87,12 @@ export class DiceHallRuntime {
     const stake = Math.floor(amount);
     if (stake < DICE_MIN_BET || stake > DICE_MAX_BET) return false;
     if (table.bets.has(player.id)) return false;
-    // 距离门：必须站在这一桌的热区里，防止离场后伪造包
     const hotspot = hotspotById(`dice-table-${tableId}`);
-    if (!hotspot || !isWithinHotspot(hotspot, player.x, player.y, HOTSPOT_SERVER_SLACK)) return false;
+    if (!hotspot) return false;
+    // 座位门：必须坐在这一桌自己的圆凳上（坐下即入局，站着只能看）
+    if (!seatMatchesHotspot(hotspot, player.seat)) return false;
+    // 距离门：仍要处在这一桌的热区里，防止坐下后远程伪造包
+    if (!isWithinHotspot(hotspot, player.x, player.y, HOTSPOT_SERVER_SLACK)) return false;
     if (!this.ports.freeze(player, stake)) return false;
     table.bets.set(player.id, { side, amount: stake });
     return true;

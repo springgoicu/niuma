@@ -28,7 +28,7 @@ interface ApartmentDialogProps {
 /**
  * 牛马公寓面板（ADR-0087）。
  *
- * 左栏户型与升级价、中间 8×6 家具网格、右栏门牌号与串门邀请。
+ * 左栏户型与升级价、中间 6×4 家具网格、右栏门牌号与串门邀请。
  * 家具买过就永久拥有（记在 `unlockedCosmetics` 的 `furn:<id>` 上），
  * 摆放只受户型档位的槽位数限制；保存后由服务端广播给同频道的室友与访客。
  */
@@ -157,8 +157,11 @@ export function ApartmentDialog({
           </button>
         </div>
 
-        {/* 8×6 网格 */}
-        <div className="mt-2 grid grid-cols-8 gap-[2px] border-2 border-ink-700 bg-ink-950 p-1">
+        {/* 家具网格：列数由共享常量派生（ADR-0095：6×4） */}
+        <div
+          className="mt-2 grid gap-[2px] border-2 border-ink-700 bg-ink-950 p-1"
+          style={{ gridTemplateColumns: `repeat(${ROOM_GRID_COLS}, minmax(0, 1fr))` }}
+        >
           {Array.from({ length: ROOM_CELL_COUNT }, (_, cell) => {
             const placed = placements.find((entry) => entry.cell === cell);
             const sku = placed ? FURNITURE_SKUS.find((item) => item.id === placed.id) : null;

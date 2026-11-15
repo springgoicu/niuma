@@ -204,10 +204,28 @@ export interface DoorSpec {
   to: number;
 }
 
+/**
+ * 地板家族：纯表现枚举，服务端只搬运、不解释。
+ *
+ * `felt` / `walnut` / `plaster` 是「场所自带场地味」这一轮补的三档：
+ * 墨绿绒（赌场）、胡桃拼花（会议室与两栋小院）、暖灰抹面（公寓）。
+ * 加一档只影响渲染层的 `fillBuildingFloor` 分派，协议与碰撞都不动。
+ */
+export type FloorKind =
+  | 'wood'
+  | 'walnut'
+  | 'tile'
+  | 'carpet'
+  | 'cinema'
+  | 'rubber'
+  | 'concrete'
+  | 'felt'
+  | 'plaster';
+
 export interface BuildingSpec {
   name: string;
   rect: WorldRect;
-  floor: 'wood' | 'tile' | 'carpet' | 'cinema' | 'rubber' | 'concrete';
+  floor: FloorKind;
 }
 
 /** 房间统一尺寸：四角各一间，贴院落四角 */
@@ -700,7 +718,7 @@ export const DOOR_PAVING: WorldRect[] = [
 
 export const CAMPUS_BUILDINGS: BuildingSpec[] = [
   { name: '工作区', rect: WORKROOM, floor: 'wood' },
-  { name: '会议室', rect: MEETING_ROOM, floor: 'wood' },
+  { name: '会议室', rect: MEETING_ROOM, floor: 'walnut' },
   { name: '宿舍区', rect: LOUNGE, floor: 'carpet' },
   { name: '卫生间', rect: RESTROOM, floor: 'tile' },
   { name: '家庭影音室', rect: HOME_THEATER, floor: 'cinema' },

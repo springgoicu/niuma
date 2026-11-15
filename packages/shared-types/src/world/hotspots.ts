@@ -13,17 +13,11 @@
  */
 
 import { WORK_DESK_RANGE, workDeskHotspotId } from '../work';
-import {
-  APARTMENT,
-  APARTMENT_DOOR,
-  APARTMENT_DOOR_RANGE,
-  APARTMENT_EXIT,
-  APARTMENT_EXIT_RANGE,
-} from './apartment';
+import { APARTMENT_SPECS } from './apartment';
 import { WORKSTATIONS } from './campus';
 import { DICE_TABLES } from './dice-hall';
 import { BULLETIN_BOARD, SHRINE_ALTAR, TEA_STATION, WELCOME_LANDMARKS } from './layout';
-import { RING_BENCHES, RING_SIGNUP, RING_SIGNUP_RANGE } from './ring';
+import { RING_BENCHES, RING_BENCH_SEAT_GROUP, RING_SIGNUP, RING_SIGNUP_RANGE } from './ring';
 import { VILLA_GATE_RANGE, VILLA_SPECS, VILLA_TREE_RANGE, type VillaSpec } from './villas';
 
 /** 服务端距离门的额外余量：包在网络上飞半个 RTT，不能用半径当硬门 */
@@ -53,7 +47,12 @@ export interface HotspotDef {
   readonly radius: number;
   /** 指向 `hint-copy` 的提示 key，客户端据此取文案与按钮描述 */
   readonly label: string;
-  /** 座位组：赌桌 / 观战长椅用它与 `SeatInstance.group` 对齐 */
+  /**
+   * 座位组：赌桌 / 观战长椅用它与 `SeatInstance.group` 对齐。
+   *
+   * 声明了就是「入座类玩法」：客户端提示与服务端校验统一走
+   * `world/seat-gate.ts` 的 `seatMatchesHotspot`（ADR-0093）。
+   */
   readonly seatGroupId?: string;
   /** 工位热区专用：指向 `WORKSTATIONS` 下标，客户端据此判断「我坐的是不是这一桌」 */
   readonly deskIndex?: number;
@@ -148,7 +147,7 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
       y: bench.y + 20,
       radius: 56,
       label: 'arenaBet',
-      seatGroupId: 'arena-bench',
+      seatGroupId: RING_BENCH_SEAT_GROUP,
     }),
   ),
   // ---- 摸鱼大赌场：两张桌各一条 ----
@@ -166,24 +165,38 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
   // ---- 豪宅小院：门口与摇钱树 ----
   ...VILLA_SPECS.map(villaGateHotspot),
   ...VILLA_SPECS.map(villaTreeHotspot),
-  // ---- 牛马公寓：门外进入 / 屋内离开 ----
-  {
-    id: 'apartment-door',
-    kind: 'apartmentDoor',
-    x: APARTMENT_DOOR.x,
-    y: APARTMENT_DOOR.y,
-    radius: APARTMENT_DOOR_RANGE,
-    label: 'apartment',
-  },
-  {
-    id: 'apartment-exit',
-    kind: 'apartmentExit',
-    x: APARTMENT_EXIT.x,
-    y: APARTMENT_EXIT.y,
-    radius: APARTMENT_EXIT_RANGE,
-    label: 'apartmentExit',
-  },
+  // ---- 牛马公寓（ADR-0095）：六栋楼各一条门热区与一条出口热区 ----
+  ...APARTMENT_SPECS.map(
+    (spec): HotspotDef => ({
+      id: apartmentDoorHotspotId(spec.slot),
+      kind: 'apartmentDoor',
+      x: spec.door.x,
+      y: spec.door.y,
+      radius: spec.doorRange,
+      label: 'apartment',
+    }),
+  ),
+  ...APARTMENT_SPECS.map(
+    (spec): HotspotDef => ({
+      id: apartmentExitHotspotId(spec.slot),
+      kind: 'apartmentExit',
+      x: spec.exit.x,
+      y: spec.exit.y,
+      radius: spec.exitRange,
+      label: 'apartmentExit',
+    }),
+  ),
 ];
+
+/** 楼栋门口热区 id：客户端提示与服务端校验共用同一份拼法 */
+export function apartmentDoorHotspotId(slot: number): string {
+  return `apartment-door-${slot}`;
+}
+
+/** 楼栋屋内出口热区 id */
+export function apartmentExitHotspotId(slot: number): string {
+  return `apartment-exit-${slot}`;
+}
 
 /** id → 热区：服务端按包里的 id 查表，不做线性扫描的老式距离判定 */
 export const HOTSPOT_INDEX: ReadonlyMap<string, HotspotDef> = new Map(
@@ -271,5 +284,19 @@ export function nearestHotspotOfKinds(
   return null;
 }
 
-/** 公寓楼体（给区域名与测试直接读，避免各处再 import 一次 apartment.ts） */
-export const APARTMENT_RECT = APARTMENT;
+/**
+ * 某一类热区里有没有命中：公寓有六扇门，服务端不再按固定 id 查，
+ * 而是「站在任意一栋门口」都算。
+ */
+export function isWithinAnyHotspotOfKind(
+  kind: HotspotKind,
+  x: number,
+  y: number,
+  slack = 0,
+): boolean {
+  for (const def of WORLD_HOTSPOTS) {
+    if (def.kind !== kind) continue;
+    if (isWithinHotspot(def, x, y, slack)) return true;
+  }
+  return false;
+}

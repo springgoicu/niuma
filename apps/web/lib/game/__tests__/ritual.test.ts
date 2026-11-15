@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { SHRINE_ALTAR, TEA_STATION, WORLD_LAYOUT } from '@niuma/shared-types';
 import { MAX_LIGHTS } from '../lighting/light-registry';
-import { FIXED_LANTERNS, LANTERN_HEIGHT, lanternLights } from '../lighting/lanterns';
+import { FIXED_LANTERNS, LANTERN_HEIGHT, LANTERN_LIGHT, lanternLights } from '../lighting/lanterns';
 import { festivalDecorPlan, festivalLights, FESTIVAL_LIGHT_COUNT } from '../festival-decor';
 import { propLights } from '../lighting/scene-lights';
 import { bowTexelsAt, BOW_DURATION_MS } from '../pony-motion';
@@ -70,14 +70,14 @@ describe('当日首香', () => {
   });
 });
 
-describe('宫灯光源表', () => {
-  it('拱门 2 盏 + 门柱 4 盏，每盏半径 48 的暖红', () => {
+describe('铁艺挂灯光源表', () => {
+  it('拱门 2 盏 + 门柱 4 盏，每盏半径 48 的暖白', () => {
     expect(FIXED_LANTERNS).toHaveLength(6);
     const lights = lanternLights(FIXED_LANTERNS);
     expect(lights).toHaveLength(6);
     for (const light of lights) {
       expect(light.radius).toBe(48);
-      expect(light.color).toBe(0xff5a3c);
+      expect(light.color).toBe(LANTERN_LIGHT.color);
       expect(light.intensity).toBeGreaterThan(0);
       expect(Number.isFinite(light.x)).toBe(true);
       expect(Number.isFinite(light.y)).toBe(true);

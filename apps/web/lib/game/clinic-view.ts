@@ -4,12 +4,15 @@ import { Container, Graphics } from 'pixi.js';
 import {
   AMBULANCE_FLAG_SIREN,
   AMBULANCE_STATE,
+  CLINIC_ACCESS_PAVING,
   CLINIC_AMBULANCE_SPOTS,
   CLINIC_BEDS,
   CLINIC_COUNTER,
   CLINIC_DROP,
+  CLINIC_FENCE_SOLIDS,
   CLINIC_NURSE_SPOTS,
   CLINIC_RECT,
+  CLINIC_REGION_RECT,
   CLINIC_SIGN,
   PATIENT_STATE,
   type AmbulancePacket,
@@ -115,6 +118,7 @@ export class ClinicView {
 
   build(depth: DepthSink, base: Container): void {
     this.paintFloor(base);
+    this.paintFence(depth, base);
     this.paintBeds(base);
     this.paintCounter(depth);
     this.paintSign(base);
@@ -139,6 +143,60 @@ export class ClinicView {
     // 地面淡红十字，给站台一个一眼能认出的医疗符号
     g.rect(x + 108, y + 50, 24, 8).fill(C.floorCross);
     g.rect(x + 116, y + 42, 8, 24).fill(C.floorCross);
+    base.addChild(g);
+  }
+
+  /**
+   * 围挡（ADR-0092）：几何只读 `CLINIC_FENCE_SOLIDS`，碰撞与贴图不会各写一份。
+   *
+   * 横向段（北栏、东南段）按脚底 y 进深度层：站内的人画在栏杆前，站外的人被栏杆挡住脚。
+   * 纵向段（东西两面）整段落在地面层，白栏板 + 钢灰扶手，与柜台、病床同一套配色。
+   */
+  private paintFence(depth: DepthSink, base: Container): void {
+    for (const bar of CLINIC_FENCE_SOLIDS) {
+      const root = new Container();
+      root.position.set(bar.x, bar.y);
+      const g = new Graphics();
+      const horizontal = bar.w >= bar.h;
+      if (horizontal) {
+        // 地脚 + 白栏板，再压一道钢灰扶手与每 24px 一根的立杆
+        rect(g, 0, 0, bar.w, bar.h, C.steelDark);
+        rect(g, 0, 0, bar.w, bar.h - 2, C.white);
+        rect(g, 0, -4, bar.w, 4, C.steel);
+        rect(g, 0, -4, bar.w, 1, C.white);
+        for (let px = 6; px < bar.w - 4; px += 24) {
+          rect(g, px, -4, 3, bar.h + 2, C.white);
+          rect(g, px + 2, -4, 1, bar.h + 2, C.steelDark);
+        }
+      } else {
+        // 纵向段：看到的是护栏侧面，白栏板上按 24px 一道压出横撑
+        rect(g, 0, 0, bar.w, bar.h, C.steelDark);
+        rect(g, 0, 0, bar.w - 2, bar.h, C.white);
+        rect(g, 0, 0, 1, bar.h, C.steel);
+        for (let py = 6; py < bar.h - 4; py += 24) {
+          rect(g, 0, py, bar.w, 3, C.steel);
+          rect(g, 0, py, bar.w, 1, C.white);
+        }
+      }
+      root.addChild(g);
+      if (horizontal) depth.add(bar.y + bar.h, root);
+      else base.addChild(root);
+    }
+    this.paintGatePosts(base);
+  }
+
+  /** 西门两侧的门柱：立柱顶一个小红十字，远远就能认出这是护士站的出入口 */
+  private paintGatePosts(base: Container): void {
+    const g = new Graphics();
+    const x = CLINIC_REGION_RECT.x;
+    const top = CLINIC_ACCESS_PAVING.y;
+    const bottom = CLINIC_ACCESS_PAVING.y + CLINIC_ACCESS_PAVING.h;
+    for (const y of [top - 12, bottom]) {
+      rect(g, x - 1, y, 12, 12, C.steelDark);
+      rect(g, x, y, 10, 10, C.white);
+      rect(g, x + 3, y + 4, 4, 2, C.red);
+      rect(g, x + 4, y + 3, 2, 4, C.red);
+    }
     base.addChild(g);
   }
 

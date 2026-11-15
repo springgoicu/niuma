@@ -107,11 +107,22 @@ export class VillasView {
       gate.addChild(gg);
       this.gates[spec.id] = gg;
 
+      // 院门牌匾：26 高，上行静态院名、下行归属（待售 / 房主名）
       const plaque = new Graphics();
-      plaque.rect(-52, -46, 104, 22).fill(C.outline);
-      plaque.rect(-50, -44, 100, 18).fill(C.plaque);
-      plaque.rect(-50, -44, 100, 2).fill(C.goldDark);
+      plaque.rect(-52, -50, 104, 26).fill(C.outline);
+      plaque.rect(-50, -48, 100, 22).fill(C.plaque);
+      plaque.rect(-50, -48, 100, 2).fill(C.goldDark);
       gate.addChild(plaque);
+
+      const name = new Text({
+        text: spec.name,
+        resolution: this.devicePxPerTexel,
+        style: { fontFamily: CJK_FONT, fontSize: 7, fontWeight: '600', fill: C.gold, letterSpacing: 1 },
+      });
+      name.anchor.set(0.5, 0.5);
+      name.position.set(0, -43);
+      gate.addChild(name);
+      this.texts.push(name);
 
       const text = new Text({
         text: `待售 ${VILLA_PRICE}`,
@@ -119,10 +130,10 @@ export class VillasView {
         style: { fontFamily: CJK_FONT, fontSize: 9, fontWeight: '600', fill: C.gold },
       });
       text.anchor.set(0.5, 0.5);
-      text.position.set(0, -35);
+      text.position.set(0, -33);
       gate.addChild(text);
       const lock = new Graphics();
-      lock.position.set(44, -35);
+      lock.position.set(44, -33);
       gate.addChild(lock);
       this.texts.push(text);
       this.labels[spec.id] = { text, lock };

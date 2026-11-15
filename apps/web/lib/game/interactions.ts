@@ -7,11 +7,14 @@ import {
   POSE,
   SIT_RANGE,
   WORLD_LAYOUT,
+  apartmentExitHotspotId,
   bossHitPoint,
   findNearestSeat,
   hotspotById,
+  hotspotRequiresSeat,
   isWithinHotspot,
   nearestHotspotOfKinds,
+  seatMatchesHotspot,
   type Direction,
   type HotspotDef,
   type Pose,
@@ -217,17 +220,17 @@ export interface ContextHintOptions {
   /** 复用调用方的设施查询槽，避免每拍造一份短命字面量 */
   propOut?: InteractiveTarget;
   sitRange?: number;
-  /** 当前坐着的座位组：观战长椅押注提示只在「坐在 arena-bench 上」时出现 */
-  seatedGroup?: string | null;
+  /**
+   * 当前坐着的座位 id（0 = 未入座）。
+   *
+   * 赌桌 / 观战长椅 / 工位统一读它判「坐的是不是这一张」：入座类玩法的提示
+   * 与服务端校验共用 `seatMatchesHotspot`，不会出现「提示说能押、按下去被拒」。
+   */
+  seatId?: number;
   /** 当前所在房间频道：0 = 园区，非 0 = 公寓屋内 */
   roomId?: number;
-  /**
-   * 当前坐着的工位下标；不是工位椅时传 -1（或省略）。
-   *
-   * 工位提示分两句：坐对了是「开始加班搬砖」，只是路过是「先坐下」。
-   * 服务端只认「坐在本工位上」，提示必须先说清楚，不能让人按 F 按出空。
-   */
-  seatDeskIndex?: number;
+  /** 当前所在楼栋（0..5）：出口热区只认自己那栋（ADR-0095），未知传 -1 */
+  roomSlot?: number;
 }
 
 /** 热区 → 提示文案：label 已在共享表里声明，这里只做一次映射 */
@@ -260,6 +263,20 @@ export function hintForHotspot(def: HotspotDef): string {
   }
 }
 
+/** 入座类玩法的「先坐下」文案：与 `seatMatchesHotspot` 的拒绝口径一一对应（ADR-0093） */
+export function needSeatHint(def: HotspotDef): string {
+  switch (def.kind) {
+    case 'diceTable':
+      return HINT.diceNeedSeat;
+    case 'arenaSeat':
+      return HINT.arenaNeedSeat;
+    case 'workDesk':
+      return HINT.workNeedSeat;
+    default:
+      return HINT.interact;
+  }
+}
+
 /**
  * 当前站位该显示哪一条环境提示；不在任何感应区时返回 null。
  *
@@ -267,10 +284,12 @@ export function hintForHotspot(def: HotspotDef): string {
  * 与 `GameSession.interact()` 用同一张表、同一个优先级，
  * 不会出现「提示说续杯、按下去却在接水」。
  *
- * 三类需要运行时状态的热区在这里过滤：
+ * 两类需要运行时状态的热区在这里过滤：
  * - 告示板要面朝牌面；
- * - 观战长椅要真的坐在 `arena-bench` 组上；
  * - 公寓门口 / 屋内出口按 `roomId` 二选一。
+ *
+ * 入座类热区（赌桌 / 观战长椅 / 工位）不再过滤掉，而是原地换成「先坐下」文案：
+ * 提示条必须在不满足条件时也说清楚差什么，否则玩家只会觉得按键没反应。
  * 擂台报名提示由会话层负责（要读阶段与名额）。
  */
 export function selectContextHint(
@@ -281,21 +300,20 @@ export function selectContextHint(
 ): string | null {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const roomId = options.roomId ?? 0;
+  const seatId = options.seatId ?? 0;
   const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
     if (candidate.kind === 'bulletin') return facesBulletin(x, y, direction);
     if (candidate.kind === 'ring') return false;
-    if (candidate.kind === 'arenaSeat') return options.seatedGroup === 'arena-bench';
     if (candidate.kind === 'apartmentDoor') return roomId === 0;
-    if (candidate.kind === 'apartmentExit') return roomId !== 0;
-    // 工位只在「坐的是这一桌」时才抢提示：没坐下时该让位给「按 Z 坐下」
-    if (candidate.kind === 'workDesk') return options.seatDeskIndex === candidate.deskIndex;
+    // 出口只认自己那栋：六栋楼各有一条 exit 热区，别的楼里的那条够不着也不该提示
+    if (candidate.kind === 'apartmentExit') {
+      return roomId !== 0 && candidate.id === apartmentExitHotspotId(options.roomSlot ?? -1);
+    }
     return true;
   });
   if (def) {
-    // 工位需要「坐的是不是这一桌」：提示与服务端校验必须是同一句话
-    if (def.kind === 'workDesk') {
-      return options.seatDeskIndex === def.deskIndex ? HINT.work : HINT.workNeedSeat;
-    }
+    // 入座类玩法：坐对了给动作文案，没坐下 / 坐错座位给「先坐下」，与服务端同一把尺
+    if (hotspotRequiresSeat(def) && !seatMatchesHotspot(def, seatId)) return needSeatHint(def);
     return hintForHotspot(def);
   }
   if (isNearBoss(x, y)) return HINT.boss;

@@ -97,6 +97,9 @@ export const RING_BENCHES: ReadonlyArray<{ x: number; y: number }> = [
   { x: 3800, y: 5444 },
 ];
 
+/** 观战长椅的座位组名：热区 `seatGroupId` 与「坐上才能押注」的资格判定共用这一处（ADR-0093） */
+export const RING_BENCH_SEAT_GROUP = 'arena-bench';
+
 /** 观战长椅的坐点（在椅面正前方 12px，与其它长椅同一口径） */
 export const RING_BENCH_SEAT_DRAFTS: ReadonlyArray<Omit<SeatInstance, 'id' | 'desk'>> = RING_BENCHES.map(
   (bench) => ({
@@ -104,7 +107,7 @@ export const RING_BENCH_SEAT_DRAFTS: ReadonlyArray<Omit<SeatInstance, 'id' | 'de
     y: bench.y + 12,
     facing: DIRECTION.Down,
     kind: 'bench' as const,
-    group: 'arena-bench',
+    group: RING_BENCH_SEAT_GROUP,
   }),
 );
 

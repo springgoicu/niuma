@@ -1,9 +1,8 @@
 import {
-  APARTMENT_OUTSIDE,
   APARTMENT_ROOM_COUNT,
-  APARTMENT_SPAWN,
   DIRECTION,
   POSE,
+  apartmentBySlot,
   doorNoOf,
   furnitureById,
   houseTierSpec,
@@ -43,7 +42,12 @@ export class ApartmentRuntime {
   private readonly rooms = new Map<number, RoomRecord>();
   private readonly invites = new Map<number, RoomInvite>();
 
-  /** 进屋：优先接受朋友邀请，否则回自己的房间；6 个频道占满时返回 null */
+  /**
+   * 进屋：优先接受朋友邀请，否则回自己的房间；6 个频道占满时返回 null。
+   *
+   * 六栋楼一栋一户（ADR-0095）：从任意一栋门口按 F 都算「回自己家」，
+   * 传送目标是房间所在那栋楼的室内落点。
+   */
   enter(player: Player, now: number): RoomRecord | null {
     if (player.roomId !== 0) return null;
     const invite = this.invites.get(player.id);
@@ -53,15 +57,17 @@ export class ApartmentRuntime {
     if (!room) return null;
     this.invites.delete(player.id);
     player.roomId = room.slot + 1;
-    this.teleport(player, APARTMENT_SPAWN);
+    this.teleport(player, apartmentBySlot(room.slot).spawn);
     return room;
   }
 
-  /** 出屋：回到门口台阶 */
+  /** 出屋：回到自己那栋楼的门口台阶 */
   exit(player: Player): boolean {
-    if (player.roomId === 0) return false;
+    const room = this.roomOf(player);
+    if (!room) return false;
+    const spec = apartmentBySlot(room.slot);
     player.roomId = 0;
-    this.teleport(player, APARTMENT_OUTSIDE);
+    this.teleport(player, spec.outside);
     return true;
   }
 

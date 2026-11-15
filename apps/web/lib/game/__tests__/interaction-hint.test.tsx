@@ -50,7 +50,17 @@ describe('设施互动提示', () => {
   });
 
   it('劝阻与状态文案保持纯文本，不产出按钮', () => {
-    for (const hint of [HINT.lieOnSeat, HINT.sitOnBed, HINT.bedOnly, '移动即可起身', '附近没有可互动的设施']) {
+    for (const hint of [
+      HINT.lieOnSeat,
+      HINT.sitOnBed,
+      HINT.bedOnly,
+      // 入座类玩法没坐下时只提醒，不能渲染成可点按钮（ADR-0093）
+      HINT.diceNeedSeat,
+      HINT.arenaNeedSeat,
+      HINT.workNeedSeat,
+      '移动即可起身',
+      '附近没有可互动的设施',
+    ]) {
       const html = render(hint);
       expect(html).not.toContain('<button');
       expect(html).toContain('role="status"');

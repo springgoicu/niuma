@@ -1,68 +1,159 @@
 /**
- * 牛马公寓（APARTMENT）：西南角的六层水泥楼，门口按 F 进入私有户型空间。
+ * 牛马公寓（APARTMENT）：园区中心四周的六栋单户公寓楼，门牌 301–306 各一栋。
  *
- * 户型空间是服务端的「局部房间」，不是另一套坐标系：
- * 所有房间共用楼内同一个矩形（`APARTMENT_INTERIOR`），靠 `roomId` 分频道——
- * 同频道的玩家互相可见，不同频道与屋外玩家互不可见（见 `sim/view.ts`）。
- * 这样做的好处是移动、AOI、深度排序、相机跟随全部复用既有实现。
+ * 每栋楼是一间独立的「局部房间」：楼体矩形、四面墙、门口热区、室内落点与
+ * 家具网格各自一套，都从 `APARTMENT_SPECS` 派生。`slot`（0..5）同时是
+ * `Player.roomId - 1` 的房间频道下标——同频道的玩家互相可见，其余与屋外玩家
+ * 互不可见（见 `sim/view.ts`）。移动、AOI、深度排序、相机跟随因此全部复用既有实现。
  *
  * 户型 0→3 复用经济档案里的 `houseTier`：纸箱 → 隔断 → 一居室 → 大平层，
  * 阶位决定可摆家具数量与地板配色。
+ *
+ * ADR-0095：公寓从「西南角一栋楼装 6 户」改为「六栋楼绕中央广场铺开」，
+ * 楼体缩到 300×240（家具网格 6×4），协议与 `roomId` 语义不变。
  */
 
 import type { SolidRect } from './campus';
 import type { WorldRect } from './geometry';
 
-/** 楼体占地：西南角，西离岛界 60、南离岛界 240、北离涟漪湖 90 */
-export const APARTMENT: WorldRect = { x: 2620, y: 5240, w: 380, h: 300 };
+/** 家具网格：6 列 × 4 行，格边 44px */
+export const ROOM_GRID_COLS = 6;
+export const ROOM_GRID_ROWS = 4;
+export const ROOM_CELL = 44;
+export const ROOM_CELL_COUNT = ROOM_GRID_COLS * ROOM_GRID_ROWS;
 
-/** 室内可用矩形：墙体厚 8，门只在南墙正中，且做成「按 F 瞬移进出」而不是门洞 */
-export const APARTMENT_INTERIOR: WorldRect = {
-  x: APARTMENT.x + 8,
-  y: APARTMENT.y + 8,
-  w: APARTMENT.w - 16,
-  h: APARTMENT.h - 16,
-};
+/** 墙厚：四面各 8px，室内 = 楼体内缩 8 */
+const WALL = 8;
 
-/** 楼体四面墙：整圈封闭，进出只走热区 */
-export const APARTMENT_WALL_SOLIDS: ReadonlyArray<SolidRect> = (() => {
-  const W = 8;
-  const { x, y, w, h } = APARTMENT;
-  return [
-    { kind: 'wall' as const, x, y, w, h: W },
-    { kind: 'wall' as const, x, y: y + h - W, w, h: W },
-    { kind: 'wall' as const, x, y, w: W, h },
-    { kind: 'wall' as const, x: x + w - W, y, w: W, h },
-  ];
-})();
+/** 楼体统一尺寸：室内 284×224，正好放下 6×4 的 44px 家具网格 */
+export const APARTMENT_W = 300;
+export const APARTMENT_H = 240;
 
-/** 门口感应点：南墙外侧，站在台阶上就能按 F */
-export const APARTMENT_DOOR = { x: APARTMENT.x + APARTMENT.w / 2, y: APARTMENT.y + APARTMENT.h + 24 } as const;
+/** 门口感应半径（屋外，按下进屋） */
 export const APARTMENT_DOOR_RANGE = 64;
-
-/** 室内落点与出口热区：进屋后站在门厅，背对南墙 */
-export const APARTMENT_SPAWN = {
-  x: APARTMENT.x + APARTMENT.w / 2,
-  y: APARTMENT.y + APARTMENT.h - 40,
-} as const;
-export const APARTMENT_EXIT = {
-  x: APARTMENT.x + APARTMENT.w / 2,
-  y: APARTMENT.y + APARTMENT.h - 24,
-} as const;
+/** 屋内出口感应半径 */
 export const APARTMENT_EXIT_RANGE = 56;
 
-/** 屋外落点：出门站回台阶 */
-export const APARTMENT_OUTSIDE = { x: APARTMENT_DOOR.x, y: APARTMENT_DOOR.y + 26 } as const;
+/** 房间频道数 = 楼栋数：一栋一户 */
+export const APARTMENT_ROOM_COUNT = 6;
+/** 门牌号基数：301–306 */
+export const APARTMENT_DOOR_BASE = 301;
 
-/** 家具网格：8 列 × 6 行，格边 44px，居中铺在室内 */
-export const ROOM_GRID_COLS = 8;
-export const ROOM_GRID_ROWS = 6;
-export const ROOM_CELL = 44;
-export const ROOM_GRID_ORIGIN = {
-  x: APARTMENT_INTERIOR.x + Math.round((APARTMENT_INTERIOR.w - ROOM_GRID_COLS * ROOM_CELL) / 2),
-  y: APARTMENT_INTERIOR.y + 24,
-} as const;
-export const ROOM_CELL_COUNT = ROOM_GRID_COLS * ROOM_GRID_ROWS;
+export interface ApartmentSpec {
+  /** 0..5，同时是房间频道下标（`roomId - 1`） */
+  readonly slot: number;
+  /** 门牌号 301–306 */
+  readonly doorNo: number;
+  /** 楼体（含 8px 墙） */
+  readonly rect: WorldRect;
+  /** 室内可用矩形 */
+  readonly interior: WorldRect;
+  /** 四面墙的碰撞 */
+  readonly wallSolids: ReadonlyArray<SolidRect>;
+  /** 门口感应点：南墙外侧 */
+  readonly door: { readonly x: number; readonly y: number };
+  readonly doorRange: number;
+  /** 室内落点：进屋后站在门厅，背对南墙 */
+  readonly spawn: { readonly x: number; readonly y: number };
+  /** 屋内出口热区心 */
+  readonly exit: { readonly x: number; readonly y: number };
+  readonly exitRange: number;
+  /** 出门落点：门口台阶 */
+  readonly outside: { readonly x: number; readonly y: number };
+  /** 家具网格原点（左上格左上角） */
+  readonly gridOrigin: { readonly x: number; readonly y: number };
+}
+
+/**
+ * 六栋楼的落点：绕中央广场四向铺开，楼体之间留出 300px 级草地。
+ *
+ * 全部避开四角院落、游乐园、赌场、急救站、两栋小院、影音室、小黑屋、
+ * 南院、八角笼、发泄区、三湖、摸鱼亭、主路与各支路（布局测试钉死）。
+ * 坐标手写、禁随机：两端必须逐像素一致。
+ */
+const APARTMENT_RECTS: ReadonlyArray<WorldRect> = [
+  // 301 西北内圈：院落西侧、赌场以北
+  { x: 3000, y: 3140, w: APARTMENT_W, h: APARTMENT_H },
+  // 302 北：游乐园西侧草带
+  { x: 3200, y: 2560, w: APARTMENT_W, h: APARTMENT_H },
+  // 303 西：西主路以南、涟漪湖以北（让开路口那对花箱）
+  { x: 2990, y: 4260, w: APARTMENT_W, h: APARTMENT_H },
+  // 304 西南：涟漪湖以南
+  { x: 2980, y: 5150, w: APARTMENT_W, h: APARTMENT_H },
+  // 305 东北：沉思浅塘以南、东北支路以西
+  { x: 5150, y: 3150, w: APARTMENT_W, h: APARTMENT_H },
+  // 306 东：东主路以北的开阔草地
+  { x: 5250, y: 3690, w: APARTMENT_W, h: APARTMENT_H },
+];
+
+function makeSpec(slot: number, rect: WorldRect): ApartmentSpec {
+  const { x, y, w, h } = rect;
+  const interior: WorldRect = { x: x + WALL, y: y + WALL, w: w - WALL * 2, h: h - WALL * 2 };
+  const doorX = x + w / 2;
+  return {
+    slot,
+    doorNo: APARTMENT_DOOR_BASE + slot,
+    rect,
+    interior,
+    wallSolids: [
+      { kind: 'wall' as const, x, y, w, h: WALL },
+      { kind: 'wall' as const, x, y: y + h - WALL, w, h: WALL },
+      { kind: 'wall' as const, x, y, w: WALL, h },
+      { kind: 'wall' as const, x: x + w - WALL, y, w: WALL, h },
+    ],
+    door: { x: doorX, y: y + h + 24 },
+    doorRange: APARTMENT_DOOR_RANGE,
+    spawn: { x: doorX, y: y + h - 40 },
+    exit: { x: doorX, y: y + h - 24 },
+    exitRange: APARTMENT_EXIT_RANGE,
+    outside: { x: doorX, y: y + h + 50 },
+    gridOrigin: {
+      x: interior.x + Math.round((interior.w - ROOM_GRID_COLS * ROOM_CELL) / 2),
+      y: interior.y + 24,
+    },
+  };
+}
+
+/** 六栋公寓楼：下标即 slot */
+export const APARTMENT_SPECS: ReadonlyArray<ApartmentSpec> = APARTMENT_RECTS.map((rect, slot) =>
+  makeSpec(slot, rect),
+);
+
+/** 楼栋墙体拼成的静态碰撞表：布局层直接展开进 `WORLD_LAYOUT.solids` */
+export const APARTMENT_WALL_SOLIDS: ReadonlyArray<SolidRect> = APARTMENT_SPECS.flatMap(
+  (spec) => spec.wallSolids,
+);
+
+export function doorNoOf(slot: number): number {
+  return APARTMENT_DOOR_BASE + Math.max(0, Math.min(APARTMENT_ROOM_COUNT - 1, slot));
+}
+
+/** 频道 / 楼栋下标 → 规格；越界夹回 0..5 */
+export function apartmentBySlot(slot: number): ApartmentSpec {
+  const index = Number.isFinite(slot)
+    ? Math.max(0, Math.min(APARTMENT_ROOM_COUNT - 1, Math.floor(slot)))
+    : 0;
+  return APARTMENT_SPECS[index] ?? APARTMENT_SPECS[0]!;
+}
+
+/** 门牌号 301–306 → 规格；非法门牌返回 undefined */
+export function apartmentByDoorNo(doorNo: number): ApartmentSpec | undefined {
+  if (!Number.isFinite(doorNo)) return undefined;
+  const slot = Math.floor(doorNo) - APARTMENT_DOOR_BASE;
+  if (slot < 0 || slot >= APARTMENT_ROOM_COUNT) return undefined;
+  return APARTMENT_SPECS[slot];
+}
+
+/** 格索引 → 世界坐标（格子中心）：服务端校验与客户端摆件共用 */
+export function cellCenter(spec: ApartmentSpec, cell: number): { x: number; y: number } {
+  const index = Math.max(0, Math.min(ROOM_CELL_COUNT - 1, Math.floor(cell)));
+  const col = index % ROOM_GRID_COLS;
+  const row = Math.floor(index / ROOM_GRID_COLS);
+  return {
+    x: spec.gridOrigin.x + col * ROOM_CELL + ROOM_CELL / 2,
+    y: spec.gridOrigin.y + row * ROOM_CELL + ROOM_CELL / 2,
+  };
+}
 
 /** 户型档位：价格、可摆件数、地板名 */
 export interface HouseTierSpec {
@@ -117,54 +208,6 @@ export function furnitureById(id: number): FurnitureSpec | undefined {
 export interface FurniturePlacement {
   id: number;
   cell: number;
-}
-
-/** 房间频道数：超出后新来的人复用最早空出来的频道 */
-export const APARTMENT_ROOM_COUNT = 6;
-/** 门牌号基数：301–306，进门后在头顶与门口牌子显示 */
-export const APARTMENT_DOOR_BASE = 301;
-
-export function doorNoOf(slot: number): number {
-  return APARTMENT_DOOR_BASE + Math.max(0, Math.min(APARTMENT_ROOM_COUNT - 1, slot));
-}
-
-/** 格索引 → 世界坐标（格子中心）：服务端校验与客户端摆件共用 */
-export function cellCenter(cell: number): { x: number; y: number } {
-  const index = Math.max(0, Math.min(ROOM_CELL_COUNT - 1, Math.floor(cell)));
-  const col = index % ROOM_GRID_COLS;
-  const row = Math.floor(index / ROOM_GRID_COLS);
-  return {
-    x: ROOM_GRID_ORIGIN.x + col * ROOM_CELL + ROOM_CELL / 2,
-    y: ROOM_GRID_ORIGIN.y + row * ROOM_CELL + ROOM_CELL / 2,
-  };
-}
-
-/** 把脚底夹回室内；预测与服务端共用同一份边界 */
-export function clampToRoom(x: number, y: number, padding = 12): { x: number; y: number } {
-  const minX = APARTMENT_INTERIOR.x + padding;
-  const maxX = APARTMENT_INTERIOR.x + APARTMENT_INTERIOR.w - padding;
-  const minY = APARTMENT_INTERIOR.y + padding;
-  const maxY = APARTMENT_INTERIOR.y + APARTMENT_INTERIOR.h - padding;
-  return {
-    x: Math.min(maxX, Math.max(minX, x)),
-    y: Math.min(maxY, Math.max(minY, y)),
-  };
-}
-
-/** 是否站在门口（屋外） */
-export function isNearApartmentDoor(x: number, y: number, range = APARTMENT_DOOR_RANGE): boolean {
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-  const dx = x - APARTMENT_DOOR.x;
-  const dy = y - APARTMENT_DOOR.y;
-  return dx * dx + dy * dy <= range * range;
-}
-
-/** 是否站在室内出口（屋内） */
-export function isNearApartmentExit(x: number, y: number, range = APARTMENT_EXIT_RANGE): boolean {
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-  const dx = x - APARTMENT_EXIT.x;
-  const dy = y - APARTMENT_EXIT.y;
-  return dx * dx + dy * dy <= range * range;
 }
 
 /** 家具布局校验：件数不超档位、格子不越界、不重复、家具 id 合法 */

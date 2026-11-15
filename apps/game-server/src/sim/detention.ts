@@ -1,6 +1,7 @@
 import {
   DIRECTION,
   ENTITY_ROLE_GUARD,
+  ENTITY_ROLE_NURSE,
   JAIL_ANCHORS,
   JAIL_PHASE,
   POSE,
@@ -63,7 +64,14 @@ export const DETENTION = {
   DRAG_LOCK_MS: 5_000,
 } as const;
 
-/** 打人触发执法（ADR-0074）：只统计擂台外的真人命中；袭警单独一轮建案（ADR-0080） */
+/**
+ * 零容忍角色（ADR-0090）：保安与护士被打一次即建案，普通同事仍不进执法。
+ *
+ * 改成集合而不是继续叠 `if`：这条口径还会随新职业扩展，规则收在一处才不会漂移。
+ */
+const ZERO_TOLERANCE_ROLES: ReadonlySet<number> = new Set([ENTITY_ROLE_GUARD, ENTITY_ROLE_NURSE]);
+
+/** 打人触发执法（ADR-0074）：只统计擂台外的真人命中；零容忍角色单独一轮建案（ADR-0080 / 0090） */
 export const ASSAULT = {
   /** 滑动窗口：2 分钟内的命中才累计 */
   WINDOW_MS: 120_000,
@@ -161,7 +169,7 @@ export class Detention implements VentHitObserver {
    * 发泄命中回调（ADR-0074 / ADR-0080）。
    *
    * 真人之间：把「攻击者 → 受害者」的命中时刻记进 2 分钟滑动窗口。
-   * 袭警：受害者是保安时零容忍，命中一次直接建案（普通同事仍不进执法）。
+   * 零容忍角色（保安 / 护士）：命中一次直接建案，普通同事仍不进执法。
    * 命中几何、擂台隔离与入座免伤都留在 `sim/vent`；这里只认已经发生的命中。
    */
   onVentHit(attacker: Player, victim: Player, now: number): void {
@@ -170,8 +178,8 @@ export class Detention implements VentHitObserver {
     if (this.cases.has(attacker.id)) return;
 
     if (victim.isNpc) {
-      // 只认保安：普通同事被打不触发执法，保持园区 NPC 的中立身份
-      if (victim.role !== ENTITY_ROLE_GUARD) return;
+      // 只认零容忍角色：普通同事被打不触发执法，保持园区 NPC 的中立身份
+      if (!ZERO_TOLERANCE_ROLES.has(victim.role)) return;
       // 建案即清账本：与打人凑满 3 次的处理一致，押送结束后从零累计
       this.attacks.delete(attacker.id);
       this.openCase(attacker, now, SYSTEM_NOTICE_KIND.DetainedFight);

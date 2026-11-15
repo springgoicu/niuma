@@ -3,7 +3,7 @@
 import { Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
 import { PLAZA_CENTER } from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
-import { paintLantern } from './lighting/lanterns';
+import { LANTERN_INK } from './lighting/lanterns';
 import { lightToneAt } from './lighting/tone';
 import { serverHourFraction } from './server-date';
 import { serverNow, serverTzOffsetMin } from './server-clock';
@@ -17,7 +17,7 @@ import {
 } from './festival-decor';
 
 /**
- * 节日装饰渲染（ADR-0063）：彩旗、门楣挂饰与树梢灯笼。
+ * 节日装饰渲染（ADR-0063 / ADR-0096）：三角彩旗、门楣挂饰与树梢灯串。
  *
  * 三条纪律：
  * 1. **构造期烘一次**：全部贴图在 `attach()` 里 `bake()`，帧循环只切 `texture` 与写 `tint / alpha`，
@@ -41,18 +41,19 @@ const TREE_LANTERN_H = 32;
 const FRAME_MS = 720;
 const TONE_SAMPLE_MS = 30_000;
 
-const STRING = 0x7d2418;
+/** 麻绳：小镇彩旗挂在灯柱之间，绳色比旗面深一档才读得出「挂着」 */
+const STRING = 0xb08a5a;
 
 interface Palette {
-  /** 三角旗三色轮换：朱红为主，金 / 奶油 / 薄荷 / 蜜桃做点缀 */
+  /** 三角旗三色轮换：奶油为主，薄荷 / 珊瑚 / 天蓝做点缀 */
   readonly flags: readonly [number, number, number];
   readonly string: number;
 }
 
 const PALETTES: readonly Palette[] = [
-  { flags: [0xd8452f, 0xe8c46a, 0xfff6e0], string: STRING },
-  { flags: [0xd8452f, 0x8fe3c7, 0xfff6e0], string: STRING },
-  { flags: [0xd8452f, 0xffb59e, 0xe8c46a], string: STRING },
+  { flags: [0xfff6e0, 0x8fe3c7, 0xf08a6a], string: STRING },
+  { flags: [0x7fb8e8, 0xfff6e0, 0x8fe3c7], string: STRING },
+  { flags: [0xf08a6a, 0xfff6e0, 0x7fb8e8], string: STRING },
 ];
 
 /** 位置哈希只决定相位，不决定任何世界坐标 */
@@ -61,7 +62,26 @@ function phaseOf(x: number, y: number): 0 | 1 {
 }
 
 /**
- * 一条彩旗：1px 阶梯弧线 + 每 15px 一面三角旗 + 中央一盏宫灯。
+ * 一只玻璃小灯泡：铁帽 + 铁框 + 暖白玻璃芯 + 灯尾，占位 5×9（`x` 是灯心）。
+ *
+ * 小镇彩旗上挂的是电灯串：9×22 的铁艺挂灯太大，会把三角旗压没。
+ */
+function paintBulb(g: Graphics, x: number, top: number): void {
+  g.rect(x, top, 1, 2).fill(LANTERN_INK.iron);
+  g.rect(x - 2, top + 2, 5, 6).fill(LANTERN_INK.iron);
+  g.rect(x - 1, top + 3, 3, 4).fill(LANTERN_INK.glass);
+  g.rect(x, top + 4, 1, 2).fill(LANTERN_INK.core);
+  g.rect(x, top + 8, 1, 1).fill(LANTERN_INK.iron);
+}
+
+/** 彩旗中央的一串小灯：一根短绳 + 三只灯泡，光池的光心落在这串灯正下方 */
+function paintLampString(g: Graphics, cx: number, top: number): void {
+  g.rect(cx - 12, top, 25, 1).fill(STRING);
+  for (const dx of [-10, 0, 10]) paintBulb(g, cx + dx, top + 1);
+}
+
+/**
+ * 一条彩旗：1px 阶梯弧线 + 每 15px 一面三角旗 + 中央一串小灯。
  * 弧线用整数抛物线，不用 `Math.sin`：跨引擎末位一致，且永远落在整纹素上。
  */
 function paintBunting(g: Graphics, width: number, palette: Palette, frame: 0 | 1, sagMax: number): void {
@@ -82,17 +102,16 @@ function paintBunting(g: Graphics, width: number, palette: Palette, frame: 0 | 1
     g.rect(x, sag + 1, flagW, 1).fill(palette.string);
     index += 1;
   }
-  // 中央大灯笼：光池的光心就落在这盏灯正下方的地面
-  paintLantern(g, Math.round(width / 2), sagMax - 2);
+  paintLampString(g, Math.round(width / 2), sagMax - 2);
 }
 
-/** 树梢小灯笼：一根横杆 + 两盏并排的宫灯，挂在树冠下三分之一 */
+/** 树梢灯串：一根横杆 + 两盏小玻璃灯，挂在树冠下三分之一 */
 function paintTreeLantern(g: Graphics): void {
   g.rect(6, 3, 13, 1).fill(STRING);
   g.rect(6, 0, 1, 4).fill(STRING);
   g.rect(18, 0, 1, 4).fill(STRING);
-  paintLantern(g, 6, 4);
-  paintLantern(g, 18, 4);
+  paintBulb(g, 7, 4);
+  paintBulb(g, 17, 4);
 }
 
 interface AnimatedEntry {

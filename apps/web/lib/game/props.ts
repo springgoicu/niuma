@@ -21,6 +21,7 @@ import { deskArtFor, type DeskArt } from './desk-art';
 import { BENCH_ART, seatArtFor } from './seat-art';
 import { bake } from './terrain-textures';
 import type { DepthSink } from './sort-layer';
+import { VENUE_COLORS, darken, lighten, type VenueColors } from './venue-palette';
 
 /**
  * 室内与园区设施的渲染层：工位、座椅、马桶、会议室、卫生间、庭院与装饰。
@@ -848,96 +849,130 @@ function drawBed(g: Graphics): void {
   rect(g, w - 4, 31, 1, 1, COLOR.metal);
 }
 
-function fillFloorWood(g: Graphics, r: WorldRect): void {
-  rect(g, r.x, r.y, r.w, r.h, COLOR.woodA);
-  // 木板错缝：每条板的起点错开，像真的拼花地板
-  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += 14) {
-    rect(g, r.x, y, r.w, 1, COLOR.woodSeam);
-    const offset = (row % 2) * 24;
-    for (let x = r.x + offset; x < r.x + r.w; x += 48) {
-      rect(g, x, y, 1, 14, COLOR.woodSeam);
+/**
+ * 木地板通用画法：错缝长条 + 交替板压一档暗色 + 板顶一线高光。
+ *
+ * 高光只加在「压暗的那一半板」上，明度阶梯仍是三档（描边/本体/高光），
+ * 不会把地面刷成一张亮网——地面越花，角色越出不来（ADR-0013）。
+ */
+function fillPlankFloor(g: Graphics, r: WorldRect, c: VenueColors, plank = 14, span = 48): void {
+  rect(g, r.x, r.y, r.w, r.h, c.main);
+  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += plank) {
+    rect(g, r.x, y, r.w, 1, c.seam);
+    const offset = (row % 2) * (span / 2);
+    for (let x = r.x + offset; x < r.x + r.w; x += span) {
+      rect(g, x, y, 1, plank, c.seam);
     }
-    if (row % 2 === 1) rect(g, r.x, y + 1, r.w, 12, COLOR.woodB);
+    if (row % 2 === 1) {
+      rect(g, r.x, y + 1, r.w, plank - 2, c.alt);
+      rect(g, r.x, y + 1, r.w, 1, lighten(c.alt, 0.18));
+    }
   }
 }
 
-function fillFloorTile(g: Graphics, r: WorldRect): void {
-  // 卫生间瓷砖：浅蓝白格子交错，接缝更淡
-  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += 16) {
-    for (let col = 0, x = r.x; x < r.x + r.w; col += 1, x += 16) {
-      rect(g, x, y, 16, 16, (row + col) % 2 === 0 ? COLOR.tileA : COLOR.tileB);
+/** 方格地砖：交错两色 + 砖缝，受光的左上角补 1px 亮边 */
+function fillGridFloor(g: Graphics, r: WorldRect, c: VenueColors, tile = 16): void {
+  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += tile) {
+    for (let col = 0, x = r.x; x < r.x + r.w; col += 1, x += tile) {
+      rect(g, x, y, tile, tile, (row + col) % 2 === 0 ? c.main : c.alt);
+      if ((row + col) % 2 === 1) rect(g, x + 1, y + 1, tile - 2, 1, lighten(c.alt, 0.3));
     }
   }
-  for (let x = r.x; x < r.x + r.w; x += 16) rect(g, x, r.y, 1, r.h, COLOR.tileSeam);
-  for (let y = r.y; y < r.y + r.h; y += 16) rect(g, r.x, y, r.w, 1, COLOR.tileSeam);
+  for (let x = r.x; x < r.x + r.w; x += tile) rect(g, x, r.y, 1, r.h, c.seam);
+  for (let y = r.y; y < r.y + r.h; y += tile) rect(g, r.x, y, r.w, 1, c.seam);
+}
+
+function fillFloorWood(g: Graphics, r: WorldRect): void {
+  fillPlankFloor(g, r, VENUE_COLORS.workroom, 14, 48);
+}
+
+/** 会议室与两栋小院：胡桃色细板，比工作区的奶油木深一档、板更窄 */
+function fillFloorWalnut(g: Graphics, r: WorldRect): void {
+  fillPlankFloor(g, r, VENUE_COLORS.meeting, 12, 40);
+}
+
+function fillFloorTile(g: Graphics, r: WorldRect): void {
+  fillGridFloor(g, r, VENUE_COLORS.restroom, 16);
 }
 
 /** 宿舍区地毯：暖色横向条带 + 内圈收边，软地面与木地板的读感差一档 */
 function fillFloorCarpet(g: Graphics, r: WorldRect): void {
-  rect(g, r.x, r.y, r.w, r.h, COLOR.carpetA);
+  const c = VENUE_COLORS.lounge;
+  rect(g, r.x, r.y, r.w, r.h, c.main);
   for (let y = r.y + 16, row = 0; y < r.y + r.h; y += 16, row += 1) {
-    rect(g, r.x, y, r.w, 1, COLOR.carpetSeam);
-    if (row % 2 === 0 && y + 15 < r.y + r.h) rect(g, r.x, y + 1, r.w, 15, COLOR.carpetB);
+    rect(g, r.x, y, r.w, 1, c.seam);
+    if (row % 2 === 0 && y + 15 < r.y + r.h) {
+      rect(g, r.x, y + 1, r.w, 15, c.alt);
+      rect(g, r.x, y + 1, r.w, 1, lighten(c.alt, 0.2));
+    }
   }
   // 内圈收边：站在门口一眼能看出这是软地面
-  rect(g, r.x + 4, r.y + 4, r.w - 8, 1, COLOR.carpetSeam);
-  rect(g, r.x + 4, r.y + r.h - 5, r.w - 8, 1, COLOR.carpetSeam);
-  rect(g, r.x + 4, r.y + 4, 1, r.h - 8, COLOR.carpetSeam);
-  rect(g, r.x + r.w - 5, r.y + 4, 1, r.h - 8, COLOR.carpetSeam);
+  rect(g, r.x + 4, r.y + 4, r.w - 8, 1, c.seam);
+  rect(g, r.x + 4, r.y + r.h - 5, r.w - 8, 1, c.seam);
+  rect(g, r.x + 4, r.y + 4, 1, r.h - 8, c.seam);
+  rect(g, r.x + r.w - 5, r.y + 4, 1, r.h - 8, c.seam);
 }
 
 /** 影音室：深炭色地毯 + 酒红收边，配合屏幕冷光形成暗厅 */
 function fillFloorCinema(g: Graphics, r: WorldRect): void {
-  rect(g, r.x, r.y, r.w, r.h, 0x232833);
-  for (let y = r.y + 8; y < r.y + r.h; y += 16) rect(g, r.x, y, r.w, 1, 0x1b2029);
+  const c = VENUE_COLORS.theater;
+  rect(g, r.x, r.y, r.w, r.h, c.main);
+  for (let y = r.y + 8; y < r.y + r.h; y += 16) rect(g, r.x, y, r.w, 1, c.alt);
   // 一圈酒红地毯收边：暗厅里唯一的暖色底
-  rect(g, r.x + 3, r.y + 3, r.w - 6, 2, 0x4a2a2e);
-  rect(g, r.x + 3, r.y + r.h - 5, r.w - 6, 2, 0x4a2a2e);
-  rect(g, r.x + 3, r.y + 3, 2, r.h - 6, 0x4a2a2e);
-  rect(g, r.x + r.w - 5, r.y + 3, 2, r.h - 6, 0x4a2a2e);
+  rect(g, r.x + 3, r.y + 3, r.w - 6, 2, c.seam);
+  rect(g, r.x + 3, r.y + r.h - 5, r.w - 6, 2, c.seam);
+  rect(g, r.x + 3, r.y + 3, 2, r.h - 6, c.seam);
+  rect(g, r.x + r.w - 5, r.y + 3, 2, r.h - 6, c.seam);
 }
 
 /** 游乐园：薄荷与奶油交替的软垫，边缘压一圈亮白安全线 */
 function fillFloorRubber(g: Graphics, r: WorldRect): void {
+  const c = VENUE_COLORS.park;
   const tile = 32;
-  rect(g, r.x, r.y, r.w, r.h, 0x9fe6cd);
+  rect(g, r.x, r.y, r.w, r.h, c.main);
   for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += tile) {
     for (let col = 0, x = r.x; x < r.x + r.w; col += 1, x += tile) {
-      if ((row + col) % 2 === 0) rect(g, x, y, tile, tile, 0x8fdcc2);
+      if ((row + col) % 2 === 0) rect(g, x, y, tile, tile, c.alt);
     }
   }
-  for (let y = r.y; y < r.y + r.h; y += tile) rect(g, r.x, y, r.w, 1, 0x7cc9ae);
-  for (let x = r.x; x < r.x + r.w; x += tile) rect(g, x, r.y, 1, r.h, 0x7cc9ae);
-  rect(g, r.x + 4, r.y + 4, r.w - 8, 3, 0xfff6e0);
-  rect(g, r.x + 4, r.y + r.h - 7, r.w - 8, 3, 0xfff6e0);
-  rect(g, r.x + 4, r.y + 4, 3, r.h - 8, 0xfff6e0);
-  rect(g, r.x + r.w - 7, r.y + 4, 3, r.h - 8, 0xfff6e0);
+  // 接缝之外再补一道极淡的内凹，软垫的厚度读得出来
+  for (let y = r.y; y < r.y + r.h; y += tile) {
+    rect(g, r.x, y, r.w, 1, c.seam);
+    rect(g, r.x, y + 1, r.w, 1, lighten(c.alt, 0.22));
+  }
+  for (let x = r.x; x < r.x + r.w; x += tile) rect(g, x, r.y, 1, r.h, c.seam);
+  rect(g, r.x + 4, r.y + 4, r.w - 8, 3, c.accent);
+  rect(g, r.x + 4, r.y + r.h - 7, r.w - 8, 3, c.accent);
+  rect(g, r.x + 4, r.y + 4, 3, r.h - 8, c.accent);
+  rect(g, r.x + r.w - 7, r.y + 4, 3, r.h - 8, c.accent);
 }
 
 /** 小黑屋：冷灰水泥地，两道固定裂缝 + 中央排水口，和影厅的软地毯形成硬对比 */
 function fillFloorConcrete(g: Graphics, r: WorldRect): void {
-  rect(g, r.x, r.y, r.w, r.h, 0x6a6d72);
+  const c = VENUE_COLORS.cell;
+  rect(g, r.x, r.y, r.w, r.h, c.main);
   // 水泥浇筑分块：每 46px 一道浅缝，错缝排布
   for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += 46) {
-    rect(g, r.x, y, r.w, 1, 0x5d6065);
+    rect(g, r.x, y, r.w, 1, c.seam);
     const offset = (row % 2) * 23;
     for (let x = r.x + offset; x < r.x + r.w; x += 46) {
-      rect(g, x, y, 1, 46, 0x5d6065);
-      rect(g, x + 1, y + 1, 45, 1, 0x73767b);
+      rect(g, x, y, 1, 46, c.seam);
+      rect(g, x + 1, y + 1, 45, 1, c.alt);
     }
   }
   // 固定裂缝：避开门口与反省凳，只做视觉，不影响碰撞
-  rect(g, r.x + 64, r.y + 58, 1, 34, 0x4f5257);
-  rect(g, r.x + 65, r.y + 58, 3, 1, 0x4f5257);
-  rect(g, r.x + 66, r.y + 59, 1, 17, 0x4f5257);
-  rect(g, r.x + r.w - 96, r.y + r.h - 92, 1, 28, 0x4f5257);
-  rect(g, r.x + r.w - 95, r.y + r.h - 92, 11, 1, 0x4f5257);
+  const crack = darken(c.seam, 0.9);
+  rect(g, r.x + 64, r.y + 58, 1, 34, crack);
+  rect(g, r.x + 65, r.y + 58, 3, 1, crack);
+  rect(g, r.x + 66, r.y + 59, 1, 17, crack);
+  rect(g, r.x + r.w - 96, r.y + r.h - 92, 1, 28, crack);
+  rect(g, r.x + r.w - 95, r.y + r.h - 92, 11, 1, crack);
   // 中央排水口：一圈深色格栅
   const drainX = r.x + r.w / 2 - 12;
   const drainY = r.y + r.h - 112;
-  rect(g, drainX, drainY, 24, 10, 0x44474c);
-  rect(g, drainX + 1, drainY + 1, 22, 8, 0x55585d);
-  for (let i = 0; i < 5; i += 1) rect(g, drainX + 3 + i * 4, drainY + 2, 1, 6, 0x3d4045);
+  rect(g, drainX, drainY, 24, 10, darken(c.seam, 0.85));
+  rect(g, drainX + 1, drainY + 1, 22, 8, c.seam);
+  for (let i = 0; i < 5; i += 1) rect(g, drainX + 3 + i * 4, drainY + 2, 1, 6, darken(c.seam, 0.7));
 }
 
 function fillPaving(g: Graphics, r: WorldRect): void {
@@ -959,12 +994,46 @@ function fillSolidFlat(g: Graphics, s: SolidRect): void {
   rect(g, s.x, s.y + s.h - 1, s.w, 1, COLOR.fixtureEdge);
 }
 
+/** 赌场墨绿绒：60px 大方格无缝绒面，靠极低的对比度表现「吸光的布」 */
+function fillFloorFelt(g: Graphics, r: WorldRect): void {
+  const c = VENUE_COLORS.diceHall;
+  const tile = 60;
+  rect(g, r.x, r.y, r.w, r.h, c.main);
+  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += tile) {
+    for (let col = 0, x = r.x; x < r.x + r.w; col += 1, x += tile) {
+      if ((row + col) % 2 === 0) rect(g, x, y, tile, tile, c.alt);
+    }
+  }
+  // 绒面没有硬缝，只留一层压暗的织纹格，走近才看得出
+  for (let y = r.y; y < r.y + r.h; y += tile) rect(g, r.x, y, r.w, 1, darken(c.main, 0.88));
+  for (let x = r.x; x < r.x + r.w; x += tile) rect(g, x, r.y, 1, r.h, darken(c.main, 0.88));
+}
+
+/** 公寓暖灰抹面：46px 伸缩缝 + 每块左上角一线受光，安静但不像水泥地 */
+function fillFloorPlaster(g: Graphics, r: WorldRect): void {
+  const c = VENUE_COLORS.apartment;
+  const tile = 46;
+  rect(g, r.x, r.y, r.w, r.h, c.main);
+  for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += tile) {
+    const offset = (row % 2) * (tile / 2);
+    for (let x = r.x + offset; x < r.x + r.w; x += tile) {
+      rect(g, x, y, Math.min(tile, r.x + r.w - x), tile, c.alt);
+      rect(g, x + 1, y + 1, Math.min(tile, r.x + r.w - x) - 2, 1, lighten(c.alt, 0.26));
+      rect(g, x, y, 1, tile, c.seam);
+    }
+    rect(g, r.x, y, r.w, 1, c.seam);
+  }
+}
+
 function fillBuildingFloor(g: Graphics, building: BuildingSpec): void {
   if (building.floor === 'wood') fillFloorWood(g, building.rect);
+  else if (building.floor === 'walnut') fillFloorWalnut(g, building.rect);
   else if (building.floor === 'carpet') fillFloorCarpet(g, building.rect);
   else if (building.floor === 'cinema') fillFloorCinema(g, building.rect);
   else if (building.floor === 'rubber') fillFloorRubber(g, building.rect);
   else if (building.floor === 'concrete') fillFloorConcrete(g, building.rect);
+  else if (building.floor === 'felt') fillFloorFelt(g, building.rect);
+  else if (building.floor === 'plaster') fillFloorPlaster(g, building.rect);
   else fillFloorTile(g, building.rect);
 }
 

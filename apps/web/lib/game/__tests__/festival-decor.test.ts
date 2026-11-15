@@ -143,10 +143,10 @@ describe('夜间光池', () => {
     expect(road).toHaveLength(2);
   });
 
-  it('沿用宫灯口径：半径 48、暖红、可抖动，光心落在陆地上', () => {
+  it('沿用挂灯口径：半径 48、暖白、可抖动，光心落在陆地上', () => {
     for (const light of festivalLights(PLAN)) {
       expect(light.radius).toBe(48);
-      expect(light.color).toBe(0xff5a3c);
+      expect(light.color).toBe(LANTERN_LIGHT.color);
       expect(light.intensity).toBeGreaterThan(0);
       expect(light.flicker).toBeGreaterThan(0);
       expect(isOnLand(light.x, light.y)).toBe(true);

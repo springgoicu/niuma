@@ -83,9 +83,13 @@ import {
   HOTSPOT_SERVER_SLACK,
   RING_PHASE,
   doorNoOf,
+  apartmentExitHotspotId,
   hotspotById,
   isWithinHotspot,
-  seatById,
+  isWithinAnyHotspotOfKind,
+  RING_BENCH_SEAT_GROUP,
+  seatInGroup,
+  seatMatchesHotspot,
   setDynamicSolids,
   type CareerSummary,
   type SeatStateEntry,
@@ -343,6 +347,20 @@ export function startGameServer(config: ServerConfig) {
   function nearHotspot(id: string, player: Player): boolean {
     const hotspot = hotspotById(id);
     return hotspot !== undefined && isWithinHotspot(hotspot, player.x, player.y, HOTSPOT_SERVER_SLACK);
+  }
+
+  /**
+   * 公寓门（ADR-0095）：六栋楼各有自己的门，站在任意一栋门口按 F 都算回家，
+   * 进的是自己那间房所在的那栋楼。
+   */
+  function nearAnyApartmentDoor(player: Player): boolean {
+    return isWithinAnyHotspotOfKind('apartmentDoor', player.x, player.y, HOTSPOT_SERVER_SLACK);
+  }
+
+  /** 公寓出口只认自己那栋楼：用别栋的出口热区穿墙会被丢包 */
+  function nearOwnApartmentExit(player: Player): boolean {
+    if (player.roomId === 0) return false;
+    return nearHotspot(apartmentExitHotspotId(player.roomId - 1), player);
   }
 
   /** 锁门状态变成碰撞体：服务端移动裁决读它，客户端在同一条包到达时同步 */
@@ -1136,6 +1154,9 @@ export function startGameServer(config: ServerConfig) {
     if (op === OpCode.C2S_DICE_BET) {
       player.lastP2PAt = now;
       const request = decodeDiceBet(data);
+      // 入座门（ADR-0093）：必须坐在这一桌自己的圆凳上；站着只在客户端提示「先入座」
+      const hotspot = hotspotById(`dice-table-${request.table}`);
+      if (!hotspot || !seatMatchesHotspot(hotspot, player.seat)) return;
       if (!nearHotspot(`dice-table-${request.table}`, player)) return;
       if (dice.placeBet(player, request.table, request.side, request.amount, now)) {
         broadcastDice(dice, world, transport, now);
@@ -1146,9 +1167,8 @@ export function startGameServer(config: ServerConfig) {
     if (op === OpCode.C2S_ARENA_BET) {
       player.lastP2PAt = now;
       const request = decodeArenaBet(data);
-      // 押注资格：必须坐在观战长椅上，且比赛中、本局没押过
-      const seat = player.seat !== 0 ? seatById(player.seat) : undefined;
-      if (!seat || seat.group !== 'arena-bench') return;
+      // 押注资格：必须坐在观战长椅上（ADR-0093 统一座位组判定），且比赛中、本局没押过
+      if (!seatInGroup(player.seat, RING_BENCH_SEAT_GROUP)) return;
       if (world.ring.betVerdict(player, request.side, request.amount, now) !== 'ok') return;
       if (!economy.freezeEscrow(player, request.amount)) return;
       if (!world.ring.placeBet(player, request.side, request.amount, now)) {
@@ -1189,7 +1209,7 @@ export function startGameServer(config: ServerConfig) {
       player.lastP2PAt = now;
       const request = decodeApartmentRequest(data);
       if (request.action === APARTMENT_ACTION.Enter) {
-        if (!nearHotspot('apartment-door', player)) return;
+        if (!nearAnyApartmentDoor(player)) return;
         broadcastSeats(seats.stand(player));
         if (!apartment.enter(player, now)) return;
         grid.update(player.id, player.x, player.y);
@@ -1200,7 +1220,7 @@ export function startGameServer(config: ServerConfig) {
         return;
       }
       if (request.action === APARTMENT_ACTION.Exit) {
-        if (!nearHotspot('apartment-exit', player)) return;
+        if (!nearOwnApartmentExit(player)) return;
         if (!apartment.exit(player)) return;
         grid.update(player.id, player.x, player.y);
         player.needsViewRefresh = true;

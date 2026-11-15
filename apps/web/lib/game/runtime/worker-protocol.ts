@@ -145,7 +145,14 @@ export type WorkerToMain =
   | { t: 'chat'; entry: ChatEntry }
   | { t: 'history'; entries: ChatEntry[]; replace: boolean; hasMore: boolean }
   | { t: 'hint'; hint: string | null }
-  | { t: 'localState'; pose: Pose; seated: boolean; seatKind: SeatKind | null }
+  | {
+      t: 'localState';
+      pose: Pose;
+      seated: boolean;
+      seatKind: SeatKind | null;
+      /** 座位组：坐进赌桌圆凳即自动入局，主线程据此派生面板开关（ADR-0093） */
+      seatGroup: string | null;
+    }
   | { t: 'nav'; nav: { id: NavTargetId; name: string } | null }
   | { t: 'picked'; id: number | null; badge?: PlayerBadge | null }
   | { t: 'badge'; id: number; badge: PlayerBadge | null }

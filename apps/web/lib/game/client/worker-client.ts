@@ -610,7 +610,12 @@ export class WorkerGameClient implements GameClient {
         callbacks.onHint(message.hint);
         return;
       case 'localState':
-        callbacks.onLocalState({ pose: message.pose, seated: message.seated, seatKind: message.seatKind });
+        callbacks.onLocalState({
+          pose: message.pose,
+          seated: message.seated,
+          seatKind: message.seatKind,
+          seatGroup: message.seatGroup,
+        });
         return;
       case 'nav':
         callbacks.onNav(message.nav);

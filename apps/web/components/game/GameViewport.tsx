@@ -18,6 +18,7 @@ import {
   isNightShift,
   findCosmeticSkuById,
   furnitureById,
+  diceTableByGroup,
   type ChatSendPacket,
   type NavTargetId,
 } from '@niuma/shared-types';
@@ -161,6 +162,8 @@ export function GameViewport({
   const lastStatsRef = useRef<{ x: number; y: number } | null>(null);
   /** 上一次入座状态：只在「未坐 → 坐」的边沿记一次摸鱼 */
   const lastSeatedRef = useRef(false);
+  /** 上一次的座位组：赌桌面板只在坐进 / 离开凳子那一次打开或收起（ADR-0093） */
+  const seatedGroupRef = useRef<string | null>(null);
   /**
    * 已经入账过的擂台 matchId。
    *
@@ -460,6 +463,16 @@ export function GameViewport({
         onHint: (next) => setHint(next),
         onLocalState: (state) => {
           setLocalState(state);
+          // 赌桌：坐上本桌圆凳即自动入局，离座 / 换桌自动收起（ADR-0093）。
+          // 只在座位组变化的那一次动面板：手动关掉后不会被同一张凳子反复弹回来。
+          if (state.seatGroup !== seatedGroupRef.current) {
+            seatedGroupRef.current = state.seatGroup;
+            const table = state.seatGroup ? diceTableByGroup(state.seatGroup) : undefined;
+            const nextTable = table ? table.id : null;
+            if (useGameUi.getState().diceOpen !== nextTable) {
+              useGameUi.getState().setDiceOpen(nextTable);
+            }
+          }
           // 如厕计时跟座位类型走：坐在马桶座上攒今日如厕，起身即结算。
           // setToilet 内部按 active 变化短路，重复上报同一状态不会重复计时。
           attendanceClockRef.current?.setToilet(

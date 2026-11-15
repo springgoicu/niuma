@@ -7,6 +7,8 @@ import {
   CLINIC_BEDS,
   CLINIC_DROP,
   CLINIC_NURSE_SPOTS,
+  CLINIC_REGION_RECT,
+  CLINIC_VEHICLE_ENTRY,
   DIRECTION,
   ENTITY_ROLE_NURSE,
   MOVE_SPEED,
@@ -18,6 +20,7 @@ import {
   encodeAmbulance,
   encodePatientStatus,
   quantizeCoord,
+  rectContains,
   resolveMotionInto,
   seatById,
   type AmbulancePacket,
@@ -95,7 +98,7 @@ interface Ambulance {
   targetId: number;
   /** 出警起始时刻，用于 8 秒脱困 */
   phaseAt: number;
-  /** 绕行航段：0 东侧空地 → 1 南向主路 → 2 追人 / 回站 */
+  /** 绕行航段：0 东侧空地 → 1 南向主路 → 2 追人 / 回站（站内伤员改走 3：南侧通道口再追人） */
   leg: number;
   /** 最后一次有意义的移动方向，用于把伤员挂在车尾 */
   dirX: number;
@@ -148,6 +151,8 @@ export class AmbulanceManager {
   /** 护盾到期广播的截止时刻 */
   private readonly shieldUntil = new Map<number, number>();
   private readonly nurses: Player[] = [];
+  /** 与 `nurses` 同步下标的站位号：某个护士没生成出来也不会把别人放错位 */
+  private readonly nurseSpots: number[] = [];
   private readonly nurseNextWave = [0, 0];
   private nurseWaveUntil = 0;
   private seq = 0;
@@ -200,6 +205,7 @@ export class AmbulanceManager {
       this.grid.insert(nurse.id, nurse.x, nurse.y);
       this.nurseNextWave[index] = now + 2000 + index * 1800;
       this.nurses.push(nurse);
+      this.nurseSpots.push(index);
     });
   }
 
@@ -359,6 +365,12 @@ export class AmbulanceManager {
       }
       if (car.leg === 1) {
         this.advanceLeg(car, AMBULANCE_ROAD_GATE.x, AMBULANCE_ROAD_GATE.y, 2, now);
+        return;
+      }
+
+      // 站内伤员（ADR-0092）：从主路直奔站心会撞上护士站围挡，先停到南侧通道口再进站
+      if (car.leg === 2 && rectContains(CLINIC_REGION_RECT, patient.x, patient.y)) {
+        this.advanceLeg(car, CLINIC_VEHICLE_ENTRY.x, CLINIC_VEHICLE_ENTRY.y, 3, now);
         return;
       }
 
@@ -578,6 +590,13 @@ export class AmbulanceManager {
   // ---------------------------------------------------------------------------
 
   private advanceNurses(now: number): void {
+    // 回位排在挥手之前：护士是站桩 NPC，没有大脑驱动「硬直结束自己爬起来」，
+    // 不在这里补一手，被创飞一次就会一直躺在急救站（ADR-0090）
+    for (let i = 0; i < this.nurses.length; i += 1) {
+      const nurse = this.nurses[i]!;
+      if (nurse.pose !== POSE.Lie || now < nurse.stunUntil) continue;
+      this.resetNurse(nurse, this.nurseSpots[i] ?? 0, now);
+    }
     if (now >= this.nurseWaveUntil) {
       for (const nurse of this.nurses) {
         if (!nurse.wave) continue;
@@ -595,6 +614,25 @@ export class AmbulanceManager {
       this.nurseNextWave[i] = now + 6000 + Math.random() * 4000;
       this.nurseWaveUntil = now + 900;
     }
+  }
+
+  /**
+   * 护士硬直结束回位（ADR-0090）：清硬直、站回出生站位、落站姿。
+   *
+   * 坐标直接取出生时的合法站位，不经碰撞求解也不会进墙；网格更新返回 true 时
+   * 才置 `needsViewRefresh`，让 AOI 里所有人重新拿到这条实体，客户端才看得到「起身」。
+   */
+  private resetNurse(nurse: Player, index: number, now: number): void {
+    const spot = CLINIC_NURSE_SPOTS[index];
+    nurse.stunUntil = 0;
+    nurse.lastMoveAt = now;
+    if (spot) {
+      nurse.x = spot.x;
+      nurse.y = spot.y;
+    }
+    nurse.applyState(DIRECTION.Down, POSE.Idle, false);
+    nurse.markDirtyIfChanged();
+    if (this.grid.update(nurse.id, nurse.x, nurse.y)) nurse.needsViewRefresh = true;
   }
 
   private broadcastCars(): void {

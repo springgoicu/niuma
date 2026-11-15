@@ -113,7 +113,8 @@ export function runWorkerHost(scope: WorkerScope): void {
         onChatHistory: (entries, meta) =>
           post({ t: 'history', entries, replace: meta.replace, hasMore: meta.hasMore }),
         onHint: (hint) => post({ t: 'hint', hint }),
-        onLocalState: ({ pose, seated, seatKind }) => post({ t: 'localState', pose, seated, seatKind }),
+        onLocalState: ({ pose, seated, seatKind, seatGroup }) =>
+          post({ t: 'localState', pose, seated, seatKind, seatGroup }),
         onNav: (nav) => post({ t: 'nav', nav }),
         onVentHit: (local) => post({ t: 'ventHit', local }),
         onVentDealt: () => post({ t: 'ventDealt' }),

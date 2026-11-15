@@ -29,3 +29,4 @@ export * from './world/dice-hall';
 export * from './world/villas';
 export * from './world/apartment';
 export * from './world/hotspots';
+export * from './world/seat-gate';

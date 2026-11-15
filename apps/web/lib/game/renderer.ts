@@ -52,6 +52,7 @@ import { propLights } from './lighting/scene-lights';
 import { readSeason, type SeasonState } from './season';
 import { SnowField } from './snow-fx';
 import { WinterArt } from './winter-art';
+import { VenueArt, VenueFx } from './venue-art';
 import { pickCharacter, type PickCandidate } from './badge';
 import { cameraFocus } from './camera';
 import { bakeCritterArt, type CritterArt } from './critter-art';
@@ -798,7 +799,7 @@ export class GameRenderer {
   private readonly p2pFx = new P2PFx();
   /** 擂台覆盖层：领奖台与彩带必须压在排序层之后，才不会被角色吃掉 */
   private readonly ringOverlay = new Container();
-  /** 门头牌匾与对联：三座自建牌坊（ADR-0061） */
+  /** 场所门牌：四角房大牌坊 + 7 处入口小横匾（ADR-0061 / ADR-0091） */
   private plaques?: PlaqueView;
   /** 摸鱼大赌场：亭台、两张绿绒赌桌与亮牌骰子（ADR-0087） */
   private dice?: DiceHallView;
@@ -808,6 +809,10 @@ export class GameRenderer {
   private apartment?: ApartmentView;
   /** 游乐园：入口门头、滑梯、秋千、跷跷板、旋转木马与灯串 */
   private park?: ParkView;
+  /** 场所第二层：地面氛围、檐下小件与各场所焦点光（`?venue=0` 整层不构造） */
+  private venueArt?: VenueArt;
+  /** 场所微动效：落叶、水光与霓虹呼吸，纯函数推进 */
+  private venueFx?: VenueFx;
   /** 上香 / 续杯的一次性反馈：金色飘字与当日首香光晕（ADR-0061） */
   private ritual?: RitualFx;
   /** 淡金光晕跟随的实体：0 表示当前没有光晕 */
@@ -955,6 +960,8 @@ export class GameRenderer {
       this.lightmap.register(this.festival?.lights ?? []);
       this.lightmap.register(this.shrine?.lights ?? []);
       this.lightmap.register(this.park?.lights ?? []);
+      // 场所第二层的焦点光：赌场霓虹、诊所冷白、擂台顶灯、公寓门廊灯、广场地灯…
+      this.lightmap.register(this.venueArt?.lights ?? []);
       this.app.stage.addChild(this.lightmap.container);
     }
     // 弹幕是屏幕空间最顶层：必须在 lightmap 之后入栈，柔光才不会盖住文字。
@@ -1020,6 +1027,13 @@ export class GameRenderer {
     this.interior = new InteriorArt();
     this.interior.build(this.sortLayer, this.props.base, this.app.renderer);
 
+    // 场所第二层：地面光池 / 收边 / 落地小物走 `props.base`（永远在角色脚下），
+    // 檐下挂件与角标走 y 排序层，灯位交给下面的光图注册。`?venue=0` 整层不构造。
+    if (params.get('venue') !== '0') {
+      this.venueArt = new VenueArt();
+      this.venueArt.build(this.sortLayer, this.props.base);
+    }
+
     // 冬季道具：雪人 / 雪堆进 y 排序层（会被树冠挡住），冰棱贴墙进地面层
     if (this.season.winter) {
       this.winterArt = new WinterArt();
@@ -1074,7 +1088,7 @@ export class GameRenderer {
     this.ring = new RingView(this.app.renderer, this.metrics.devicePxPerTexel);
     this.ring.build(this.sortLayer, this.props.base, this.ringOverlay);
 
-    // 门头牌匾（ADR-0061）：墙体是平铺色带没有立面，所以每处门头自带一座牌坊
+    // 场所门牌（ADR-0061 / ADR-0091）：墙体是平铺色带没有立面，四角房立牌坊、其余入口立小横匾
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
 
@@ -1112,6 +1126,12 @@ export class GameRenderer {
     if (this.apartment) this.world.addChild(this.apartment.interiorLayer);
 
     this.world.addChild(this.sortLayer.container);
+
+    // 场所微动效：落叶、水光与霓虹压在最上层——它们本来就该飘过脚背、盖住招牌
+    if (this.venueArt) {
+      this.venueFx = new VenueFx(this.app.renderer);
+      this.world.addChild(this.venueFx.container);
+    }
 
     // 擂台的领奖台与彩带压在 y 排序层之后：角色站在台上时不该把台面盖住
     this.world.addChild(this.ringOverlay);
@@ -1626,6 +1646,8 @@ export class GameRenderer {
     this.winterArt?.update(now);
     // 节日彩旗两帧飘动 + 30s 一次亮核采样（ADR-0063）
     this.festival?.update(now);
+    // 场所微动效：落叶 / 水光 / 霓虹，全部由绝对时间算，掉帧也不跑偏
+    this.venueFx?.update(now);
     // 相机在 session 里先于本方法更新，这里拿到的边界与焦点属于同一帧
     this.critters?.update(dtMs, this.focusX, this.focusY, this.cameraBounds);
     this.fish?.update(dtMs, this.cameraBounds, this.focusX, this.focusY);
@@ -1861,6 +1883,8 @@ export class GameRenderer {
     // 冬季与室内陈设的精灵先交给 app.destroy 统一回收，纹理在这里手动释放
     this.winterArt?.destroy();
     this.interior?.destroy();
+    // 场所层的 Graphics 由 app.destroy 回收，这里只需释放微动效自己烘的三张小图
+    this.venueFx?.destroy();
     this.snow?.destroy();
     this.danmaku?.destroy();
     // 先放两个 Field 的精灵，再放共享图集：反了会让还在引用纹理的 Sprite 悬空

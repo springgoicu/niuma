@@ -90,6 +90,14 @@ describe('设施提示按钮映射', () => {
     }
   });
 
+  it('入座类玩法没坐下时只提醒，不映射成按钮（ADR-0093）', () => {
+    for (const copy of [HINT.diceNeedSeat, HINT.arenaNeedSeat, HINT.workNeedSeat]) {
+      expect(hintButton(copy)).toBeNull();
+      // 手势说法必须提到动作盘上的「坐下」，否则触屏玩家找不到入口
+      expect(touchHint(copy)).toContain('「坐下」');
+    }
+  });
+
   it('状态文案与未知文案不映射成按钮', () => {
     for (const copy of ['移动即可起身', '已到达食堂', '附近没有可互动的设施', '']) {
       expect(hintButton(copy)).toBeNull();

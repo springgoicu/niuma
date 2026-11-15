@@ -103,8 +103,12 @@ import {
   WORLD_EVENT_KIND,
   WORLD_EVENT_PHASE,
   isWorkDeskSeat,
+  apartmentByDoorNo,
+  apartmentExitHotspotId,
   redPacketSpots,
-  workDeskIndexOfSeat,
+  RING_BENCH_SEAT_GROUP,
+  seatMatchesHotspot,
+  diceTableByGroup,
   type SeatInstance,
   type SeatKind,
   type SeatStateEntry,
@@ -205,6 +209,20 @@ export interface WorldSnapshot {
   points: Array<{ x: number; y: number; self: boolean }>;
 }
 
+/**
+ * 本地座位状态（`onLocalState` 的载荷）。
+ *
+ * `seatGroup` 是入座类玩法的唯一开关：坐在赌桌圆凳上就自动进入本桌赌局（ADR-0093），
+ * 主线程据此派生出面板可见性，不需要为「坐下」再造一条协议消息。
+ */
+export interface LocalSeatState {
+  pose: Pose;
+  seated: boolean;
+  seatKind: SeatKind | null;
+  /** 当前座位组（`dice-a` / `dice-b` / `arena-bench` …），未入座或该座位无组时为 null */
+  seatGroup: string | null;
+}
+
 export interface SessionCallbacks {
   onStatus(status: 'connecting' | 'queued' | 'online' | 'offline' | 'error', detail?: string): void;
   /** 排队位次快照；null 表示离开队列（入场、被拒或断线） */
@@ -218,7 +236,7 @@ export interface SessionCallbacks {
   /** 附近可用座位、当前入座或被拦下的动作提示；null 表示不显示 */
   onHint(hint: string | null): void;
   /** 本地姿态、入座状态与座位种类：动作按钮据此显示激活 / 不可用态，只在变化时回调 */
-  onLocalState(state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }): void;
+  onLocalState(state: LocalSeatState): void;
   /** 自动寻路目标：`null` 表示没有在导航（到达、取消、被打断都会回调） */
   onNav(nav: { id: NavTargetId; name: string } | null): void;
   /** 本地被创飞：行为统计用；旁观他人挨打不算自己的抗压记录 */
@@ -467,10 +485,14 @@ export class GameSession {
   private ringReceivedAt = 0;
   /** 公寓屋内状态：门口 / 出口热区二选一，渲染层据此叠室内地板 */
   private inRoom = false;
+  /** 当前所在楼栋（0..5，来自房间快照的门牌号）：出口热区只认自己那栋 */
+  private roomSlot = -1;
   /** 上次上报给 UI 的本地姿态与入座状态，用来去重 */
   private localPose = -1;
   private localSeated = false;
   private localSeatKind: SeatKind | null = null;
+  /** 上次上报给 UI 的座位组：赌桌凳子决定面板要不要自动打开（ADR-0093） */
+  private localSeatGroup: string | null = null;
   private net: NetClient | null = null;
   private localId = 0;
   /** 系统消息的负序号：与聊天 msgId 分开，列表 key 不会撞 */
@@ -1198,13 +1220,16 @@ export class GameSession {
    */
   private updateSeatHint(eid: number): void {
     if (this.localSeat !== 0) {
+      const group = seatById(this.localSeat)?.group ?? null;
       if (isWorkDeskSeat(this.localSeat)) {
         // 工位上坐着时 F 就是开工（ADR-0088），「移动即可起身」在这里是最没用的一句话
         this.contextHint = HINT.work;
+      } else if (group !== null && diceTableByGroup(group) !== undefined) {
+        // 赌桌圆凳：坐下即入局（ADR-0093），面板被手动关掉后按 F 还能再开
+        this.contextHint = HINT.dice;
       } else {
         // 观战长椅上坐下不是「只能起身」：这里正是押注入口（ADR-0087）
-        const group = seatById(this.localSeat)?.group;
-        this.contextHint = group === 'arena-bench' ? HINT.arenaBet : '移动即可起身';
+        this.contextHint = group === RING_BENCH_SEAT_GROUP ? HINT.arenaBet : '移动即可起身';
       }
     } else {
       const x = Position.x[eid]!;
@@ -1216,9 +1241,9 @@ export class GameSession {
         : selectContextHint(x, y, direction, {
             isFreeSeat: (id) => !this.seatOwner.has(id),
             propOut: this.interactTarget,
-            seatedGroup: this.localSeat !== 0 ? seatById(this.localSeat)?.group ?? null : null,
+            seatId: this.localSeat,
             roomId: this.inRoom ? 1 : 0,
-            seatDeskIndex: this.localSeat !== 0 ? workDeskIndexOfSeat(this.localSeat) : -1,
+            roomSlot: this.roomSlot,
           });
     }
     this.publishHint();
@@ -1254,16 +1279,30 @@ export class GameSession {
     this.renderer.showBubble(this.localId, 'Zzz…');
   }
 
-  /** 本地姿态镜像：只在变化时回调一次，动作条据此切换高亮与不可用态 */
+  /**
+   * 本地姿态镜像：只在变化时回调一次，动作条据此切换高亮与不可用态。
+   *
+   * `seatGroup` 一并参与去重：坐下 / 换桌必须让主线程重算赌局面板的开关，
+   * 但同一状态重复上报会变成每帧一条 Worker 消息。
+   */
   private emitLocalState(eid: number): void {
     const pose = Motion.pose[eid]!;
     const seated = this.localSeat !== 0;
     const seatKind = seated ? seatById(this.localSeat)?.kind ?? null : null;
-    if (pose === this.localPose && seated === this.localSeated && seatKind === this.localSeatKind) return;
+    const seatGroup = seated ? seatById(this.localSeat)?.group ?? null : null;
+    if (
+      pose === this.localPose &&
+      seated === this.localSeated &&
+      seatKind === this.localSeatKind &&
+      seatGroup === this.localSeatGroup
+    ) {
+      return;
+    }
     this.localPose = pose;
     this.localSeated = seated;
     this.localSeatKind = seatKind;
-    this.callbacks.onLocalState({ pose: pose as Pose, seated, seatKind });
+    this.localSeatGroup = seatGroup;
+    this.callbacks.onLocalState({ pose: pose as Pose, seated, seatKind, seatGroup });
   }
 
   /**
@@ -1416,11 +1455,13 @@ export class GameSession {
     this.callbacks.onRing?.(null, 0);
     // 房间频道随连接重建：新会话从园区门口重新进
     this.inRoom = false;
+    this.roomSlot = -1;
     this.renderer.setRoomState(null);
     this.localId = 0;
     this.localPose = -1;
     this.localSeated = false;
     this.localSeatKind = null;
+    this.localSeatGroup = null;
   }
 
   /** 被拒后由用户显式重试：重置拒绝态并立刻重连，不等指数退避 */
@@ -1683,11 +1724,11 @@ export class GameSession {
     // 其余 F 类互动统一查 `WORLD_HOTSPOTS`（与提示条同一张表、同一个优先级）
     const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
       if (candidate.kind === 'ring') return false;
-      if (candidate.kind === 'arenaSeat') {
-        return this.localSeat !== 0 && seatById(this.localSeat)?.group === 'arena-bench';
-      }
       if (candidate.kind === 'apartmentDoor') return !this.inRoom;
-      if (candidate.kind === 'apartmentExit') return this.inRoom;
+      if (candidate.kind === 'apartmentExit') {
+        return this.inRoom && candidate.id === apartmentExitHotspotId(this.roomSlot);
+      }
+      // 入座类热区（赌桌 / 长椅 / 工位）不再过滤：没坐上时下面各自给出「先坐下」
       return true;
     });
     if (!def) {
@@ -1720,16 +1761,25 @@ export class GameSession {
         return;
       case 'workDesk':
         // 搬砖要求「坐在这一桌的工位上」：站着只提示先坐下，不发包也不开界面
-        if (this.localSeat === 0 || workDeskIndexOfSeat(this.localSeat) !== def.deskIndex) {
+        if (!seatMatchesHotspot(def, this.localSeat)) {
           this.showHint(HINT.workNeedSeat);
           return;
         }
         this.callbacks.onWorkOpen?.();
         return;
       case 'diceTable':
+        // 赌桌同理（ADR-0093）：没坐上本桌凳子只提示，不发下注包也不开面板
+        if (!seatMatchesHotspot(def, this.localSeat)) {
+          this.showHint(HINT.diceNeedSeat);
+          return;
+        }
         this.callbacks.onDiceOpen?.(hotspotIndex(def.id));
         return;
       case 'arenaSeat':
+        if (!seatMatchesHotspot(def, this.localSeat)) {
+          this.showHint(HINT.arenaNeedSeat);
+          return;
+        }
         this.callbacks.onArenaBetOpen?.();
         return;
       case 'villaGate':
@@ -2115,6 +2165,8 @@ export class GameSession {
   }
 
   private handleRoomState(packet: RoomStatePacket): void {
+    // 门牌号 → 楼栋：六栋楼各有自己的出口热区（ADR-0095）
+    this.roomSlot = apartmentByDoorNo(packet.doorNo)?.slot ?? -1;
     this.setInsideRoom(true);
     this.renderer.setRoomState(packet);
     this.callbacks.onRoomState?.(packet);
@@ -2124,7 +2176,10 @@ export class GameSession {
   private setInsideRoom(inside: boolean): void {
     if (this.inRoom === inside) return;
     this.inRoom = inside;
-    if (!inside) this.renderer.setRoomState(null);
+    if (!inside) {
+      this.roomSlot = -1;
+      this.renderer.setRoomState(null);
+    }
     this.seatHintAt = 0;
   }
 
