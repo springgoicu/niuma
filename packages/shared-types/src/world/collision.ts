@@ -1,11 +1,13 @@
 /**
  * 地形碰撞：服务端权威结算与客户端本地预测跑的是同一份纯函数，因此双端坐标天然一致。
  *
- * 求解策略（见 ADR-0008 / ADR-0028 / ADR-0030）：
+ * 求解策略（见 ADR-0008 / ADR-0028 / ADR-0030 / ADR-0099）：
  * 1. 障碍按 128px 网格建索引，单次查询只遍历邻近桶；
  * 2. 4px 子步推进，薄隔断（6px 隔断 + 9px 玩家半径）不可能被一步跨过；
  * 3. 整段被挡时退化为单轴移动，贴着墙体与家具走会自然滑行而不是卡死；
- * 4. 三处景观湖全域可涉水（ADR-0030 / ADR-0047），水不再是障碍；海仍由 `isOnLand` 兜底。
+ * 4. 两条单轴都被挡时再做 1px 内角侧移：90° 内角上 4px 整步进不去、1px 进得去，
+ *    否则斜着贴墙角会直接停死（ADR-0099）。侧移计入位移预算，不会额外提速；
+ * 5. 三处景观湖全域可涉水（ADR-0030 / ADR-0047），水不再是障碍；海仍由 `isOnLand` 兜底。
  *
  * 办公区已删除围栏（ADR-0028），软边界树篱不参与碰撞。
  */
@@ -25,6 +27,10 @@ import { ISLAND, PLANTER_RADIUS, TREE_TRUNK_RADIUS, WORLD_CENTER, WORLD_LAYOUT, 
 export const PLAYER_RADIUS = 9;
 /** 单步最长 4px，小于最薄障碍的有效厚度（6px 隔断 + 9px 半径 = 15），避免高速穿模 */
 const MAX_SUBSTEP = 4;
+/** 内角辅助滑行的单次侧移（px）：1px 才进得去 90° 内角，4px 整步会被挡 */
+const NUDGE_STEP = 1;
+/** 单次解算最多侧移几次：同时受位移预算约束，只是兜底上限 */
+const MAX_NUDGES = 24;
 /** 障碍索引网格边长 */
 const GRID_SIZE = 128;
 const GRID_COUNT = Math.ceil(WORLD_WIDTH / GRID_SIZE);
@@ -321,6 +327,8 @@ export function resolveMotionInto(
   let x = originX;
   let y = originY;
   let traveled = 0;
+  /** 1px 侧移的次数上限：每侧移一次都从位移预算里扣，因此不会额外提速 */
+  let nudges = 0;
   while (traveled < distance) {
     const advance = Math.min(MAX_SUBSTEP, distance - traveled);
     const nx = x + unitX * advance;
@@ -343,7 +351,41 @@ export function resolveMotionInto(
       traveled += advance;
       continue;
     }
-    break;
+    // 第三级：内角辅助滑行（ADR-0099）。
+    // 90° 内角上斜走时，整步与两条单轴滑行会同时被挡（4px 整步进不去，1px 却进得去），
+    // 于是角色顶在墙角停死。这里把整步拆成 1px 的侧移：先试原方向的 1px 微步，
+    // 再试垂直于原方向的 1px（两侧都探，优先能多看 1px 空格的那侧）。
+    // 侧移同样计入 `traveled`，所以总位移永远不超过调用方给的步长，不会被用来加速。
+    if (nudges >= MAX_NUDGES || traveled + NUDGE_STEP > distance) break;
+    const stepX = Math.abs(unitX) > 0.0001 ? (unitX > 0 ? NUDGE_STEP : -NUDGE_STEP) : 0;
+    const stepY = Math.abs(unitY) > 0.0001 ? (unitY > 0 ? NUDGE_STEP : -NUDGE_STEP) : 0;
+    if (stepX !== 0 && !isBlocked(x + stepX, y, radius)) {
+      x += stepX;
+      traveled += NUDGE_STEP;
+      nudges += 1;
+      continue;
+    }
+    if (stepY !== 0 && !isBlocked(x, y + stepY, radius)) {
+      y += stepY;
+      traveled += NUDGE_STEP;
+      nudges += 1;
+      continue;
+    }
+    // 垂直方向：横向被挡就试纵向两侧，反之亦然；2px 探针只用来决定先试哪一侧
+    const sideX = stepX !== 0;
+    const first = sideX ? NUDGE_STEP : -NUDGE_STEP;
+    const other = -first;
+    const freeFirst =
+      sideX
+        ? !isBlocked(x, y + first, radius) && !isBlocked(x, y + first * 2, radius)
+        : !isBlocked(x + first, y, radius) && !isBlocked(x + first * 2, y, radius);
+    const pick = freeFirst ? first : other;
+    const pickFree = sideX ? !isBlocked(x, y + pick, radius) : !isBlocked(x + pick, y, radius);
+    if (!pickFree) break;
+    if (sideX) y += pick;
+    else x += pick;
+    traveled += NUDGE_STEP;
+    nudges += 1;
   }
   out.x = x;
   out.y = y;

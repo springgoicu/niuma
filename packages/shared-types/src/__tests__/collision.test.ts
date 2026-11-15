@@ -70,6 +70,34 @@ describe('中央广场与五向出街', () => {
   });
 });
 
+describe('内角辅助滑行（ADR-0099）', () => {
+  it('斜着贴凸墙角推进时不会一下停死，位移不超过步长', () => {
+    // 301 栋东南角 (3500, 4920)：楼体整块实心，外面是巷道与草地。
+    // 站位离两条边各 7px（斜距 9.9 > 半径 9，站得住），朝墙角斜走时
+    // 4px 整步与两条单轴滑行会同时被挡 —— 这正是旧实现「顶住不动」的位置。
+    const fromX = 3507;
+    const fromY = 4927;
+    expect(isBlocked(fromX, fromY)).toBe(false);
+    const toX = fromX - 12;
+    const toY = fromY - 12;
+    expect(isBlocked(fromX - 4, fromY - 4)).toBe(true);
+
+    const out = resolveMotion(fromX, fromY, toX, toY);
+    const moved = Math.hypot(out.x - fromX, out.y - fromY);
+    // 1px 侧移能挤进墙角，于是不再原地卡死
+    expect(moved).toBeGreaterThan(0);
+    // 侧移计入位移预算：总位移永远不超过这一帧给的步长
+    expect(moved).toBeLessThanOrEqual(Math.hypot(toX - fromX, toY - fromY) + 0.001);
+    expect(isBlocked(out.x, out.y)).toBe(false);
+  });
+
+  it('空旷处照旧走满整段，侧移不参与正常移动', () => {
+    const out = resolveMotion(CENTER.x, CENTER.y, CENTER.x + 24, CENTER.y);
+    expect(out.x).toBeCloseTo(CENTER.x + 24, 6);
+    expect(out.y).toBeCloseTo(CENTER.y, 6);
+  });
+});
+
 describe('水体', () => {
   it('三处湖面都可以涉水进入', () => {
     for (const lake of WORLD_LAYOUT.lakes) {

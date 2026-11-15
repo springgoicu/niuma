@@ -50,6 +50,11 @@ export class BossView {
   private readonly plateText: Text;
   private readonly hpText: Text;
   private readonly texts: Text[] = [];
+  /** 残血 / 倒下的吐槽气泡：只在档位翻转时改文案，不逐帧写 text */
+  private readonly alertRoot = new Container();
+  private alertText: Text | null = null;
+  private alertTier: 0 | 1 | 2 = 0;
+  private readonly alertBubbleTexture;
   private readonly colorTexture;
   private readonly grayTexture;
   private readonly woodPlate;
@@ -140,8 +145,32 @@ export class BossView {
     this.hpText.anchor.set(0, 0.5);
     this.hpText.position.set(BAR_W / 2 + 8, BAR_TOP + BAR_H / 2);
 
+    // 残血吐槽气泡：奶白硬边 + 小尖角，压在名牌上方；默认不显示
+    const bubbleTexture = bake(
+      renderer,
+      (g) => {
+        g.roundRect(0, 0, 118, 22, 4).fill(0x1b2233);
+        g.roundRect(1, 1, 116, 20, 3).fill(0xf5efd8);
+        g.rect(2, 2, 114, 1).fill(0xfffcf2);
+        // 尖角指向老板头顶
+        g.poly([54, 22, 64, 22, 59, 28]).fill(0x1b2233);
+        g.poly([55, 22, 63, 22, 59, 27]).fill(0xf5efd8);
+      },
+      { frame: new Rectangle(0, 0, 118, 28) },
+    );
+    this.alertBubbleTexture = bubbleTexture;
+    const bubble = new Sprite(bubbleTexture);
+    bubble.anchor.set(0.5, 1);
+    bubble.position.set(0, PLATE_TOP - 2);
+    this.alertRoot.addChild(bubble);
+    this.alertText = this.makeText('', 11, 0x2a3142, 1, '600');
+    this.alertText.anchor.set(0.5, 1);
+    this.alertText.position.set(0, PLATE_TOP - 6);
+    this.alertRoot.addChild(this.alertText);
+    this.alertRoot.visible = false;
+
     this.labels.position.copyFrom(this.root.position);
-    this.labels.addChild(this.barBack, this.barFill, this.plate, this.plateText, this.hpText);
+    this.labels.addChild(this.barBack, this.barFill, this.plate, this.plateText, this.hpText, this.alertRoot);
     this.applyHp(BOSS_MAX_HP);
   }
 
@@ -165,6 +194,25 @@ export class BossView {
   /** 服务端广播的血量：0 点即倒地，归零只切换一次状态 */
   setHp(hp: number): void {
     this.applyHp(hp);
+  }
+
+  /**
+   * 血量档位（0 正常 / 1 残血 / 2 倒下）：只有翻转时才写一次文案。
+   *
+   * 与血条颜色同一把尺子（<30% 转橙），但房间氛围读的是这里，不各自再算一遍比例。
+   */
+  setAlert(tier: 0 | 1 | 2): void {
+    if (tier === this.alertTier) return;
+    this.alertTier = tier;
+    const bubble = this.alertRoot;
+    if (tier === 0) {
+      bubble.visible = false;
+      return;
+    }
+    bubble.visible = true;
+    const text = tier === 2 ? '让我缓一会儿…' : '这届牛马有点猛…';
+    const label = this.alertText;
+    if (label && label.text !== text) label.text = text;
   }
 
   /** 本地踢中反馈：立刻抖一下，不等服务端回包 */
@@ -248,5 +296,6 @@ export class BossView {
     this.cardPlate.destroy(true);
     this.barFillTexture.destroy(true);
     this.groundTexture.destroy(true);
+    this.alertBubbleTexture.destroy(true);
   }
 }

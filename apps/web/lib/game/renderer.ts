@@ -8,12 +8,15 @@ import {
   type Texture,
 } from 'pixi.js';
 import {
+  BOSS_MAX_HP,
   ENTITY_ROLE_GUARD,
   ISLAND,
   PATIENT_STATE,
   WORLD_LAYOUT,
+  isNightShift,
   isWadingAt,
   seatById,
+  workDeskIndexOfSeat,
   type AmbulancePacket,
   type CharacterAppearance,
   type P2PDuelStatePacket,
@@ -21,7 +24,7 @@ import {
   type PatientStatusPacket,
   type RingPacket,
   type DiceStatePacket,
-  type RoomStatePacket,
+  type ApartmentPeekEntry,
   type VillaStatePacket,
   type BossShockPacket,
 } from '@niuma/shared-types';
@@ -42,6 +45,7 @@ import { RingView } from './ring';
 import { DiceHallView } from './dice-hall-view';
 import { VillasView } from './villas-view';
 import { ApartmentView } from './apartment-view';
+import { WindowPeekView } from './window-peek';
 import { RitualFx } from './ritual-fx';
 import { ShrineView } from './shrine';
 import { TeaStationView } from './tea-station';
@@ -50,6 +54,7 @@ import { InteriorArt } from './interior-art';
 import { LightmapLayer } from './lighting/lightmap';
 import { propLights } from './lighting/scene-lights';
 import { readSeason, type SeasonState } from './season';
+import { serverNow, serverTzOffsetMin } from './server-clock';
 import { SnowField } from './snow-fx';
 import { WinterArt } from './winter-art';
 import { VenueArt, VenueFx } from './venue-art';
@@ -98,11 +103,16 @@ import {
 import { SortLayer } from './sort-layer';
 import { SPRITE_LAYOUT } from './sprite-layout.generated';
 import { TerrainView } from './terrain';
+import { VenuePlay } from './venue-play';
+import { venueRoomOfSeat } from './venue-spots';
 import { WaterFx, makeWadingTexture } from './water-fx';
 import { WelcomeView } from './welcome';
 
 /** 黄金安全帽的目录键：脚底金光的唯一触发条件（ADR-0088） */
 const GOLDEN_HELMET_ID = 'golden_helmet';
+
+/** 涉水扩散环的节流间隔（ms）：与脚步小节拍分开，避免每一步都叠一圈半透明 */
+const WADING_WAKE_MS = 380;
 
 /**
  * 世界倍率：1 纹素画 1.5 个 CSS 像素，角色站立 48 纹素 ≈ 72 CSS 像素（DPR 2）。
@@ -207,6 +217,8 @@ class EntityView {
   private lastColumn = -1;
   /** 上一次的可见状态：只在翻转时才改 `renderable` */
   private shown = true;
+  /** 是否正在公寓窗口探头：本体与昵称整体不画，只在窗口里留一颗头 */
+  private peeked = false;
   /** 昵称文字底边（相对脚底）：换装改变头顶高度后重算 */
   private nameBottom: number;
   /** 头顶（相对脚底，负值）：眩晕星星绕它转，与配件挂点同源 */
@@ -407,8 +419,20 @@ class EntityView {
   setShown(shown: boolean): void {
     if (shown === this.shown) return;
     this.shown = shown;
-    this.root.renderable = shown;
-    this.labels.renderable = shown;
+    this.root.renderable = shown && !this.peeked;
+    this.labels.renderable = shown && !this.peeked;
+  }
+
+  /**
+   * 窗口探头（ADR-0098）：人在窗里，本体与昵称都不该出现在门口台阶上。
+   *
+   * 与 `setShown` 是两条独立开关（屏外剔除 / 探头隐藏），合成后才是真正的可见性。
+   */
+  setPeeked(peeked: boolean): void {
+    if (peeked === this.peeked) return;
+    this.peeked = peeked;
+    this.root.renderable = this.shown && !peeked;
+    this.labels.renderable = this.shown && !peeked;
   }
 
   get isShown(): boolean {
@@ -805,8 +829,12 @@ export class GameRenderer {
   private dice?: DiceHallView;
   /** 豪宅小院：院墙、牌匾与摇钱树 */
   private villas?: VillasView;
-  /** 牛马公寓：外立面 + 屋内覆盖层 */
+  /** 牛马公寓：只有外立面，室内与家具随 ADR-0098 下线 */
   private apartment?: ApartmentView;
+  /** 公寓窗口探头：占用窗口里的头与亮灯，画在排序层之上 */
+  private windowPeek?: WindowPeekView;
+  /** 最近一次窗口占用快照：实体进场时按它补画（外观来自实体同步） */
+  private peekEntries: ReadonlyArray<ApartmentPeekEntry> = [];
   /** 游乐园：入口门头、滑梯、秋千、跷跷板、旋转木马与灯串 */
   private park?: ParkView;
   /** 场所第二层：地面氛围、檐下小件与各场所焦点光（`?venue=0` 整层不构造） */
@@ -857,6 +885,17 @@ export class GameRenderer {
   private season: SeasonState = { winter: false, snow: false, source: 'date' };
   /** 室内陈设补完层：与季节无关，改动只落在渲染层 */
   private interior?: InteriorArt;
+  /** 室内状态联动与微动效（`?interior=0` 关闭）：隔间门、吊灯断闪、宿舍暖光 */
+  private interiorFx = true;
+  /**
+   * 弱交互场所演出层（会议室投屏 / 影厅大屏 / 影院压暗 / 音箱音符 / 打卡闪光）。
+   * `?venue=0` 整层不构造；`?motion=0` 时停在第一帧。
+   */
+  private venuePlay?: VenuePlay;
+  /** 已占用的座位镜像：只用于「变化沿」计数，避免重复广播把人数越加越多 */
+  private readonly occupiedSeats = new Set<number>();
+  private meetingSeated = 0;
+  private theaterSeated = 0;
   /** 左右脚交替：同一条触地通路里按次数翻转，不用随机数 */
   private footprintFoot = false;
   private shadowTextures: Texture[] = [];
@@ -865,6 +904,8 @@ export class GameRenderer {
   private waterFx?: WaterFx;
   /** 水线覆盖纹理：所有角色共用一张，不按人复制 */
   private wadingTexture?: Texture;
+  /** 上一次涉水扩散环的时间戳（`performance.now()`），只用于 380ms 节流 */
+  private wakeAt = 0;
   private dustFrames = new Set<number>();
   /** 树冠遮挡的输入缓冲：脚底坐标 (x, y) 成对写入，容量 512 人 */
   private readonly occluders = new Float32Array(1024);
@@ -1017,7 +1058,13 @@ export class GameRenderer {
     this.world.addChild(this.terrain.decals);
     // 室内地板与墙体、园区铺装：与地形同层，压在贴花之上、y 排序层之下
     this.props = new PropsView();
-    this.props.build(this.sortLayer, this.app.renderer);
+    // `?decor=0` 只关过渡带的灌木与路边小物，地图与碰撞不变（与 `?venue=0` 同一套灰度惯例）；
+    // `?flat=1` 同时关掉路口铺砖、斑马线、指引箭头与铺装路缘，回到旧的纯平铺画法
+    this.props.build(this.sortLayer, this.app.renderer, {
+      winter: this.season.winter,
+      decor: params.get('decor') !== '0',
+      flat: params.get('flat') === '1',
+    });
     this.world.addChild(this.props.base);
     // 脚底金光压在铺装之上、角色之下：光环不该盖住腿，也不该被地面吃掉
     this.world.addChild(this.goldAura);
@@ -1026,12 +1073,27 @@ export class GameRenderer {
     // 墙上的窗、钟、镜与衣柜这类「贴墙家具」都没有碰撞——贴墙位置本来就在墙体里
     this.interior = new InteriorArt();
     this.interior.build(this.sortLayer, this.props.base, this.app.renderer);
+    // 室内「活起来」的那一层（隔间门开合 / 吊灯断闪 / 宿舍暖光）：`?interior=0` 一键退回静态美术，
+    // 与 `?venue=0` / `?decor=0` 同一套灰度惯例——美术本体保留，只停掉状态联动与微动效
+    this.interiorFx = params.get('interior') !== '0';
+    if (this.interiorFx) {
+      this.interior.setWarmEligible(this.season.winter || this.isNightNow());
+    }
+
+    // 弱交互场所演出（会议室投屏 / 影厅大屏 / 音符 / 打卡闪光）：
+    // 屏幕是贴墙陈设，与室内地板同层——永远在角色脚下，不会盖住走进去的人。
+    // `?venue=0` 与 venue 装饰层同一条关法；`?motion=0` 只冻结时间，画面照旧。
+    if (params.get('venue') !== '0') {
+      this.venuePlay = new VenuePlay(this.app.renderer, { animate: params.get('motion') !== '0' });
+      this.venuePlay.build(this.props.base);
+    }
 
     // 场所第二层：地面光池 / 收边 / 落地小物走 `props.base`（永远在角色脚下），
     // 檐下挂件与角标走 y 排序层，灯位交给下面的光图注册。`?venue=0` 整层不构造。
     if (params.get('venue') !== '0') {
       this.venueArt = new VenueArt();
-      this.venueArt.build(this.sortLayer, this.props.base);
+      // `?light=0` 连地面光池一起退场：灯灭了却还留着一地暖椭圆会读成漏光
+      this.venueArt.build(this.sortLayer, this.props.base, { light: this.lightEnabled });
     }
 
     // 冬季道具：雪人 / 雪堆进 y 排序层（会被树冠挡住），冰棱贴墙进地面层
@@ -1051,7 +1113,7 @@ export class GameRenderer {
     }
 
     // 北门迎宾地标：自己按脚底 y 进排序层，和树、桌椅、角色共用同一套遮挡关系
-    this.welcome = new WelcomeView();
+    this.welcome = new WelcomeView(this.season.winter);
     this.welcome.build(this.sortLayer, this.app.renderer, this.metrics.devicePxPerTexel);
 
     // 放假告示板的动态文本（ADR-0059）：展板本体已在 props 里，这里只叠横幅与跑马灯
@@ -1059,7 +1121,7 @@ export class GameRenderer {
     this.bulletin.build(this.sortLayer);
 
     // 摸鱼亭（ADR-0096）：台基走地面层，亭身拆后景/前景两条深度键，人能走进去坐下
-    this.pavilion = new PavilionView();
+    this.pavilion = new PavilionView(this.season.winter);
     this.pavilion.build(this.sortLayer, this.props.base);
 
     // 固定挂灯（ADR-0096）：拱门横梁两端 + 四角院落门柱，入夜由光图层统一点亮
@@ -1073,7 +1135,7 @@ export class GameRenderer {
     this.tea.build(this.sortLayer);
 
     // 护士急救站（ADR-0084）：地面/柜台走常规深度，救护车与护士帽红十字进覆盖层
-    this.clinic = new ClinicView();
+    this.clinic = new ClinicView(this.season.winter);
     this.clinic.build(this.sortLayer, this.props.base);
     // 入场快照可能早于图集构建：把先到的治疗状态补喂给爱心层
     for (const [id, state] of this.patientStates) {
@@ -1102,7 +1164,13 @@ export class GameRenderer {
     this.apartment.build(this.sortLayer, this.props.base);
 
     // 游乐园：入口门头、滑梯与三件器械；滑梯的深度键在塔顶，滑下时不会被盖住
-    this.park = new ParkView(this.app.renderer, this.metrics.devicePxPerTexel);
+    // `?motion=0` 时摩天轮停在 0 步、彩灯不闪：与 venue 演出层同一个开关
+    this.park = new ParkView(
+      this.app.renderer,
+      this.metrics.devicePxPerTexel,
+      params.get('motion') !== '0',
+      this.season.winter,
+    );
     this.park.build(this.sortLayer, this.props.base);
 
     // 节日装饰（ADR-0063 / ADR-0096）：跨路彩旗、门楣挂饰与树梢灯串；纯装饰、不参与碰撞。
@@ -1122,10 +1190,15 @@ export class GameRenderer {
     this.waterFx = new WaterFx(this.app.renderer);
     this.world.addChild(this.waterFx.container);
 
-    // 公寓室内地板压在排序层之下：屋里的角色站在自己的地板上，而不是被地板盖住
-    if (this.apartment) this.world.addChild(this.apartment.interiorLayer);
-
     this.world.addChild(this.sortLayer.container);
+
+    // 影院压暗压在排序层之后、昵称之前：坐下时整个座位区（含角色）一起暗下去，
+    // 屏幕本身在暗区之上，才是「开场」而不是「关灯停电」
+    if (this.venuePlay) this.world.addChild(this.venuePlay.dim);
+
+    // 窗口探头压在排序层之后：公寓外立面的深度键在楼底，头必须画在楼面之上（ADR-0098）
+    this.windowPeek = new WindowPeekView(this.atlas);
+    this.world.addChild(this.windowPeek.container);
 
     // 场所微动效：落叶、水光与霓虹压在最上层——它们本来就该飘过脚背、盖住招牌
     if (this.venueArt) {
@@ -1212,8 +1285,15 @@ export class GameRenderer {
       this.wadingTexture!,
       (x, y, wading) => {
         // 水里换涟漪，陆地照旧扬尘：同一条落脚通路，不另建计时器
-        if (wading) this.waterFx?.spawn(x, y);
-        else {
+        if (wading) {
+          this.waterFx?.spawn(x, y);
+          // 涉水扩散环：380ms 最多一枚，走起来才有一圈圈推开的水纹
+          const now = performance.now();
+          if (now - this.wakeAt >= WADING_WAKE_MS) {
+            this.wakeAt = now;
+            this.waterFx?.spawnWake(x, y);
+          }
+        } else {
           this.fx?.spawn(x, y);
           // 雪地脚印：只踩在覆雪地面（户外草地）上。土路、桥、沙岸、室内都是
           // 不该留印子的地面——`isOutdoorGround` 就是贴花层用的那一份判定
@@ -1273,6 +1353,10 @@ export class GameRenderer {
     // 脚底金光按头饰判定：入场首帧就要亮，否则戴冠的人会先秃一帧
     if (appearance.cosmetics?.headwear === GOLDEN_HELMET_ID) this.goldHelmets.add(id);
     else this.goldHelmets.delete(id);
+    // 探头快照可能早于实体视图到达：这时才拿得到外观，补画一次窗口里的头
+    if (this.peekEntries.some((entry) => entry.id === id)) {
+      this.setApartmentPeek(this.peekEntries);
+    }
   }
 
   removeEntity(id: number): void {
@@ -1282,6 +1366,7 @@ export class GameRenderer {
       this.goldHelmets.delete(id);
       this.beacons.delete(view);
       this.p2pFx.drop(id);
+      this.windowPeek?.drop(id);
       view.destroy();
     }
     
@@ -1498,9 +1583,18 @@ export class GameRenderer {
     this.villas?.setState(packet);
   }
 
-  /** 公寓室内：null 表示回到园区，整层地板与家具隐藏 */
-  setRoomState(packet: RoomStatePacket | null): void {
-    this.apartment?.setRoomState(packet);
+  /**
+   * 公寓窗口占用快照（ADR-0098）：全量覆盖。
+   *
+   * 探头的人本体隐藏、头画到窗口上；窗口一并点亮。外观仍读常规实体视图，
+   * 所以这里只是「谁在哪扇窗」，不重复传外观。
+   */
+  setApartmentPeek(entries: ReadonlyArray<ApartmentPeekEntry>): void {
+    this.peekEntries = entries;
+    const peeking = new Set<number>();
+    for (const entry of entries) peeking.add(entry.id);
+    for (const [id, view] of this.views) view.setPeeked(peeking.has(id));
+    this.windowPeek?.setEntries(entries, (id) => this.views.get(id)?.body.appearance);
   }
 
   /**
@@ -1532,9 +1626,29 @@ export class GameRenderer {
     this.ritual.grantAura(performance.now(), durationMs);
   }
 
-  /** 老板血量：下行广播与入场快照都走这里（ADR-0070） */
+  /**
+   * 老板血量：下行广播与入场快照都走这里（ADR-0070）。
+   *
+   * 血条之外只外露一个档位给房间氛围（正常 / 残血 / 倒下）：
+   * 两个类各自解释血量迟早会读出两种「残血」，而每帧读百分比又无从比较。
+   */
   setBossHp(hp: number): void {
     this.boss?.setHp(hp);
+    if (!this.interiorFx) {
+      this.boss?.setAlert(0);
+      this.venueArt?.setBossAlert(0);
+      return;
+    }
+    const safe = Number.isFinite(hp) ? Math.max(0, Math.min(BOSS_MAX_HP, hp)) : BOSS_MAX_HP;
+    const tier: 0 | 1 | 2 = safe <= 0 ? 2 : safe / BOSS_MAX_HP < 0.3 ? 1 : 0;
+    this.boss?.setAlert(tier);
+    this.venueArt?.setBossAlert(tier);
+  }
+
+  /** 园区本地时间的「夜班」判定：与工效加成的口径同一把尺子（服务端时钟 + 园区时区） */
+  private isNightNow(): boolean {
+    const hour = new Date(serverNow() + serverTzOffsetMin() * 60_000).getUTCHours();
+    return isNightShift(hour);
   }
 
   /** 本地踢中反馈：先抖一下，不等服务端回包 */
@@ -1648,6 +1762,17 @@ export class GameRenderer {
     this.festival?.update(now);
     // 场所微动效：落叶 / 水光 / 霓虹，全部由绝对时间算，掉帧也不跑偏
     this.venueFx?.update(now);
+    // 室内状态美术：工位代码行两帧 + 专注光呼吸、隔间门 / 吊灯 / 暖光、发泄室警戒光。
+    // `?interior=0` 时整层停在这里：屏幕停在亮屏的静止帧，房间退回改前的样子
+    if (this.interiorFx) {
+      this.props?.update(now);
+      this.interior?.update(now);
+      this.venueArt?.update(now);
+    }
+    // 局域演出：会议投屏轮播、影厅频道动件、影院压暗收敛、音符与闪光
+    this.venuePlay?.update(now, dtMs);
+    // 游乐园：摩天轮吊舱换步、夜间彩灯逐颗脉冲
+    this.park?.update(now);
     // 相机在 session 里先于本方法更新，这里拿到的边界与焦点属于同一帧
     this.critters?.update(dtMs, this.focusX, this.focusY, this.cameraBounds);
     this.fish?.update(dtMs, this.cameraBounds, this.focusX, this.focusY);
@@ -1839,10 +1964,71 @@ export class GameRenderer {
     return { x: (stageX - this.world.x) / scale, y: (stageY - this.world.y) / scale };
   }
 
-  /** 座位占用变化：对应工位的显示器随之点亮或熄灭 */
+  /**
+   * 座位占用变化：对应工位的显示器随占座点亮或熄灭。
+   *
+   * 顺带维护会议室 / 影厅的人头数（只读 `S2C_SEAT_STATE`，纯客户端演出）：
+   * 只在真正的变化沿上加减，重复广播不会把人数越加越多。
+   */
   setSeatOccupied(seatId: number, occupied: boolean): void {
     const seat = seatById(seatId);
     if (seat) this.props?.setSeatOccupied(seat, occupied);
+    // 室内的第二处联动：马桶 → 隔间门，宿舍床 → 暖光条件（工位屏在 PropsView 里）
+    if (this.interiorFx) this.interior?.setSeatOccupied(seatId, occupied);
+
+    const had = this.occupiedSeats.has(seatId);
+    if (occupied === had) return;
+    if (occupied) this.occupiedSeats.add(seatId);
+    else this.occupiedSeats.delete(seatId);
+
+    const room = venueRoomOfSeat(seatId);
+    if (!room || !this.venuePlay) return;
+    const delta = occupied ? 1 : -1;
+    if (room === 'meeting') {
+      this.meetingSeated = Math.max(0, this.meetingSeated + delta);
+      this.venuePlay.setRoomOccupied('meeting', this.meetingSeated);
+    } else {
+      this.theaterSeated = Math.max(0, this.theaterSeated + delta);
+      this.venuePlay.setRoomOccupied('theater', this.theaterSeated);
+    }
+  }
+
+  /**
+   * 本地入座变化：只有坐在影厅座椅上才压暗影厅。
+   * 座位 id 由 session 给出（0 = 起身），渲染层不自己猜。
+   */
+  setLocalSeatVenue(seatId: number): void {
+    this.venuePlay?.setTheaterLocalSeated(venueRoomOfSeat(seatId) === 'theater');
+  }
+
+  /**
+   * 局域水花：洗手台按 F 的一次性反馈（纯本地，不广播）。
+   * 池子与尘土共用同一条 ticker，不为一次洗手新增图层。
+   */
+  showSplash(x: number, y: number): void {
+    this.fx?.spawnSplash(x, y);
+  }
+
+  /**
+   * 本人搬砖中：在对应工位上点亮一圈专注光。
+   *
+   * `seatId` 是本地座位（0 = 没坐），由 session 给出：渲染层不猜「谁在搬砖」。
+   * 非工位座位一律收起——坐在长椅上不该有加班光。
+   */
+  setWorking(seatId: number, active: boolean): void {
+    if (!this.props || !this.interiorFx) return;
+    const deskIndex = active ? workDeskIndexOfSeat(seatId) : -1;
+    this.props.setWorkingDesk(deskIndex, deskIndex >= 0);
+  }
+
+  /** 影厅换台（本地）：返回新频道名，供瞬时提示使用 */
+  cycleTheaterChannel(): string {
+    return this.venuePlay?.cycleChannel() ?? '';
+  }
+
+  /** 游乐园打卡闪光：纯客户端反馈，不广播 */
+  flashPhotoAt(x: number, y: number): void {
+    this.venuePlay?.flashPhoto(x, y);
   }
 
   destroy(): void {
@@ -1877,6 +2063,7 @@ export class GameRenderer {
     this.dice?.destroy();
     this.villas?.destroy();
     this.apartment?.destroy();
+    this.windowPeek?.destroy();
     this.park?.destroy();
     this.clinic?.destroy();
     this.ritual?.destroy();
@@ -1885,6 +2072,9 @@ export class GameRenderer {
     this.interior?.destroy();
     // 场所层的 Graphics 由 app.destroy 回收，这里只需释放微动效自己烘的三张小图
     this.venueFx?.destroy();
+    // 局域演出自己烘的幻灯片 / 频道底图 / 动件 / 音符 / 闪光纹理都在这里释放
+    this.venuePlay?.destroy();
+    this.occupiedSeats.clear();
     this.snow?.destroy();
     this.danmaku?.destroy();
     // 先放两个 Field 的精灵，再放共享图集：反了会让还在引用纹理的 Sprite 悬空

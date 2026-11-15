@@ -146,8 +146,7 @@ export class Player {
   coins = 0;
   stats: EconomyStats = emptyStats();
   inventory: Record<string, number> = {};
-  houseTier = 0;
-  /** 已解锁的外观件与家具（`furn:<id>`）：装扮货架与公寓家具共用这条清单 */
+  /** 已解锁的外观件；历史存档里的 `furn:<id>` 记录原样保留但无人读取 */
   unlockedCosmetics: string[] = [];
   /** 已冻结赌注：从 coins 扣出但尚未裁决，退款按这个数原路返还 */
   escrowedCoins = 0;
@@ -206,7 +205,6 @@ export class Player {
     this.coins = clean.coins;
     this.stats = clean.stats;
     this.inventory = clean.inventory;
-    this.houseTier = clean.houseTier;
     this.unlockedCosmetics = [...clean.unlockedCosmetics];
     this.escrowedCoins = 0;
     this.busyMatchId = 0;
@@ -227,7 +225,6 @@ export class Player {
       coins: this.coins,
       stats: this.stats,
       inventory: this.inventory,
-      houseTier: this.houseTier,
       unlockedCosmetics: this.unlockedCosmetics,
     });
   }
@@ -253,10 +250,10 @@ export class Player {
   /** 当前占用的座位 id，0 表示站立或地面坐 */
   seat = 0;
   /**
-   * 所在房间频道：0 = 园区，1..6 = 牛马公寓的房间。
+   * 是否在牛马公寓的窗口里：0 = 园区，1..6 = 在某栋楼的窗口探头（ADR-0098）。
    *
-   * 房间是同一段坐标上的不同频道：同频道互相可见，跨频道与屋外互不可见。
-   * 视野过滤在 `refreshView` 里做，移动与碰撞完全复用园区的实现。
+   * 只是「人在窗里」的标记，不再是同步频道：移动、坐躺、受击全部按免伤挡板处理，
+   * 全园区都看得见那颗头（客户端按窗口快照画）。
    */
   roomId = 0;
   /** 八角笼连胜：同一人连续拿冠军的次数，断线或换人夺冠即清零 */
@@ -372,7 +369,6 @@ export class Player {
     this.coins = 0;
     this.stats = emptyStats();
     this.inventory = {};
-    this.houseTier = 0;
     this.unlockedCosmetics = [];
     this.escrowedCoins = 0;
     this.busyMatchId = 0;

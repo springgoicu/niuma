@@ -14,17 +14,16 @@ export const ECONOMY_STORAGE_KEY = 'niuma:economy:v1';
 
 /** HELLO 尾部经济段魔数。0xfa 已被会话续算段占用，0xf8–0xff 全部名花有主 */
 export const ECONOMY_EXTENSION_MAGIC = 0xf7;
-/** 经济段最短载荷：coins u32 + 四维各 u8 + houseTier u8 + 道具数量 u8 */
-export const ECONOMY_MIN_BYTES = 10;
-/** 经济段最长载荷：10 + 16 种道具 × (id u8 + count u16) */
-export const ECONOMY_MAX_BYTES = 10 + 16 * 3;
+/** 经济段最短载荷：coins u32 + 四维各 u8 + 道具数量 u8（ADR-0098 去掉房屋等级） */
+export const ECONOMY_MIN_BYTES = 9;
+/** 经济段最长载荷：9 + 16 种道具 × (id u8 + count u16) */
+export const ECONOMY_MAX_BYTES = 9 + 16 * 3;
 export const ECONOMY_MAX_ITEM_KINDS = 16;
 
 /** 余额上限：u32 留出余量，避免前端 number 与 0xffffffff 相加时越界 */
 export const MAX_COINS = 999_999_999;
 export const MAX_STAT_LEVEL = 10;
 export const MAX_ITEM_COUNT = 99;
-export const MAX_HOUSE_TIER = 5;
 export const MAX_ECONOMY_COSMETICS = 24;
 
 export const STAT_KEYS = ['atkSpeedLv', 'workEffLv', 'critLv', 'armorLv'] as const;
@@ -53,7 +52,6 @@ export interface EconomyProfile {
   stats: EconomyStats;
   unlockedCosmetics: string[];
   inventory: Record<string, number>;
-  houseTier: number;
   dailyQuests: DailyQuestState;
 }
 
@@ -98,9 +96,9 @@ export const WALLET_REASON = {
   VillaIncome: 24,
   /** 装扮购买 */
   Cosmetic: 25,
-  /** 户型升级 */
+  /** 曾用于户型升级：随 ADR-0098 下线，编号永久留空不复用 */
   HouseUpgrade: 26,
-  /** 购买家具 */
+  /** 曾用于购买家具：随 ADR-0098 下线，编号永久留空不复用 */
   Furniture: 27,
   // ---- 打工产出 / 世界事件（ADR-0088），只追加不复用 ----
   /** 工位搬砖工资 */
@@ -423,7 +421,6 @@ export function emptyEconomyProfile(): EconomyProfile {
     stats: emptyStats(),
     unlockedCosmetics: [],
     inventory: {},
-    houseTier: 0,
     dailyQuests: { day: '', progress: {}, claimed: [] },
   };
 }
@@ -495,9 +492,6 @@ export function sanitizeEconomyProfile(raw: unknown): EconomyProfile {
     },
     unlockedCosmetics: sanitizeCosmetics(source.unlockedCosmetics),
     inventory: sanitizeInventory(source.inventory),
-    houseTier: Number.isFinite(Number(source.houseTier))
-      ? Math.max(0, Math.min(MAX_HOUSE_TIER, Math.floor(Number(source.houseTier))))
-      : 0,
     dailyQuests: sanitizeDailyQuests(source.dailyQuests),
   };
 }

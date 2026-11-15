@@ -20,6 +20,8 @@ export interface SignPlate {
   readonly octant: NavOctant;
   /** 牌面在烘焙画布上的上沿；绘制与文字叠层共用同一份 */
   readonly top: number;
+  /** 区色书脊：与 `DISTRICTS` 同一份色，HUD 导览卡的区组标题也用它 */
+  readonly color: number;
 }
 
 /**
@@ -36,12 +38,17 @@ export function signPlateTop(index: number, count: number, height: number): numb
   return PLATE_TOP + offset + Math.max(0, index) * SIGN_PLATE_ROW;
 }
 
-/** 牌面目的地：五座区门，顺序与 `DISTRICTS` 一致，箭头按真实方位现算 */
+/**
+ * 牌面目的地：五座区门，顺序与 `DISTRICTS` 一致，箭头按真实方位现算。
+ * `color` 直接取 `DISTRICTS[].color`，牌面书脊因此与区门门灯、小地图区色、
+ * HUD 导览卡组标题是同一种颜色——指路牌不再只有「薄荷绿一种箭头」。
+ */
 export function signPlates(x: number, y: number, height: number): SignPlate[] {
   const readings = districtReadings(x, y);
   return readings.map((reading, index) => ({
     label: reading.district.name,
     octant: reading.octant,
     top: signPlateTop(index, readings.length, height),
+    color: reading.district.color,
   }));
 }

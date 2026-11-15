@@ -4,18 +4,18 @@ import { DOOR_PLAQUES, NAV_ARRIVALS, NAV_TARGETS, isOnLand, type NavTargetId } f
 import { VILLA_SPECS } from '../world/villas';
 
 /**
- * 场所门牌（ADR-0091）：12 处导览目标各有一块中文门牌。
+ * 场所门牌（ADR-0091 / ADR-0099）：15 处导览目标各有一块中文门牌。
  *
- * 四角房沿用木构门架（`gate`），其余 7 处入口立小门牌（`board`）；
+ * 企业楼沿用木构门架（`gate`），其余 12 处入口立小门牌（`board`）；
  * 两栋小院的院名写在院门牌匾上，不占 `DOOR_PLAQUES`。
  */
 const PLAQUE_IDS = DOOR_PLAQUES.map((plaque) => plaque.id);
 const ALL_IDS: NavTargetId[] = [...PLAQUE_IDS, 'villa1', 'villa2'];
 
 describe('场所门牌（ADR-0091）', () => {
-  it('12 处导览场所全部有门牌，id 不重复也不缺项', () => {
-    expect(ALL_IDS).toHaveLength(12);
-    expect(new Set(ALL_IDS).size).toBe(12);
+  it('15 处导览场所全部有门牌，id 不重复也不缺项', () => {
+    expect(ALL_IDS).toHaveLength(15);
+    expect(new Set(ALL_IDS).size).toBe(15);
     expect(new Set(ALL_IDS)).toEqual(new Set(NAV_TARGETS.map((target) => target.id)));
   });
 
@@ -37,7 +37,7 @@ describe('场所门牌（ADR-0091）', () => {
     expect(DOOR_PLAQUES.filter((plaque) => plaque.frame === 'gate').map((plaque) => plaque.id)).toEqual([
       'workroom',
     ]);
-    expect(DOOR_PLAQUES.filter((plaque) => plaque.frame === 'board')).toHaveLength(9);
+    expect(DOOR_PLAQUES.filter((plaque) => plaque.frame === 'board')).toHaveLength(12);
   });
 
   it('每个门牌落点都能站人，且不压在导览到达点上', () => {

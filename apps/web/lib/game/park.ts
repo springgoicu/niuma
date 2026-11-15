@@ -12,8 +12,13 @@ import {
   type ParkAttractionKind,
 } from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
+import { lightToneAt } from './lighting/tone';
+import { serverHourFraction } from './server-date';
+import { serverNow, serverTzOffsetMin } from './server-clock';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
+import { WINTER_COLORS } from './terrain-palette';
+import { bulbPulse, ferrisStep } from './venue-motion';
 
 /**
  * 游乐园（本轮新增）：晴天下班后的糖果色游乐场。
@@ -56,6 +61,22 @@ const GATE_ART = { w: 132, h: 96 };
 const SWING_ART = { w: 82, h: 92 };
 const SEESAW_ART = { w: 80, h: 34 };
 const CAROUSEL_ART = { w: 124, h: 102 };
+
+/* ------------------------------------------------------------------ *
+ * 摩天轮：静态底 + 六只吊舱 + 一圈彩灯
+ *
+ * 轮盘中心与半径写在这里一次，底图、吊舱圆环 LUT 与彩灯挂点全部从它派生。
+ * `FERRIS_STEPS = 72` 与 6 只吊舱整除（12 步一只），一圈 24s，每步约 5px：
+ * 吊舱按整数坐标挪动，既看不出跳格，也不会出现浮点旋转的糊边。
+ * ------------------------------------------------------------------ */
+const FERRIS_CY = 74;
+const FERRIS_R = 62;
+const FERRIS_STEPS = 72;
+const FERRIS_CABIN_COUNT = 6;
+const FERRIS_PERIOD_MS = 24000;
+const FERRIS_BULB_COUNT = 12;
+const FERRIS_CABIN_ART = { w: 16, h: 18 };
+const FERRIS_BULB_ART = { w: 3, h: 3 };
 
 /** 大件器械的包围盒只从共享布局读，渲染层不写第二份尺寸 */
 const ATTRACTIONS = Object.fromEntries(PARK_ATTRACTIONS.map((item) => [item.kind, item])) as Record<
@@ -125,7 +146,7 @@ function drawSlide(g: Graphics): void {
 }
 
 /** 东门：两根彩柱 + 一道横梁 + 彩旗，牌面文字由 Pixi Text 叠加 */
-function drawGate(g: Graphics): void {
+function drawGate(g: Graphics, winter = false): void {
   for (const x of [8, GATE_ART.w - 22]) {
     box(g, x, 16, 14, GATE_ART.h - 20, C.mint, C.ink);
     rect(g, x + 3, 22, 8, GATE_ART.h - 32, C.mintLight);
@@ -133,6 +154,15 @@ function drawGate(g: Graphics): void {
   }
   box(g, 4, 26, GATE_ART.w - 8, 16, C.peach, C.ink);
   rect(g, 8, 29, GATE_ART.w - 16, 4, C.cream);
+  // 冬季：横梁顶与两个柱头各积一层雪，门口台阶两侧起雪堆（薄薄一道，不挡视线）
+  if (winter) {
+    for (let x = 6; x < GATE_ART.w - 6; x += 7) {
+      const tall = ((Math.imul(x + 11, 2654435761) >>> 0) % 2) + 2;
+      rect(g, x, 23, Math.min(7, GATE_ART.w - 6 - x), tall, WINTER_COLORS.snowBase);
+    }
+    for (const x of [8, GATE_ART.w - 22]) rect(g, x + 1, 15, 12, 2, WINTER_COLORS.snowBase);
+    for (const x of [4, GATE_ART.w - 28]) rect(g, x, GATE_ART.h - 6, 24, 3, WINTER_COLORS.snowShade);
+  }
   for (let i = 0; i < 7; i += 1) {
     const bx = 12 + i * 17;
     g.poly([bx, 42, bx + 8, 42, bx + 4, 54]).fill(i % 2 === 0 ? C.butter : C.sky);
@@ -225,12 +255,18 @@ function drawCarousel(g: Graphics): void {
   });
 }
 
-/** 摩天轮：A 字腿 + 双圈轮盘 + 六个吊舱，辐条用手写偏移，不依赖三角函数 */
-function drawFerrisWheel(g: Graphics): void {
+/**
+ * 摩天轮静态底：A 字腿 + 双圈轮盘 + 八根辐条 + 桅杆小旗。
+ *
+ * **吊舱不在这张图里**（`drawFerrisCabin` 单独烘一张）：轮辐按 45° 自对称，
+ * 旋转的视觉线索全部来自六个吊舱——它们沿圆环整数步进、始终直立，
+ * 于是「轮子在慢慢转」既不需要多帧烘焙，也不会有任何浮点旋转把像素糊掉。
+ */
+function drawFerrisBase(g: Graphics): void {
   const { w, h } = ATTRACTIONS.ferris;
   const cx = w / 2;
-  const cy = 74;
-  const r = 62;
+  const cy = FERRIS_CY;
+  const r = FERRIS_R;
 
   g.ellipse(cx, h - 4, 58, 6).fill({ color: C.ink, alpha: 0.18 });
 
@@ -264,23 +300,23 @@ function drawFerrisWheel(g: Graphics): void {
     g.stroke({ width: 2, color: C.inkSoft });
   }
 
-  // 六个吊舱：挂绳 + 舱体 + 亮面窗
-  for (const [px, py] of [
-    [cx, cy - r],
-    [cx + 54, cy - 32],
-    [cx + 54, cy + 32],
-    [cx, cy + r],
-    [cx - 54, cy + 32],
-    [cx - 54, cy - 32],
-  ] as const) {
-    rect(g, px - 1, py - 2, 2, 6, C.ink);
-    box(g, px - 8, py + 4, 16, 12, C.peach, C.ink);
-    rect(g, px - 5, py + 6, 10, 3, C.cream);
-  }
-
   dot(g, cx, cy, 6, C.gold);
   rect(g, cx - 1, cy - r - 18, 2, 14, C.ink);
   g.poly([cx + 1, cy - r - 18, cx + 16, cy - r - 13, cx + 1, cy - r - 8]).fill(C.mint);
+}
+
+/** 吊舱：挂绳 + 舱体 + 亮面窗，锚点在吊舱顶部（挂在轮缘上，舱体始终直立） */
+function drawFerrisCabin(g: Graphics): void {
+  rect(g, 7, 0, 2, 5, C.ink);
+  box(g, 0, 4, 16, 12, C.peach, C.ink);
+  rect(g, 3, 6, 10, 3, C.cream);
+  rect(g, 3, 11, 10, 1, C.peachDark);
+}
+
+/** 轮盘彩灯：3×3 的小灯泡，夜里逐颗亮灭 */
+function drawFerrisBulb(g: Graphics): void {
+  rect(g, 1, 0, 1, 3, C.cream);
+  rect(g, 0, 1, 3, 1, C.cream);
 }
 
 /** 小火车：两节奶油车厢 + 红色车头，轮子做成黑点 */
@@ -410,8 +446,36 @@ export class ParkView {
   private readonly gateText: Text;
   /** 每个可排序件都带自己的深度键：滑梯用塔顶，其余用脚底 y */
   private readonly items: Array<{ root: Container; depthY: number }> = [];
+  /** 六个吊舱：挂在轮缘、始终直立，靠整数圆环 LUT 绕圈 */
+  private readonly cabins: Sprite[] = [];
+  /** 一圈彩灯：只在夜里亮，逐颗错相脉冲 */
+  private readonly bulbs: Sprite[] = [];
+  /** 72 步整数圆环偏移（dx, dy 各一字节），构造期算一次 */
+  private readonly ring: Int8Array;
+  /** 轮盘中心在吊舱容器里的局部坐标（容器原点 = 精灵底边中心） */
+  private readonly wheelX: number;
+  private readonly wheelY: number;
+  private lastStep = -1;
+  private nightGain = 0;
+  private nightSampledAt = Number.NEGATIVE_INFINITY;
+  /** `?motion=0` 时全部时间量取 0：吊舱停在 0 步、彩灯停在首帧 */
+  private readonly animate: boolean;
+  /** 冬季：南门门头与柱脚积雪（纯表现层，`?season=off` 时不画） */
+  private readonly winter: boolean;
 
-  constructor(renderer: TextureFactory, devicePxPerTexel: number) {
+  constructor(renderer: TextureFactory, devicePxPerTexel: number, animate = true, winter = false) {
+    this.animate = animate;
+    this.winter = winter;
+    // 吊舱圆环：客户端表现层允许三角函数，且只在构造期算一次
+    const ring = new Int8Array(FERRIS_STEPS * 2);
+    for (let i = 0; i < FERRIS_STEPS; i += 1) {
+      const angle = (i / FERRIS_STEPS) * Math.PI * 2;
+      ring[i * 2] = Math.round(Math.cos(angle) * FERRIS_R);
+      ring[i * 2 + 1] = Math.round(Math.sin(angle) * FERRIS_R);
+    }
+    this.ring = ring;
+    this.wheelX = 0;
+    this.wheelY = FERRIS_CY - ATTRACTIONS.ferris.h;
     // 旋转木马的灯随器械走：不再写死旧地图上的 (2560,5940)
     const carousel = PARK_RIDES.find((ride) => ride.kind === 'carousel');
     this.lights = [
@@ -440,14 +504,16 @@ export class ParkView {
     this.gateText.anchor.set(0.5, 1);
 
     const slideTexture = bake(renderer, drawSlide, { frame: new Rectangle(0, 0, SLIDE_ART.w, SLIDE_ART.h) });
-    const gateTexture = bake(renderer, drawGate, { frame: new Rectangle(0, 0, GATE_ART.w, GATE_ART.h) });
+    const gateTexture = bake(renderer, (g) => drawGate(g, this.winter), {
+      frame: new Rectangle(0, 0, GATE_ART.w, GATE_ART.h),
+    });
     const swingTexture = bake(renderer, drawSwing, { frame: new Rectangle(0, 0, SWING_ART.w, SWING_ART.h) });
     const seesawTexture = bake(renderer, drawSeesaw, { frame: new Rectangle(0, 0, SEESAW_ART.w, SEESAW_ART.h) });
     const carouselTexture = bake(renderer, drawCarousel, { frame: new Rectangle(0, 0, CAROUSEL_ART.w, CAROUSEL_ART.h) });
     const balloonTexture = bake(renderer, drawBalloons, { frame: new Rectangle(0, 0, 30, 36) });
 
     const attractionTextures: Record<ParkAttractionKind, Texture> = {
-      ferris: bake(renderer, drawFerrisWheel, {
+      ferris: bake(renderer, drawFerrisBase, {
         frame: new Rectangle(0, 0, ATTRACTIONS.ferris.w, ATTRACTIONS.ferris.h),
       }),
       train: bake(renderer, drawTrain, { frame: new Rectangle(0, 0, ATTRACTIONS.train.w, ATTRACTIONS.train.h) }),
@@ -459,6 +525,13 @@ export class ParkView {
       }),
     };
 
+    const cabinTexture = bake(renderer, drawFerrisCabin, {
+      frame: new Rectangle(0, 0, FERRIS_CABIN_ART.w, FERRIS_CABIN_ART.h),
+    });
+    const bulbTexture = bake(renderer, drawFerrisBulb, {
+      frame: new Rectangle(0, 0, FERRIS_BULB_ART.w, FERRIS_BULB_ART.h),
+    });
+
     this.textures.push(
       slideTexture,
       gateTexture,
@@ -466,6 +539,8 @@ export class ParkView {
       seesawTexture,
       carouselTexture,
       balloonTexture,
+      cabinTexture,
+      bulbTexture,
       ...Object.values(attractionTextures),
     );
 
@@ -507,7 +582,79 @@ export class ParkView {
       sprite.anchor.set(0.5, 1);
       const footY = attraction.y + attraction.h / 2;
       sprite.position.set(attraction.x, footY);
-      this.push(this.wrap(sprite), footY);
+      const root = this.wrap(sprite);
+      // 摩天轮的吊舱与彩灯挂进同一个容器：它们和轮盘共用一条深度键，
+      // 不会被自己的基座或树干插到中间；容器原点 = 精灵底边中心。
+      if (attraction.kind === 'ferris') this.attachFerris(root, cabinTexture, bulbTexture);
+      this.push(root, footY);
+    }
+  }
+
+  /**
+   * 把六只吊舱与十二盏彩灯挂到摩天轮容器上。
+   *
+   * 吊舱锚点在顶部（吊在轮缘）、舱体始终直立；位置由 `update()` 按 72 步 LUT 刷新，
+   * 因此这里只建精灵，不做任何浮点旋转。
+   */
+  private attachFerris(root: Container, cabinTexture: Texture, bulbTexture: Texture): void {
+    for (let i = 0; i < FERRIS_CABIN_COUNT; i += 1) {
+      const cabin = new Sprite(cabinTexture);
+      cabin.anchor.set(0.5, 0);
+      root.addChild(cabin);
+      this.cabins.push(cabin);
+    }
+    for (let i = 0; i < FERRIS_BULB_COUNT; i += 1) {
+      const bulb = new Sprite(bulbTexture);
+      bulb.anchor.set(0.5, 0.5);
+      // 一圈 12 盏三色轮换，暖白 / 蜜桃 / 薄荷，夜里读得出「游乐园的灯」
+      bulb.tint = i % 3 === 0 ? C.cream : i % 3 === 1 ? C.peach : C.mint;
+      bulb.visible = false;
+      root.addChild(bulb);
+      this.bulbs.push(bulb);
+    }
+    // 先摆一次 0 步：没有 update 调用（如 `?motion=0`）时也是一圈完整的轮盘
+    this.applyFerrisStep(0);
+  }
+
+  /** 按步号把六只吊舱摆到圆环上（72 步 / 6 只 = 每只间隔 12 步） */
+  private applyFerrisStep(step: number): void {
+    const ring = this.ring;
+    const span = FERRIS_STEPS / FERRIS_CABIN_COUNT;
+    for (let i = 0; i < this.cabins.length; i += 1) {
+      const index = ((step + i * span) % FERRIS_STEPS) * 2;
+      const cabin = this.cabins[i]!;
+      cabin.position.set(this.wheelX + ring[index]!, this.wheelY + ring[index + 1]! + 2);
+    }
+    for (let i = 0; i < this.bulbs.length; i += 1) {
+      const index = ((step + i * (FERRIS_STEPS / FERRIS_BULB_COUNT)) % FERRIS_STEPS) * 2;
+      this.bulbs[i]!.position.set(this.wheelX + ring[index]!, this.wheelY + ring[index + 1]!);
+    }
+  }
+
+  /**
+   * 每帧推进：吊舱换步 + 彩灯脉冲。
+   * 掉帧只影响「下一次换步」，不累积误差——步号永远由绝对时间算出。
+   */
+  update(nowMs: number): void {
+    const now = this.animate ? nowMs : 0;
+    const step = ferrisStep(now, FERRIS_PERIOD_MS, FERRIS_STEPS);
+    if (step !== this.lastStep) {
+      this.lastStep = step;
+      this.applyFerrisStep(step);
+    }
+
+    // 夜间增益 30s 采样一次：白天整圈灯不画，省掉 12 次 alpha 写入
+    if (nowMs - this.nightSampledAt >= 30_000) {
+      this.nightSampledAt = nowMs;
+      const tone = lightToneAt(serverHourFraction(serverNow(), serverTzOffsetMin()));
+      this.nightGain = tone.label === 'night' ? 1 : tone.label === 'dusk' ? 0.55 : 0;
+    }
+    for (let i = 0; i < this.bulbs.length; i += 1) {
+      const bulb = this.bulbs[i]!;
+      const alpha = this.nightGain * (0.35 + 0.65 * bulbPulse(i * 13 + 5, now));
+      const visible = alpha > 0.04;
+      if (bulb.visible !== visible) bulb.visible = visible;
+      if (visible) bulb.alpha = alpha;
     }
   }
 
@@ -540,6 +687,9 @@ export class ParkView {
   }
 
   destroy(): void {
+    // 吊舱与彩灯是摩天轮容器的子节点，随 `items` 一起销毁；这里只清引用
+    this.cabins.length = 0;
+    this.bulbs.length = 0;
     for (const item of this.items) item.root.destroy({ children: true });
     this.items.length = 0;
     for (const texture of this.textures) texture.destroy(true);

@@ -22,11 +22,15 @@ export const WADING_H = 14;
 
 /** 涟漪寿命：太短看不见扩散，太长会在脚边叠一圈「年轮」 */
 const SPLASH_LIFE = 420;
+/** 水花环寿命：比常规涟漪更长，才看得出「扩散出去」 */
+const WAKE_LIFE = 560;
 /** 涟漪池大小：同屏几十人涉水时，每人每步一枚也够轮转 */
-const SPLASH_COUNT = 24;
-/** 涟漪画布：三帧共用，靠帧内容变大 */
-const SPLASH_W = 20;
-const SPLASH_H = 10;
+const SPLASH_COUNT = 36;
+/** 涟漪画布：四帧共用，靠帧内容变大（终帧 14 半径，比旧版大一倍，涉水才看得见） */
+const SPLASH_W = 28;
+const SPLASH_H = 14;
+/** 帧数：换帧节奏由 update 里的阈值决定，与帧数组长度保持一致 */
+const SPLASH_FRAMES = 4;
 
 /** 生成水线覆盖纹理：半透明水色 + 顶部断续水线 */
 export function makeWadingTexture(renderer: TextureFactory): Texture {
@@ -91,12 +95,13 @@ function traceSplashRing(g: Graphics, rx: number, ry: number, color: number, alp
   }
 }
 
-/** 三帧涟漪：环半径逐帧变大，颜色从泡沫过渡到浅水 */
+/** 四帧涟漪：环半径逐帧变大，颜色从泡沫过渡到浅水 */
 function makeSplashTextures(renderer: TextureFactory): Texture[] {
   const frames: Array<{ rx: number; ry: number; color: number; alpha: number }> = [
-    { rx: 3, ry: 2, color: TERRAIN_COLORS.waterFoam, alpha: 0.85 },
-    { rx: 6, ry: 3, color: TERRAIN_COLORS.waterCrest, alpha: 0.7 },
-    { rx: 9, ry: 4, color: TERRAIN_COLORS.waterCrest, alpha: 0.55 },
+    { rx: 3, ry: 2, color: TERRAIN_COLORS.waterFoam, alpha: 0.9 },
+    { rx: 7, ry: 3, color: TERRAIN_COLORS.waterFoam, alpha: 0.75 },
+    { rx: 11, ry: 5, color: TERRAIN_COLORS.waterCrest, alpha: 0.6 },
+    { rx: 14, ry: 6, color: TERRAIN_COLORS.waterCrest, alpha: 0.45 },
   ];
   return frames.map(({ rx, ry, color, alpha }) => {
     const g = new Graphics();
@@ -116,11 +121,12 @@ interface Splash {
   sprite: Sprite;
   age: number;
   life: number;
+  /** 起点亮度：入水大水花最亮、涉水扩散环次之、普通落脚最淡 */
+  peak: number;
   active: boolean;
-  big: boolean;
 }
 
-/** 涟漪粒子池：入水与水中落脚各触发一次 */
+/** 涟漪粒子池：入水、涉水扩散与水中落脚共用一套精灵 */
 export class WaterFx {
   readonly container = new Container();
   private readonly textures: Texture[];
@@ -134,22 +140,36 @@ export class WaterFx {
       sprite.anchor.set(0.5, 0.5);
       sprite.visible = false;
       this.container.addChild(sprite);
-      this.particles.push({ sprite, age: 0, life: 0, active: false, big: false });
+      this.particles.push({ sprite, age: 0, life: 0, peak: 0.65, active: false });
     }
   }
 
-  /** `big` 用于入水那一下：寿命更长、起点更亮 */
-  spawn(x: number, y: number, big = false): void {
+  /** 取下一枚粒子并写好公共字段；三个入口共用，避免各写一遍取模 */
+  private take(x: number, y: number, life: number, peak: number): Splash {
     const particle = this.particles[this.next]!;
     this.next = (this.next + 1) % this.particles.length;
     particle.sprite.texture = this.textures[0]!;
     particle.sprite.position.set(Math.round(x), Math.round(y - 2));
-    particle.sprite.alpha = big ? 0.9 : 0.65;
+    particle.sprite.alpha = peak;
     particle.sprite.visible = true;
     particle.age = 0;
-    particle.life = big ? SPLASH_LIFE * 1.25 : SPLASH_LIFE;
-    particle.big = big;
+    particle.life = life;
+    particle.peak = peak;
     particle.active = true;
+    return particle;
+  }
+
+  /** `big` 用于入水那一下：寿命更长、起点更亮 */
+  spawn(x: number, y: number, big = false): void {
+    this.take(x, y, big ? SPLASH_LIFE * 1.25 : SPLASH_LIFE, big ? 0.9 : 0.65);
+  }
+
+  /**
+   * 涉水扩散环：与脚步小节拍分开的「大圈」，寿命更长、半径到终帧，
+   * 由调用方按 380ms 节流，避免每一步都叠一枚半透明环。
+   */
+  spawnWake(x: number, y: number): void {
+    this.take(x, y, WAKE_LIFE, 0.5);
   }
 
   update(dtMs: number): void {
@@ -163,9 +183,10 @@ export class WaterFx {
       }
       const k = particle.age / particle.life;
       // 换帧变大，不做浮点缩放：像素边不能在扩散过程中被插值糊掉
-      const frame = k < 0.34 ? 0 : k < 0.67 ? 1 : 2;
-      particle.sprite.texture = this.textures[frame]!;
-      particle.sprite.alpha = (particle.big ? 0.9 : 0.65) * (1 - k);
+      const frame = k < 0.22 ? 0 : k < 0.5 ? 1 : k < 0.78 ? 2 : SPLASH_FRAMES - 1;
+      const texture = this.textures[frame]!;
+      if (particle.sprite.texture !== texture) particle.sprite.texture = texture;
+      particle.sprite.alpha = particle.peak * (1 - k);
     }
   }
 

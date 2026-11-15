@@ -35,7 +35,6 @@ export type HotspotKind =
   | 'villaGate'
   | 'villaTree'
   | 'apartmentDoor'
-  | 'apartmentExit'
   /** 工位（ADR-0088）：坐着按 F 开始加班搬砖 */
   | 'workDesk';
 
@@ -165,7 +164,7 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
   // ---- 豪宅小院：门口与摇钱树 ----
   ...VILLA_SPECS.map(villaGateHotspot),
   ...VILLA_SPECS.map(villaTreeHotspot),
-  // ---- 牛马公寓（ADR-0095）：六栋楼各一条门热区与一条出口热区 ----
+  // ---- 牛马公寓（ADR-0098）：六栋楼各一条门热区，进屋只在窗口探头、不再有出口热区 ----
   ...APARTMENT_SPECS.map(
     (spec): HotspotDef => ({
       id: apartmentDoorHotspotId(spec.slot),
@@ -176,26 +175,11 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
       label: 'apartment',
     }),
   ),
-  ...APARTMENT_SPECS.map(
-    (spec): HotspotDef => ({
-      id: apartmentExitHotspotId(spec.slot),
-      kind: 'apartmentExit',
-      x: spec.exit.x,
-      y: spec.exit.y,
-      radius: spec.exitRange,
-      label: 'apartmentExit',
-    }),
-  ),
 ];
 
 /** 楼栋门口热区 id：客户端提示与服务端校验共用同一份拼法 */
 export function apartmentDoorHotspotId(slot: number): string {
   return `apartment-door-${slot}`;
-}
-
-/** 楼栋屋内出口热区 id */
-export function apartmentExitHotspotId(slot: number): string {
-  return `apartment-exit-${slot}`;
 }
 
 /** id → 热区：服务端按包里的 id 查表，不做线性扫描的老式距离判定 */
@@ -219,7 +203,6 @@ export const HOTSPOT_PRIORITY: readonly HotspotKind[] = [
   'villaGate',
   'villaTree',
   'apartmentDoor',
-  'apartmentExit',
 ];
 
 export function hotspotById(id: string): HotspotDef | undefined {
@@ -299,4 +282,28 @@ export function isWithinAnyHotspotOfKind(
     if (isWithinHotspot(def, x, y, slack)) return true;
   }
   return false;
+}
+
+/**
+ * 站在哪栋楼的门口：返回最近的门口 slot，离所有门都太远返回 -1。
+ *
+ * 进屋要按「脚下这扇门」决定探头出现在哪栋楼上，所以服务端不能只判
+ * 「附近有没有任意一栋的门」（旧 `isWithinAnyHotspotOfKind` 的做法）。
+ */
+export function apartmentDoorSlotAt(x: number, y: number, slack = 0): number {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return -1;
+  let best = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const spec of APARTMENT_SPECS) {
+    const dx = x - spec.door.x;
+    const dy = y - spec.door.y;
+    const reach = spec.doorRange + Math.max(0, slack);
+    if (!Number.isFinite(reach)) continue;
+    const distance = dx * dx + dy * dy;
+    if (distance > reach * reach) continue;
+    if (distance >= bestDistance) continue;
+    best = spec.slot;
+    bestDistance = distance;
+  }
+  return best;
 }

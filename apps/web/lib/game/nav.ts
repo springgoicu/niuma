@@ -1,4 +1,12 @@
-import { DISTRICTS, MOVE_SPEED, NAV_TARGETS, type DistrictSpec, type NavTarget } from '@niuma/shared-types';
+import {
+  DISTRICTS,
+  MOVE_SPEED,
+  NAV_TARGETS,
+  PLAZA_HOME,
+  SPAWN_CENTER,
+  type DistrictSpec,
+  type NavTarget,
+} from '@niuma/shared-types';
 
 /**
  * 园区导览的纯计算层（ADR-0036 / ADR-0097）：世界指路牌、HUD 导览卡与测试共用。
@@ -86,6 +94,20 @@ export function nearestReading(readings: readonly NavReading[]): NavReading | nu
     if (!best || reading.distance < best.distance) best = reading;
   }
   return best;
+}
+
+/** 「回中央广场」的读数：广场不是场所，所以单独给一条，字段与场所读数一致 */
+export interface PlazaReading {
+  readonly name: string;
+  readonly distance: number;
+  readonly seconds: number;
+  readonly octant: NavOctant;
+  readonly bearingDeg: number;
+}
+
+/** 到出生点（广场正中）的方位与步行秒数 */
+export function plazaReading(x: number, y: number): PlazaReading {
+  return { name: PLAZA_HOME.name, ...readingOf(x, y, SPAWN_CENTER.x, SPAWN_CENTER.y) };
 }
 
 /** 场景徽标文案：导览卡与工牌共用一套说法 */

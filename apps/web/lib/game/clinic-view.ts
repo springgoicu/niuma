@@ -19,6 +19,7 @@ import {
   type PatientStatusPacket,
 } from '@niuma/shared-types';
 import { BEACON_BLUE, BEACON_OFF_ALPHA, BEACON_RED, beaconPhase } from './police-beacon';
+import { WINTER_COLORS } from './terrain-palette';
 import type { DepthSink } from './sort-layer';
 
 const C = {
@@ -38,6 +39,9 @@ const C = {
   seat: 0x3a4a56,
   heart: 0xff5c8a,
   heartLight: 0xffb3c6,
+  /** 积雪：与地面雪同一色阶 */
+  snow: WINTER_COLORS.snowBase,
+  snowShade: WINTER_COLORS.snowShade,
 } as const;
 
 function rect(g: Graphics, x: number, y: number, w: number, h: number, color: number): void {
@@ -112,7 +116,8 @@ export class ClinicView {
   private readonly hearts: Container[] = [];
   private readonly treating = new Set<number>();
 
-  constructor() {
+  /** 冬季：栏板顶与站台边沿积雪。纯表现层，`?season=off` 时不画 */
+  constructor(private readonly winter = false) {
     this.overlay.addChild(this.paintNurseCrosses());
   }
 
@@ -143,6 +148,14 @@ export class ClinicView {
     // 地面淡红十字，给站台一个一眼能认出的医疗符号
     g.rect(x + 108, y + 50, 24, 8).fill(C.floorCross);
     g.rect(x + 116, y + 42, 8, 24).fill(C.floorCross);
+    // 冬季：站台南沿堆一条雪齿，草地的雪与室内瓷砖之间不再是直角硬切
+    if (this.winter) {
+      for (let sx = x + 2; sx < x + w - 2; sx += 9) {
+        const tall = ((Math.imul(sx + 5, 2654435761) >>> 0) % 2) + 2;
+        rect(g, sx, y + h - tall, Math.min(9, x + w - 2 - sx), tall, C.snow);
+      }
+      rect(g, x + 2, y + h - 1, w - 4, 1, C.snowShade);
+    }
     base.addChild(g);
   }
 
@@ -167,6 +180,13 @@ export class ClinicView {
         for (let px = 6; px < bar.w - 4; px += 24) {
           rect(g, px, -4, 3, bar.h + 2, C.white);
           rect(g, px + 2, -4, 1, bar.h + 2, C.steelDark);
+        }
+        // 冬季：扶手顶积雪，栏杆因此有厚度而不是一条白线
+        if (this.winter) {
+          for (let px = 0; px < bar.w; px += 8) {
+            const tall = ((Math.imul(px + 3, 2246822519) >>> 0) % 2) + 1;
+            rect(g, px, -5, Math.min(8, bar.w - px), tall, C.snow);
+          }
         }
       } else {
         // 纵向段：看到的是护栏侧面，白栏板上按 24px 一道压出横撑

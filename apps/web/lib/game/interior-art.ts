@@ -14,8 +14,11 @@ import {
   type WorldRect,
 } from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
+import { LOUNGE_DECOR, RESTROOM_DECOR, WORK_DECOR } from './interior-spots';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
+import { badContactFlicker, warmGlowBreath } from './venue-motion';
+import { MEETING_SCREEN_RECT } from './venue-spots';
 
 /**
  * 室内陈设补完层：会议室、宿舍区、工作区、卫生间的「第二层细节」。
@@ -646,6 +649,36 @@ export class InteriorArt {
   readonly lights: LightSpec[] = [];
 
   /**
+   * 隔间门：每坑一枚精灵 + open / closed 两张烘焙纹理。
+   *
+   * 为什么拆出 flat：flat 是「一次性画完、永不改动」的地面层，
+   * 开关状态要跟着 `S2C_SEAT_STATE` 变，只能走可换纹理的精灵。
+   * 门扇进 y 排序层（深度键取坑位南沿），人站在门外时门在身后，
+   * 坐进去时门在前景把下半身挡住——格子间该有的遮挡关系。
+   */
+  private readonly stallDoors: Array<{ sprite: Sprite; open: Texture; closed: Texture }> = [];
+  /** 马桶 seatId → 坑位下标：构造期按 x 匹配，不按 id 硬编码（座位表只允许末尾追加） */
+  private readonly stallOfSeat = new Map<number, number>();
+
+  /** 小黑屋吊灯：灯罩留在 flat，灯泡单独一枚双帧精灵，接触不良时才闪 */
+  private cellBulb?: Sprite;
+  private cellBulbTextures: readonly Texture[] = [];
+  private cellBulbSeed = 7;
+  /** 灯泡中心：`decorateCell` 现场写入，`buildCellBulb` 再据此烘焙 */
+  private cellBulbAt: { x: number; y: number } | null = null;
+  /** 灯泡当前是不是「暗档」：只在翻转时换纹理 */
+  private cellBulbDim = false;
+
+  /** 宿舍暖光：壁灯外的一层暖黄光晕，躺下 + 夜/冬才亮 */
+  private readonly warmGlows: Sprite[] = [];
+  private warmEligible = false;
+  /** 宿舍区当前躺了几个人（只统计下发给客户端的座位占用） */
+  private loungeResting = 0;
+  private readonly loungeBedSeats = new Set<number>();
+  /** 当前躺在宿舍床上的座位：重复广播不会重复计数 */
+  private readonly loungeOccupied = new Set<number>();
+
+  /**
    * `base` 收墙面与地面陈设（在地板之上、家具精灵之下），
    * `depth` 收立式家具（衣柜 / 书架 / 推车 / 打印机 / 纸箱 / 落地灯 /
    * 白板立架 / 发财树 / 饮水机 / 折叠椅 / 挂衣架 / 热水杯 / 香薰 / 绿萝）。
@@ -672,11 +705,140 @@ export class InteriorArt {
     if (lounge) this.furnishLounge(depth, renderer, lounge);
     if (restroom) this.decorateRestroomFittings(depth, renderer, restroom);
     if (theater) this.furnishTheater(depth, renderer, theater);
+
+    // 可切换的美术：隔间门、吊灯灯泡、宿舍暖光。
+    // 三处都在构造期把「开 / 关」两张纹理烘好，运行时只换引用或写 alpha。
+    if (restroom) this.buildStallDoors(depth, renderer, restroom);
+    if (cell) this.buildCellBulb(base, renderer);
+    if (lounge) this.buildLoungeGlow(base, renderer, lounge);
   }
 
   destroy(): void {
     for (const texture of this.textures) texture.destroy(true);
     this.textures.length = 0;
+  }
+
+  /* ---------------- 可切换的状态美术（占用 / 时间驱动） ---------------- */
+
+  /**
+   * 座位占用：马桶 → 隔间门，宿舍床 → 暖光条件。
+   * 工位屏幕由 `PropsView` 自己处理（桌子在它手里），这里不重复。
+   */
+  setSeatOccupied(seatId: number, occupied: boolean): void {
+    const stallIndex = this.stallOfSeat.get(seatId);
+    if (stallIndex !== undefined) {
+      const door = this.stallDoors[stallIndex];
+      if (door) door.sprite.texture = occupied ? door.closed : door.open;
+      return;
+    }
+    if (!this.loungeBedSeats.has(seatId)) return;
+    // 服务端可能重发同一份占用快照：只在真正的变化沿上加减，人数不会越加越多
+    if (occupied) {
+      if (this.loungeOccupied.has(seatId)) return;
+      this.loungeOccupied.add(seatId);
+      this.loungeResting += 1;
+      return;
+    }
+    if (!this.loungeOccupied.delete(seatId)) return;
+    if (this.loungeResting > 0) this.loungeResting -= 1;
+  }
+
+  /**
+   * 暖光时机（冬季或夜间）：由 renderer 在季节判定之后灌进来。
+   * 季节只在这里被「消费」一次，子模块不再各读一遍 `location.search`。
+   */
+  setWarmEligible(eligible: boolean): void {
+    this.warmEligible = eligible;
+  }
+
+  /**
+   * 每帧推进：吊灯接触不良、宿舍暖光呼吸。
+   * 只写 alpha / visible，不改几何、不建对象。
+   */
+  update(nowMs: number): void {
+    if (!Number.isFinite(nowMs)) return;
+    const bulb = this.cellBulb;
+    if (bulb && this.cellBulbTextures.length === 2) {
+      // 断闪只切纹理，不写 alpha：半透明的灯芯会露出后面的灯罩，看起来像重影
+      const dim = badContactFlicker(this.cellBulbSeed, nowMs) < 0.5;
+      if (dim !== this.cellBulbDim) {
+        this.cellBulbDim = dim;
+        bulb.texture = this.cellBulbTextures[dim ? 1 : 0]!;
+      }
+    }
+    if (this.warmGlows.length === 0) return;
+    const warm = this.warmEligible && this.loungeResting > 0;
+    if (!warm) {
+      for (const glow of this.warmGlows) if (glow.visible) glow.visible = false;
+      return;
+    }
+    const alpha = 0.5 * warmGlowBreath(this.cellBulbSeed + 31, nowMs);
+    for (const glow of this.warmGlows) {
+      glow.visible = true;
+      glow.alpha = alpha;
+    }
+  }
+
+  /** 小黑屋灯泡：亮 / 暗两张纹理，接触不良时整枚精灵断闪（灯罩与墙面不动） */
+  private buildCellBulb(base: Container, renderer: TextureFactory): void {
+    const at = this.cellBulbAt;
+    if (!at) return;
+    const on = this.texture(
+      renderer,
+      'cell-bulb-on',
+      (g) => {
+        // 光晕 + 搪瓷罩里的灯芯：亮的时候带一圈硬边暖光
+        g.ellipse(9, 5, 9, 4).fill({ color: 0xffd79a, alpha: 0.28 });
+        rect(g, 3, 3, 12, 4, 0xffe3a3);
+        rect(g, 4, 3, 2, 4, 0xfff3cc);
+        rect(g, 3, 6, 12, 1, 0xe8a94f);
+      },
+      { w: 18, h: 9 },
+    );
+    const dim = this.texture(
+      renderer,
+      'cell-bulb-dim',
+      (g) => {
+        rect(g, 3, 3, 12, 4, 0x7a6a52);
+        rect(g, 4, 3, 2, 4, 0x9a866a);
+        rect(g, 3, 6, 12, 1, 0x584a38);
+      },
+      { w: 18, h: 9 },
+    );
+    const sprite = new Sprite(on);
+    sprite.anchor.set(0.5, 0.5);
+    // 精灵中心对灯芯，不盖住 flat 里那只搪瓷罩；`dim` 只留作纹理引用，断电时不会闪回黑块
+    sprite.position.set(at.x + 0.5, at.y);
+    sprite.texture = on;
+    base.addChild(sprite);
+    this.cellBulb = sprite;
+    // 断电那一帧要能切到暗纹理：把两张都挂在精灵的纹理缓存里（不新增显示对象）
+    this.cellBulbTextures = [on, dim];
+  }
+
+  /** 宿舍暖光：两盏壁灯外各一层暖黄光晕，默认不可见，有人躺下才呼吸 */
+  private buildLoungeGlow(base: Container, renderer: TextureFactory, room: Room): void {
+    const { x, y } = room.rect;
+    const sconceY = y + room.wall + 2;
+    const halo = this.texture(
+      renderer,
+      'lounge-warm-halo',
+      (g) => {
+        // 三层硬边椭圆，越往外越淡：像素画里不用柔化滤镜
+        g.ellipse(22, 16, 21, 14).fill({ color: 0xffcf8a, alpha: 0.16 });
+        g.ellipse(22, 16, 15, 10).fill({ color: 0xffcf8a, alpha: 0.18 });
+        g.ellipse(22, 16, 8, 6).fill({ color: 0xffe6b8, alpha: 0.22 });
+      },
+      { w: 44, h: 32 },
+    );
+    for (const dx of LOUNGE_DECOR.sconceXs) {
+      const glow = new Sprite(halo);
+      glow.anchor.set(0.5, 0.5);
+      glow.position.set(x + dx + 4, sconceY + 11);
+      glow.visible = false;
+      base.addChild(glow);
+      this.warmGlows.push(glow);
+    }
   }
 
   /* ---------------- 小黑屋：水泥地、吊灯、铁窗、反省凳（ADR-0072） ---------------- */
@@ -718,12 +880,13 @@ export class InteriorArt {
     rect(g, posterX + 6, posterY + 39, 62, 1, 0x8d8577);
     rect(g, posterX + 16, posterY + 42, 42, 1, 0xb0a795);
 
-    // 吊灯：一根线、一只搪瓷罩、一圈暖光；光位交给灯光模块，不在这里画光锥
+    // 吊灯：一根线、一只搪瓷罩；灯泡本体留给 `buildCellBulb` 的双帧精灵，
+    // 这样「接触不良」只在灯泡上闪，灯罩与墙不会跟着呼吸
     const bulbX = innerX + (w - t * 2) / 2;
     rect(g, bulbX, innerY, 1, 34, 0x4b4f57);
     rect(g, bulbX - 8, innerY + 34, 17, 3, 0x2c3037);
-    rect(g, bulbX - 5, innerY + 37, 11, 3, 0xffe3a3);
-    rect(g, bulbX - 6, innerY + 37, 1, 3, 0xfff3cc);
+    this.cellBulbSeed = (bulbX * 17 + innerY) | 0;
+    this.cellBulbAt = { x: bulbX, y: innerY + 38 };
     this.lights.push({
       x: bulbX,
       y: innerY + 38,
@@ -751,6 +914,21 @@ export class InteriorArt {
     rect(g, sx + 22, innerY + 2, 9, 7, 0x40464f);
     rect(g, sx - 28, innerY + 4, 5, 4, 0x0f1116);
     rect(g, sx + 24, innerY + 4, 5, 4, 0x0f1116);
+
+    // 墙上的反省刻痕：前人留下的「正」字，四组各五笔，高低不一。
+    // 1px 凹痕色取墙体暗面，不做描边——墙上刻的东西不该浮在表面
+    const tallyY = innerY + 6;
+    for (let group = 0; group < 4; group += 1) {
+      const gx = sx - 62 + group * 16;
+      const gy = tallyY + (group % 2) * 3;
+      for (let line = 0; line < 4; line += 1) {
+        rect(g, gx + line * 3, gy, 1, 7, 0x9aa3ae);
+      }
+      // 第五笔横过来，正好压住四条竖线
+      rect(g, gx - 1, gy + 3, 11, 1, 0x9aa3ae);
+      // 每组底下补一道更浅的旧痕：刻过又被磨平的样子
+      rect(g, gx, gy + 9, 9, 1, 0xb9c0c9);
+    }
   }
 
   /* ---------------- 工作区：开放木地板，无墙 ---------------- */
@@ -771,20 +949,45 @@ export class InteriorArt {
 
   private furnishWorkroom(depth: DepthSink, renderer: TextureFactory, room: Room): void {
     const { x, y } = room.rect;
-    this.place(depth, renderer, 'boxes', drawBoxes, BOXES, x + 232, y + 338);
-    this.place(depth, renderer, 'printer', drawPrinter, PRINTER, x + 272, y + 338);
-    this.place(depth, renderer, 'cart', drawCart, CART, x + 318, y + 338);
-    this.place(depth, renderer, 'lamp', drawFloorLamp, FLOOR_LAMP, x + 440, y + 40);
+    // 落点全部来自 `interior-spots.ts`：按 F 的感应点与这里共用同一份偏移
+    this.place(depth, renderer, 'boxes', drawBoxes, BOXES, x + WORK_DECOR.boxes.dx, y + WORK_DECOR.boxes.dy);
+    this.place(
+      depth,
+      renderer,
+      'printer',
+      drawPrinter,
+      PRINTER,
+      x + WORK_DECOR.printer.dx,
+      y + WORK_DECOR.printer.dy,
+    );
+    this.place(depth, renderer, 'cart', drawCart, CART, x + WORK_DECOR.cart.dx, y + WORK_DECOR.cart.dy);
+    this.place(
+      depth,
+      renderer,
+      'lamp',
+      drawFloorLamp,
+      FLOOR_LAMP,
+      x + WORK_DECOR.floorLamp.dx,
+      y + WORK_DECOR.floorLamp.dy,
+    );
     // 落地灯光位：place 的脚底 y+40，纹理高 36、灯罩中心在顶部下 6px
     this.lights.push({
-      x: x + 440,
-      y: y + 10,
+      x: x + WORK_DECOR.floorLamp.dx,
+      y: y + WORK_DECOR.floorLamp.dy - 30,
       radius: 58,
       color: 0xffd79a,
       intensity: 0.65,
       flicker: 0.08,
     });
-    this.place(depth, renderer, 'board', drawStandBoard, STAND_BOARD, x + 120, y + 332);
+    this.place(
+      depth,
+      renderer,
+      'board',
+      drawStandBoard,
+      STAND_BOARD,
+      x + WORK_DECOR.standBoard.dx,
+      y + WORK_DECOR.standBoard.dy,
+    );
   }
 
   /* ---------------- 会议室：深灰地毯 + 冷蓝投屏 + 长桌 ---------------- */
@@ -815,11 +1018,10 @@ export class InteriorArt {
     rect(g, innerX, innerY + innerH - 1, innerW, 1, COLOR.carpetSlateLight);
     rect(g, innerX + innerW - 1, innerY, 1, innerH, COLOR.carpetSlateLight);
 
-    // 北墙居中超宽投屏：200×56，屏幕外沿两层硬边冷光
-    const screenW = 200;
-    const screenH = 56;
-    const screenX = x + (w - screenW) / 2;
-    const screenY = y + 2;
+    // 北墙居中超宽投屏：200×56，屏幕外沿两层硬边冷光。
+    // 坐标从 `venue-spots.ts` 的共享矩形取：待机遮罩与幻灯片叠层要严丝合缝地压在上面，
+    // 一旦这里再写一份 200×56 的推导，叠层错开 1px 就会露出旧笔迹。
+    const { x: screenX, y: screenY, w: screenW, h: screenH } = MEETING_SCREEN_RECT;
     wash(g, screenX - 6, screenY - 2, screenW + 12, screenH + 10, COLOR.screenCyan, 0.06);
     wash(g, screenX - 3, screenY, screenW + 6, screenH + 4, COLOR.screenCyan, 0.1);
     // 地毯上的冷光池：阶梯边缘，不是渐变
@@ -915,23 +1117,27 @@ export class InteriorArt {
     rect(g, x + t, y + t, 1, h - t * 2, COLOR.walnut);
     rect(g, x + w - t - 1, y + t, 1, h - t * 2, COLOR.walnut);
 
-    // 北墙两扇雪窗：门洞 x+200..x+260 两侧
-    this.window(g, x + 60, y + t + 12, 64, 18);
-    this.window(g, x + 320, y + t + 12, 64, 18);
+    // 北墙两扇雪窗：门洞 x+200..x+260 两侧。落点来自 `interior-spots.ts`，
+    // 「按 F 看窗外」的感应圈与这里共用同一份坐标
+    const windowBottom = y + t + LOUNGE_DECOR.windowDrop;
+    for (const dx of LOUNGE_DECOR.windowXs) {
+      this.window(g, x + dx, windowBottom, LOUNGE_DECOR.windowW, LOUNGE_DECOR.windowH);
+    }
     // 浅蓝月光 / 雪景：从窗台向室内投出阶梯矩形遮罩
-    this.moonbeam(g, x + 60, y + t + 12, 64, 74);
-    this.moonbeam(g, x + 320, y + t + 12, 64, 74);
+    for (const dx of LOUNGE_DECOR.windowXs) {
+      this.moonbeam(g, x + dx, windowBottom, LOUNGE_DECOR.windowW, 74);
+    }
 
     // 南墙暖气片 + 烤橘子
     this.radiator(g, x + 232, y + h - t, 36);
 
     // 北墙：门两侧的暖黄壁灯与挂钟，避开门洞与窗
     const sconceY = y + t + 2;
-    this.sconce(g, x + 138, sconceY);
-    this.clock(g, x + 170, y + t + 4);
-    this.sconce(g, x + 396, sconceY);
+    this.sconce(g, x + LOUNGE_DECOR.sconceXs[0], sconceY);
+    this.clock(g, x + LOUNGE_DECOR.clockDx, y + t + LOUNGE_DECOR.clockDrop);
+    this.sconce(g, x + LOUNGE_DECOR.sconceXs[1], sconceY);
     // 壁灯光位：灯罩下方 11px，光圈落进室内而不是压在墙里
-    for (const offset of [138, 396]) {
+    for (const offset of LOUNGE_DECOR.sconceXs) {
       this.lights.push({
         x: x + offset + 4,
         y: sconceY + 11,
@@ -954,6 +1160,8 @@ export class InteriorArt {
 
     // 下铺床脚的牛皮纸快递箱：只给两组上下铺的下铺画，上铺不会长出箱子
     const beds = seatsIn(room, 'bed');
+    // 暖光只看「宿舍这张床有没有人躺」：床位 id 在构造期收好，占用回调里查 Set 即可
+    for (const bed of beds) this.loungeBedSeats.add(bed.id);
     beds.forEach((bed, index) => {
       if (index % 2 === 0) return;
       // 箱顶压在床架下沿（床精灵的 4px 底边是透明的），只露出 4px 牛皮纸
@@ -963,9 +1171,25 @@ export class InteriorArt {
 
   private furnishLounge(depth: DepthSink, renderer: TextureFactory, room: Room): void {
     const { x, y, h } = room.rect;
-    this.place(depth, renderer, 'wardrobe', drawWardrobe, WARDROBE, x + 352, y + h - 8);
+    this.place(
+      depth,
+      renderer,
+      'wardrobe',
+      drawWardrobe,
+      WARDROBE,
+      x + LOUNGE_DECOR.wardrobeDx,
+      y + h - LOUNGE_DECOR.wardrobeLift,
+    );
     // 书架贴东墙：26px 宽，中心 x+436 → 右缘正好压在墙内侧 x+450
-    this.place(depth, renderer, 'bookshelf', drawBookshelf, BOOKSHELF, x + 436, y + 120);
+    this.place(
+      depth,
+      renderer,
+      'bookshelf',
+      drawBookshelf,
+      BOOKSHELF,
+      x + LOUNGE_DECOR.bookshelfDx,
+      y + LOUNGE_DECOR.bookshelfDy,
+    );
     this.place(depth, renderer, 'rack', drawLuggageRack, LUGGAGE_RACK, x + 300, y + 320);
     this.place(depth, renderer, 'coat-rack', drawCoatRack, COAT_RACK, x + 438, y + 250);
 
@@ -1136,15 +1360,23 @@ export class InteriorArt {
 
     // 连体洗手台 + 宽镜 + 台面小物
     this.vanity(g, room);
-    // 隔间木门 + 红锁 + 厕纸架
-    this.stallDoors(g);
+    // 隔断 + 红锁 + 厕纸架（门扇另行做成可换纹理的精灵，见 buildStallDoors）
+    this.stallPartitions(g);
     // 北墙提示牌：节约用水 · 严禁超时（图标 + 点阵字块）
     this.restroomSign(g, x + 146, y + 2);
   }
 
   private decorateRestroomFittings(depth: DepthSink, renderer: TextureFactory, room: Room): void {
     const { x, y, h } = room.rect;
-    this.place(depth, renderer, 'dryer', drawHandDryer, HAND_DRYER, x + 320, y + h - room.wall);
+    this.place(
+      depth,
+      renderer,
+      'dryer',
+      drawHandDryer,
+      HAND_DRYER,
+      x + RESTROOM_DECOR.dryerDx,
+      y + h - room.wall,
+    );
     // 香薰与绿萝挪到男 / 女区南端：北墙整排让给坑位，留在原处会压在马桶上
     this.place(depth, renderer, 'diffuser', drawDiffuser, DIFFUSER, x + 26, y + h - room.wall - 6);
     this.place(depth, renderer, 'pothos', drawPothos, POTHOS, x + 300, y + h - room.wall - 6);
@@ -1319,28 +1551,81 @@ export class InteriorArt {
   }
 
   /**
-   * 隔间：6px 胡桃木隔断 + 南沿半掩门扇 + 红锁 + 厕纸架。
+   * 隔间静态件：6px 胡桃木隔断 + 厕纸架。
+   *
+   * 门扇不在这里画 —— 它要跟着马桶占用开合，改由 `buildStallDoors` 做成可换纹理的精灵。
    * 坑位表来自共享布局（ADR-0053），加减坑位不用在渲染层重写坐标。
    */
-  private stallDoors(g: Graphics): void {
+  private stallPartitions(g: Graphics): void {
     for (const stall of RESTROOM_STALLS) {
       const { partition } = stall;
-      if (partition) {
-        box(g, partition.x, partition.y, partition.w, partition.h, COLOR.walnut, COLOR.walnutDark);
-        rect(g, partition.x + 1, partition.y + 1, 1, partition.h - 2, COLOR.walnutLight);
-        rect(g, partition.x + partition.w - 2, partition.y + 1, 1, partition.h - 2, COLOR.walnutDark);
-        // 厕纸架：挂在隔断朝本格的一侧
-        box(g, partition.x + 2, stall.y + 60, 5, 7, COLOR.fixture, COLOR.fixtureEdge);
-        rect(g, partition.x + 4, stall.y + 62, 3, 3, COLOR.ceramic);
-        rect(g, partition.x + 4, stall.y + 62, 3, 1, COLOR.ceramicEdge);
-      }
-      // 门扇：贴坑位南沿，与东侧隔断留 5px 缝；红锁表示使用中
-      const doorY = stall.y + stall.h - 6;
+      if (!partition) continue;
+      box(g, partition.x, partition.y, partition.w, partition.h, COLOR.walnut, COLOR.walnutDark);
+      rect(g, partition.x + 1, partition.y + 1, 1, partition.h - 2, COLOR.walnutLight);
+      rect(g, partition.x + partition.w - 2, partition.y + 1, 1, partition.h - 2, COLOR.walnutDark);
+      // 厕纸架：挂在隔断朝本格的一侧
+      box(g, partition.x + 2, stall.y + 60, 5, 7, COLOR.fixture, COLOR.fixtureEdge);
+      rect(g, partition.x + 4, stall.y + 62, 3, 3, COLOR.ceramic);
+      rect(g, partition.x + 4, stall.y + 62, 3, 1, COLOR.ceramicEdge);
+    }
+  }
+
+  /**
+   * 隔间门：每坑一枚精灵，两张烘焙纹理在开 / 关之间切换。
+   *
+   * - 空坑：半掩门扇（与改前的画法完全一致），红锁换成灰扣；
+   * - 有人：门扇闭合、门锁变红、门缝透出一线暖光——「占坑」不用写字也读得出来。
+   *
+   * 座位 → 坑位按 x 就近匹配：`RESTROOM_STALLS` 与马桶座位表都由同一份布局派生，
+   * 但座位 id 只允许末尾追加，硬编码 id 会在下次加座位时整体错位。
+   */
+  private buildStallDoors(depth: DepthSink, renderer: TextureFactory, room: Room): void {
+    const toilets = seatsIn(room, 'toilet');
+    const doorH = 14;
+    for (let index = 0; index < RESTROOM_STALLS.length; index += 1) {
+      const stall = RESTROOM_STALLS[index]!;
       const doorW = stall.w - 8;
-      box(g, stall.x + 3, doorY, doorW, 6, COLOR.walnutLight, COLOR.walnutDark);
-      rect(g, stall.x + 4, doorY + 2, doorW - 2, 1, COLOR.walnut);
-      g.rect(stall.x + stall.w - 9, doorY + 2, 3, 2).fill(COLOR.peachDark);
-      rect(g, stall.x + stall.w - 9, doorY + 2, 1, 1, 0xffc4b8);
+      const open = this.texture(renderer, `stall-open:${doorW}`, (g) => {
+        // 半掩：门扇贴在坑位南沿，右端留 5px 缝，红锁挂在门边
+        box(g, 3, doorH - 6, doorW, 6, COLOR.walnutLight, COLOR.walnutDark);
+        rect(g, 4, doorH - 4, doorW - 2, 1, COLOR.walnut);
+        rect(g, doorW - 1, doorH - 4, 3, 2, COLOR.fixtureEdge);
+      }, { w: stall.w, h: doorH });
+      const closed = this.texture(
+        renderer,
+        `stall-closed:${doorW}`,
+        (g) => {
+          // 闭合：门扇加高到 10px（盖住半掩那一版），红锁 + 门缝暖光
+          box(g, 3, doorH - 10, doorW, 10, COLOR.walnut, COLOR.walnutDark);
+          rect(g, 4, doorH - 9, doorW - 2, 1, COLOR.walnutLight);
+          rect(g, 5, doorH - 7, doorW - 4, 1, COLOR.walnutDark);
+          // 门缝暖光：一线 1px 亮黄，表示里面有人开着灯
+          rect(g, 4, doorH - 2, doorW - 2, 1, COLOR.amber);
+          // 红锁：门右侧的横担 + 一枚红点
+          rect(g, doorW - 2, doorH - 6, 4, 2, COLOR.outline);
+          rect(g, doorW - 1, doorH - 6, 2, 2, COLOR.peachDark);
+          rect(g, doorW - 1, doorH - 6, 1, 1, 0xffc4b8);
+        },
+        { w: stall.w, h: doorH },
+      );
+      const sprite = new Sprite(open);
+      sprite.anchor.set(0.5, 1);
+      sprite.position.set(stall.x + stall.w / 2, stall.y + stall.h);
+      // 深度键取坑位南沿：人站门外时门在身后，坐进去时门把下半身挡住
+      depth.add(stall.y + stall.h, sprite);
+      this.stallDoors.push({ sprite, open, closed });
+
+      // 就近匹配马桶座位（两坑相距 53，取最近的一定不会串格）
+      const cx = stall.x + stall.w / 2;
+      let bestId = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const seat of toilets) {
+        const distance = Math.abs(seat.x - cx);
+        if (distance >= bestDistance) continue;
+        bestId = seat.id;
+        bestDistance = distance;
+      }
+      if (bestId !== 0) this.stallOfSeat.set(bestId, index);
     }
   }
 

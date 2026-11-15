@@ -85,6 +85,13 @@ export function applyMove(
     player.lastClientMoveSequence = packet.clientSequence;
   }
 
+  // 公寓窗口探头（ADR-0098）：人在窗里，位移与姿态一概不采信，只保留门口台阶上的站姿
+  if (player.roomId !== 0) {
+    player.applyState(player.direction, POSE.Idle, false);
+    player.markDirtyIfChanged();
+    return RESULT;
+  }
+
   // 颁奖阶段冻结参赛者：忽略客户端位移与姿态，直接落回站姿
   if (ring?.isFrozen(player.id)) {
     player.applyState(player.direction, POSE.Idle, false);

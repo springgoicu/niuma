@@ -20,8 +20,11 @@ import { chairArtFor, type ChairArt } from './chair-art';
 import { deskArtFor, type DeskArt } from './desk-art';
 import { BENCH_ART, seatArtFor } from './seat-art';
 import { bake } from './terrain-textures';
+import { paintRoadDressing, roadPostPlan } from './road-dressing';
+import { buildStreetDecor } from './street-decor-art';
 import type { DepthSink } from './sort-layer';
 import { VENUE_COLORS, darken, lighten, type VenueColors } from './venue-palette';
+import { codeLinePhase, focusPulse } from './venue-motion';
 
 /**
  * 室内与园区设施的渲染层：工位、座椅、马桶、会议室、卫生间、庭院与装饰。
@@ -55,6 +58,17 @@ const COLOR = {
   screenIdle: 0x7aa6d8,
   screenLit: 0x9ff5d2,
   screenInk: 0x3d6fa8,
+  /**
+   * 工位亮屏的冷蓝白。
+   *
+   * 刻意不复用 `screenLit`（薄荷绿）：那档绿是售货机与马桶手机的「待机色」，
+   * 工位整排亮成绿色会像一排自动贩卖机。蓝白 #c6e6ff 与木色桌面是互补对比，
+   * 亮度只比熄屏高两档，夜里也不会把角色压成剪影。
+   */
+  deskScreen: 0xc6e6ff,
+  deskScreenDim: 0x8fb6dd,
+  deskScreenInk: 0x2f6f9e,
+  deskScreenLine: 0xeaf4f8,
   deskTop: 0xf2c79b,
   deskTopLight: 0xffe0bf,
   deskFront: 0xd9a77a,
@@ -571,8 +585,11 @@ function drawProp(kind: PropKind, g: Graphics, variant = 0): void {
  * 桌子只有一块桌面，屏幕必须朝坐的人；`art` 给出显示器落在哪条边、
  * 镜头看到的是屏幕、背壳还是侧面。点亮状态三种视角都要一眼读出来：
  * 正面亮屏、背面沿外框漏光、侧视在屏幕那一侧留一条亮边与一片反光。
+ *
+ * `phase` 是亮屏代码行的两帧相位（0 / 1）：两帧只改行的长度与缩进，
+ * 换成纹理引用即可，不需要在帧循环里重画。
  */
-function drawMonitor(g: Graphics, lit: boolean, art: DeskArt): void {
+function drawMonitor(g: Graphics, lit: boolean, art: DeskArt, phase: 0 | 1): void {
   const m = art.monitor;
   const standX = Math.round(m.x + m.w / 2 - 3);
   const side = art.screen === 'west' || art.screen === 'east';
@@ -580,7 +597,7 @@ function drawMonitor(g: Graphics, lit: boolean, art: DeskArt): void {
   // 泛光按帧内裁剪：朝北的显示器贴在帧顶，外扩 4px 会越过画布上沿
   if (lit) {
     const glowY = Math.max(0, m.y - 4);
-    g.rect(m.x - 4, glowY, m.w + 8, m.h + 8 - (glowY - (m.y - 4))).fill({ color: COLOR.screenLit, alpha: 0.12 });
+    g.rect(m.x - 4, glowY, m.w + 8, m.h + 8 - (glowY - (m.y - 4))).fill({ color: COLOR.deskScreen, alpha: 0.12 });
   }
   // 支架：机身下沿压 2px，底座落在桌面上 / 桌面前沿
   rect(g, standX, m.y + m.h - 2, 6, 7, COLOR.bezel);
@@ -590,24 +607,38 @@ function drawMonitor(g: Graphics, lit: boolean, art: DeskArt): void {
     const screenX = art.screen === 'east' ? m.x + m.w - 3 : m.x + 1;
     box(g, m.x, m.y, m.w, m.h, COLOR.bezel);
     rect(g, m.x + 3, m.y + 2, m.w - 6, m.h - 4, COLOR.chairBase);
-    rect(g, screenX, m.y + 3, 2, m.h - 6, lit ? COLOR.screenLit : COLOR.screenInk);
+    rect(g, screenX, m.y + 3, 2, m.h - 6, lit ? COLOR.deskScreen : COLOR.screenInk);
     if (lit) {
       // 光从屏幕那一侧洒在桌面上：侧视只有这一片反光读得出「亮着」
       const spillX = art.screen === 'east' ? m.x + m.w + 4 : m.x - 4;
-      g.ellipse(spillX, m.y + m.h / 2, 5, m.h * 0.42).fill({ color: COLOR.screenLit, alpha: 0.24 });
+      g.ellipse(spillX, m.y + m.h / 2, 5, m.h * 0.42).fill({ color: COLOR.deskScreen, alpha: 0.24 });
+      // 两帧的差别落在屏幕那一条亮边的中段：侧视也能看出「有人在敲」
+      rect(g, screenX, m.y + (phase === 0 ? 6 : 10), 2, 3, COLOR.deskScreenLine);
     }
     return;
   }
 
   box(g, m.x, m.y, m.w, m.h, COLOR.bezel);
   if (art.screen === 'front') {
-    // 正面：屏幕 + 代码行；灯亮时行变白，未点亮时是深色墨线
-    box(g, m.x + 2, m.y + 2, m.w - 4, m.h - 6, lit ? COLOR.screenLit : COLOR.screenIdle, COLOR.bezel);
+    // 正面：屏幕 + 标题栏 + 代码行；熄屏时只剩一道深色墨线
+    box(g, m.x + 2, m.y + 2, m.w - 4, m.h - 6, lit ? COLOR.deskScreen : COLOR.screenIdle, COLOR.bezel);
     if (lit) {
-      rect(g, m.x + 5, m.y + 6, 12, 1, COLOR.ceramic);
-      rect(g, m.x + 5, m.y + 10, 18, 1, COLOR.ceramic);
-      rect(g, m.x + 5, m.y + 14, 8, 1, COLOR.ceramic);
-      g.ellipse(m.x + m.w / 2, m.y + m.h + 4, m.w * 0.55, 5).fill({ color: COLOR.screenLit, alpha: 0.2 });
+      // 标题栏：一条深蓝 + 右侧三个窗口点，屏幕才像「开着一个编辑器」
+      rect(g, m.x + 4, m.y + 4, m.w - 8, 2, COLOR.deskScreenInk);
+      for (let i = 0; i < 3; i += 1) rect(g, m.x + m.w - 11 + i * 2, m.y + 4, 1, 2, COLOR.deskScreenLine);
+      // 代码行：两帧换长度与缩进；末尾 1px 是光标
+      if (phase === 0) {
+        rect(g, m.x + 5, m.y + 8, 14, 1, COLOR.deskScreenLine);
+        rect(g, m.x + 7, m.y + 11, 9, 1, COLOR.deskScreenLine);
+        rect(g, m.x + 5, m.y + 14, 18, 1, COLOR.deskScreenLine);
+        rect(g, m.x + 24, m.y + 14, 1, 1, COLOR.deskScreenLine);
+      } else {
+        rect(g, m.x + 5, m.y + 8, 10, 1, COLOR.deskScreenLine);
+        rect(g, m.x + 7, m.y + 11, 16, 1, COLOR.deskScreenLine);
+        rect(g, m.x + 5, m.y + 14, 7, 1, COLOR.deskScreenLine);
+        rect(g, m.x + 13, m.y + 14, 1, 1, COLOR.deskScreenLine);
+      }
+      g.ellipse(m.x + m.w / 2, m.y + m.h + 4, m.w * 0.55, 5).fill({ color: COLOR.deskScreen, alpha: 0.2 });
     } else {
       rect(g, m.x + 5, m.y + 6, 14, 1, COLOR.screenInk);
       rect(g, m.x + 5, m.y + 10, 9, 1, COLOR.screenInk);
@@ -621,8 +652,10 @@ function drawMonitor(g: Graphics, lit: boolean, art: DeskArt): void {
   rect(g, m.x + 6, m.y + 12, m.w - 12, 1, COLOR.bezel);
   if (lit) {
     // 屏幕朝人（北），镜头这一侧只能看到光沿外框漏出来的一圈
-    rect(g, m.x + 1, m.y + 1, m.w - 2, 1, COLOR.screenLit);
-    rect(g, m.x + 1, m.y + m.h - 2, m.w - 2, 1, COLOR.screenLit);
+    rect(g, m.x + 1, m.y + 1, m.w - 2, 1, COLOR.deskScreen);
+    rect(g, m.x + 1, m.y + m.h - 2, m.w - 2, 1, COLOR.deskScreen);
+    // 漏光在两帧里错开一格，避免背壳看久了像死图
+    rect(g, m.x + (phase === 0 ? 4 : 8), m.y + m.h - 3, 10, 1, COLOR.deskScreenDim);
   }
 }
 
@@ -633,7 +666,7 @@ function drawMonitor(g: Graphics, lit: boolean, art: DeskArt): void {
  * 侧放桌的桌面、前挡板、桌腿与显示器位置都来自同一份数据。
  * 绘制顺序是「桌面 → 显示器 → 陈设」，显示器才站得住桌面而不是被桌面盖住。
  */
-function drawDesk(g: Graphics, lit: boolean, art: DeskArt): void {
+function drawDesk(g: Graphics, lit: boolean, art: DeskArt, phase: 0 | 1): void {
   const { top, front, handle, legs, shadow: sh, details } = art;
   shadow(g, sh.cx, sh.cy, sh.rx, sh.ry);
   // 桌面与前挡板：顶面浅、前面深，带圆角与抽屉拉手
@@ -642,7 +675,7 @@ function drawDesk(g: Graphics, lit: boolean, art: DeskArt): void {
   box(g, front.x, front.y, front.w, front.h, COLOR.deskFront);
   rect(g, handle.x, handle.y, handle.w, handle.h, COLOR.deskLeg);
   for (const leg of legs) box(g, leg.x, leg.y, leg.w, leg.h, COLOR.deskLeg);
-  drawMonitor(g, lit, art);
+  drawMonitor(g, lit, art, phase);
   // 桌角生活细节：侧放桌的显示器占住西 / 东长边，陈设让到靠人的半边
   const { plant, mug, note } = details;
   box(g, mug.x, mug.y, 9, 9, COLOR.mint);
@@ -969,10 +1002,37 @@ function fillFloorConcrete(g: Graphics, r: WorldRect): void {
   for (let i = 0; i < 5; i += 1) rect(g, drainX + 3 + i * 4, drainY + 2, 1, 6, darken(c.seam, 0.7));
 }
 
-function fillPaving(g: Graphics, r: WorldRect): void {
+/**
+ * 铺装街区（ADR-0099）：底色 + 40px 错缝 + 一圈内凹路缘 + 1px 顶面高光。
+ *
+ * 以前只有 40px 井字缝，五片街区广场读起来是一整块灰布；加了路缘之后
+ * 「踩上台阶进了街区」这件事才有像素上的交代。明度只多一档高光，
+ * 地面没有变花，角色仍然出得来。
+ *
+ * `curb` 只在街区级的铺装上画：楼体自己占用的铺装（小院院落、公寓楼体）
+ * 已经在 `fillBuildingFloor` 里有地面，再加一圈边会像给房子描了个框。
+ */
+function fillPaving(g: Graphics, r: WorldRect, curb: boolean): void {
   rect(g, r.x, r.y, r.w, r.h, COLOR.paving);
   for (let x = r.x + 40; x < r.x + r.w; x += 40) rect(g, x, r.y, 1, r.h, COLOR.pavingSeam);
   for (let y = r.y + 40; y < r.y + r.h; y += 40) rect(g, r.x, y, r.w, 1, COLOR.pavingSeam);
+  if (!curb || r.w < 60 || r.h < 40) return;
+  // 路缘石：四周 2px 深缝，再向内让 1px 受光，边缘就有厚度
+  rect(g, r.x, r.y, r.w, 2, COLOR.pavingSeam);
+  rect(g, r.x, r.y + r.h - 2, r.w, 2, COLOR.pavingSeam);
+  rect(g, r.x, r.y, 2, r.h, COLOR.pavingSeam);
+  rect(g, r.x + r.w - 2, r.y, 2, r.h, COLOR.pavingSeam);
+  rect(g, r.x + 2, r.y + 2, r.w - 4, 1, lighten(COLOR.paving, 0.14));
+  rect(g, r.x + 2, r.y + 2, 1, r.h - 4, lighten(COLOR.paving, 0.08));
+}
+
+/** 这片铺装是否与某栋有地板的建筑相交：相交就不画路缘（那是楼自己的地面） */
+function pavingTouchesBuilding(r: WorldRect): boolean {
+  for (const building of WORLD_LAYOUT.buildings) {
+    const b = building.rect;
+    if (r.x < b.x + b.w && r.x + r.w > b.x && r.y < b.y + b.h && r.y + r.h > b.y) return true;
+  }
+  return false;
 }
 
 /** 墙与平面设施（会议桌、隔断）：俯视压扁，带一道顶面高光 */
@@ -1042,7 +1102,16 @@ interface Cullable {
 interface DeskSprite {
   sprite: Sprite;
   idle: Texture;
-  lit: Texture;
+  /** 亮屏两帧：代码行的长度与缩进不同，只换纹理引用（帧循环零绘制） */
+  lit: readonly [Texture, Texture];
+  /** 桌面中心（专注光的落点） */
+  x: number;
+  y: number;
+  /** 相位种子：由桌心派生，同排工位不会一起闪 */
+  seed: number;
+  /** 是否有人坐着：只有占用的工位才推进相位 */
+  occupied: boolean;
+  phase: 0 | 1;
 }
 
 export class PropsView {
@@ -1053,17 +1122,48 @@ export class PropsView {
   private readonly desks: DeskSprite[] = [];
   private readonly textures: Texture[] = [];
   /**
+   * 专注光：全场只有一张。搬砖的是本地玩家，同时最多一处亮着，
+   * 做成「一枚精灵挪到对应桌面」比给 8 张桌子各挂一枚更省对象、也更容易读。
+   */
+  private focusDesk = -1;
+  private focusSprite?: Sprite;
+  /** 上一帧时钟：`update` 与 `setSeatOccupied` 共用同一个相位基准 */
+  private nowMs = 0;
+  /**
    * 每种装饰只烘焙一次：加密道具之后同类道具会有几十个，
    * 逐个烘焙等于几十张同内容的纹理，显存与初始化时间都会被放大。
    * 键是 `kind:variant`——logo 四个变体共用一张尺寸表、四张图标纹理。
    */
   private readonly propTextures = new Map<string, Texture>();
+  /**
+   * 路灯落地光晕：一张 36×20 的暖色椭圆 + 四根光针，全场复用一张纹理。
+   *
+   * **不进光图**：`LightRegistry` 的预算被 `lighting.test.ts` 钉在 `MAX_LIGHTS`，
+   * 给三十几盏路灯各加一个 `LightSpec` 会把后面的场所光挤掉；像素风里
+   * 「地上有一圈暖色」本来就够读，多一道烘焙椭圆即可。
+   */
+  private lampGlow?: Texture;
+  /** 路侧指示桩纹理：按区色缓存，全图最多五张 */
+  private readonly roadPostTextures = new Map<number, Texture>();
 
-  /** 构造期一次性生成全部贴图与精灵；`depth` 负责按脚底 y 归入深度层 */
-  build(depth: DepthSink, renderer: TextureFactory): void {
+  /**
+   * 构造期一次性生成全部贴图与精灵；`depth` 负责按脚底 y 归入深度层。
+   *
+   * `options.decor` 对应 `?decor=0`（与 `?venue=0` 同一套灰度惯例）：
+   * 过渡带装饰是纯表现层，关掉之后地图与碰撞完全不变，只少一层点缀。
+   */
+  build(
+    depth: DepthSink,
+    renderer: TextureFactory,
+    options: { winter?: boolean; decor?: boolean; flat?: boolean } = {},
+  ): void {
     const ground = new Graphics();
     for (const building of WORLD_LAYOUT.buildings) fillBuildingFloor(ground, building);
-    for (const area of WORLD_LAYOUT.paved) fillPaving(ground, area);
+    const paved = !options.flat;
+    for (const area of WORLD_LAYOUT.paved) fillPaving(ground, area, paved && !pavingTouchesBuilding(area));
+    // 路面叙事（ADR-0099）：路口铺砖 / 斑马线 / 指引箭头，全部构造期一次成图。
+    // `?flat=1` 与旧的「矩形平铺」画法保持一致：整层不画，回到改动前的观感
+    if (!options.flat) paintRoadDressing(ground);
     for (const solid of WORLD_LAYOUT.solids) {
       if (solid.kind === 'desk') continue;
       // 售货机 / 饮水机 / 咖啡机的本体由装饰精灵承担，地面层不再重复画
@@ -1073,15 +1173,37 @@ export class PropsView {
     this.base.addChild(ground);
 
     const frame = (w: number, h: number) => new Rectangle(0, 0, w, h);
+    // 路灯的落地光晕：只烘一张，三十几盏灯共用（不进 LightRegistry，见字段注释）
+    this.lampGlow = bake(
+      renderer,
+      (g) => {
+        g.ellipse(18, 12, 17, 6).fill({ color: COLOR.lampGlow, alpha: 0.09 });
+        g.ellipse(18, 12, 11, 4).fill({ color: COLOR.lampGlow, alpha: 0.13 });
+        // 光针：像素风靠 1px 硬线读「有光」，不用渐隐
+        g.rect(17, 3, 1, 4).fill({ color: COLOR.lampGlow, alpha: 0.2 });
+        g.rect(17, 17, 1, 3).fill({ color: COLOR.lampGlow, alpha: 0.16 });
+        g.rect(6, 11, 5, 1).fill({ color: COLOR.lampGlow, alpha: 0.16 });
+        g.rect(26, 11, 5, 1).fill({ color: COLOR.lampGlow, alpha: 0.16 });
+      },
+      { frame: frame(36, 20) },
+    );
+    this.textures.push(this.lampGlow);
     // 四个朝向各烘焙一对 idle / lit：桌子随朝向转置（横桌 96×66、侧放桌 48×110），
     // 每张桌子按自己的帧尺寸烘焙，显示器永远立在远侧长边之上（ADR-0027 / ADR-0032）
-    const deskTextures = new Map<Direction, { idle: Texture; lit: Texture; frame: { w: number; h: number } }>();
+    const deskTextures = new Map<
+      Direction,
+      { idle: Texture; lit: readonly [Texture, Texture]; frame: { w: number; h: number } }
+    >();
     for (const facing of [DIRECTION.Up, DIRECTION.Down, DIRECTION.Left, DIRECTION.Right]) {
       const art = deskArtFor(facing);
       const deskFrame = frame(art.frame.w, art.frame.h);
       deskTextures.set(facing, {
-        idle: bake(renderer, (g) => drawDesk(g, false, art), { frame: deskFrame }),
-        lit: bake(renderer, (g) => drawDesk(g, true, art), { frame: deskFrame }),
+        idle: bake(renderer, (g) => drawDesk(g, false, art, 0), { frame: deskFrame }),
+        // 两帧只有代码行不同：亮屏是「有人在敲」，不是一张静止壁纸
+        lit: [
+          bake(renderer, (g) => drawDesk(g, true, art, 0), { frame: deskFrame }),
+          bake(renderer, (g) => drawDesk(g, true, art, 1), { frame: deskFrame }),
+        ],
         frame: art.frame,
       });
     }
@@ -1116,7 +1238,7 @@ export class PropsView {
       sofa: bake(renderer, drawSofa, { frame: frame(SOFA_SPRITE.w, SOFA_SPRITE.h) }),
       bed: bake(renderer, drawBed, { frame: frame(BED_SPRITE.w, BED_SPRITE.h) }),
     };
-    for (const art of deskTextures.values()) this.textures.push(art.idle, art.lit);
+    for (const art of deskTextures.values()) this.textures.push(art.idle, art.lit[0], art.lit[1]);
     this.textures.push(
       ...Object.values(seatTextures),
       ...chairTextures.values(),
@@ -1134,9 +1256,39 @@ export class PropsView {
       sprite.position.set(desk.x, bottom);
       // 深度键按朝向派生：东西向的桌子与椅子同 y，必须让到人与椅子之后（ADR-0032）
       depth.add(desk.y + deskDepthOffset(desk.facing), sprite);
-      this.desks.push({ sprite, idle: art.idle, lit: art.lit });
+      this.desks.push({
+        sprite,
+        idle: art.idle,
+        lit: art.lit,
+        x: desk.x,
+        y: desk.y,
+        // 相位种子由桌心派生：同一排工位不会整齐划一地闪
+        seed: (desk.x * 31 + desk.y) | 0,
+        occupied: false,
+        phase: 0,
+      });
       this.cullables.push({ sprite, x: desk.x, y: bottom, padX: art.frame.w / 2 + 4, padY: art.frame.h });
     }
+
+    // 专注光：一枚 92×36 的硬边椭圆环，冷蓝白、居中锚点，默认不可见。
+    // 走 `base`（地面层之上、角色之下）——光圈不该盖住坐在桌后的人。
+    const focusTexture = bake(
+      renderer,
+      (g) => {
+        g.ellipse(46, 18, 44, 15).fill({ color: 0xffffff, alpha: 0.1 });
+        g.ellipse(46, 18, 36, 11).fill({ color: 0xffffff, alpha: 0.08 });
+        // 外圈 1px 亮环：像素风里靠硬边读「有光」，不靠渐隐
+        g.ellipse(46, 18, 45, 16).stroke({ width: 1, color: 0xffffff, alpha: 0.42 });
+      },
+      { frame: frame(92, 36) },
+    );
+    this.textures.push(focusTexture);
+    const focus = new Sprite(focusTexture);
+    focus.anchor.set(0.5, 0.5);
+    focus.tint = COLOR.deskScreen;
+    focus.visible = false;
+    this.base.addChild(focus);
+    this.focusSprite = focus;
 
     for (const seat of WORLD_LAYOUT.seats) {
       // 长椅视觉由道具管线绘制（`addProp`），座位只登记坐点；这里跳过以免出现两张长椅
@@ -1170,6 +1322,66 @@ export class PropsView {
     }
 
     for (const prop of WORLD_LAYOUT.props) this.addProp(depth, renderer, prop);
+
+    // 过渡带装饰：草地空档里的灌木、路边邮筒/消防栓/垃圾桶与路肩碎石。
+    // 全部零碰撞、不写布局，只借用这条管线已有的纹理缓存与视口裁剪。
+    if (options.decor !== false) {
+      buildStreetDecor(
+        {
+          base: this.base,
+          addSprite: (texture, x, y, padX, padY) => {
+            const sprite = new Sprite(texture);
+            sprite.anchor.set(0.5, 1);
+            sprite.position.set(x, y);
+            depth.add(y, sprite);
+            this.cullables.push({ sprite, x, y, padX, padY });
+          },
+          keepTexture: (texture) => this.textures.push(texture),
+        },
+        renderer,
+        options.winter === true,
+      );
+    }
+
+    // 路侧指示桩（ADR-0099）：五座街口 + 四条主路中点各一根，牌面挂所属大区的区色。
+    // 纯客户端：不进 `WORLD_LAYOUT.props`，因此不产生碰撞、不扰动树点；`?flat=1` 时一起关掉
+    if (options.flat !== true) this.addRoadPosts(depth, renderer);
+  }
+
+  /** 指示桩纹理：木柱 + 一块带区色的牌面，按区色各烘一张（全图最多五张） */
+  private roadPostTexture(renderer: TextureFactory, color: number): Texture {
+    const cached = this.roadPostTextures.get(color);
+    if (cached) return cached;
+    const texture = bake(
+      renderer,
+      (g) => {
+        // 底座投影：冷靛蓝，与其它道具同一档透明度
+        g.ellipse(9, 27, 6, 2).fill({ color: COLOR.shadow, alpha: 0.24 });
+        // 木柱：3px 宽，左沿受光
+        rect(g, 8, 10, 3, 17, COLOR.woodDark);
+        rect(g, 8, 10, 1, 17, COLOR.woodLight);
+        // 牌面：12×8 奶油底 + 1px 深边，中间一条区色带
+        rect(g, 2, 1, 14, 10, COLOR.outline);
+        rect(g, 3, 2, 12, 8, COLOR.signPaper);
+        rect(g, 3, 5, 12, 3, color);
+        rect(g, 3, 2, 12, 1, lighten(COLOR.signPaper, 0.2));
+        rect(g, 3, 9, 12, 1, COLOR.signEdge);
+      },
+      { frame: new Rectangle(0, 0, 18, 28) },
+    );
+    this.roadPostTextures.set(color, texture);
+    this.textures.push(texture);
+    return texture;
+  }
+
+  private addRoadPosts(depth: DepthSink, renderer: TextureFactory): void {
+    for (const post of roadPostPlan()) {
+      const sprite = new Sprite(this.roadPostTexture(renderer, post.color));
+      sprite.anchor.set(0.5, 1);
+      sprite.position.set(post.x, post.y);
+      depth.add(post.y, sprite);
+      this.cullables.push({ sprite, x: post.x, y: post.y, padX: 12, padY: 30 });
+    }
   }
 
   private propTexture(renderer: TextureFactory, prop: PropInstance): Texture {
@@ -1188,6 +1400,14 @@ export class PropsView {
 
   private addProp(depth: DepthSink, renderer: TextureFactory, prop: PropInstance): void {
     const size = PROP_SIZE[prop.kind];
+    // 路灯：先在地上压一层暖光晕，深度键比灯柱小半格，人走过去仍然盖住光
+    if (prop.kind === 'lamp' && this.lampGlow) {
+      const glow = new Sprite(this.lampGlow);
+      glow.anchor.set(0.5, 1);
+      glow.position.set(prop.x, prop.y - 1);
+      depth.add(prop.y - 0.5, glow);
+      this.cullables.push({ sprite: glow, x: prop.x, y: prop.y, padX: 20, padY: 22 });
+    }
     const texture = this.propTexture(renderer, prop);
     const sprite = new Sprite(texture);
     sprite.anchor.set(0.5, 1);
@@ -1196,12 +1416,62 @@ export class PropsView {
     this.cullables.push({ sprite, x: prop.x, y: prop.y, padX: size.w / 2 + 2, padY: size.h + 2 });
   }
 
-  /** 占用变化：工位显示器点亮 / 熄灭。椅子与马桶没有视觉状态，只靠姿态表现 */
+  /**
+   * 占用变化：工位显示器点亮 / 熄灭。椅子与马桶没有视觉状态，只靠姿态表现。
+   *
+   * 点亮时取当前时钟算相位，坐下那一刻屏幕就已经是「有人在敲」的那一帧，
+   * 不会先亮一帧静止图再开始动。
+   */
   setSeatOccupied(seat: SeatInstance, occupied: boolean): void {
     if (seat.desk < 0) return;
     const desk = this.desks[seat.desk];
     if (!desk) return;
-    desk.sprite.texture = occupied ? desk.lit : desk.idle;
+    desk.occupied = occupied;
+    if (!occupied) {
+      desk.sprite.texture = desk.idle;
+      return;
+    }
+    desk.phase = codeLinePhase(desk.seed, this.nowMs);
+    desk.sprite.texture = desk.lit[desk.phase];
+  }
+
+  /**
+   * 本人搬砖中的专注光：`deskIndex < 0` 表示收起。
+   *
+   * 只挪一枚共享精灵，不新增光源（光图预算 64 盏已经很紧），
+   * 亮度由 `focusPulse` 的纯函数给出，每帧只写一次 alpha。
+   */
+  setWorkingDesk(deskIndex: number, active: boolean): void {
+    const focus = this.focusSprite;
+    if (!focus) return;
+    const desk = active && deskIndex >= 0 ? this.desks[deskIndex] : undefined;
+    if (!desk) {
+      this.focusDesk = -1;
+      focus.visible = false;
+      return;
+    }
+    this.focusDesk = deskIndex;
+    focus.position.set(desk.x, desk.y);
+    focus.visible = true;
+  }
+
+  /** 每帧推进：亮着的工位切代码行相位，专注光呼吸。只写 texture 引用与 alpha */
+  update(nowMs: number): void {
+    if (!Number.isFinite(nowMs)) return;
+    this.nowMs = nowMs;
+    for (let i = 0; i < this.desks.length; i += 1) {
+      const desk = this.desks[i]!;
+      if (!desk.occupied) continue;
+      const phase = codeLinePhase(desk.seed, nowMs);
+      if (phase === desk.phase) continue;
+      desk.phase = phase;
+      desk.sprite.texture = desk.lit[phase];
+    }
+    const focus = this.focusSprite;
+    if (!focus || this.focusDesk < 0) return;
+    const desk = this.desks[this.focusDesk];
+    if (!desk) return;
+    focus.alpha = focusPulse(desk.seed, nowMs);
   }
 
   /** 视口裁剪：与地形同一套规则，离屏的桌椅与装饰不参与绘制 */

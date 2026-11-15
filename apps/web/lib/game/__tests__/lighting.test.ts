@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { WORLD_LAYOUT } from '@niuma/shared-types';
+import { DISTRICTS, DICE_TABLES, PLAZA_CENTER, WORLD_LAYOUT } from '@niuma/shared-types';
 import {
   LightRegistry,
   MAX_LIGHTS,
@@ -11,6 +11,14 @@ import {
 import { propLights } from '../lighting/scene-lights';
 import { ambientMultiplierOf, lightToneAt, localLightGain } from '../lighting/tone';
 import { venueLights } from '../venue-lights';
+import { FESTIVAL_LIGHT_COUNT } from '../festival-decor';
+
+/** 各模块里写死的常驻光数量：改灯时同步改这里，预算断言才有意义 */
+const INTERIOR_LIGHT_COUNT = 8;
+const LANTERN_LIGHT_COUNT = 6;
+const PAVILION_LIGHT_COUNT = 4;
+const SHRINE_LIGHT_COUNT = 2;
+const PARK_LIGHT_COUNT = 2;
 
 const NIGHT = lightToneAt(0);
 const NOON = lightToneAt(11);
@@ -152,16 +160,53 @@ describe('地标光源派生', () => {
     expect(vending?.color).toBe(0xd9ecff);
   });
 
-  it('预算：道具 + 场所 + 节日常驻总数不超过 MAX_LIGHTS', () => {
+  it('预算：道具 + 场所 + 室内 + 挂灯 + 节日 的常驻总数不超过 MAX_LIGHTS', () => {
     // 场馆自己的光位集中在 venue-lights.ts：超过上限时 LightRegistry 会静默丢弃，
-    // 因此这里先算总数。6 = 节日彩旗的 FESTIVAL_LIGHT_COUNT，11 = 室内 6 + 挂灯 2 + 亭 2 + 祭坛 2，
-    // 这些都在各自模块里另有断言，这里只按最坏情况给定额。
-    const resident = lights.length + venueLights().length + 6 + 11;
+    // 因此这里先算总数。下列常驻数量都来自各自模块里已经写死的构造逻辑：
+    // - 室内 8：工作区 1 / 小黑屋 1 / 会议室 2 / 宿舍 2 / 影音室 2（interior-art.ts）
+    // - 挂灯 6：拱门 2 + 门柱 4（layout.ts 的 ARCH/DOOR_LANTERN_POSTS）
+    // - 摸鱼亭 4：四角各一盏；祭坛 2；公园 2：南门 + 旋转木马
+    // 旧版本把后四项按 11 记，漏算了公园两盏、又少算了室内与亭的真实数量，
+    // 于是断言的 84 与真实的 94 差了 10 盏——加灯时就会静默丢灯。
+    const resident =
+      lights.length +
+      venueLights().length +
+      INTERIOR_LIGHT_COUNT +
+      LANTERN_LIGHT_COUNT +
+      PAVILION_LIGHT_COUNT +
+      SHRINE_LIGHT_COUNT +
+      PARK_LIGHT_COUNT +
+      FESTIVAL_LIGHT_COUNT;
     expect(resident).toBeLessThanOrEqual(MAX_LIGHTS);
-    // 场所光自身也不该无限膨胀：30 盏 = 六栋公寓 6 + 两院 2 + 擂台 2 + 赌场 2
-    // + 诊所 2 + 广场 8 + 茶台 1 + 卫生间 1 + 五座区门 5 + 发泄室 1（ADR-0097）
+    // 至少留两盏余量：动态光源（节日验收、后续小改）不至于一加就掉
+    expect(MAX_LIGHTS - resident).toBeGreaterThanOrEqual(2);
+    // 场所光自身也不该无限膨胀：30 盏 = 六栋公寓 6 + 两院 2 + 擂台 2 + 赌场 2 + 赌桌 2
+    // + 诊所 2 + 广场 4 + 广场中心 1 + 茶台 1 + 卫生间 1 + 五座区门 5 + 企业走廊 1 + 发泄室 1
     expect(venueLights().length).toBeLessThanOrEqual(32);
     expect(venueLights().length).toBeGreaterThanOrEqual(26);
+  });
+
+  it('夜间动线的五个关键点都有光：广场中心、区门、赌桌、企业走廊、急救站门', () => {
+    const specs = venueLights();
+    // 广场中心：唯一一枚 r≥280 的大半径暖光，光心就是广场圆心
+    const center = specs.find((spec) => spec.radius >= 280);
+    expect(center).toBeDefined();
+    expect(center!.x).toBe(PLAZA_CENTER.x);
+    expect(center!.y).toBe(PLAZA_CENTER.y);
+    expect(center!.intensity).toBeLessThanOrEqual(0.25);
+    // 五座区门：每座一盏，且色温必须偏暖（红通道高于蓝通道）
+    for (const district of DISTRICTS) {
+      const gate = specs.find((spec) => Math.abs(spec.x - district.gate.x) < 1 && spec.y < district.gate.y);
+      expect(gate).toBeDefined();
+      expect((gate!.color >> 16) & 0xff).toBeGreaterThan(gate!.color & 0xff);
+    }
+    // 两张绿绒桌：桌心 40px 内各有一盏
+    for (const table of DICE_TABLES) {
+      const hit = specs.some(
+        (spec) => Math.abs(spec.x - table.x) < 40 && Math.abs(spec.y - (table.y + table.h / 2)) < 40,
+      );
+      expect(hit).toBe(true);
+    }
   });
 
   it('场所光位都在世界范围内，色温不是纯白纯黑', () => {

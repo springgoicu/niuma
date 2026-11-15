@@ -3,7 +3,6 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
-  FurniturePlacement,
   NavTargetId,
   ResumeState,
 } from '@niuma/shared-types';
@@ -486,20 +485,16 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'apartment', request: { action, arg: 0 } });
   }
 
-  apartmentInvite(targetId: number): void {
-    if (this.delegate) return this.delegate.apartmentInvite(targetId);
-    this.post({ t: 'apartmentInvite', targetId });
-  }
-
-  saveRoomLayout(placements: FurniturePlacement[]): void {
-    if (this.delegate) return this.delegate.saveRoomLayout(placements);
-    this.post({ t: 'roomLayout', placements });
-  }
-
   /** 搬砖结算（ADR-0088）：只报连击数，金额由服务端算 */
   claimWork(combo: number): void {
     if (this.delegate) return this.delegate.claimWork(combo);
     this.post({ t: 'claimWork', combo });
+  }
+
+  /** 搬砖终端开关：把「正在倒计时」告诉渲染线程，点亮工位上那圈专注光 */
+  setWorking(active: boolean): void {
+    if (this.delegate) return this.delegate.setWorking(active);
+    this.post({ t: 'working', active });
   }
 
   /** 领取每日悬赏 */
@@ -517,6 +512,11 @@ export class WorkerGameClient implements GameClient {
   navigateTo(id: NavTargetId): void {
     if (this.delegate) return this.delegate.navigateTo(id);
     this.post({ t: 'navigate', id });
+  }
+
+  navigateHome(): void {
+    if (this.delegate) return this.delegate.navigateHome();
+    this.post({ t: 'navigateHome' });
   }
 
   cancelNavigation(): void {
@@ -698,12 +698,6 @@ export class WorkerGameClient implements GameClient {
       case 'arenaPool':
         callbacks.onArenaPool?.(message.packet);
         return;
-      case 'room':
-        callbacks.onRoomState?.(message.packet);
-        return;
-      case 'roomInvite':
-        callbacks.onRoomInvite?.(message.packet);
-        return;
       case 'diceOpen':
         callbacks.onDiceOpen?.(message.table);
         return;
@@ -712,9 +706,6 @@ export class WorkerGameClient implements GameClient {
         return;
       case 'villaOpen':
         callbacks.onVillaOpen?.(message.villa);
-        return;
-      case 'apartmentOpen':
-        callbacks.onApartmentOpen?.();
         return;
       case 'workOpen':
         callbacks.onWorkOpen?.();

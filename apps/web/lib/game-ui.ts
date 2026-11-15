@@ -15,8 +15,6 @@ import {
   type Pose,
   type QueueStatusPacket,
   type RingPacket,
-  type RoomInvitePacket,
-  type RoomStatePacket,
   type SeatKind,
   type VillaStatePacket,
   type BossShockPacket,
@@ -85,8 +83,20 @@ interface GameUiState {
   seatKind: SeatKind | null;
   /** 环境提示或动作被拦下的瞬时提示；null 表示不显示 */
   hint: string | null;
-  /** 正在自动前往的导览目标；null 表示没有导航 */
-  navTarget: { id: NavTargetId; name: string } | null;
+  /** 正在自动前往的导览目标；null 表示没有导航。`'plaza'` 是客户端的「回中央广场」 */
+  navTarget: { id: NavTargetId | 'plaza'; name: string } | null;
+  /**
+   * 「请把导览卡展开」的请求序号，每次自增。
+   *
+   * 导览卡的展开态是组件内部状态（触屏端会自行收起），所以外面不能直接写布尔量；
+   * 用序号驱动一次真实变化，连点指路牌也能重新展开而不是被 React 判成同值跳过。
+   */
+  navOpenSeq: number;
+  /**
+   * 过门区域横幅（纯客户端）：`key` 自增驱动重播，同一区域再次进入也会重新淡入。
+   * 会话态、不落盘——换个园区、刷新页面都不该记住「上次弹过哪一条」。
+   */
+  areaBanner: { key: number; title: string; subtitle: string; color: number } | null;
   /**
    * 擂台快照与收到时刻。
    *
@@ -133,12 +143,7 @@ interface GameUiState {
   villaOpen: number | null;
   /** 两栋小院的牌匾 / 锁状态 */
   villas: VillaStatePacket | null;
-  /** 牛马公寓面板（户型 / 家具 / 邀请） */
-  apartmentOpen: boolean;
-  /** 当前房间状态：门牌、房主与家具布局 */
-  room: RoomStatePacket | null;
-  /** 最近的串门邀请：右上角小提示，5 秒后自行消失 */
-  roomInvite: RoomInvitePacket | null;
+
   // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
   /** 加班搬砖终端小游戏：整层浮窗，世界与连接照跑 */
   workOpen: boolean;
@@ -161,9 +166,6 @@ interface GameUiState {
   setArenaPool: (packet: ArenaPoolPacket | null) => void;
   setVillaOpen: (villa: number | null) => void;
   setVillas: (packet: VillaStatePacket | null) => void;
-  setApartmentOpen: (open: boolean) => void;
-  setRoom: (packet: RoomStatePacket | null) => void;
-  setRoomInvite: (packet: RoomInvitePacket | null) => void;
   setWallet: (wallet: EconomyProfile) => void;
   setInvite: (invite: { packet: P2PInviteNotifyPacket; expiresAt: number } | null) => void;
   setInviteResult: (result: P2PInviteResultPacket | null) => void;
@@ -182,7 +184,13 @@ interface GameUiState {
   setLocalState: (state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }) => void;
   setRing: (packet: RingPacket | null, receivedAt: number) => void;
   setHint: (hint: string | null) => void;
-  setNavTarget: (nav: { id: NavTargetId; name: string } | null) => void;
+  setNavTarget: (nav: { id: NavTargetId | 'plaza'; name: string } | null) => void;
+  /** 请求展开导览卡：只自增序号，真正的开合仍由 NavCard 决定 */
+  requestNavCardOpen: () => void;
+  /** 弹一条过门横幅；同一片区域连进两次也重播，`key` 是重播开关 */
+  pushAreaBanner: (banner: { title: string; subtitle: string; color: number }) => void;
+  /** 关闭横幅；`key` 不匹配时不动（避免旧定时器关掉新横幅） */
+  clearAreaBanner: (key: number) => void;
   setStatus: (status: ConnectionStatus, detail?: string) => void;
   setStats: (stats: SessionStats) => void;
   setQueue: (queue: QueueStatusPacket | null) => void;
@@ -254,7 +262,9 @@ const INITIAL = {
   seated: false,
   seatKind: null as SeatKind | null,
   hint: null,
-  navTarget: null as { id: NavTargetId; name: string } | null,
+  navTarget: null as { id: NavTargetId | 'plaza'; name: string } | null,
+  navOpenSeq: 0,
+  areaBanner: null as { key: number; title: string; subtitle: string; color: number } | null,
   ring: null as { packet: RingPacket; receivedAt: number } | null,
   wallet: emptyEconomyProfile(),
   invite: null as { packet: P2PInviteNotifyPacket; expiresAt: number } | null,
@@ -275,9 +285,6 @@ const INITIAL = {
   arenaPool: null as ArenaPoolPacket | null,
   villaOpen: null as number | null,
   villas: null as VillaStatePacket | null,
-  apartmentOpen: false,
-  room: null as RoomStatePacket | null,
-  roomInvite: null as RoomInvitePacket | null,
   workOpen: false,
   quests: null as QuestStatePacket | null,
   questOpen: false,
@@ -286,6 +293,7 @@ const INITIAL = {
 };
 let coinPopSeq = 0;
 let shoutSeq = 0;
+let areaSeq = 0;
 const MAX_COIN_POPS = 5;
 
 export const useGameUi = create<GameUiState>((set) => ({
@@ -341,9 +349,6 @@ export const useGameUi = create<GameUiState>((set) => ({
   setArenaPool: (arenaPool) => set({ arenaPool }),
   setVillaOpen: (villaOpen) => set({ villaOpen }),
   setVillas: (villas) => set({ villas }),
-  setApartmentOpen: (apartmentOpen) => set({ apartmentOpen }),
-  setRoom: (room) => set({ room }),
-  setRoomInvite: (roomInvite) => set({ roomInvite }),
 
   // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
   setWorkOpen: (workOpen) => set({ workOpen }),
@@ -358,6 +363,13 @@ export const useGameUi = create<GameUiState>((set) => ({
   setHint: (hint) => set({ hint }),
 
   setNavTarget: (navTarget) => set({ navTarget }),
+
+  requestNavCardOpen: () => set((state) => ({ navOpenSeq: state.navOpenSeq + 1 })),
+
+  pushAreaBanner: (banner) => set({ areaBanner: { key: ++areaSeq, ...banner } }),
+
+  clearAreaBanner: (key) =>
+    set((state) => (state.areaBanner?.key === key ? { areaBanner: null } : {})),
 
   setStatus: (status, detail = '') => set({ status, detail }),
 

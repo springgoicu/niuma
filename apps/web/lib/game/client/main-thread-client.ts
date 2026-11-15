@@ -3,7 +3,6 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
-  FurniturePlacement,
   NavTargetId,
   ResumeState,
 } from '@niuma/shared-types';
@@ -274,21 +273,16 @@ export class MainThreadGameClient implements GameClient {
   }
 
   apartmentAction(action: number): void {
-    if (action === 2) this.session?.upgradeApartment();
-    else if (action === 1) this.session?.exitApartment();
+    if (action === 1) this.session?.exitApartment();
     else this.session?.enterApartment();
-  }
-
-  apartmentInvite(targetId: number): void {
-    this.session?.inviteRoom(targetId);
-  }
-
-  saveRoomLayout(placements: FurniturePlacement[]): void {
-    this.session?.saveRoomLayout(placements);
   }
 
   claimWork(combo: number): void {
     this.session?.claimWork(combo);
+  }
+
+  setWorking(active: boolean): void {
+    this.session?.setWorking(active);
   }
 
   claimQuest(questId: number): void {
@@ -301,6 +295,10 @@ export class MainThreadGameClient implements GameClient {
 
   navigateTo(id: NavTargetId): void {
     this.session?.navigateTo(id);
+  }
+
+  navigateHome(): void {
+    this.session?.navigateHome();
   }
 
   cancelNavigation(): void {

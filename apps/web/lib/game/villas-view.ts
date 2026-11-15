@@ -8,6 +8,7 @@ import {
   type VillaStatePacket,
 } from '@niuma/shared-types';
 import type { DepthSink } from './sort-layer';
+import { WINTER_COLORS } from './terrain-palette';
 
 /**
  * 豪宅小院的美术层（ADR-0087）。
@@ -38,7 +39,8 @@ const C = {
   coin: 0xffd166,
   leaf: 0x2f8f63,
   leafLight: 0x4fbf85,
-  snow: 0xf2f7ff,
+  /** 屋顶积雪与地面雪同一色阶：两套白会在地脚处露一条接缝 */
+  snow: WINTER_COLORS.snowBase,
 } as const;
 
 interface LabelSlot {

@@ -341,7 +341,21 @@ export interface Fish {
   elapsedMs: number;
   frame: number;
   frameLeftMs: number;
+  /** 受惊剩余时间（ms）：>0 时加速摆尾逃开，归零后恢复悠闲往返 */
+  alarmMs: number;
+  /** 横向躲避偏移（px）：受惊瞬间按玩家所在侧给出，之后平滑回零 */
+  dodge: number;
 }
+
+/** 受惊半径：玩家踩进这个圈，鱼才散开（小于撒点的离岸余量，不会把鱼赶上岸） */
+export const FISH_SCARE_RADIUS = 56;
+/** 受惊持续时长：够游出一段距离，又不至于一直抽搐 */
+export const FISH_ALARM_MS = 520;
+/** 受惊时的速度倍率与摆尾幅度 */
+const FISH_DASH_MUL = 2.1;
+const FISH_DODGE_PX = 4;
+const FISH_SWAY_IDLE = 3;
+const FISH_SWAY_ALARM = 6;
 
 export function createFish(spawn: FishSpawn): Fish {
   return {
@@ -361,14 +375,49 @@ export function createFish(spawn: FishSpawn): Fish {
     elapsedMs: 0,
     frame: 0,
     frameLeftMs: 140,
+    alarmMs: 0,
+    dodge: 0,
   };
 }
 
-/** 单帧推进：往返 + 摆尾。位置保留浮点，落屏时吸附整纹素（与角色同一条纪律） */
-export function stepFish(fish: Fish, dtMs: number): void {
+/**
+ * 单帧推进：往返 + 摆尾 + 被玩家惊到的加速散开。
+ *
+ * `playerX / playerY` 缺省为无穷远：无玩家的场合（单测、`?fish=0` 前的冷启动）
+ * 行为与旧版逐帧一致。受惊只改三个标量（`alarmMs` / `dodge` / `heading`），
+ * 位置仍然由「往返位移 + 侧向摆尾」合成，帧循环里不分配任何对象。
+ */
+export function stepFish(fish: Fish, dtMs: number, playerX = Number.POSITIVE_INFINITY, playerY = Number.POSITIVE_INFINITY): void {
   const dt = dtMs / 1000;
   fish.elapsedMs += dtMs;
-  fish.travel += fish.heading * fish.speed * dt;
+
+  // 惊吓判定：只在冷静状态下重新触发，避免站在岸边把鱼按在原地抽搐
+  if (fish.alarmMs <= 0 && Number.isFinite(playerX) && Number.isFinite(playerY)) {
+    const dx = fish.x - playerX;
+    const dy = fish.y - playerY;
+    if (dx * dx + dy * dy < FISH_SCARE_RADIUS * FISH_SCARE_RADIUS) {
+      fish.alarmMs = FISH_ALARM_MS;
+      // `away` 是「玩家 → 鱼」在切向上的投影：符号就是鱼该继续躲的方向
+      const sideX = -fish.dirY;
+      const sideY = fish.dirX;
+      const away = sideX * dx + sideY * dy;
+      fish.dodge = away >= 0 ? FISH_DODGE_PX : -FISH_DODGE_PX;
+      // 玩家正挡在前进方向：掉头游开，而不是顶着人往前拱
+      if ((fish.dirX * fish.heading * dx + fish.dirY * fish.heading * dy) > 0) {
+        fish.heading = fish.heading === 1 ? -1 : 1;
+      }
+    }
+  }
+
+  const alarmed = fish.alarmMs > 0;
+  if (alarmed) fish.alarmMs = Math.max(0, fish.alarmMs - dtMs);
+  // 躲避偏移平滑回零：约 240ms 收掉，肉眼读成「闪开又归位」
+  if (fish.dodge !== 0) {
+    fish.dodge -= fish.dodge * Math.min(1, dtMs / 240);
+    if (Math.abs(fish.dodge) < 0.05) fish.dodge = 0;
+  }
+
+  fish.travel += fish.heading * fish.speed * (alarmed ? FISH_DASH_MUL : 1) * dt;
   if (fish.travel > fish.range) {
     fish.travel = fish.range - (fish.travel - fish.range);
     fish.heading = -1;
@@ -376,8 +425,11 @@ export function stepFish(fish: Fish, dtMs: number): void {
     fish.travel = -fish.range + (-fish.range - fish.travel);
     fish.heading = 1;
   }
-  // 侧向摆尾：3px 横移，永远小于半河宽与撒点的岸边余量
-  const sway = Math.sin(fish.phase + fish.elapsedMs * 0.0016) * 3;
+  // 侧向摆尾：平时 3px，受惊时 6px + 躲避偏移，仍远小于湖心到岸的余量
+  const sway =
+    Math.sin(fish.phase + fish.elapsedMs * (alarmed ? 0.0026 : 0.0016)) *
+      (alarmed ? FISH_SWAY_ALARM : FISH_SWAY_IDLE) +
+    fish.dodge;
   const sideX = -fish.dirY;
   const sideY = fish.dirX;
   fish.x = fish.homeX + fish.dirX * fish.travel + sideX * sway;
@@ -386,7 +438,7 @@ export function stepFish(fish: Fish, dtMs: number): void {
 
   fish.frameLeftMs -= dtMs;
   if (fish.frameLeftMs <= 0) {
-    fish.frameLeftMs = 140;
+    fish.frameLeftMs = alarmed ? 95 : 140;
     fish.frame = fish.frame === 0 ? 1 : 0;
   }
 }

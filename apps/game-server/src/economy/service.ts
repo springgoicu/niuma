@@ -7,8 +7,6 @@ import {
   findCosmeticSkuById,
   findItemSku,
   findItemSkuById,
-  furnitureById,
-  houseTierSpec,
   statUpgradePrice,
   type EconomyProfile,
   type StatKey,
@@ -37,7 +35,6 @@ export class EconomyService {
     return {
       coins: player.coins,
       stats: player.stats,
-      houseTier: player.houseTier,
       reason: WALLET_REASON.Init,
       inventory: player.inventory,
     };
@@ -51,7 +48,6 @@ export class EconomyService {
       encodeWalletSync({
         coins: player.coins,
         stats: player.stats,
-        houseTier: player.houseTier,
         reason,
         inventory: player.inventory,
       }),
@@ -210,35 +206,6 @@ export class EconomyService {
     player.coins -= sku.price;
     player.unlockedCosmetics = [...player.unlockedCosmetics, sku.key].slice(0, 24);
     this.push(player, WALLET_REASON.Cosmetic);
-    return true;
-  }
-
-  /**
-   * 家具购买：与装扮共用「已解锁」清单（键名 `furn:<id>`）。
-   *
-   * 复用 `unlockedCosmetics` 而不是新开字段，是为了不破坏钱包同步包的既有结构；
-   * 这条清单本来就是「这台设备解锁了哪些外观件」，家具属于同一类语义。
-   */
-  buyFurniture(player: Player, furnitureId: number): boolean {
-    const sku = furnitureById(furnitureId);
-    if (!sku) return false;
-    const key = `furn:${sku.id}`;
-    if (player.unlockedCosmetics.includes(key)) return false;
-    if (player.coins < sku.price) return false;
-    player.coins -= sku.price;
-    player.unlockedCosmetics = [...player.unlockedCosmetics, key].slice(0, 24);
-    this.push(player, WALLET_REASON.Furniture);
-    return true;
-  }
-
-  /** 户型升级：只允许升到下一档，价格由 `HOUSE_TIERS` 定义 */
-  upgradeHouseTier(player: Player): boolean {
-    const next = houseTierSpec(player.houseTier + 1);
-    if (next.tier <= player.houseTier) return false;
-    if (player.coins < next.price) return false;
-    player.coins -= next.price;
-    player.houseTier = next.tier;
-    this.push(player, WALLET_REASON.HouseUpgrade);
     return true;
   }
 

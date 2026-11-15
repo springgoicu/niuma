@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  HOME_THEATER,
   LOUNGE,
   MEETING_ROOM,
   RESTROOM,
@@ -7,6 +8,7 @@ import {
   VENT_ROOM,
   WORKROOM,
 } from '../world/campus';
+import { CLINIC_RECT } from '../world/clinic';
 import { BOSS_ARENA } from '../world/boss';
 import { RING_ARENA, RING_EXIT, RING_NEAR_PX } from '../world/ring';
 import { isBlocked, PLAYER_RADIUS } from '../world/collision';
@@ -26,10 +28,12 @@ const ROOM_OF: Partial<Record<NavTargetId, { x: number; y: number; w: number; h:
   restroom: RESTROOM,
   lounge: LOUNGE,
   workroom: WORKROOM,
+  theater: HOME_THEATER,
+  clinic: CLINIC_RECT,
 };
 
 /** 户外设施：到达点必须是陆地、不下水 */
-const OUTDOOR: NavTargetId[] = ['park', 'ring', 'diceHall'];
+const OUTDOOR: NavTargetId[] = ['park', 'ring', 'diceHall', 'pavilion'];
 
 /** 点到矩形的最短距离：用来断言擂台落点在报名半径内 */
 function distanceToRect(
@@ -43,8 +47,8 @@ function distanceToRect(
 }
 
 describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
-  it('12 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
-    // 企业区 4 + 游乐区 3 + 生活区 4 + 服务区 1
+  it('15 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
+    // 企业区 4 + 游乐区 3 + 生活区 5 + 服务区 2 + 景观区 1（ADR-0099 补影音室 / 急救站 / 摸鱼亭）
     expect(NAV_TARGETS.map((target) => target.id)).toEqual([
       'workroom',
       'meeting',
@@ -55,9 +59,12 @@ describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
       'ring',
       'apartment',
       'lounge',
+      'theater',
       'villa1',
       'villa2',
       'restroom',
+      'clinic',
+      'pavilion',
     ]);
     expect(new Set(NAV_TARGETS.map((target) => target.id)).size).toBe(NAV_TARGETS.length);
     for (const target of NAV_TARGETS) {

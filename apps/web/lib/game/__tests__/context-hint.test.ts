@@ -17,6 +17,7 @@ import {
 } from '@niuma/shared-types';
 import { HINT, hintButton } from '../hint-copy';
 import { nearestInteractiveProp, selectContextHint } from '../interactions';
+import { PARK_PHOTO_SPOTS, VENUE_SEAT_GROUPS } from '../venue-spots';
 
 function propOf(kind: PropKind) {
   const prop = WORLD_LAYOUT.props.find((item) => item.kind === kind);
@@ -109,6 +110,57 @@ describe('环境提示选择', () => {
     expect(
       selectContextHint(0, Number.POSITIVE_INFINITY, DIRECTION.Up, { isFreeSeat: noSeats }),
     ).toBeNull();
+  });
+});
+
+describe('弱交互场所提示', () => {
+  it('站在会议椅旁仍是「按 Z 坐下」，坐上去才变成「开会发言」', () => {
+    const chair = firstSeatOfKind('chair', (seat) => !isWorkDeskSeat(seat.id));
+    expect(
+      selectContextHint(chair.x, chair.y - 20, DIRECTION.Down, { isFreeSeat: allSeatsFree, seatId: 0 }),
+    ).toBe(HINT.seat);
+    expect(
+      selectContextHint(chair.x, chair.y, DIRECTION.Down, {
+        isFreeSeat: allSeatsFree,
+        seatId: chair.id,
+      }),
+    ).toBe(HINT.meeting);
+    // 提示条与按键同一口径：这条提示带可点的 F 按钮
+    expect(hintButton(HINT.meeting)?.key).toBe('F');
+  });
+
+  it('影厅座椅：站着提示坐下，坐上去提示换频道', () => {
+    const cinema = firstSeatOfKind('cinema');
+    expect(
+      selectContextHint(cinema.x, cinema.y + 40, DIRECTION.Up, { isFreeSeat: allSeatsFree, seatId: 0 }),
+    ).toBe(HINT.seat);
+    expect(
+      selectContextHint(cinema.x, cinema.y, DIRECTION.Up, {
+        isFreeSeat: allSeatsFree,
+        seatId: cinema.id,
+      }),
+    ).toBe(HINT.theater);
+  });
+
+  it('石鼓凳：坐上去提示对着湖发呆', () => {
+    const drum = firstSeatOfKind('drum');
+    expect(
+      selectContextHint(drum.x, drum.y, DIRECTION.Down, { isFreeSeat: allSeatsFree, seatId: drum.id }),
+    ).toBe(HINT.pavilion);
+  });
+
+  it('游乐园打卡点：站着按 F 拍照，且不会盖掉旁边长椅的坐下提示', () => {
+    const photo = PARK_PHOTO_SPOTS[0]!;
+    expect(selectContextHint(photo.x, photo.y, DIRECTION.Down, { isFreeSeat: noSeats, seatId: 0 })).toBe(
+      HINT.parkPhoto,
+    );
+    // 园内长椅坐点不在任何打卡点半径里：两套提示不会互相顶掉
+    for (const id of VENUE_SEAT_GROUPS.parkBench) {
+      const seat = seatById(id)!;
+      expect(selectContextHint(seat.x, seat.y, DIRECTION.Down, { isFreeSeat: allSeatsFree, seatId: 0 })).toBe(
+        HINT.seat,
+      );
+    }
   });
 });
 

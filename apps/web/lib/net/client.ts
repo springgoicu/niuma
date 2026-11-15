@@ -47,8 +47,7 @@ import {
   decodeWorldEvent,
   decodeEventClaimResult,
   decodeArenaPool,
-  decodeRoomState,
-  decodeRoomInvite,
+  decodeApartmentPeek,
   encodeDiceBet,
   encodeWorkClaim,
   encodeQuestClaim,
@@ -56,8 +55,6 @@ import {
   encodeVillaRequest,
   encodeArenaBet,
   encodeApartmentRequest,
-  encodeApartmentInvite,
-  encodeRoomLayout,
   encodeBoardRequest,
   encodeCareerReport,
   encodeChatHistoryRequest,
@@ -125,9 +122,7 @@ import {
   type DiceStatePacket,
   type VillaStatePacket,
   type ArenaPoolPacket,
-  type RoomStatePacket,
-  type RoomInvitePacket,
-  type FurniturePlacement,
+  type ApartmentPeekPacket,
   type BossShockPacket,
   type EventClaimResult,
   type QuestStatePacket,
@@ -193,10 +188,8 @@ export interface NetHandlers {
   onVillaState?(packet: VillaStatePacket): void;
   /** 八角笼彩池快照：押注、开赛与结算各一条 */
   onArenaPool?(packet: ArenaPoolPacket): void;
-  /** 房间状态：门牌、房主与家具布局，只发给同频道的人 */
-  onRoomState?(packet: RoomStatePacket): void;
-  /** 串门邀请通知 */
-  onRoomInvite?(packet: RoomInvitePacket): void;
+  /** 公寓窗口探头全量快照：谁在哪栋哪个窗口 */
+  onApartmentPeek?(packet: ApartmentPeekPacket): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -521,7 +514,6 @@ export class NetClient {
           stats: packet.stats,
           unlockedCosmetics: this.economy?.unlockedCosmetics ?? [],
           inventory: packet.inventory,
-          houseTier: packet.houseTier,
           dailyQuests: this.economy?.dailyQuests ?? { day: '', progress: {}, claimed: [] },
         };
         this.handlers.onWallet?.(packet);
@@ -569,11 +561,8 @@ export class NetClient {
       case OpCode.S2C_ARENA_POOL:
         this.handlers.onArenaPool?.(decodeArenaPool(data));
         break;
-      case OpCode.S2C_ROOM_STATE:
-        this.handlers.onRoomState?.(decodeRoomState(data));
-        break;
-      case OpCode.S2C_ROOM_INVITE:
-        this.handlers.onRoomInvite?.(decodeRoomInvite(data));
+      case OpCode.S2C_APARTMENT_PEEK:
+        this.handlers.onApartmentPeek?.(decodeApartmentPeek(data));
         break;
       case OpCode.S2C_WORK_RESULT:
         this.handlers.onWorkResult?.(decodeWorkResult(data));
@@ -803,16 +792,6 @@ export class NetClient {
   sendApartment(request: { action: number; arg: number }): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeApartmentRequest(request));
-  }
-
-  sendApartmentInvite(targetId: number): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeApartmentInvite(targetId));
-  }
-
-  sendRoomLayout(placements: ReadonlyArray<FurniturePlacement>): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeRoomLayout(placements));
   }
 
   dispose(): void {

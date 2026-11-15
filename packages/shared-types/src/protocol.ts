@@ -156,14 +156,13 @@ import type {
   SystemNoticePacket,
   VentEventPacket,
   WelcomePacket,
+  ApartmentPeekPacket,
   ApartmentRequest,
   ArenaBetRequest,
   ArenaPoolPacket,
   DiceBetRequest,
   DiceStatePacket,
   DiceTablePacket,
-  RoomInvitePacket,
-  RoomStatePacket,
   VillaRequest,
   VillaStatePacket,
 } from './types';
@@ -743,7 +742,7 @@ export function readCareerSegment(data: Uint8Array, offset: number): CareerSumma
   return decodeCareer(data, offset + 2, total - 2);
 }
 
-/** 经济段载荷：余额 + 四维 + 房屋等级 + 背包条目（id 升序，便于测试比对字节） */
+/** 经济段载荷：余额 + 四维 + 背包条目（id 升序，便于测试比对字节） */
 function encodeEconomyPayload(profile: EconomyProfile): Uint8Array {
   const clean = sanitizeEconomyProfile(profile);
   const entries: Array<{ id: number; count: number }> = [];
@@ -756,7 +755,7 @@ function encodeEconomyPayload(profile: EconomyProfile): Uint8Array {
   const writer = new ByteWriter(ECONOMY_MIN_BYTES + entries.length * 3);
   writer.u32(clean.coins);
   for (const key of STAT_KEYS) writer.u8(clean.stats[key]);
-  writer.u8(clean.houseTier).u8(entries.length);
+  writer.u8(entries.length);
   for (const entry of entries) writer.u8(entry.id).u16(entry.count);
   return writer.finish();
 }
@@ -771,13 +770,11 @@ function decodeEconomyPayload(data: Uint8Array): EconomyProfile | undefined {
     critLv: clampStatLevel(reader.u8()),
     armorLv: clampStatLevel(reader.u8()),
   };
-  const houseTier = reader.u8();
   const count = reader.u8();
   if (reader.remaining < count * 3) return undefined;
   const profile = emptyEconomyProfile();
   profile.coins = clampCoins(coins);
   profile.stats = stats;
-  profile.houseTier = houseTier;
   for (let i = 0; i < count; i += 1) {
     const sku = findItemSkuById(reader.u8());
     const itemCount = clampItemCount(reader.u16());
@@ -2016,14 +2013,14 @@ export function decodeQueueRejected(data: Uint8Array): QueueRejectedPacket {
 }
 
 // ---------------------------------------------------------------------------
-// 牛马币钱包（ADR-0082）：`[0x38][coins u32][4×stats u8][houseTier u8][reason u8][count u8]`
+// 牛马币钱包（ADR-0082）：`[0x38][coins u32][4×stats u8][reason u8][count u8]`
 // + count × `[itemId u8][count u16]`。完整背包快照而不是增量：幂等，也不需要合并逻辑。
+// ADR-0098：房屋等级字节随户型下线一起去掉（此前是 `[houseTier u8][reason u8]`）。
 // ---------------------------------------------------------------------------
 
 export interface WalletSyncPacket {
   coins: number;
   stats: EconomyStats;
-  houseTier: number;
   reason: number;
   inventory: Record<string, number>;
 }
@@ -2032,7 +2029,6 @@ export function encodeWalletSync(packet: WalletSyncPacket): Uint8Array {
   const clean = sanitizeEconomyProfile({
     coins: packet.coins,
     stats: packet.stats,
-    houseTier: packet.houseTier,
     inventory: packet.inventory,
   });
   const entries: Array<{ id: number; count: number }> = [];
@@ -2041,10 +2037,10 @@ export function encodeWalletSync(packet: WalletSyncPacket): Uint8Array {
     if (sku && count > 0) entries.push({ id: sku.id, count: clampItemCount(count) });
   }
   entries.sort((a, b) => a.id - b.id);
-  const writer = new ByteWriter(12 + entries.length * 3);
+  const writer = new ByteWriter(11 + entries.length * 3);
   writer.u8(OpCode.S2C_WALLET_SYNC).u32(clean.coins);
   for (const key of STAT_KEYS) writer.u8(clean.stats[key]);
-  writer.u8(clean.houseTier).u8(packet.reason & 0xff).u8(entries.length);
+  writer.u8(packet.reason & 0xff).u8(entries.length);
   for (const entry of entries) writer.u8(entry.id).u16(entry.count);
   return writer.finish();
 }
@@ -2052,7 +2048,7 @@ export function encodeWalletSync(packet: WalletSyncPacket): Uint8Array {
 export function decodeWalletSync(data: Uint8Array): WalletSyncPacket {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_WALLET_SYNC) throw new Error('not a wallet sync packet');
-  if (reader.remaining < 11) throw new Error('wallet sync truncated');
+  if (reader.remaining < 10) throw new Error('wallet sync truncated');
   const coins = clampCoins(reader.u32());
   const stats: EconomyStats = {
     atkSpeedLv: clampStatLevel(reader.u8()),
@@ -2060,7 +2056,6 @@ export function decodeWalletSync(data: Uint8Array): WalletSyncPacket {
     critLv: clampStatLevel(reader.u8()),
     armorLv: clampStatLevel(reader.u8()),
   };
-  const houseTier = reader.u8();
   const reason = reader.u8();
   const count = reader.u8();
   if (reader.remaining < count * 3) throw new Error('wallet sync inventory truncated');
@@ -2070,7 +2065,7 @@ export function decodeWalletSync(data: Uint8Array): WalletSyncPacket {
     const itemCount = clampItemCount(reader.u16());
     if (sku && itemCount > 0) inventory[sku.key] = itemCount;
   }
-  return { coins, stats, houseTier, reason, inventory };
+  return { coins, stats, reason, inventory };
 }
 
 // ---------------------------------------------------------------------------
@@ -2681,100 +2676,34 @@ export function decodeApartmentRequest(data: Uint8Array): ApartmentRequest {
   return { action: reader.u8(), arg: reader.u8() };
 }
 
-export function encodeApartmentInvite(targetId: number): Uint8Array {
-  const writer = new ByteWriter(3);
-  writer.u8(OpCode.C2S_APARTMENT_INVITE).u16(Math.max(0, targetId) & 0xffff);
-  return writer.finish();
-}
-
-export function decodeApartmentInvite(data: Uint8Array): number {
-  const reader = new ByteReader(data);
-  if (reader.u8() !== OpCode.C2S_APARTMENT_INVITE) throw new Error('not an apartment invite packet');
-  return reader.u16();
-}
-
-/** 家具布局上行：`[op][count u8]` + count × `[id u8][cell u8]` */
-export function encodeRoomLayout(placements: ReadonlyArray<{ id: number; cell: number }>): Uint8Array {
-  const count = Math.min(0xff, placements.length);
-  const writer = new ByteWriter(2 + count * 2);
-  writer.u8(OpCode.C2S_ROOM_LAYOUT).u8(count);
-  for (const entry of placements.slice(0, count)) {
-    writer.u8(entry.id & 0xff).u8(entry.cell & 0xff);
+/**
+ * 窗口探头全量快照：`[op][count u8]` + count × `[playerId u16][slot u8][window u8]`。
+ *
+ * 只发「谁在哪栋哪个窗口」：头的外观走常规实体同步，不在这条包里重复传。
+ */
+export function encodeApartmentPeek(packet: ApartmentPeekPacket): Uint8Array {
+  const count = Math.min(0xff, packet.entries.length);
+  const writer = new ByteWriter(2 + count * 4);
+  writer.u8(OpCode.S2C_APARTMENT_PEEK).u8(count);
+  for (const entry of packet.entries.slice(0, count)) {
+    writer
+      .u16(Math.max(0, entry.id) & 0xffff)
+      .u8(entry.slot & 0xff)
+      .u8(entry.window & 0xff);
   }
   return writer.finish();
 }
 
-export function decodeRoomLayout(data: Uint8Array): Array<{ id: number; cell: number }> {
+export function decodeApartmentPeek(data: Uint8Array): ApartmentPeekPacket {
   const reader = new ByteReader(data);
-  if (reader.u8() !== OpCode.C2S_ROOM_LAYOUT) throw new Error('not a room layout packet');
+  if (reader.u8() !== OpCode.S2C_APARTMENT_PEEK) throw new Error('not an apartment peek packet');
   const count = reader.u8();
-  const out: Array<{ id: number; cell: number }> = [];
+  const entries: Array<{ id: number; slot: number; window: number }> = [];
   for (let i = 0; i < count; i += 1) {
-    if (reader.remaining < 2) break;
-    out.push({ id: reader.u8(), cell: reader.u8() });
+    if (reader.remaining < 4) break;
+    entries.push({ id: reader.u16(), slot: reader.u8(), window: reader.u8() });
   }
-  return out;
-}
-
-/** 房间状态：`[op][doorNo u16][ownerId u16][tier u8][nameLen u8][name][count u8]` + count × `[id u8][cell u8]` */
-export function encodeRoomState(packet: RoomStatePacket): Uint8Array {
-  const name = truncateName(packet.ownerName);
-  const bytes = textEncoder.encode(name);
-  const count = Math.min(0xff, packet.placements.length);
-  const writer = new ByteWriter(7 + bytes.length + count * 2);
-  writer
-    .u8(OpCode.S2C_ROOM_STATE)
-    .u16(packet.doorNo & 0xffff)
-    .u16(Math.max(0, packet.ownerId) & 0xffff)
-    .u8(packet.tier & 0xff)
-    .u8(bytes.length)
-    .raw(bytes)
-    .u8(count);
-  for (const entry of packet.placements.slice(0, count)) {
-    writer.u8(entry.id & 0xff).u8(entry.cell & 0xff);
-  }
-  return writer.finish();
-}
-
-export function decodeRoomState(data: Uint8Array): RoomStatePacket {
-  const reader = new ByteReader(data);
-  if (reader.u8() !== OpCode.S2C_ROOM_STATE) throw new Error('not a room state packet');
-  const doorNo = reader.u16();
-  const ownerId = reader.u16();
-  const tier = reader.u8();
-  const nameLength = reader.u8();
-  const ownerName = nameLength <= reader.remaining ? reader.utf8(nameLength) : '';
-  const count = reader.remaining > 0 ? reader.u8() : 0;
-  const placements: Array<{ id: number; cell: number }> = [];
-  for (let i = 0; i < count; i += 1) {
-    if (reader.remaining < 2) break;
-    placements.push({ id: reader.u8(), cell: reader.u8() });
-  }
-  return { doorNo, ownerId, ownerName, tier, placements };
-}
-
-/** 串门邀请：`[op][fromId u16][doorNo u16][len u8][name]` */
-export function encodeRoomInvite(packet: RoomInvitePacket): Uint8Array {
-  const name = truncateName(packet.fromName);
-  const bytes = textEncoder.encode(name);
-  const writer = new ByteWriter(6 + bytes.length);
-  writer
-    .u8(OpCode.S2C_ROOM_INVITE)
-    .u16(Math.max(0, packet.fromId) & 0xffff)
-    .u16(packet.doorNo & 0xffff)
-    .u8(bytes.length)
-    .raw(bytes);
-  return writer.finish();
-}
-
-export function decodeRoomInvite(data: Uint8Array): RoomInvitePacket {
-  const reader = new ByteReader(data);
-  if (reader.u8() !== OpCode.S2C_ROOM_INVITE) throw new Error('not a room invite packet');
-  const fromId = reader.u16();
-  const doorNo = reader.u16();
-  const length = reader.u8();
-  const fromName = length <= reader.remaining ? reader.utf8(length) : '';
-  return { fromId, doorNo, fromName };
+  return { entries };
 }
 
 // ---------------------------------------------------------------------------

@@ -243,13 +243,24 @@ export const RESTROOM_W = 340;
 export const RESTROOM_H = 300;
 
 /**
- * 企业楼（也是 `WORLD_LAYOUT.office`，ADR-0097）：一栋 920×760 的两层小楼，
- * 坐落在中央广场正西的前庭之后。北排两间（工作区 / 会议室），中间一条 40px 走廊，
+ * 楼内走廊净宽（ADR-0099）：40 → 56。
+ *
+ * 实测口径：角色碰撞半径 9（直径 18），走廊两侧墙体落在走廊之外，所以净宽就是 `h`。
+ * 40 时两人交错只剩 4px 余量，斜着进走廊东口会撞在会议室东南内角上；
+ * 56 把余量拉到 20px，同时仍比主路（112）窄一档，读得出「这是一条楼内走廊」。
+ *
+ * 房间尺寸不动：多出来的 16px 全部给走廊，楼体因此从 760 长到 776。
+ */
+export const CORRIDOR_H = 56;
+
+/**
+ * 企业楼（也是 `WORLD_LAYOUT.office`，ADR-0097）：一栋 920×776 的两层小楼，
+ * 坐落在中央广场正西的前庭之后。北排两间（工作区 / 会议室），中间一条 56px 走廊，
  * 南排一整间发泄室；走廊东端敞口，就是公司大门。
  *
  * 楼不再像旧四角院落那样围住广场：广场独立成市政中心，五个方向各接一条街。
  */
-export const CAMPUS_RECT: WorldRect = { x: 2620, y: 3200, w: 920, h: 760 };
+export const CAMPUS_RECT: WorldRect = { x: 2620, y: 3200, w: 920, h: ROOM_H * 2 + CORRIDOR_H };
 
 /** 北排西：开放工作区（无墙，两排背靠背工位） */
 export const WORKROOM: WorldRect = { x: CAMPUS_RECT.x, y: CAMPUS_RECT.y, w: ROOM_W, h: ROOM_H };
@@ -260,17 +271,21 @@ export const MEETING_ROOM: WorldRect = {
   w: ROOM_W,
   h: ROOM_H,
 };
-/** 楼内走廊：北排与南排之间 40px，东端敞口即大门 */
+/** 楼内走廊：北排与南排之间 56px（ADR-0099），东端敞口即大门 */
 export const COMPANY_CORRIDOR: WorldRect = {
   x: CAMPUS_RECT.x,
   y: CAMPUS_RECT.y + ROOM_H,
   w: CAMPUS_RECT.w,
-  h: 40,
+  h: CORRIDOR_H,
 };
-/** 南排：发泄室（整排一间 920×360，橡胶地 + 老板） */
+/**
+ * 南排：发泄室（整排一间 920×360，橡胶地 + 老板）。
+ * y 从走廊推出来：走廊加宽 16px，发泄室整体下移同样的 16px，
+ * 室内净高仍是 340（`BOSS_ARENA` 300 高、南侧留 14px），老板与垫子的余量分毫不变。
+ */
 export const VENT_ROOM: WorldRect = {
   x: CAMPUS_RECT.x,
-  y: CAMPUS_RECT.y + ROOM_H + 40,
+  y: COMPANY_CORRIDOR.y + COMPANY_CORRIDOR.h,
   w: CAMPUS_RECT.w,
   h: ROOM_H,
 };
@@ -290,7 +305,7 @@ export const RESTROOM: WorldRect = {
 /* ------------------------------------------------------------------ *
  * 家庭影音室（本轮新增）
  *
- * 落在校园与南侧庭院之间的草地：北缘离 CAMPUS_RECT 南沿 74px，
+ * 落在校园与南侧庭院之间的草地：北缘离 CAMPUS_RECT 南沿 58px（走廊加宽 16px 后由 74 收到 58），
  * 南缘离 SOUTH_YARD 北沿 30px，东墙外 200px 就是南向主路。
  * 门开在东墙，进门后是东侧走道，三排座椅面朝北墙的大屏幕。
  * ------------------------------------------------------------------ */

@@ -55,14 +55,14 @@ import {
   encodeVillaState,
   encodeArenaPool,
   encodeDiceState,
-  encodeRoomState,
-  encodeRoomInvite,
+  encodeApartmentPeek,
   encodeLoudspeaker,
-  decodeApartmentInvite,
+  encodeSystemNotice,
+  formatSystemNotice,
+  SYSTEM_NOTICE_KIND,
   decodeApartmentRequest,
   decodeArenaBet,
   decodeDiceBet,
-  decodeRoomLayout,
   decodeVillaRequest,
   quantizeCoord,
   SHOP_KIND,
@@ -82,11 +82,9 @@ import {
   VILLA_ACTION,
   HOTSPOT_SERVER_SLACK,
   RING_PHASE,
-  doorNoOf,
-  apartmentExitHotspotId,
+  apartmentDoorSlotAt,
   hotspotById,
   isWithinHotspot,
-  isWithinAnyHotspotOfKind,
   RING_BENCH_SEAT_GROUP,
   seatInGroup,
   seatMatchesHotspot,
@@ -350,17 +348,11 @@ export function startGameServer(config: ServerConfig) {
   }
 
   /**
-   * 公寓门（ADR-0095）：六栋楼各有自己的门，站在任意一栋门口按 F 都算回家，
-   * 进的是自己那间房所在的那栋楼。
+   * 脚下是哪栋楼的门口（ADR-0098）：探头要出现在这栋楼上，所以按最近的那扇门取
+   * slot，离所有门都太远返回 -1（伪造包直接丢掉）。
    */
-  function nearAnyApartmentDoor(player: Player): boolean {
-    return isWithinAnyHotspotOfKind('apartmentDoor', player.x, player.y, HOTSPOT_SERVER_SLACK);
-  }
-
-  /** 公寓出口只认自己那栋楼：用别栋的出口热区穿墙会被丢包 */
-  function nearOwnApartmentExit(player: Player): boolean {
-    if (player.roomId === 0) return false;
-    return nearHotspot(apartmentExitHotspotId(player.roomId - 1), player);
+  function apartmentDoorSlotNear(player: Player): number {
+    return apartmentDoorSlotAt(player.x, player.y, HOTSPOT_SERVER_SLACK);
   }
 
   /** 锁门状态变成碰撞体：服务端移动裁决读它，客户端在同一条包到达时同步 */
@@ -394,19 +386,17 @@ export function startGameServer(config: ServerConfig) {
     }
   }
 
-  /** 房间状态只发给同频道的人：访客与房主看到的是同一份家具 */
-  function broadcastRoom(roomId: number): void {
-    if (roomId === 0) return;
+  /**
+   * 窗口占用全量快照：谁在哪栋哪个窗口探头（ADR-0098）。
+   *
+   * 只在进楼 / 出楼 / 断线 / 入场各发一次，不进 20Hz Tick；稳态零额外流量。
+   */
+  function broadcastApartmentPeek(): void {
+    const packet = encodeApartmentPeek({ entries: apartment.snapshot() });
     for (const player of world.players.values()) {
-      if (player.roomId !== roomId || player.wsId === 0) continue;
-      const state = apartment.stateFor(player);
-      if (state) transport.send(player.wsId, encodeRoomState(state));
+      if (player.wsId === 0) continue;
+      transport.send(player.wsId, packet);
     }
-  }
-
-  /** 进出房间一次性重算双方视野：同频道互见，跨频道立即 despawn */
-  function refreshRoomPairing(): void {
-    for (const player of world.players.values()) player.needsViewRefresh = true;
   }
 
   /** 摸鱼大赌场：两张桌各自独立跑公共局，彩池结算全部经经济端口 */
@@ -432,7 +422,7 @@ export function startGameServer(config: ServerConfig) {
     },
   });
 
-  /** 牛马公寓：6 个房间频道，房间号就是局部同步的分组键 */
+  /** 牛马公寓：只记「谁在哪栋哪个窗口探头」，没有房间频道也没有室内 */
   const apartment = new ApartmentRuntime();
 
   // 豪宅冠名权随共享运行态一起恢复：恢复必须在 `villas` 构造之后
@@ -679,6 +669,8 @@ export function startGameServer(config: ServerConfig) {
     ws.send(encodeRing(world.ring.snapshot(now, world)));
     // 救护车停靠时不发冗余包，入场必须单独补一次位置；在途伤员状态也一并补
     clinic.sendSnapshot(ws.data.wsId, now);
+    // 入场补发窗口占用：远处楼里的头不必等下一次有人进出才出现
+    ws.send(encodeApartmentPeek({ entries: apartment.snapshot() }));
     const occupied = seats.snapshot();
     if (occupied.length > 0) ws.send(encodeSeatState(occupied));
     // 历史必须早于 refreshView：known 一旦建立，实时聊天才可能到达这个 socket；
@@ -811,6 +803,8 @@ export function startGameServer(config: ServerConfig) {
     }
 
     if (op === OpCode.C2S_ACTION) {
+      // 人在公寓窗口里（ADR-0098）：坐 / 躺 / 起身一概不受理，按 F 才出门
+      if (player.roomId !== 0) return;
       // 被押送时的输入硬直：坐 / 躺 / 起身全部拒绝，聊天仍走下面的频道
       if (now < player.stunUntil) return;
       // 昏迷 / 被救护车拖拽 / 病床治疗期间，座位动作全部由急救管理器接管
@@ -1066,9 +1060,7 @@ export function startGameServer(config: ServerConfig) {
       op === OpCode.C2S_DICE_BET ||
       op === OpCode.C2S_ARENA_BET ||
       op === OpCode.C2S_VILLA ||
-      op === OpCode.C2S_APARTMENT ||
-      op === OpCode.C2S_APARTMENT_INVITE ||
-      op === OpCode.C2S_ROOM_LAYOUT;
+      op === OpCode.C2S_APARTMENT;
     if (interactive && now - player.lastP2PAt < P2P_PACKET_INTERVAL_MS) return;
 
     if (op === OpCode.C2S_P2P_INVITE) {
@@ -1143,8 +1135,6 @@ export function startGameServer(config: ServerConfig) {
       } else if (request.kind === SHOP_KIND.Cosmetic) {
         // 装扮货架：只认共享表里的 id，重复购买不扣钱
         economy.buyCosmetic(player, request.id);
-      } else if (request.kind === SHOP_KIND.Furniture) {
-        economy.buyFurniture(player, request.id);
       }
       return;
     }
@@ -1209,52 +1199,38 @@ export function startGameServer(config: ServerConfig) {
       player.lastP2PAt = now;
       const request = decodeApartmentRequest(data);
       if (request.action === APARTMENT_ACTION.Enter) {
-        if (!nearAnyApartmentDoor(player)) return;
+        // 只认脚下这扇门：探头要出现在你站着的那栋楼上
+        const slot = apartmentDoorSlotNear(player);
+        if (slot < 0) return;
         broadcastSeats(seats.stand(player));
-        if (!apartment.enter(player, now)) return;
+        if (!apartment.enter(player, slot)) {
+          // 20 个窗口都满了：只提示本人，不进楼
+          const text = formatSystemNotice(SYSTEM_NOTICE_KIND.ApartmentFull);
+          if (text && player.wsId !== 0) {
+            transport.send(
+              player.wsId,
+              encodeSystemNotice({
+                kind: SYSTEM_NOTICE_KIND.ApartmentFull,
+                entityId: player.id,
+                text,
+              }),
+            );
+          }
+          return;
+        }
         grid.update(player.id, player.x, player.y);
         player.needsViewRefresh = true;
-        refreshRoomPairing();
-        const room = apartment.stateFor(player);
-        if (room) transport.send(player.wsId, encodeRoomState(room));
+        broadcastApartmentPeek();
         return;
       }
       if (request.action === APARTMENT_ACTION.Exit) {
-        if (!nearOwnApartmentExit(player)) return;
+        // 人在窗口里：任意时刻按 F 都回门口台阶
         if (!apartment.exit(player)) return;
         grid.update(player.id, player.x, player.y);
         player.needsViewRefresh = true;
-        refreshRoomPairing();
+        broadcastApartmentPeek();
         return;
       }
-      if (request.action === APARTMENT_ACTION.Upgrade) {
-        if (player.roomId === 0) return;
-        if (!economy.upgradeHouseTier(player)) return;
-        apartment.syncTier(player);
-        broadcastRoom(player.roomId);
-      }
-      return;
-    }
-
-    if (op === OpCode.C2S_APARTMENT_INVITE) {
-      player.lastP2PAt = now;
-      const targetId = decodeApartmentInvite(data);
-      const target = world.get(targetId);
-      if (!target || target.wsId === 0 || target.id === player.id) return;
-      const room = apartment.invite(player, targetId, now);
-      if (!room) return;
-      transport.send(
-        target.wsId,
-        encodeRoomInvite({ fromId: player.id, doorNo: doorNoOf(room.slot), fromName: player.name }),
-      );
-      return;
-    }
-
-    if (op === OpCode.C2S_ROOM_LAYOUT) {
-      player.lastP2PAt = now;
-      if (player.roomId === 0) return;
-      if (!apartment.saveLayout(player, decodeRoomLayout(data))) return;
-      broadcastRoom(player.roomId);
       return;
     }
   }
@@ -1280,12 +1256,13 @@ export function startGameServer(config: ServerConfig) {
       broadcastRing(world, transport, clock.now());
       state?.markDirty();
     }
-    // 观战押注与赌桌注额原路退回；房间频道释放，让后来的人能住进来
+    // 观战押注与赌桌注额原路退回；窗口释放，让后来的人能探头
     const droppedBet = world.ring.dropBet(player.id);
     if (droppedBet > 0) economy.refundEscrow(player);
     dice.onDisconnect(player.id, world);
-    apartment.leave(player.id, player.deviceId);
+    const releasedWindow = apartment.leave(player.id);
     player.roomId = 0;
+    if (releasedWindow) broadcastApartmentPeek();
     broadcastVilla();
     // 必须在 broadcastDespawn 之前：它内部会清空 known，之后再播报就没人收了
     announceLeave(player, world, transport);

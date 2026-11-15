@@ -1,5 +1,16 @@
-import type { NavTarget } from '@niuma/shared-types';
 import type { PathPoint } from './pathfinding';
+
+/**
+ * 自动寻路只依赖「名字 + 落点」，不认场所表。
+ *
+ * 这样「回中央广场」这种非场所目标也能复用同一台状态机；
+ * `NavTarget` 结构上满足本接口，导览卡那边不需要任何转换。
+ */
+export interface NavGoal {
+  readonly id?: string;
+  readonly name: string;
+  readonly arrive: { readonly x: number; readonly y: number };
+}
 
 /**
  * 自动寻路的路点推进状态机（ADR-0040）。
@@ -22,7 +33,7 @@ export type ObserveResult = 'ok' | 'stuck';
 export class Navigator {
   private path: readonly PathPoint[] = [];
   private cursor = 0;
-  private current: NavTarget | null = null;
+  private current: NavGoal | null = null;
   private arriveX = 0;
   private arriveY = 0;
   private lastX = 0;
@@ -34,12 +45,12 @@ export class Navigator {
     return this.current !== null;
   }
 
-  get target(): NavTarget | null {
+  get target(): NavGoal | null {
     return this.current;
   }
 
   /** 开始一段新导航：替换旧目标，路点从头推进 */
-  start(path: readonly PathPoint[], target: NavTarget): void {
+  start(path: readonly PathPoint[], target: NavGoal): void {
     this.path = path;
     this.cursor = 0;
     this.current = target;

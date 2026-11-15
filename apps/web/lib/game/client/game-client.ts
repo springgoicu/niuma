@@ -3,7 +3,6 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
-  FurniturePlacement,
   NavTargetId,
   ResumeState,
 } from '@niuma/shared-types';
@@ -71,20 +70,20 @@ export interface GameClient {
   villaAction(villa: number, action: number): void;
   /** 八角笼观战押注：必须坐在观战长椅上，服务端复核座位组 */
   arenaBet(side: number, amount: number): void;
-  /** 公寓：0 进屋 / 1 出屋 / 2 升级户型 */
+  /** 公寓：0 进屋探头 / 1 出门（ADR-0098） */
   apartmentAction(action: number): void;
-  /** 邀请朋友来串门 */
-  apartmentInvite(targetId: number): void;
-  /** 上传家具布局（件数与格子由服务端按户型档位校验） */
-  saveRoomLayout(placements: FurniturePlacement[]): void;
   // ---- 打工产出与随机事件（ADR-0088）----
   /** 完成一轮搬砖：只报连击数，金额由服务端按坐姿 / 间隔 / 工效 / 夜班算 */
   claimWork(combo: number): void;
+  /** 搬砖终端开 / 关：只驱动工位上那圈专注光，不发包也不进协议 */
+  setWorking(active: boolean): void;
   /** 领取每日悬赏：达标且当日未领才发钱 */
   claimQuest(questId: number): void;
   /** 手动抢红包（自动拾取走会话层） */
   claimEvent(index: number): void;
   navigateTo(id: NavTargetId): void;
+  /** 回中央广场：广场不是场所，走客户端动作而不是 `NAV_TARGETS` */
+  navigateHome(): void;
   cancelNavigation(): void;
   /** 舞台局部坐标 → 命中角色的 netId（经 `options.onPick` 回调） */
   pick(stageX: number, stageY: number): void;

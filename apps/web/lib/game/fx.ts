@@ -100,6 +100,19 @@ interface Particle {
   active: boolean;
 }
 
+/**
+ * 水花：洗手台按下 F 后的几粒浅蓝，向上弹起再落下。
+ *
+ * 与尘土共用一条 `update`（同一次遍历、同一个 ticker），只是多一个重力加速度：
+ * 帧循环里仍然只写 position / alpha / visible，不建对象。
+ */
+const SPLASH_SPRITE = 2;
+const SPLASH_COUNT = 18;
+const SPLASH_LIFE = 420;
+/** 每按一次 F 溅出几粒：三粒足够读出「水」，再多就变成喷泉 */
+const SPLASH_PER_BURST = 3;
+const SPLASH_GRAVITY = 0.00022;
+
 export class GroundFx {
   readonly container = new Container();
   private readonly dustTextures: Texture[];
@@ -112,6 +125,12 @@ export class GroundFx {
   private readonly printTexture: Texture;
   private readonly prints: Particle[] = [];
   private printNext = 0;
+
+  /** 水花：洗手 / 冲水的一次性反馈，池子固定、循环使用 */
+  private readonly splashTexture: Texture;
+  private readonly splashes: Particle[] = [];
+  private splashNext = 0;
+  private splashCursor = 0;
 
   constructor(renderer: TextureFactory) {
     this.dustTextures = DUST_SHAPES.map((shape) => {
@@ -156,6 +175,25 @@ export class GroundFx {
       sprite.visible = false;
       this.printLayer.addChild(sprite);
       this.prints.push({ sprite, vx: 0, vy: 0, age: 0, life: 0, active: false });
+    }
+
+    // 水花纹理：2×2 的浅蓝小块，上沿亮一格（水珠受光面）
+    const splash = new Graphics();
+    splash.rect(0, 0, SPLASH_SPRITE, SPLASH_SPRITE).fill(0xbfe6f5);
+    splash.rect(0, 0, SPLASH_SPRITE, 1).fill(0xeaf4f8);
+    this.splashTexture = renderer.generateTexture({
+      target: splash,
+      resolution: 1,
+      antialias: false,
+      textureSourceOptions: { scaleMode: 'nearest' },
+    });
+    splash.destroy();
+    for (let i = 0; i < SPLASH_COUNT; i += 1) {
+      const sprite = new Sprite(this.splashTexture);
+      sprite.anchor.set(0.5, 0.5);
+      sprite.visible = false;
+      this.container.addChild(sprite);
+      this.splashes.push({ sprite, vx: 0, vy: 0, age: 0, life: 0, active: false });
     }
   }
 
@@ -216,7 +254,44 @@ export class GroundFx {
     print.active = true;
   }
 
+  /**
+   * 水花：在 (x, y) 溅出三粒浅蓝，左右各偏一格、上抛速度依次递减。
+   * 循环取值而不是随机，双开窗口按 F 看到的落点完全一致。
+   */
+  spawnSplash(x: number, y: number): void {
+    for (let i = 0; i < SPLASH_PER_BURST; i += 1) {
+      const splash = this.splashes[this.splashNext]!;
+      this.splashNext = (this.splashNext + 1) % this.splashes.length;
+      const dir = i === 0 ? -1 : i === 1 ? 1 : 0;
+      splash.sprite.position.set(Math.round(x) + dir * 3, Math.round(y) - i);
+      splash.sprite.alpha = 0.85;
+      splash.sprite.visible = true;
+      splash.vx = dir * 0.012 + (this.splashCursor % 3) * 0.002;
+      splash.vy = -0.055 - i * 0.012;
+      splash.age = 0;
+      splash.life = SPLASH_LIFE;
+      splash.active = true;
+    }
+    this.splashCursor = (this.splashCursor + 1) % 3;
+  }
+
   update(dtMs: number): void {
+    for (const splash of this.splashes) {
+      if (!splash.active) continue;
+      splash.age += dtMs;
+      if (splash.age >= splash.life) {
+        splash.active = false;
+        splash.sprite.visible = false;
+        continue;
+      }
+      const k = splash.age / splash.life;
+      splash.vy += SPLASH_GRAVITY * dtMs;
+      splash.sprite.x += splash.vx * dtMs;
+      splash.sprite.y += splash.vy * dtMs;
+      // 像素水花只调透明度，不缩放：2px 的小块缩一半会变成 3 个亚像素点
+      splash.sprite.alpha = 0.85 * (1 - k);
+    }
+
     for (const print of this.prints) {
       if (!print.active) continue;
       print.age += dtMs;
@@ -251,5 +326,6 @@ export class GroundFx {
     this.container.destroy({ children: true });
     for (const texture of this.dustTextures) texture.destroy(true);
     this.printTexture.destroy(true);
+    this.splashTexture.destroy(true);
   }
 }

@@ -34,9 +34,6 @@ import type {
   ArenaPoolPacket,
   DiceBetRequest,
   DiceStatePacket,
-  FurniturePlacement,
-  RoomInvitePacket,
-  RoomStatePacket,
   VillaRequest,
   VillaStatePacket,
   BossShockPacket,
@@ -115,13 +112,15 @@ export type MainToWorker =
   | { t: 'villa'; request: VillaRequest }
   | { t: 'arenaBet'; request: ArenaBetRequest }
   | { t: 'apartment'; request: ApartmentRequest }
-  | { t: 'apartmentInvite'; targetId: number }
-  | { t: 'roomLayout'; placements: FurniturePlacement[] }
   /** 打工产出与随机事件（ADR-0088）：上行只带意图 */
   | { t: 'claimWork'; combo: number }
+  /** 搬砖终端开关：只驱动工位专注光，不上网络、不进协议 */
+  | { t: 'working'; active: boolean }
   | { t: 'claimQuest'; questId: number }
   | { t: 'claimEvent'; index: number }
   | { t: 'navigate'; id: NavTargetId }
+  /** 回中央广场：广场不是场所，上行只报一个意图，终点是出生点 */
+  | { t: 'navigateHome' }
   | { t: 'cancelNav' }
   | { t: 'pick'; x: number; y: number }
   /** 订阅 / 退订某人的工牌：`null` 表示收起详情 */
@@ -153,7 +152,8 @@ export type WorkerToMain =
       /** 座位组：坐进赌桌圆凳即自动入局，主线程据此派生面板开关（ADR-0093） */
       seatGroup: string | null;
     }
-  | { t: 'nav'; nav: { id: NavTargetId; name: string } | null }
+  /** 导航目标：`'plaza'` 是客户端的「回中央广场」，不占共享场所 id */
+  | { t: 'nav'; nav: { id: NavTargetId | 'plaza'; name: string } | null }
   | { t: 'picked'; id: number | null; badge?: PlayerBadge | null }
   | { t: 'badge'; id: number; badge: PlayerBadge | null }
   /** 本地被创飞：行为统计只需一个布尔量 */
@@ -194,17 +194,14 @@ export type WorkerToMain =
   | { t: 'itemReject'; packet: ItemRejectPacket }
   /** 茶台按 F：主线程打开商店并切到指定页签（ADR-0085 / ADR-0087 增加装扮页签） */
   | { t: 'shopOpen'; tab: 'stats' | 'items' | 'cosmetics' }
-  /** 赌桌 / 八角笼 / 豪宅 / 公寓的「按 F 开面板」意图 */
+  /** 赌桌 / 八角笼 / 豪宅的「按 F 开面板」意图 */
   | { t: 'diceOpen'; table: number }
   | { t: 'arenaBetOpen' }
   | { t: 'villaOpen'; villa: number }
-  | { t: 'apartmentOpen' }
   /** 热区建筑的下行快照 */
   | { t: 'dice'; packet: DiceStatePacket }
   | { t: 'villa'; packet: VillaStatePacket }
   | { t: 'arenaPool'; packet: ArenaPoolPacket }
-  | { t: 'room'; packet: RoomStatePacket }
-  | { t: 'roomInvite'; packet: RoomInvitePacket }
   /** 打工产出与随机事件（ADR-0088） */
   | { t: 'workOpen' }
   | { t: 'workResult'; packet: WorkResultPacket }

@@ -17,7 +17,6 @@ import {
   BOSS_SHOCK_PHASE,
   isNightShift,
   findCosmeticSkuById,
-  furnitureById,
   diceTableByGroup,
   type ChatSendPacket,
   type NavTargetId,
@@ -30,6 +29,7 @@ import { reloadForStaleAssets } from '@/lib/build-version';
 import { parseSpeciesParam } from '@/lib/creator-seed';
 import { useGameUi } from '@/lib/game-ui';
 import { loadDanmakuPrefs, saveDanmakuPrefs } from '@/lib/danmaku-prefs';
+import { arrivalCopy, initialArrivalState, stepArrival } from '@/lib/game/arrival-copy';
 import { isAtlasVersionMismatch } from '@/lib/game/atlas-errors';
 import {
   dayKey,
@@ -79,6 +79,7 @@ import {
   hudButtonClassName,
 } from './Hud';
 import { InstallAppButton } from './InstallAppButton';
+import { DistrictBanner } from './DistrictBanner';
 import { InteractionHint } from './InteractionHint';
 import { JoinGate } from './JoinGate';
 import { LeaderboardDialog } from './LeaderboardDialog';
@@ -160,6 +161,10 @@ export function GameViewport({
   const attendanceClockRef = useRef<ReturnType<typeof startAttendanceClock> | null>(null);
   /** 上一次统计坐标：2Hz 采样差分算里程 */
   const lastStatsRef = useRef<{ x: number; y: number } | null>(null);
+  /** 过门区域横幅的状态机：纯客户端，靠 2Hz 的 region 推进（见 `arrival-copy.ts`） */
+  const arrivalRef = useRef(initialArrivalState());
+  /** 首拍只记基线：刚进园那一条交给欢迎条，不要一进来就弹「中央迎宾广场」 */
+  const arrivalSeededRef = useRef(false);
   /** 上一次入座状态：只在「未坐 → 坐」的边沿记一次摸鱼 */
   const lastSeatedRef = useRef(false);
   /** 上一次的座位组：赌桌面板只在坐进 / 离开凳子那一次打开或收起（ADR-0093） */
@@ -202,6 +207,8 @@ export function GameViewport({
   const setHint = useGameUi((state) => state.setHint);
   const setLocalState = useGameUi((state) => state.setLocalState);
   const setNavTarget = useGameUi((state) => state.setNavTarget);
+  const requestNavCardOpen = useGameUi((state) => state.requestNavCardOpen);
+  const pushAreaBanner = useGameUi((state) => state.pushAreaBanner);
   const setRing = useGameUi((state) => state.setRing);
   const hint = useGameUi((state) => state.hint);
   const status = useGameUi((state) => state.status);
@@ -222,6 +229,11 @@ export function GameViewport({
   useEffect(() => {
     if (workOpen && !seated) setWorkOpen(false);
   }, [workOpen, seated, setWorkOpen]);
+
+  // 搬砖终端开着 → 工位上那圈专注光。倒计时只活在主线程，渲染线程只认这个开关
+  useEffect(() => {
+    clientRef.current?.setWorking(workOpen && seated);
+  }, [workOpen, seated]);
   /** 夜班判定与提示文案共用同一把尺子：园区时区的小时数由服务器时钟推算 */
   const workHour = new Date(serverNow() + serverTzOffsetMin() * 60_000).getUTCHours();
 
@@ -346,6 +358,9 @@ export function GameViewport({
     careerClockRef.current = clock;
     lastStatsRef.current = null;
     lastSeatedRef.current = false;
+    // 过门横幅回到「还没确认过任何区域」：重进园区时由首拍重新取基线
+    arrivalRef.current = initialArrivalState();
+    arrivalSeededRef.current = false;
     return () => {
       clock.dispose();
       careerClockRef.current = null;
@@ -457,6 +472,22 @@ export function GameViewport({
           }
           lastStatsRef.current = { x: stats.x, y: stats.y };
           careerClockRef.current?.recordOvertime();
+          // 过门横幅：2Hz 的区域名 + 连续两拍确认 + 4 秒冷却。
+          // 纯客户端表现，不发包、不落盘（状态机在 `arrival-copy.ts` 里可单测）。
+          if (stats.region) {
+            if (!arrivalSeededRef.current) {
+              arrivalSeededRef.current = true;
+              arrivalRef.current = {
+                ...arrivalRef.current,
+                shown: stats.region,
+                lastAt: performance.now(),
+              };
+            } else {
+              const step = stepArrival(arrivalRef.current, stats.region, performance.now());
+              arrivalRef.current = step.next;
+              if (step.fire) pushAreaBanner(arrivalCopy(stats.region));
+            }
+          }
         },
         onChat: (entry) => pushMessage(entry),
         onChatHistory: (entries, meta) => applyHistory(entries, meta),
@@ -505,6 +536,8 @@ export function GameViewport({
         onBossReset: () => setBossDown(null),
         onBoardOpen: openBoard,
         onBulletinOpen: openBulletin,
+        // 指路牌：纯客户端互动，只把导览卡展开（服务端收不到任何包）
+        onDirectoryOpen: requestNavCardOpen,
         onBoard: (packet) => setBoards((prev) => ({ ...prev, [packet.metric]: packet })),
         onWallet: (packet) => {
           const ui = useGameUi.getState();
@@ -516,7 +549,6 @@ export function GameViewport({
             coins: packet.coins,
             stats: packet.stats,
             inventory: packet.inventory,
-            houseTier: packet.houseTier,
           };
           // 赌注冻结不落盘：刷新页面导致的断线会退款，落盘反而会把冻结额永久吃掉
           if (packet.reason !== WALLET_REASON.EscrowFreeze) saveEconomy(next);
@@ -570,12 +602,9 @@ export function GameViewport({
         onDiceOpen: (table) => useGameUi.getState().setDiceOpen(table),
         onArenaBetOpen: () => useGameUi.getState().setArenaBetOpen(true),
         onVillaOpen: (villa) => useGameUi.getState().setVillaOpen(villa),
-        onApartmentOpen: () => useGameUi.getState().setApartmentOpen(true),
         onDiceState: (packet) => useGameUi.getState().setDice(packet),
         onVillaState: (packet) => useGameUi.getState().setVillas(packet),
         onArenaPool: (packet) => useGameUi.getState().setArenaPool(packet),
-        onRoomState: (packet) => useGameUi.getState().setRoom(packet),
-        onRoomInvite: (packet) => useGameUi.getState().setRoomInvite(packet),
         // ---- 打工产出与随机事件（ADR-0088）----
         onWorkOpen: () => useGameUi.getState().setWorkOpen(true),
         onWorkResult: (packet) => {
@@ -674,6 +703,8 @@ export function GameViewport({
     setHint,
     setLocalState,
     setNavTarget,
+    requestNavCardOpen,
+    pushAreaBanner,
     buildCareerReport,
   ]);
 
@@ -721,6 +752,9 @@ export function GameViewport({
   }, []);
   const handleNavigate = useCallback((id: NavTargetId) => {
     clientRef.current?.navigateTo(id);
+  }, []);
+  const handleNavigateHome = useCallback(() => {
+    clientRef.current?.navigateHome();
   }, []);
   const handleCancelNavigation = useCallback(() => {
     clientRef.current?.cancelNavigation();
@@ -1006,15 +1040,10 @@ export function GameViewport({
               if (selfId > 0) clientRef.current?.useItem(selfId, itemId);
             }}
             onBuy={(kind, id, count) => {
-              // 装扮 / 家具的「已解锁」不在钱包包里（结构不变），本地先乐观记账；
+              // 装扮的「已解锁」不在钱包包里（结构不变），本地先乐观记账；
               // 服务端拒掉时下一次 HELLO 会用权威值盖回来（ADR-0087）
-              if (kind === SHOP_KIND.Cosmetic || kind === SHOP_KIND.Furniture) {
-                const key =
-                  kind === SHOP_KIND.Cosmetic
-                    ? findCosmeticSkuById(id)?.key
-                    : furnitureById(id)
-                      ? `furn:${id}`
-                      : undefined;
+              if (kind === SHOP_KIND.Cosmetic) {
+                const key = findCosmeticSkuById(id)?.key;
                 if (key) {
                   const local = loadEconomy();
                   if (!local.unlockedCosmetics.includes(key)) {
@@ -1032,9 +1061,6 @@ export function GameViewport({
             onDiceBet={(table, side, amount) => clientRef.current?.diceBet(table, side, amount)}
             onArenaBet={(side, amount) => clientRef.current?.arenaBet(side, amount)}
             onVilla={(villa, action) => clientRef.current?.villaAction(villa, action)}
-            onApartment={(action) => clientRef.current?.apartmentAction(action)}
-            onInviteRoom={(targetId) => clientRef.current?.apartmentInvite(targetId)}
-            onSaveRoomLayout={(placements) => clientRef.current?.saveRoomLayout(placements)}
           />
 
           {/* 他人工牌：桌面与手机共用同一个完整档案弹窗，避免两套布局的字段漂移 */}
@@ -1065,9 +1091,12 @@ export function GameViewport({
             compact={isTouch}
             portrait={portrait}
             onNavigate={handleNavigate}
+            onNavigateHome={handleNavigateHome}
             onCancelNavigation={handleCancelNavigation}
           />
           <WelcomeBanner compact={isTouch} portrait={portrait} />
+          {/* 过门横幅：跨区门 / 进馆时在顶部弹一次，2Hz 驱动、纯客户端表现 */}
+          <DistrictBanner compact={isTouch} />
 
           <QueueGate onRetry={handleRetry} />
           {hint && (

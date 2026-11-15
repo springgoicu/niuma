@@ -6,8 +6,8 @@ import {
   HOTSPOT_PRIORITY,
   POSE,
   SIT_RANGE,
+  WELCOME_LANDMARKS,
   WORLD_LAYOUT,
-  apartmentExitHotspotId,
   bossHitPoint,
   findNearestSeat,
   hotspotById,
@@ -22,6 +22,8 @@ import {
   type SeatKind,
 } from '@niuma/shared-types';
 import { HINT } from './hint-copy';
+import { nearestInteriorSpotInto, type InteriorSpotTarget } from './interior-spots';
+import { venueSpotAt, type VenueSpotKind } from './venue-spots';
 
 /**
  * 轻互动：售货机、饮水机、咖啡机的一次性反馈，与躺床打呼。
@@ -153,6 +155,32 @@ export function isBulletinHit(x: number, y: number): boolean {
   return x >= left && x <= left + BULLETIN_BOARD.width && y >= top && y <= BULLETIN_BOARD.y;
 }
 
+/**
+ * 世界指路牌（`WELCOME_LANDMARKS.directory`，拱门东侧的 96×120 导览牌）。
+ *
+ * 与放假告示板走同一条路线：判定留在客户端，`WORLD_HOTSPOTS` 一行不改，
+ * 服务端永远收不到指路牌的交互包，因此**不涉及双端同步发版**。
+ * 半径 96 比告示板的 64 松一档：牌高 120、立在迎宾带上，玩家是站在牌下抬头看。
+ */
+export const DIRECTORY_INTERACT_RANGE = 96;
+
+/** 是否站在指路牌旁：坐标取牌面底边中心，与 `HUB_SOLIDS` 的碰撞盒同源 */
+export function isNearDirectory(x: number, y: number, range: number = DIRECTORY_INTERACT_RANGE): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
+  const dx = WELCOME_LANDMARKS.directory.x - x;
+  const dy = WELCOME_LANDMARKS.directory.y - y;
+  return dx * dx + dy * dy <= range * range;
+}
+
+/** 点击命中：整块 96×120 牌面（底边锚定向上长），不含牌下地面 */
+export function isDirectoryHit(x: number, y: number): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const dir = WELCOME_LANDMARKS.directory;
+  const left = dir.x - dir.width / 2;
+  const top = dir.y - dir.height;
+  return x >= left && x <= left + dir.width && y >= top && y <= dir.y;
+}
+
 const INTERACTIVE_KINDS = ['vending', 'cooler', 'coffee'] as const;
 export type InteractiveKind = (typeof INTERACTIVE_KINDS)[number];
 
@@ -214,11 +242,16 @@ export function nearestInteractiveProp(
   return nearestInteractivePropInto(out, x, y, range) ? out : null;
 }
 
+/** 提示查询的复用槽位：每 150ms 一次，不该为一次判定造字面量 */
+const HINT_SPOT: InteriorSpotTarget = { id: '', kind: 'printer', index: 0, x: 0, y: 0 };
+
 /** `selectContextHint` 的输入：座位是否空闲由调用方提供（客户端查本地占用镜像） */
 export interface ContextHintOptions {
   isFreeSeat: (seatId: number) => boolean;
   /** 复用调用方的设施查询槽，避免每拍造一份短命字面量 */
   propOut?: InteractiveTarget;
+  /** 复用调用方的本地装饰点查询槽（室内陈设），不传则用模块内共享槽 */
+  spotOut?: InteriorSpotTarget;
   sitRange?: number;
   /**
    * 当前坐着的座位 id（0 = 未入座）。
@@ -254,12 +287,24 @@ export function hintForHotspot(def: HotspotDef): string {
       return HINT.villaTree;
     case 'apartmentDoor':
       return HINT.apartment;
-    case 'apartmentExit':
-      return HINT.apartmentExit;
     case 'workDesk':
       return HINT.work;
     default:
       return HINT.interact;
+  }
+}
+
+/** 弱交互场所 → 提示文案：坐姿类只在坐下后出现，打卡点站着就能拍 */
+export function hintForVenueSpot(kind: VenueSpotKind): string {
+  switch (kind) {
+    case 'meeting':
+      return HINT.meeting;
+    case 'theater':
+      return HINT.theater;
+    case 'parkPhoto':
+      return HINT.parkPhoto;
+    default:
+      return HINT.pavilion;
   }
 }
 
@@ -301,14 +346,11 @@ export function selectContextHint(
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const roomId = options.roomId ?? 0;
   const seatId = options.seatId ?? 0;
+  // 人在公寓窗口里（ADR-0098）：没有别的可做，唯一提示就是出门
+  if (roomId !== 0) return HINT.apartmentExit;
   const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
     if (candidate.kind === 'bulletin') return facesBulletin(x, y, direction);
     if (candidate.kind === 'ring') return false;
-    if (candidate.kind === 'apartmentDoor') return roomId === 0;
-    // 出口只认自己那栋：六栋楼各有一条 exit 热区，别的楼里的那条够不着也不该提示
-    if (candidate.kind === 'apartmentExit') {
-      return roomId !== 0 && candidate.id === apartmentExitHotspotId(options.roomSlot ?? -1);
-    }
     return true;
   });
   if (def) {
@@ -316,7 +358,16 @@ export function selectContextHint(
     if (hotspotRequiresSeat(def) && !seatMatchesHotspot(def, seatId)) return needSeatHint(def);
     return hintForHotspot(def);
   }
+  // 指路牌不是热区（走客户端本地判定），提示排在热区之后、老板之前
+  if (isNearDirectory(x, y)) return HINT.directory;
   if (isNearBoss(x, y)) return HINT.boss;
+  // 弱交互场所（会议室 / 影音室 / 摸鱼亭 / 游乐园打卡点）：纯客户端演出，
+  // 坐姿类只在坐下后命中，站着时仍然把提示让给「按 Z 坐下」。
+  const venueSpot = venueSpotAt(x, y, seatId);
+  if (venueSpot) return hintForVenueSpot(venueSpot.kind);
+  // 室内本地陈设（打印机 / 洗手台 / 衣柜 / 反省凳…）排在设施之前：
+  // 它们都摆在走道边，56px 内可能同时命中咖啡机，先按陈设给提示才与按键顺序一致
+  if (nearestInteriorSpotInto(options.spotOut ?? HINT_SPOT, x, y)) return HINT.interact;
   const prop = options.propOut ?? { kind: 'vending', x: 0, y: 0 };
   if (nearestInteractivePropInto(prop, x, y)) return HINT.interact;
   const range = options.sitRange ?? SIT_RANGE;

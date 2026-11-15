@@ -80,7 +80,8 @@ export class FishField {
       if (!sprite.visible) sprite.visible = true;
       visible += 1;
 
-      stepFish(fish, dtMs);
+      // 焦点 ≈ 本地角色：玩家靠近时鱼会加速摆尾散开，走远后自动恢复
+      stepFish(fish, dtMs, focusX, focusY);
 
       const x = Math.round(fish.x);
       const y = Math.round(fish.y);

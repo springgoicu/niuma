@@ -121,7 +121,8 @@ export function resolveVents(
 
     // 入座即免伤：办公 / 睡觉 / 蹲马桶等任何坐着的人都不击退、不倒地，
     // 也不穿透去打击他身后的人——这一下按空放处理。
-    if (target.seat !== 0) {
+    // 公寓窗口探头的人（ADR-0098）同理：人在窗里，只露一颗头，打不到。
+    if (target.seat !== 0 || target.roomId !== 0) {
       broadcastVent(world, attacker, 0, 0, 0, transport);
       continue;
     }

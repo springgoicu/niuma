@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CAMPUS_RECT,
   COMPANY_CORRIDOR,
+  CORRIDOR_H,
   LOUNGE,
   MEETING_ROOM,
   RESTROOM,
@@ -14,12 +15,13 @@ import {
   WALL_THICKNESS,
   WORKROOM,
 } from '../world/campus';
+import { PLAYER_RADIUS } from '../world/collision';
 import { WORLD_CENTER, WORLD_LAYOUT, regionAt } from '../world/layout';
 import { rectContains, rectExpanded, type WorldRect } from '../world/geometry';
 
 /**
- * 企业楼与三处独立房间（ADR-0097）：
- * - 企业楼是一栋 920×760 的两层小楼：北排工作区 / 会议室，中间一条走廊，南排一整间发泄室；
+ * 企业楼与三处独立房间（ADR-0097 / ADR-0099）：
+ * - 企业楼是一栋 920×776 的两层小楼：北排工作区 / 会议室，中间一条 56px 走廊，南排一整间发泄室；
  * - 宿舍区、影音室、卫生间、小黑屋各自独立成栋，落在各自的大区里；
  * - 工作区仍是唯一无墙的房间，卫生间仍是男 / 洗手池 / 女 三区。
  */
@@ -41,7 +43,7 @@ function inside(rect: WorldRect, x: number, y: number): boolean {
 }
 
 describe('企业楼（ADR-0097）', () => {
-  it('北排两间 460×360 并排，中间走廊，南排整间发泄室 920×360', () => {
+  it('北排两间 460×360 并排，中间 56px 走廊，南排整间发泄室 920×360', () => {
     for (const room of [WORKROOM, MEETING_ROOM]) {
       expect(room.w).toBe(ROOM_W);
       expect(room.h).toBe(ROOM_H);
@@ -52,14 +54,19 @@ describe('企业楼（ADR-0097）', () => {
     expect(MEETING_ROOM.x).toBe(WORKROOM.x + WORKROOM.w);
     expect(MEETING_ROOM.y).toBe(CAMPUS_RECT.y);
     expect(MEETING_ROOM.x + MEETING_ROOM.w).toBe(CAMPUS_RECT.x + CAMPUS_RECT.w);
-    // 走廊正好夹在南北两排之间
+    // 走廊正好夹在南北两排之间（ADR-0099：40 → 56）
     expect(COMPANY_CORRIDOR.y).toBe(CAMPUS_RECT.y + ROOM_H);
-    expect(COMPANY_CORRIDOR.h).toBe(40);
+    expect(COMPANY_CORRIDOR.h).toBe(CORRIDOR_H);
+    expect(COMPANY_CORRIDOR.h).toBe(56);
+    // 楼体只由两排房间 + 走廊决定：多出来的 16px 全部给走廊，房间不缩水
+    expect(CAMPUS_RECT.h).toBe(ROOM_H * 2 + CORRIDOR_H);
     // 发泄室占满整排，宽 = 楼宽
     expect(VENT_ROOM.w).toBe(CAMPUS_RECT.w);
     expect(VENT_ROOM.h).toBe(ROOM_H);
     expect(VENT_ROOM.y).toBe(COMPANY_CORRIDOR.y + COMPANY_CORRIDOR.h);
     expect(VENT_ROOM.y + VENT_ROOM.h).toBe(CAMPUS_RECT.y + CAMPUS_RECT.h);
+    // 通行余量：走廊净宽要容得下「两人交错」= 4 个半径，并留出 ≥8px 的贴墙余量
+    expect(COMPANY_CORRIDOR.h).toBeGreaterThanOrEqual(PLAYER_RADIUS * 4 + 8);
   });
 
   it('宿舍区与卫生间各自独立，不贴在企业楼里', () => {

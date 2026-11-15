@@ -142,12 +142,9 @@ export function runWorkerHost(scope: WorkerScope): void {
         onDiceOpen: (table) => post({ t: 'diceOpen', table }),
         onArenaBetOpen: () => post({ t: 'arenaBetOpen' }),
         onVillaOpen: (villa) => post({ t: 'villaOpen', villa }),
-        onApartmentOpen: () => post({ t: 'apartmentOpen' }),
         onDiceState: (packet) => post({ t: 'dice', packet }),
         onVillaState: (packet) => post({ t: 'villa', packet }),
         onArenaPool: (packet) => post({ t: 'arenaPool', packet }),
-        onRoomState: (packet) => post({ t: 'room', packet }),
-        onRoomInvite: (packet) => post({ t: 'roomInvite', packet }),
         // 打工产出与随机事件（ADR-0088）
         onWorkOpen: () => post({ t: 'workOpen' }),
         onWorkResult: (packet) => post({ t: 'workResult', packet }),
@@ -280,18 +277,14 @@ export function runWorkerHost(scope: WorkerScope): void {
         session?.placeArenaBet(message.request.side, message.request.amount);
         return;
       case 'apartment':
-        if (message.request.action === 2) session?.upgradeApartment();
-        else if (message.request.action === 1) session?.exitApartment();
+        if (message.request.action === 1) session?.exitApartment();
         else session?.enterApartment();
-        return;
-      case 'apartmentInvite':
-        session?.inviteRoom(message.targetId);
-        return;
-      case 'roomLayout':
-        session?.saveRoomLayout(message.placements);
         return;
       case 'claimWork':
         session?.claimWork(message.combo);
+        return;
+      case 'working':
+        session?.setWorking(message.active);
         return;
       case 'claimQuest':
         session?.claimQuest(message.questId);
@@ -301,6 +294,9 @@ export function runWorkerHost(scope: WorkerScope): void {
         return;
       case 'navigate':
         session?.navigateTo(message.id);
+        return;
+      case 'navigateHome':
+        session?.navigateHome();
         return;
       case 'cancelNav':
         session?.cancelNavigation();

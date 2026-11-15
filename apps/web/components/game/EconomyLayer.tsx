@@ -1,9 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { FurniturePlacement } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
-import { ApartmentDialog } from './ApartmentDialog';
 import { ArenaBetDialog } from './ArenaBetDialog';
 import { ChallengeDialog } from './ChallengeDialog';
 import { CoinPops } from './CoinPops';
@@ -36,9 +34,6 @@ export interface EconomyLayerProps {
   onDiceBet: (table: number, side: number, amount: number) => void;
   onArenaBet: (side: number, amount: number) => void;
   onVilla: (villa: number, action: number) => void;
-  onApartment: (action: number) => void;
-  onInviteRoom: (targetId: number) => void;
-  onSaveRoomLayout: (placements: FurniturePlacement[]) => void;
 }
 
 /** 默认押注：新玩家先看到 50，仍可在浮层里改成 0 / 10 / 200 或自定义 */
@@ -62,9 +57,6 @@ export function EconomyLayer({
   onDiceBet,
   onArenaBet,
   onVilla,
-  onApartment,
-  onInviteRoom,
-  onSaveRoomLayout,
 }: EconomyLayerProps) {
   const [challengeTarget, setChallengeTarget] = useState<{ id: number; name: string } | null>(null);
   const wallet = useGameUi((state) => state.wallet);
@@ -81,11 +73,6 @@ export function EconomyLayer({
   const villaOpen = useGameUi((state) => state.villaOpen);
   const setVillaOpen = useGameUi((state) => state.setVillaOpen);
   const villas = useGameUi((state) => state.villas);
-  const apartmentOpen = useGameUi((state) => state.apartmentOpen);
-  const setApartmentOpen = useGameUi((state) => state.setApartmentOpen);
-  const room = useGameUi((state) => state.room);
-  const roomInvite = useGameUi((state) => state.roomInvite);
-  const setRoomInvite = useGameUi((state) => state.setRoomInvite);
 
   return (
     <>
@@ -145,32 +132,6 @@ export function EconomyLayer({
           onClose={() => setVillaOpen(null)}
           onAction={onVilla}
         />
-      )}
-      {apartmentOpen && (
-        <ApartmentDialog
-          room={room}
-          coins={wallet.coins}
-          onClose={() => setApartmentOpen(false)}
-          onAction={onApartment}
-          onBuy={onBuy}
-          onInvite={onInviteRoom}
-          onSaveLayout={onSaveRoomLayout}
-        />
-      )}
-      {roomInvite && (
-        <div className="pointer-events-auto fixed right-3 top-3 z-50 border-2 border-mint-500 bg-ink-900/95 px-3 py-2 shadow-[3px_3px_0_rgba(0,0,0,0.4)]">
-          <p className="text-[11px] text-mist-100">
-            {roomInvite.fromName} 邀你到 {roomInvite.doorNo} 串门
-          </p>
-          <p className="font-mono text-[9px] text-mist-500">两分钟内在公寓门口按 F 即可进屋</p>
-          <button
-            type="button"
-            onClick={() => setRoomInvite(null)}
-            className="mt-1 border-2 border-ink-700 px-2 py-0.5 text-[10px] text-mist-300 hover:bg-ink-800"
-          >
-            知道了
-          </button>
-        </div>
       )}
       <CoinPops />
     </>

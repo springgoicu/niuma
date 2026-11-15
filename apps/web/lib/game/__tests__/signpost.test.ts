@@ -20,6 +20,11 @@ describe('世界指路牌牌面（ADR-0078 / ADR-0097）', () => {
     expect(plates.map((plate) => plate.octant)).toEqual(readings.map((reading) => reading.octant));
   });
 
+  it('每块牌的书脊色等于对应区色，不另写一份配色', () => {
+    const plates = signPlates(DIRECTORY.x, DIRECTORY.y, DIRECTORY.height);
+    expect(plates.map((plate) => plate.color)).toEqual(DISTRICTS.map((district) => district.color));
+  });
+
   it('行位置自上而下单调、等距，且不压标题牌与底牌', () => {
     const plates = signPlates(DIRECTORY.x, DIRECTORY.y, DIRECTORY.height);
     for (let i = 1; i < plates.length; i += 1) {

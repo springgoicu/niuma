@@ -30,7 +30,6 @@ describe('economy storage', () => {
         stats: { atkSpeedLv: 3, workEffLv: 2, critLv: 1, armorLv: 4 },
         unlockedCosmetics: ['hat'],
         inventory: { ice_americano: 2, slack_shield: 1 },
-        houseTier: 1,
         dailyQuests: { day: '2026-11-15', progress: { punch: 2 }, claimed: [] },
       },
       storage,

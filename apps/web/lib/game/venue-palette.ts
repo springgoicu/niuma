@@ -21,6 +21,8 @@ export type VenueId =
   | 'theater'
   | 'cell'
   | 'plaza'
+  /** 迎宾拱门门前的迎宾毯（ADR-0097 的地标，配色沿用拱门奶油 + 薄荷） */
+  | 'arch'
   | 'pavilion'
   | 'shrine'
   | 'tea'
@@ -59,6 +61,8 @@ export const VENUE_COLORS: Record<VenueId, VenueColors> = {
   /** 冷灰水泥：带蓝相，不用中性灰 */
   cell: { main: 0x6d7078, alt: 0x7a7d85, seam: 0x545861, accent: 0xc9b6ff, glow: 0xc9b6ff },
   plaza: { main: 0xbbb2a0, alt: 0xc6bdaa, seam: 0x8f8574, accent: 0xffe49a, glow: 0xffd08a },
+  /** 迎宾拱门迎宾毯：奶油底 + 薄荷边，与 welcome.ts 的招牌同族（不与 plaza 的暖黄撞色） */
+  arch: { main: 0xe4d8bd, alt: 0xd6c9ad, seam: 0x8f8574, accent: 0x8fe3c7, glow: 0xffd08a },
   /** 木构凉亭：原木地面 + 白漆栏杆（ADR-0096） */
   pavilion: { main: 0xc9a878, alt: 0xbb9a6c, seam: 0x96754e, accent: 0xf3ede1, glow: 0xffc98a },
   /** 石砌神龛：暖灰石地 + 铜件点缀（ADR-0096） */

@@ -21,6 +21,7 @@ import {
   offsetContour,
   organicContour,
   polygonContour,
+  resampleContour,
   roundedRectContour,
   traceContour,
   type ContourPoint,
@@ -583,8 +584,31 @@ export class TerrainView {
         g.rect(glyph.x, glyph.y, glyph.w, glyph.h).fill(glyph.color);
       }
       this.edge.addChild(g);
+      // 冬季：土路两侧压一条薄雪（ADR-0099）。雪被踩化的只有路心，
+      // 路缘本来就是最先积雪的地方——2px 内缘 + 零星 1×1 雪粒，不做整条白边
+      if (this.winter && job.self === MATERIAL.dirt) this.addPathSnow(job.contour, job.seed);
     }
     this.edges.length = 0;
+  }
+
+  /**
+   * 路缘薄雪：沿土路轮廓向内压 2px 的雪色内缘，再按 7px 密度撒 1×1 雪粒。
+   * 只在 `edgeEnabled && !flat` 的冬季分支里调用，夏季一格都不生成。
+   */
+  private addPathSnow(contour: ContourPoint[], seed: number): void {
+    const snow = new Graphics();
+    snow
+      .poly(contourPolygon(contour))
+      .stroke({ color: W.snowBase, width: 2, alignment: 1, join: 'round', alpha: 0.78 });
+    const random = seeded(seed ^ 0x51f2);
+    for (const point of resampleContour(contour, 7)) {
+      // 大约六成留下雪粒：整圈都撒会变成描边，全不留又读不出积雪
+      if (random() > 0.62) continue;
+      const x = point.x + (random() > 0.5 ? 1 : -1);
+      const y = point.y + (random() > 0.5 ? 1 : -1);
+      snow.rect(x, y, 1 + Math.floor(random() * 2), 1).fill(random() > 0.4 ? W.snowLight : W.snowShade);
+    }
+    this.edge.addChild(snow);
   }
 
   /** 材质网格按需构建：`?edge=0` 时一格都不算 */

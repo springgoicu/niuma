@@ -240,14 +240,8 @@ export const OpCode = {
   S2C_ARENA_POOL: 0x4b,
   /** 公寓操作：`[op][action u8][arg u8]`，3 字节定长 */
   C2S_APARTMENT: 0x4c,
-  /** 邀请串门：`[op][targetId u16]`，3 字节定长 */
-  C2S_APARTMENT_INVITE: 0x4d,
-  /** 上传家具布局：`[op][count u8]` + count × `[id u8][cell u8]`，变长 */
-  C2S_ROOM_LAYOUT: 0x4e,
-  /** 房间状态（门牌 / 房主 / 家具）：只发给同频道的玩家 */
-  S2C_ROOM_STATE: 0x4f,
-  /** 串门邀请通知：`[op][fromId u16][doorNo u16][len u8][name]` */
-  S2C_ROOM_INVITE: 0x50,
+  // 0x4d–0x50 永久留空不复用：邀请串门、家具布局、房间状态、串门通知随
+  // ADR-0098「公寓改为窗口探头」下线，编号不能回收给新包（旧客户端会解错）。
   // ---- 打工产出 / Boss 2.0 / 全局随机事件 / 每日悬赏（ADR-0088），从 0x51 继续追加 ----
   /**
    * 搬砖结算：`[op][combo u8]`，2 字节定长。
@@ -272,6 +266,14 @@ export const OpCode = {
    * 广播给视野内的人（让旁观者看到红包被抢走），`flags bit0` 表示领取者就是收包人本人。
    */
   S2C_EVENT_CLAIM: 0x58,
+  /**
+   * 公寓窗口探头全量快照（ADR-0098）：`[op][count u8]` + count ×
+   * `[playerId u16][slot u8][window u8]`。
+   *
+   * 全量而不是增量：最多 6 栋 × 20 窗 = 120 条，只在进楼 / 出楼 / 断线 / 入场时各发一次，
+   * 稳态零流量。收到就整份替换，不需要合并或对账。
+   */
+  S2C_APARTMENT_PEEK: 0x59,
 } as const;
 
 /** 老板血量包：flags bit0 = 本次归零，bit1 = 跨日重置 */
@@ -600,11 +602,10 @@ export interface ArenaPoolPacket {
   myBet: number;
 }
 
-/** 公寓操作：0 进屋 / 1 出屋 / 2 升级户型 */
+/** 公寓操作：0 进屋探头 / 1 出门；2 曾用于户型升级，随 ADR-0098 下线且不复用 */
 export const APARTMENT_ACTION = {
   Enter: 0,
   Exit: 1,
-  Upgrade: 2,
 } as const;
 
 export interface ApartmentRequest {
@@ -612,20 +613,18 @@ export interface ApartmentRequest {
   arg: number;
 }
 
-/** 房间状态：门牌号、房主与家具布局 */
-export interface RoomStatePacket {
-  doorNo: number;
-  ownerId: number;
-  ownerName: string;
-  tier: number;
-  placements: ReadonlyArray<{ id: number; cell: number }>;
+/** 一个正在窗口探头的人：楼栋 + 窗口编号 */
+export interface ApartmentPeekEntry {
+  id: number;
+  /** 楼栋下标 0..5 */
+  slot: number;
+  /** 窗口编号 0..19 */
+  window: number;
 }
 
-/** 串门邀请通知 */
-export interface RoomInvitePacket {
-  fromId: number;
-  doorNo: number;
-  fromName: string;
+/** 窗口探头全量快照：收到就整份替换 */
+export interface ApartmentPeekPacket {
+  entries: ReadonlyArray<ApartmentPeekEntry>;
 }
 
 /**

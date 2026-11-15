@@ -1,169 +1,103 @@
 import {
-  APARTMENT_ROOM_COUNT,
+  APARTMENT_WINDOW_COUNT,
   DIRECTION,
   POSE,
   apartmentBySlot,
-  doorNoOf,
-  furnitureById,
-  houseTierSpec,
-  sanitizePlacements,
-  type FurniturePlacement,
-  type RoomStatePacket,
+  apartmentWindowAt,
+  type ApartmentPeekEntry,
 } from '@niuma/shared-types';
 import type { Player } from './world';
 
-/** 一个房间频道：门牌号 + 房主 + 家具布局 */
-export interface RoomRecord {
+/** 一个探头位置：哪栋楼、哪个窗口 */
+export interface WindowSeat {
   slot: number;
-  ownerId: number;
-  ownerDeviceId: string;
-  ownerName: string;
-  tier: number;
-  placements: FurniturePlacement[];
+  window: number;
 }
-
-export interface RoomInvite {
-  slot: number;
-  fromName: string;
-  until: number;
-}
-
-/** 邀请有效期：两分钟内走到公寓门口就能直接进朋友的屋 */
-export const ROOM_INVITE_MS = 120_000;
 
 /**
- * 牛马公寓的房间管理（局部同步的房号来源）。
+ * 牛马公寓的窗口占用（ADR-0098）。
  *
- * 频道就是 `Player.roomId`（1..6，0 表示在园区）：同频道的玩家互相可见，
- * 跨频道与屋外玩家互不可见。房间坐标全部复用楼内同一个矩形，
- * 移动、AOI、深度排序与相机跟随因此不需要第二套实现。
+ * 进屋 = 人从园区挪到这栋楼的一个空闲窗口探头，出门 = 回到门口台阶。
+ * 楼里没有可走的空间，所以这里只维护一张「谁占了哪个窗口」的表：
+ * 每栋 4×5 = 20 个窗口，一窗一人，占满就拒客。
+ *
+ * 这是本运行周期的临时态，不落盘：断线即释放（与旧的房间频道一致）。
  */
 export class ApartmentRuntime {
-  private readonly rooms = new Map<number, RoomRecord>();
-  private readonly invites = new Map<number, RoomInvite>();
+  /** slot → 20 个窗口的占用者 id，0 表示空窗 */
+  private readonly windows = new Map<number, number[]>();
+  /** 反向索引：playerId → { slot, window }，出门与断线 O(1) 释放 */
+  private readonly seats = new Map<number, WindowSeat>();
 
   /**
-   * 进屋：优先接受朋友邀请，否则回自己的房间；6 个频道占满时返回 null。
+   * 进屋探头：占这栋楼第一个空窗。
    *
-   * 六栋楼一栋一户（ADR-0095）：从任意一栋门口按 F 都算「回自己家」，
-   * 传送目标是房间所在那栋楼的室内落点。
+   * 已经有人在里面、或该栋 20 个窗口全满时返回 null（调用方提示「窗口都住满了」）。
    */
-  enter(player: Player, now: number): RoomRecord | null {
+  enter(player: Player, slot: number): WindowSeat | null {
     if (player.roomId !== 0) return null;
-    const invite = this.invites.get(player.id);
-    const invited = invite && invite.until > now ? this.rooms.get(invite.slot) : undefined;
-    const own = this.findOwnRoom(player);
-    const room = invited ?? own ?? this.allocate(player);
-    if (!room) return null;
-    this.invites.delete(player.id);
-    player.roomId = room.slot + 1;
-    this.teleport(player, apartmentBySlot(room.slot).spawn);
-    return room;
+    const spec = apartmentBySlot(slot);
+    const free = this.freeWindowOf(spec.slot);
+    if (free < 0) return null;
+    this.windows.get(spec.slot)![free] = player.id;
+    const seat: WindowSeat = { slot: spec.slot, window: free };
+    this.seats.set(player.id, seat);
+    player.roomId = spec.slot + 1;
+    // 停在门口台阶：位置确定、相机不跳，头由客户端画到这栋楼的窗口上
+    this.teleport(player, spec.outside);
+    return seat;
   }
 
-  /** 出屋：回到自己那栋楼的门口台阶 */
+  /** 出门：释放窗口并回到自己那栋楼的门口台阶 */
   exit(player: Player): boolean {
-    const room = this.roomOf(player);
-    if (!room) return false;
-    const spec = apartmentBySlot(room.slot);
+    const seat = this.seats.get(player.id);
+    if (!seat) return false;
+    const spec = apartmentBySlot(seat.slot);
+    this.releaseWindow(seat, player.id);
+    this.seats.delete(player.id);
     player.roomId = 0;
     this.teleport(player, spec.outside);
     return true;
   }
 
-  /** 房间里的家具布局：越界与未拥有的家具会被过滤掉 */
-  saveLayout(player: Player, raw: ReadonlyArray<FurniturePlacement>): boolean {
-    const room = this.roomOf(player);
-    if (!room) return false;
-    const owned = new Set(player.unlockedCosmetics);
-    const allowed = raw.filter((entry) => {
-      const sku = furnitureById(entry.id);
-      if (!sku) return false;
-      if (sku.price <= 0) return true;
-      return owned.has(`furn:${sku.id}`);
-    });
-    room.placements = sanitizePlacements(allowed, room.tier);
+  /** 断线：窗口立刻释放，别让后来的人对着空窗按 F 被拒 */
+  leave(playerId: number): boolean {
+    const seat = this.seats.get(playerId);
+    if (!seat) return false;
+    this.releaseWindow(seat, playerId);
+    this.seats.delete(playerId);
     return true;
   }
 
-  /** 邀请朋友：记一条带 TTL 的票据，对方在门口按 F 就会进这间屋 */
-  invite(from: Player, targetId: number, now: number): RoomRecord | null {
-    const room = this.roomOf(from);
-    if (!room) return null;
-    if (targetId === from.id) return null;
-    this.invites.set(targetId, { slot: room.slot, fromName: from.name, until: now + ROOM_INVITE_MS });
-    return room;
-  }
-
-  roomOf(player: Player): RoomRecord | undefined {
-    if (player.roomId === 0) return undefined;
-    return this.rooms.get(player.roomId - 1);
-  }
-
-  /** 房间状态包：同频道共用一份，访客也能看到房主的家具 */
-  stateFor(player: Player): RoomStatePacket | null {
-    const room = this.roomOf(player);
-    if (!room) return null;
-    return {
-      doorNo: doorNoOf(room.slot),
-      ownerId: room.ownerId,
-      ownerName: room.ownerName,
-      tier: room.tier,
-      placements: room.placements,
-    };
-  }
-
-  /** 房主升级后把房号对应的档位同步过去（家具超额的由前端重新摆） */
-  syncTier(player: Player): boolean {
-    const room = this.findOwnRoom(player);
-    if (!room) return false;
-    room.tier = player.houseTier;
-    room.placements = sanitizePlacements(room.placements, room.tier);
-    return true;
-  }
-
-  /** 断线：释放频道，让后来的人能用到这间屋 */
-  leave(playerId: number, deviceId: string): void {
-    this.invites.delete(playerId);
-    for (const [slot, room] of this.rooms) {
-      if (room.ownerDeviceId !== deviceId) continue;
-      room.ownerId = 0;
-      // 屋主离开就把频道腾出来：房间是「本运行周期」的临时空间，不是永久房产
-      this.rooms.delete(slot);
+  /** 全量快照：谁在哪栋哪个窗口 */
+  snapshot(): ApartmentPeekEntry[] {
+    const out: ApartmentPeekEntry[] = [];
+    for (const [id, seat] of this.seats) {
+      out.push({ id, slot: seat.slot, window: seat.window });
     }
+    out.sort((a, b) => a.id - b.id);
+    return out;
   }
 
-  /** 房主改名：门牌上的名字跟着换 */
-  rename(player: Player): boolean {
-    const room = this.findOwnRoom(player);
-    if (!room || room.ownerName === player.name) return false;
-    room.ownerName = player.name;
-    return true;
+  /** 某人的窗口位置；没进屋返回 undefined（UI 与测试用） */
+  seatOf(playerId: number): WindowSeat | undefined {
+    return this.seats.get(playerId);
   }
 
-  private findOwnRoom(player: Player): RoomRecord | undefined {
-    if (!player.deviceId) return undefined;
-    for (const room of this.rooms.values()) {
-      if (room.ownerDeviceId === player.deviceId) return room;
+  private freeWindowOf(slot: number): number {
+    let row = this.windows.get(slot);
+    if (!row) {
+      row = new Array<number>(APARTMENT_WINDOW_COUNT).fill(0);
+      this.windows.set(slot, row);
     }
-    return undefined;
+    return row.indexOf(0);
   }
 
-  private allocate(player: Player): RoomRecord | null {
-    for (let slot = 0; slot < APARTMENT_ROOM_COUNT; slot += 1) {
-      if (this.rooms.has(slot)) continue;
-      const room: RoomRecord = {
-        slot,
-        ownerId: player.id,
-        ownerDeviceId: player.deviceId,
-        ownerName: player.name,
-        tier: player.houseTier,
-        placements: [],
-      };
-      this.rooms.set(slot, room);
-      return room;
-    }
-    return null;
+  private releaseWindow(seat: WindowSeat, playerId: number): void {
+    const row = this.windows.get(seat.slot);
+    if (!row) return;
+    if (apartmentWindowAt(seat.slot, seat.window) === undefined) return;
+    if (row[seat.window] === playerId) row[seat.window] = 0;
   }
 
   private teleport(player: Player, target: { x: number; y: number }): void {
@@ -177,9 +111,4 @@ export class ApartmentRuntime {
     player.dirty = true;
     player.needsViewRefresh = true;
   }
-}
-
-/** 家具槽位上限：给 UI 的提示与「还能摆几件」共用 */
-export function roomSlotLimit(tier: number): number {
-  return houseTierSpec(tier).slots;
 }

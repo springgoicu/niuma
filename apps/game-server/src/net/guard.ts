@@ -90,9 +90,6 @@ defineExact(OpCode.C2S_DICE_BET, 7); // [op][table u8][side u8][amount u32]
 defineExact(OpCode.C2S_VILLA, 3); // [op][villa u8][action u8]
 defineExact(OpCode.C2S_ARENA_BET, 6); // [op][side u8][amount u32]
 defineExact(OpCode.C2S_APARTMENT, 3); // [op][action u8][arg u8]
-defineExact(OpCode.C2S_APARTMENT_INVITE, 3); // [op][targetId u16]
-// 家具布局：`[op][count u8]` + count × 2 字节
-defineVariable(OpCode.C2S_ROOM_LAYOUT, 2, 1, 1);
 
 // ---- 打工产出 / 世界事件 / 每日悬赏（ADR-0088）：三个单字节参数的上行包 ----
 defineExact(OpCode.C2S_WORK_CLAIM, 2); // [op][combo u8]

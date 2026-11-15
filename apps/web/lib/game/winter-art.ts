@@ -1,7 +1,7 @@
 'use client';
 
 import { Container, Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
-import { WORLD_LAYOUT } from '@niuma/shared-types';
+import { DISTRICTS, DOOR_PLAQUES, WELCOME_LANDMARKS, WORKROOM_GATE, WORLD_LAYOUT } from '@niuma/shared-types';
 import { lightToneAt } from './lighting/tone';
 import { serverHourFraction } from './server-date';
 import { serverNow, serverTzOffsetMin } from './server-clock';
@@ -70,6 +70,7 @@ export class WinterArt {
 
     this.addBulbs(depth, renderer);
     this.addIcicles(base);
+    this.addSnowDrifts(base);
     this.applyBulbBrightness();
   }
 
@@ -210,6 +211,59 @@ export class WinterArt {
     const label = lightToneAt(hour, true).label;
     const alpha = label === 'night' ? 1 : label === 'dusk' ? 0.62 : 0.22;
     for (const sprite of this.bulbs) sprite.alpha = alpha;
+  }
+
+  /**
+   * 铺装收边的雪齿：雪从草地跨到石砖/木台上时不再是一条直角硬线。
+   *
+   * 雪层只有「岛轮廓」一级遮罩（`terrain.ts` 的 `addSnowCover`），
+   * 而边缘系统的六种材质里没有「铺装 / 室内地板」，所以雪与铺装的交界此前是硬切。
+   * 这里沿每条铺装的四条外边各撒一排 1–3px 的雪齿，**画在铺装外侧**：
+   * 门洞、区门、拱门与楼门口 44px 内自动跳过，天然在门口断开，不糊住门槛。
+   *
+   * 全部合成一张 Graphics：几百个矩形、一次绘制，无逐帧成本，也不参与碰撞。
+   */
+  private addSnowDrifts(base: Container): void {
+    const drifts = new Graphics();
+    // 门洞列表：门牌（每处场所入口）、五座区门、迎宾拱门与企业楼大门
+    const holes: ReadonlyArray<{ x: number; y: number }> = [
+      ...DOOR_PLAQUES.map((plaque) => ({ x: plaque.x, y: plaque.depthY })),
+      ...DISTRICTS.map((district) => ({ x: district.gate.x, y: district.gate.y })),
+      { x: WELCOME_LANDMARKS.arch.x, y: WELCOME_LANDMARKS.arch.y },
+      { x: WORKROOM_GATE.x, y: WORKROOM_GATE.y },
+    ];
+    const blocked = (x: number, y: number): boolean => {
+      for (const hole of holes) {
+        if (Math.abs(hole.x - x) < 44 && Math.abs(hole.y - y) < 90) return true;
+      }
+      return false;
+    };
+    const tooth = (x: number, y: number, horizontal: boolean): void => {
+      if (blocked(x, y)) return;
+      const n = (Math.imul(x + 7, 2654435761) ^ Math.imul(y + 13, 2246822519)) >>> 0;
+      const tall = 1 + (n % 3);
+      const wide = 5 + ((n >>> 5) % 4);
+      if (horizontal) {
+        drifts.rect(x, y - tall, wide, tall).fill(W.snowBase);
+        drifts.rect(x, y - 1, wide, 1).fill(W.snowShade);
+      } else {
+        drifts.rect(x - tall, y, tall, wide).fill(W.snowBase);
+        drifts.rect(x - 1, y, 1, wide).fill(W.snowShade);
+      }
+    };
+
+    for (const area of WORLD_LAYOUT.paved) {
+      // 上沿：雪落在铺装之外（北侧草地上），下沿同理；左右两沿竖着堆
+      for (let x = area.x + 2; x < area.x + area.w - 2; x += 9) {
+        tooth(x, area.y, true);
+        tooth(x, area.y + area.h + 3, true);
+      }
+      for (let y = area.y + 2; y < area.y + area.h - 2; y += 9) {
+        tooth(area.x, y, false);
+        tooth(area.x + area.w + 3, y, false);
+      }
+    }
+    base.addChild(drifts);
   }
 
   /**

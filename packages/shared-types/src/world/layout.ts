@@ -119,6 +119,7 @@ import {
   DISTRICTS,
   NAV_ARRIVALS,
   NAV_TARGETS,
+  PLAZA_HOME,
   PLAZA_REGION_NAME,
   VENUES,
   districtAt,
@@ -144,6 +145,7 @@ export {
   JAIL_DOOR,
   JAIL_DOOR_PAVING,
   COMPANY_CORRIDOR,
+  MEETING_ROOM,
   RESTROOM_STALLS,
   SHRINE_ALTAR,
   SHRINE_ALTAR_SOLID,
@@ -192,6 +194,7 @@ export {
   DISTRICTS,
   NAV_ARRIVALS,
   NAV_TARGETS,
+  PLAZA_HOME,
   PLAZA_REGION_NAME,
   VENUES,
   districtAt,
@@ -604,13 +607,15 @@ const PATHS: PathShape[] = [
     ],
     PATH_MAIN_HALF_WIDTH,
   ),
-  // 企业区前庭：广场西北 → 企业楼大门
+  // 企业区前庭：广场西北 → 企业楼大门。
+  // 末点落在**走廊口的门线**上（`COMPANY_CORRIDOR.y + h`），走廊加宽到 56 后
+  // 这条土路也跟着长 16px，否则路会停在门前 16px 的草地上（ADR-0099）
   buildPath(
     [
       [3880, 3880],
       [3760, 3780],
       [3680, 3660],
-      [3620, 3600],
+      [3620, 3616],
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
@@ -732,7 +737,7 @@ const LAKES: LakeShape[] = [MOPING_LAKE_POINTS, CHENSI_POND_POINTS, LIANYI_LAKE_
 }));
 
 /**
- * 12 处导览场所的门牌（ADR-0091 / ADR-0097）。
+ * 15 处导览场所的门牌（ADR-0091 / ADR-0097 / ADR-0099）。
  *
  * - `gate`：企业楼沿用自建牌坊，匾额换成标准中文名；
  * - `board`：其余各处在入口立一块 60×30 的小门牌，纯装饰、不登记碰撞；
@@ -817,6 +822,30 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('apartment'),
     x: APARTMENT_SPECS[0]!.door.x + 110,
     depthY: APARTMENT_SPECS[0]!.door.y,
+    frame: 'board',
+  },
+  {
+    // ADR-0099：影音室东门，牌匾贴在门前铺装的东端，离到达点 120px
+    id: 'theater',
+    text: navName('theater'),
+    x: HOME_THEATER.x + HOME_THEATER.w + 60,
+    depthY: HOME_THEATER.y + 160,
+    frame: 'board',
+  },
+  {
+    // 摸鱼亭：亭外西南角的草地上，不压八根廊柱与四张石鼓凳
+    id: 'pavilion',
+    text: navName('pavilion'),
+    x: PAVILION_RECT.x - 20,
+    depthY: PAVILION_RECT.y + PAVILION_RECT.h + 12,
+    frame: 'board',
+  },
+  {
+    // 急救站：西侧人行门洞外的铺装西南角，避开围挡与立牌
+    id: 'clinic',
+    text: navName('clinic'),
+    x: CLINIC_ACCESS_PAVING.x + 6,
+    depthY: CLINIC_ACCESS_PAVING.y + CLINIC_ACCESS_PAVING.h + 18,
     frame: 'board',
   },
 ];
@@ -1172,10 +1201,13 @@ const ROAD_PROPS: PropInstance[] = [
   { kind: 'lamp', x: 3980, y: 4800 },
   { kind: 'lamp', x: 4212, y: 4800 },
   { kind: 'bin', x: 3960, y: 5290 },
-  // 西主路 / 企业区与景观区
-  { kind: 'lamp', x: 3300, y: 3980 },
-  { kind: 'lamp', x: 3300, y: 4212 },
-  { kind: 'lamp', x: 2900, y: 3980 },
+  // 西主路 / 企业区与景观区。楼北侧两盏灯跟着企业楼南墙下移 16px（3960 → 3976，ADR-0099）：
+  // 原来离墙 20px，走廊加宽后若不跟着挪，灯柱会插进墙里 4px。
+  // 这对灯柱是节日彩旗的挂点，两者必须一起下移同样的 16px —— 只挪一根的话
+  // 间距会从 232 变成 216，彩旗长度与贴图就都错位了
+  { kind: 'lamp', x: 3300, y: 3996 },
+  { kind: 'lamp', x: 3300, y: 4228 },
+  { kind: 'lamp', x: 2900, y: 3996 },
   { kind: 'bench', x: 2900, y: 4212 },
   // 东主路 / 服务广场：一对 232 间距的灯柱，节日彩旗挂在这一对上
   { kind: 'lamp', x: 5000, y: 3980 },

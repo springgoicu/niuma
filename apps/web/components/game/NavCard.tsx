@@ -4,13 +4,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, ChevronDown, Compass } from 'lucide-react';
 import { DISTRICTS, SPAWN_CENTER, districtAt, regionAt, type NavTargetId } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
-import { nearestReading, navReadings, sceneLabel, OCTANT_NAMES } from '@/lib/game/nav';
+import { nearestReading, navReadings, plazaReading, sceneLabel, OCTANT_NAMES } from '@/lib/game/nav';
 import { HUD_DOCK_PORTRAIT_REM } from './Hud';
 
 /** 触摸端：离开北门口袋超过这个距离就自动收起，把画面还给摇杆与动作盘 */
 const LEASH = 260;
 /** 触摸端：入场后自动展开的时长 */
 const AUTO_COLLAPSE_MS = 8000;
+
+/** 区色 → CSS 十六进制：区色只在 `DISTRICTS` 里定义一次，这里只做格式转换 */
+function districtTint(color: number): string {
+  return `#${color.toString(16).padStart(6, '0')}`;
+}
 
 /**
  * 园区导览卡（ADR-0036 / ADR-0040 / ADR-0077）：实时方位 + 名称 + 步行秒数，
@@ -26,11 +31,14 @@ export function NavCard({
   compact = false,
   portrait = false,
   onNavigate,
+  onNavigateHome,
   onCancelNavigation,
 }: {
   compact?: boolean;
   portrait?: boolean;
   onNavigate: (id: NavTargetId) => void;
+  /** 回中央广场：广场不是场所，走客户端动作（ADR-0099） */
+  onNavigateHome: () => void;
   onCancelNavigation: () => void;
 }) {
   const x = useGameUi((state) => state.x);
@@ -39,23 +47,31 @@ export function NavCard({
   const noticeOpen = useGameUi((state) => state.noticeOpen);
   const installOpen = useGameUi((state) => state.installOpen);
   const navTarget = useGameUi((state) => state.navTarget);
+  /** 指路牌发来的「请展开」序号；0 表示还没人请求过 */
+  const navOpenSeq = useGameUi((state) => state.navOpenSeq);
   const [open, setOpen] = useState(true);
   /** 用户手动开合过就不再自动收起，避免和手指抢控制权 */
   const manual = useRef(false);
 
   const readings = useMemo(() => navReadings(x, y), [x, y]);
-  // ADR-0097：导览卡按五区分组，空组不占位；组顺序即 DISTRICTS 的顺序
+  // ADR-0097：导览卡按五区分组，空组不占位；组顺序即 DISTRICTS 的顺序。
+  // 组标题带上 `district.color`：与世界里的区门门灯、指路牌书脊是同一份色标，
+  // 玩家在画布上认过的颜色，在面板里能立刻对上。
   const groups = useMemo(
     () =>
       DISTRICTS.map((district) => ({
         key: district.id,
         label: district.name,
+        color: district.color,
         items: readings.filter((reading) => reading.target.district === district.id),
       })).filter((group) => group.items.length > 0),
     [readings],
   );
   const nearest = nearestReading(readings);
   const navReading = navTarget ? readings.find((reading) => reading.target.id === navTarget.id) ?? null : null;
+  // 回广场那一行：广场不是场所，读数单独算一条
+  const home = plazaReading(x, y);
+  const headingHome = navTarget?.id === 'plaza';
   const place = regionAt(x, y);
   const district = districtAt(x, y);
   const region = district && place !== district.name ? `${district.name} · ${place}` : place;
@@ -74,6 +90,14 @@ export function NavCard({
     const dy = y - SPAWN_CENTER.y;
     if (dx * dx + dy * dy > LEASH * LEASH && !manual.current) setOpen(false);
   }, [compact, x, y]);
+
+  // 世界指路牌按 F 或点击牌面：外面只能发「请展开」的序号，
+  // 这里顺手把 manual 置位，免得刚展开就被自动收起逻辑（离开出生点 / 超时）收回去。
+  useEffect(() => {
+    if (navOpenSeq === 0) return;
+    manual.current = true;
+    setOpen(true);
+  }, [navOpenSeq]);
 
   const toggle = () => {
     manual.current = true;
@@ -129,7 +153,14 @@ export function NavCard({
             {groups.map((group) => (
               <div key={group.key}>
                 <div className="sticky top-0 z-10 flex items-center justify-between border-y border-ink-700/70 bg-ink-900/95 px-2.5 py-1 font-mono text-[8px] tracking-[0.16em] text-mist-500">
-                  <span>{group.label}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      aria-hidden
+                      className="h-2.5 w-[3px] shrink-0"
+                      style={{ backgroundColor: districtTint(group.color) }}
+                    />
+                    <span className="truncate">{group.label}</span>
+                  </span>
                   <span className="tabular-nums text-mist-600">{group.items.length}</span>
                 </div>
                 <ul>
@@ -192,6 +223,54 @@ export function NavCard({
                 </ul>
               </div>
             ))}
+            {/* 回中央广场：广场不属于任何大区，单独一条，永远排在最后 */}
+            <div className="border-t border-ink-700/70">
+              <div className="flex items-center justify-between border-b border-ink-700/70 bg-ink-900/95 px-2.5 py-1 font-mono text-[8px] tracking-[0.16em] text-mist-500">
+                <span>广场</span>
+                <span className="tabular-nums text-mist-600">1</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  manual.current = true;
+                  if (headingHome) onCancelNavigation();
+                  else onNavigateHome();
+                }}
+                aria-pressed={headingHome}
+                aria-label={
+                  headingHome
+                    ? '取消回中央广场'
+                    : `回中央广场，${OCTANT_NAMES[home.octant]}方向，步行约 ${home.seconds} 秒`
+                }
+                className={`group flex min-h-9 w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left transition-colors focus-visible:bg-mint-400/10 focus-visible:outline-none ${
+                  headingHome ? 'bg-mint-400/12 text-mint-400' : 'text-mist-300 hover:bg-ink-800/80 hover:text-mist-100'
+                }`}
+              >
+                <span aria-hidden className="grid h-4 w-4 shrink-0 place-items-center">
+                  <ArrowUp
+                    className="h-3.5 w-3.5 transition-transform duration-200"
+                    style={{ transform: `rotate(${home.bearingDeg}deg)` }}
+                  />
+                </span>
+                <span className="flex-1 truncate text-[11px] leading-none">回中央广场</span>
+                <span className="shrink-0 font-mono text-[8px] tracking-[0.08em] text-mist-500">室外</span>
+                <span
+                  className={`font-mono text-[9px] tabular-nums ${
+                    headingHome ? 'text-mint-400/80' : 'text-mist-400'
+                  }`}
+                >
+                  ≈{home.seconds}s
+                </span>
+                <span
+                  aria-hidden
+                  className={`shrink-0 font-mono text-[9px] tracking-[0.08em] transition-colors ${
+                    headingHome ? 'text-signal-500' : 'text-mist-500 group-hover:text-mint-400'
+                  }`}
+                >
+                  {headingHome ? '取消' : '去这里'}
+                </span>
+              </button>
+            </div>
           </div>
 
           <footer className="flex items-center justify-between gap-2 border-t-2 border-ink-700 px-2.5 py-1 font-mono text-[8px] tracking-[0.12em] text-mist-400">

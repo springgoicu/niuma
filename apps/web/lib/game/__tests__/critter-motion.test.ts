@@ -258,4 +258,36 @@ describe('小鱼（ADR-0045）', () => {
     stepFish(fish, 145);
     expect(fish.frame).toBe(first);
   });
+
+  it('玩家不在附近时与旧行为一致：不加速、不躲避', () => {
+    const fish = createFish(SPAWN);
+    // 玩家远在 2000px 外：受惊半径 56px 完全不触发
+    stepFish(fish, 16, SPAWN.x + 2000, SPAWN.y + 2000);
+    expect(fish.alarmMs).toBe(0);
+    expect(fish.dodge).toBe(0);
+  });
+
+  it('玩家靠近时受惊：加速摆尾并朝远离玩家的一侧躲开', () => {
+    const fish = createFish(SPAWN);
+    const calm = createFish(SPAWN);
+    // 玩家站在鱼的正南 20px：鱼要往北（y 更小）躲
+    stepFish(fish, 16, SPAWN.x, SPAWN.y + 20);
+    expect(fish.alarmMs).toBeGreaterThan(0);
+    expect(fish.dodge).toBeLessThan(0);
+    stepFish(calm, 16);
+    // 同一帧里受惊的鱼游得更远
+    expect(Math.abs(fish.travel)).toBeGreaterThan(Math.abs(calm.travel));
+  });
+
+  it('玩家走远后受惊自动回零，不会一直抽搐', () => {
+    const fish = createFish(SPAWN);
+    stepFish(fish, 16, SPAWN.x, SPAWN.y + 20);
+    expect(fish.alarmMs).toBeGreaterThan(0);
+    // 人一直站在旁边会持续受惊（鱼在往外游），走远之后才收
+    for (let i = 0; i < 90; i += 1) stepFish(fish, 16, SPAWN.x + 3000, SPAWN.y + 3000);
+    expect(fish.alarmMs).toBe(0);
+    expect(Math.abs(fish.dodge)).toBeLessThanOrEqual(0.05);
+    // 恢复后仍在湖面往返范围内，摆尾幅度回到 3px
+    expect(Math.abs(fish.y - fish.homeY)).toBeLessThanOrEqual(4);
+  });
 });

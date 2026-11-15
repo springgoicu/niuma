@@ -11,6 +11,7 @@ import {
   type DiceStatePacket,
 } from '@niuma/shared-types';
 import { TOWN_MATERIALS } from './venue-palette';
+import { WINTER_COLORS } from './terrain-palette';
 import type { DepthSink } from './sort-layer';
 
 /**
@@ -44,7 +45,11 @@ const C = {
   chipBlue: 0x3b7bd4,
   chipWhite: 0xe8f1f2,
   neon: 0x5eead4,
-  snow: 0xf2f7ff,
+  /** 桌面台灯：黄铜灯罩 + 暖白灯芯，桌布上一枚暖点 */
+  lampShade: 0xc9a14a,
+  lampCore: 0xfff0b8,
+  /** 亭顶积雪与地面雪同一色阶 */
+  snow: WINTER_COLORS.snowBase,
 } as const;
 
 export class DiceHallView {
@@ -73,6 +78,21 @@ export class DiceHallView {
       .fill({ color: C.woodDark, alpha: 0.12 })
       .rect(DICE_HALL.x + 6, DICE_HALL.y + 6, DICE_HALL.w - 12, DICE_HALL.h - 12)
       .stroke({ color: C.woodLight, width: 2, alpha: 0.35 });
+    // 冬季：亭子半开敞，雪会顺檐口落进来。沿四边内侧堆一圈 3–4px 的雪齿，
+    // 让「亭内木台 ↔ 亭外雪地」之间是自然过渡而不是直角硬切。
+    if (this.winter) {
+      const inner = 8;
+      for (let x = DICE_HALL.x + inner; x < DICE_HALL.x + DICE_HALL.w - inner; x += 8) {
+        const tall = ((Math.imul(x + 13, 2654435761) >>> 0) % 2) + 3;
+        ground.rect(x, DICE_HALL.y + inner, Math.min(8, DICE_HALL.x + DICE_HALL.w - inner - x), tall).fill(C.snow);
+      }
+      for (let y = DICE_HALL.y + inner; y < DICE_HALL.y + DICE_HALL.h - inner; y += 9) {
+        ground.rect(DICE_HALL.x + inner, y, 3, Math.min(9, DICE_HALL.y + DICE_HALL.h - inner - y)).fill(C.snow);
+        ground
+          .rect(DICE_HALL.x + DICE_HALL.w - inner - 3, y, 3, Math.min(9, DICE_HALL.y + DICE_HALL.h - inner - y))
+          .fill(C.snow);
+      }
+    }
     base.addChild(ground);
     for (const root of this.roots) depth.add(root.y, root);
     for (const table of this.tables) depth.add(table.y, table);
@@ -170,6 +190,14 @@ export class DiceHallView {
       g.rect(-halfW + 2, -4, table.w - 4, 2).fill(C.goldDark);
       for (let i = 0; i < 4; i += 1) {
         g.rect(-halfW + 10 + i * 22, -h - 3, 12, 3).fill(i % 2 === 0 ? C.chipRed : C.chipWhite);
+      }
+      // 桌沿两盏黄铜台灯：绿绒桌因此有了「牌桌上方的暖光」，
+      // 关掉柔光层（`?light=0`）也还留得住两个亮点，不会变成一块纯绿。
+      for (const lx of [-halfW + 14, halfW - 14]) {
+        g.rect(lx - 1, -h - 6, 2, 5).fill(C.goldDark);
+        g.rect(lx - 5, -h - 9, 10, 2).fill(C.goldDark);
+        g.rect(lx - 4, -h - 12, 8, 3).fill(C.lampShade);
+        g.rect(lx - 3, -h - 11, 6, 2).fill(C.lampCore);
       }
       if (this.winter) g.rect(-halfW + 2, -h + 2, table.w - 4, 2).fill(C.snow);
       root.addChild(g);

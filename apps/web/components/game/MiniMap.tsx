@@ -33,12 +33,13 @@ export function MiniMap({ hostRef }: { hostRef: (host: HTMLDivElement | null) =>
         ref={hostRef}
         className="block"
         style={{ width: MINIMAP_SIZE, height: MINIMAP_SIZE }}
-        aria-label={`${region}附近 ${nearby} 头牛马，视野半径 900 像素`}
+        aria-label={`${region}附近 ${nearby} 头牛马，视野半径 1000 像素`}
       />
 
       <div className="flex items-center justify-between border-t-2 border-ink-700 px-2.5 py-1 font-mono text-[9px] tracking-[0.12em] text-mist-500">
         <span>SCAN 4Hz</span>
-        <span>AOI 900px</span>
+        {/* 与 shared-types 的 VIEW_RADIUS=1000 对齐：旧文案写 900，和画布覆盖范围对不上 */}
+        <span>AOI 1000px</span>
       </div>
     </div>
   );

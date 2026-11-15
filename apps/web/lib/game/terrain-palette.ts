@@ -185,6 +185,10 @@ export const MINIMAP_COLORS = {
   sand: cssColor(TERRAIN_COLORS.sandLight),
   water: cssColor(TERRAIN_COLORS.waterMid),
   fence: cssColor(TERRAIN_COLORS.fenceRail),
+  /** 土路的压暗描边：让放射状路网在缩略图上仍是一个「骨架」而不是几块色斑 */
+  dirtEdge: cssColor(TERRAIN_COLORS.dirtEdge),
+  /** 地标图标的深边：取深靛，与全站描边同一色相，不用纯黑 */
+  markInk: '#2a3142',
   self: '#4fe3c1',
   other: '#f4ede1',
 } as const;

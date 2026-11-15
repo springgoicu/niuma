@@ -12,6 +12,8 @@ import {
   MOVE_SPEED,
   NAV_TARGETS,
   PATIENT_STATE,
+  PLAZA_HOME,
+  SPAWN_CENTER,
   QUEUE_REJECT_REASON,
   RING_CAPACITY,
   RING_EXIT,
@@ -44,6 +46,7 @@ import {
   quantizeCoord,
   readSync,
   readSyncTick,
+  districtById,
   regionAt,
   resolveMotionInto,
   seatById,
@@ -88,10 +91,8 @@ import {
   type ResumeState,
   type RingPacket,
   type ArenaPoolPacket,
+  type ApartmentPeekPacket,
   type DiceStatePacket,
-  type FurniturePlacement,
-  type RoomInvitePacket,
-  type RoomStatePacket,
   type VillaStatePacket,
   type BossShockPacket,
   type EventClaimResult,
@@ -103,8 +104,6 @@ import {
   WORLD_EVENT_KIND,
   WORLD_EVENT_PHASE,
   isWorkDeskSeat,
-  apartmentByDoorNo,
-  apartmentExitHotspotId,
   redPacketSpots,
   RING_BENCH_SEAT_GROUP,
   seatMatchesHotspot,
@@ -137,6 +136,8 @@ import type { AudioEvent, EngineEnv, SessionProfile } from './runtime/engine-env
 import {
   facesBulletin,
   isBulletinHit,
+  isDirectoryHit,
+  isNearDirectory,
   nearestInteractivePropInto,
   hintForHotspot,
   isNearBulletin,
@@ -147,12 +148,33 @@ import {
   snoreDue,
   type InteractiveTarget,
 } from './interactions';
+import {
+  interiorSpotAction,
+  nearestInteriorSpotInto,
+  pickInteriorLine,
+  type InteriorSpotTarget,
+} from './interior-spots';
+import {
+  MEETING_LINES,
+  PHOTO_LINES,
+  ZEN_LINES,
+  idleKindOfSeat,
+  isMeetingSeat,
+  isPavilionSeat,
+  isTheaterScreenHit,
+  isTheaterSeat,
+  linesOfIdleKind,
+  pickVenueLine,
+  venueBubbleDue,
+  venueSpotAt,
+  type VenueSpot,
+} from './venue-spots';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
 import { serverDateKey } from './server-date';
 import { applyClockSample, serverNow, serverTzOffsetMin } from './server-clock';
 import { BOW_DURATION_MS, bowTexelsAt, jumpLiftTexels, jumpShadowFor } from './pony-motion';
 import { Navigator } from './navigator';
-import { findPath } from './pathfinding';
+import { planRoute } from './nav-route';
 import { GameRenderer } from './renderer';
 
 /**
@@ -237,8 +259,11 @@ export interface SessionCallbacks {
   onHint(hint: string | null): void;
   /** 本地姿态、入座状态与座位种类：动作按钮据此显示激活 / 不可用态，只在变化时回调 */
   onLocalState(state: LocalSeatState): void;
-  /** 自动寻路目标：`null` 表示没有在导航（到达、取消、被打断都会回调） */
-  onNav(nav: { id: NavTargetId; name: string } | null): void;
+  /**
+   * 自动寻路目标：`null` 表示没有在导航（到达、取消、被打断都会回调）。
+   * `id` 放宽到 `'plaza'`：回中央广场是客户端动作，不进共享场所表
+   */
+  onNav(nav: { id: NavTargetId | 'plaza'; name: string } | null): void;
   /** 本地被创飞：行为统计用；旁观他人挨打不算自己的抗压记录 */
   onVentHit?(local: boolean): void;
   /** 本地成功击倒他人：空放不回调，旁观互殴也不回调 */
@@ -251,6 +276,13 @@ export interface SessionCallbacks {
   onBoardOpen?(): void;
   /** 在放假告示板旁按 F 或点击牌面：宿主据此展开软木看板（ADR-0060） */
   onBulletinOpen?(): void;
+  /**
+   * 在世界指路牌旁按 F 或点击牌面：宿主据此展开园区导览卡。
+   *
+   * 纯客户端互动（与放假告示板同一路线）：不发包、不进 `WORLD_HOTSPOTS`，
+   * 服务端不会收到任何相关包，因此不需要双端同步发版。
+   */
+  onDirectoryOpen?(): void;
   /** 牛马榜快照（一个指标一条），宿主按 metric 归并后交给面板 */
   onBoard?(packet: BoardPacket): void;
   /** 工牌点赞变化：目标、计数与「是不是你点的」，宿主据此刷新档案弹窗 */
@@ -296,18 +328,12 @@ export interface SessionCallbacks {
   onArenaBetOpen?(): void;
   /** 豪宅门口 / 摇钱树旁按 F：打开小院卡片 */
   onVillaOpen?(villaId: number): void;
-  /** 公寓门口按 F：打开公寓面板（户型 / 家具 / 邀请） */
-  onApartmentOpen?(): void;
   /** 赌桌公共局快照：两张桌一包 */
   onDiceState?(packet: DiceStatePacket): void;
   /** 豪宅牌匾与锁状态 */
   onVillaState?(packet: VillaStatePacket): void;
   /** 八角笼彩池 */
   onArenaPool?(packet: ArenaPoolPacket): void;
-  /** 房间状态：门牌、房主、家具 */
-  onRoomState?(packet: RoomStatePacket): void;
-  /** 朋友邀你去串门 */
-  onRoomInvite?(packet: RoomInvitePacket): void;
   // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
   /** 坐到自己工位上按 F：宿主打开「加班搬砖」终端小游戏 */
   onWorkOpen?(): void;
@@ -410,6 +436,10 @@ export class GameSession {
   private readonly navigator = new Navigator();
   /** 导航方向的复用槽位：与手动输入分开，互不覆盖 */
   private readonly navVector = { x: 0, y: 0 };
+  /** 卡死重规划次数：第一次原地换条路，第二次才交还控制权（ADR-0099） */
+  private navRetries = 0;
+  /** 当前目标的区门先验：重规划时沿用同一份，不必再查一次场所表 */
+  private navApproach: { x: number; y: number } | undefined;
   private readonly names = new Map<number, string>();
   /** netId → 待重试的角色视图定时器：despawn / clearWorld / stop 必须清掉 */
   private readonly viewRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
@@ -453,6 +483,18 @@ export class GameSession {
   private interactCount = 0;
   /** 设施查询输出槽：F 键在按键栈里调用，不为一次查询造字面量 */
   private readonly interactTarget: InteractiveTarget = { kind: 'vending', x: 0, y: 0 };
+  /** 室内陈设查询输出槽（打印机 / 洗手台 / 衣柜 / 反省凳…），与提示条共用 */
+  private readonly interiorTarget: InteriorSpotTarget = {
+    id: '',
+    kind: 'printer',
+    index: 0,
+    x: 0,
+    y: 0,
+  };
+  /** 室内陈设的台词轮转序号：同一个站位连按会换一句话 */
+  private interiorCount = 0;
+  /** 本人是否正开着搬砖终端：只影响工位专注光，不进协议 */
+  private working = false;
   /**
    * 发泄节流与出招窗口。
    *
@@ -480,12 +522,19 @@ export class GameSession {
   /** 躺床计时：lieAt 是躺下时刻，snoreAt 是上一次「Zzz…」 */
   private lieAt = 0;
   private snoreAt = 0;
+  /** 弱交互场所的静置计时：venueIdleAt 是入座时刻，venueBubbleAt 是上一条气泡 */
+  private venueIdleAt = 0;
+  private venueBubbleAt = 0;
+  /** 场所气泡的轮转计数：同一个计数永远同一句，便于复现 */
+  private venueLineCount = 0;
+  /** 已经同步给渲染层的座位 id：影厅压暗只在变化时下发，不在帧循环里重复调用 */
+  private venueSeatApplied = -1;
   /** 最近一次擂台快照（idle 时清空）与收到时刻：HUD 倒计时与本地冻结都读它 */
   private ring: RingPacket | null = null;
   private ringReceivedAt = 0;
-  /** 公寓屋内状态：门口 / 出口热区二选一，渲染层据此叠室内地板 */
+  /** 是否在公寓窗口里探头（ADR-0098）：提示条换成「出门」，位移与动作全部冻结 */
   private inRoom = false;
-  /** 当前所在楼栋（0..5，来自房间快照的门牌号）：出口热区只认自己那栋 */
+  /** 探头所在楼栋（0..5，来自窗口快照）：头部画在这栋楼的窗口上 */
   private roomSlot = -1;
   /** 上次上报给 UI 的本地姿态与入座状态，用来去重 */
   private localPose = -1;
@@ -661,8 +710,7 @@ export class GameSession {
       onDiceState: (packet) => this.handleDiceState(packet),
       onVillaState: (packet) => this.handleVillaState(packet),
       onArenaPool: (packet) => this.handleArenaPool(packet),
-      onRoomState: (packet) => this.handleRoomState(packet),
-      onRoomInvite: (packet) => this.callbacks.onRoomInvite?.(packet),
+      onApartmentPeek: (packet) => this.handleApartmentPeek(packet),
       onPing: (rtt) => {
         this.ping = rtt;
         this.jitter.onRtt(rtt);
@@ -685,7 +733,6 @@ export class GameSession {
           stats: packet.stats,
           unlockedCosmetics: this.localEconomy?.unlockedCosmetics ?? [],
           inventory: packet.inventory,
-          houseTier: packet.houseTier,
           dailyQuests: this.localEconomy?.dailyQuests ?? { day: '', progress: {}, claimed: [] },
         };
         this.callbacks.onWallet?.(packet);
@@ -988,6 +1035,29 @@ export class GameSession {
       return null;
     }
 
+    /**
+     * 再判指路牌：同样是静态地标，同样「不隔空开面板」——
+     * 站在 96px 外点牌面只给一句提示，与 F 键的距离门完全一致。
+     */
+    if (localEid && point && isDirectoryHit(point.x, point.y)) {
+      if (isNearDirectory(Position.x[localEid]!, Position.y[localEid]!)) {
+        this.callbacks.onDirectoryOpen?.();
+      } else {
+        this.showHint('走近一点看导览牌');
+      }
+      return null;
+    }
+
+    /**
+     * 影厅大屏：坐在影厅座椅上点画面就是换台（与 F 同一条口径，纯客户端）。
+     * 没坐下时点屏幕不做事——省得站在门口误触，把别人的片子换掉。
+     */
+    if (localEid && point && isTheaterSeat(this.localSeat) && isTheaterScreenHit(point.x, point.y)) {
+      const channel = this.renderer.cycleTheaterChannel();
+      if (channel) this.showHint(`频道：${channel}`);
+      return null;
+    }
+
     // 点人优先：点谁就开谁的工牌
     const id = this.renderer.pickEntityAt(stageX, stageY);
     if (id !== null && id !== this.localId) return this.badgeOf(id);
@@ -1157,6 +1227,9 @@ export class GameSession {
       this.lieAt = this.elapsed;
       this.snoreAt = this.elapsed;
     }
+    // 场所静置气泡重新计时；影厅压暗由每帧的 `syncVenueSeat()` 跟着本地座位走
+    this.venueIdleAt = this.elapsed;
+    this.venueBubbleAt = this.elapsed;
   }
 
   /**
@@ -1172,6 +1245,13 @@ export class GameSession {
     this.seatIntent = false;
     this.lieAt = 0;
     this.snoreAt = 0;
+    this.venueIdleAt = 0;
+    this.venueBubbleAt = 0;
+    // 起身即收工：专注光不该留在空椅子上（终端浮窗也会跟着关）
+    if (this.working) {
+      this.working = false;
+      this.renderer.setWorking(0, false);
+    }
     // 只有「坐 / 躺 / 占座」才需要回到站立：行走中的跳跃不打断走路循环
     if (!hadSeat && !posed) return;
     if (eid) {
@@ -1227,6 +1307,13 @@ export class GameSession {
       } else if (group !== null && diceTableByGroup(group) !== undefined) {
         // 赌桌圆凳：坐下即入局（ADR-0093），面板被手动关掉后按 F 还能再开
         this.contextHint = HINT.dice;
+      } else if (isTheaterSeat(this.localSeat)) {
+        // 影厅座椅：坐下后 F 就是换频道（纯客户端切画面）
+        this.contextHint = HINT.theater;
+      } else if (isMeetingSeat(this.localSeat)) {
+        this.contextHint = HINT.meeting;
+      } else if (isPavilionSeat(this.localSeat)) {
+        this.contextHint = HINT.pavilion;
       } else {
         // 观战长椅上坐下不是「只能起身」：这里正是押注入口（ADR-0087）
         this.contextHint = group === RING_BENCH_SEAT_GROUP ? HINT.arenaBet : '移动即可起身';
@@ -1241,6 +1328,8 @@ export class GameSession {
         : selectContextHint(x, y, direction, {
             isFreeSeat: (id) => !this.seatOwner.has(id),
             propOut: this.interactTarget,
+            // 与 `interact()` 同一把尺：室内陈设先于设施
+            spotOut: this.interiorTarget,
             seatId: this.localSeat,
             roomId: this.inRoom ? 1 : 0,
             roomSlot: this.roomSlot,
@@ -1453,10 +1542,10 @@ export class GameSession {
     this.ringReceivedAt = 0;
     this.renderer.setRing(null);
     this.callbacks.onRing?.(null, 0);
-    // 房间频道随连接重建：新会话从园区门口重新进
+    // 窗口探头随连接重建：新会话从园区门口重新进
     this.inRoom = false;
     this.roomSlot = -1;
-    this.renderer.setRoomState(null);
+    this.renderer.setApartmentPeek([]);
     this.localId = 0;
     this.localPose = -1;
     this.localSeated = false;
@@ -1519,7 +1608,7 @@ export class GameSession {
   }
 
   /**
-   * 自动寻路（ADR-0040）：以当前本地位置为起点，点一次只跑一次 A*。
+   * 自动寻路（ADR-0040 / ADR-0099）：以当前本地位置为起点，先走路网、再进门口。
    * 入座时先起身；找不到路就明确提示，不把人顶在墙上。
    */
   navigateTo(id: NavTargetId): void {
@@ -1528,20 +1617,50 @@ export class GameSession {
     if (this.localSeat !== 0) this.standUp();
     const target = NAV_TARGETS.find((item) => item.id === id);
     if (!target) return;
-    const path = findPath(Position.x[eid]!, Position.y[eid]!, target.arrive.x, target.arrive.y);
+    // 区门作为「最后一段」的先验：目标在屋里时，图只认门口那一侧
+    const approach = districtById(target.district).gate;
+    this.startNavigation(
+      { id: target.id, name: target.name, arrive: target.arrive },
+      approach,
+    );
+  }
+
+  /**
+   * 回中央广场（ADR-0099）：广场不是场所，不进 `NAV_TARGETS`，
+   * 但走的是同一台自动寻路状态机，终点就是出生点。
+   */
+  navigateHome(): void {
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    if (this.localSeat !== 0) this.standUp();
+    this.startNavigation({ id: 'plaza', name: PLAZA_HOME.name, arrive: SPAWN_CENTER });
+  }
+
+  /** 起一段导航：规划失败时给出提示，成功则接管方向 */
+  private startNavigation(
+    goal: { id: NavTargetId | 'plaza'; name: string; arrive: { x: number; y: number } },
+    approach?: { x: number; y: number },
+  ): void {
+    const eid = this.ecs.get(this.localId);
+    if (!eid) return;
+    const path = planRoute(Position.x[eid]!, Position.y[eid]!, goal.arrive.x, goal.arrive.y, approach);
     if (path === null) {
       this.cancelNavigation();
       this.showHint('找不到过去的路，试着手动走过去');
       return;
     }
-    this.navigator.start(path, target);
-    this.callbacks.onNav({ id: target.id, name: target.name });
+    this.navApproach = approach;
+    this.navRetries = 0;
+    this.navigator.start(path, goal);
+    this.callbacks.onNav({ id: goal.id, name: goal.name });
   }
 
   /** 取消自动寻路：幂等，没有在导航时不触发回调 */
   cancelNavigation(): void {
     if (!this.navigator.active) return;
     this.navigator.cancel();
+    this.navRetries = 0;
+    this.navApproach = undefined;
     this.callbacks.onNav(null);
   }
 
@@ -1704,6 +1823,12 @@ export class GameSession {
    */
   private interact(eid: number): void {
     if (this.elapsed < this.interactAt) return;
+    // 人在公寓窗口里探头（ADR-0098）：任意时刻按 F 都是出门，不再匹配任何热区
+    if (this.inRoom) {
+      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+      this.exitApartment();
+      return;
+    }
     const x = Position.x[eid]!;
     const y = Position.y[eid]!;
     // 红包雨优先于一切热区：站在红包上按 F 一定是抢钱，不该先弹面板（ADR-0088）
@@ -1721,17 +1846,43 @@ export class GameSession {
       this.interactRing();
       return;
     }
+    // 指路牌：只展开导览卡，纯客户端（与牛马榜 / 放假告示板同口径，不发包）
+    if (isNearDirectory(x, y)) {
+      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+      this.callbacks.onDirectoryOpen?.();
+      return;
+    }
     // 其余 F 类互动统一查 `WORLD_HOTSPOTS`（与提示条同一张表、同一个优先级）
     const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
       if (candidate.kind === 'ring') return false;
-      if (candidate.kind === 'apartmentDoor') return !this.inRoom;
-      if (candidate.kind === 'apartmentExit') {
-        return this.inRoom && candidate.id === apartmentExitHotspotId(this.roomSlot);
-      }
       // 入座类热区（赌桌 / 长椅 / 工位）不再过滤：没坐上时下面各自给出「先坐下」
       return true;
     });
     if (!def) {
+      // 弱交互场所（会议室 / 影音室 / 摸鱼亭 / 游乐园打卡点）：纯客户端演出，
+      // 排在陈设与设施之前——坐对了椅子，按 F 就是要开会 / 换台，不该被旁边的咖啡机截走
+      const venueSpot = venueSpotAt(x, y, this.localSeat);
+      if (venueSpot) {
+        this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+        this.activateVenueSpot(venueSpot, x, y);
+        return;
+      }
+      // 室内本地陈设（打印机 / 洗手台 / 衣柜 / 反省凳…）排在设施之前：
+      // 它们贴在走道边，与咖啡机、饮水机就那么几步路，顺序必须与提示条一致
+      const spot = this.interiorTarget;
+      if (nearestInteriorSpotInto(spot, x, y)) {
+        this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+        this.renderer.showBubble(
+          this.localId,
+          pickInteriorLine(spot.kind, this.interiorCount, this.species),
+        );
+        // 洗手：水花落在台面前方一步。位置取感应点而不是脚底——人可能侧着站
+        if (interiorSpotAction(spot.kind, this.interiorCount) === 'wash') {
+          this.renderer.showSplash(spot.x, spot.y + 8);
+        }
+        this.interiorCount += 1;
+        return;
+      }
       const target = this.interactTarget;
       if (!nearestInteractivePropInto(target, x, y)) {
         this.showHint('附近没有可互动的设施');
@@ -1789,14 +1940,68 @@ export class GameSession {
       case 'apartmentDoor':
         this.enterApartment();
         return;
-      case 'apartmentExit':
-        this.exitApartment();
-        return;
       default:
         // 提示条已经说了能做什么；走到这里说明是未来的新热区，先冒一句通用提示
         this.showHint(hintForHotspot(def));
         return;
     }
+  }
+
+  /**
+   * 弱交互场所的一次性 F 反馈（**纯客户端**，不发包、不进服务端状态）：
+   * - 会议室：职场黑话气泡；
+   * - 影音室：本地换台 + 瞬时提示「频道：xxx」；
+   * - 游乐园：头顶相机闪光 + 童年回忆气泡；
+   * - 摸鱼亭：禅意气泡。
+   */
+  private activateVenueSpot(spot: VenueSpot, x: number, y: number): void {
+    switch (spot.kind) {
+      case 'theater': {
+        const name = this.renderer.cycleTheaterChannel();
+        if (name) this.showHint(`频道：${name}`);
+        return;
+      }
+      case 'parkPhoto':
+        // 闪光落在头顶（脚底 y - 34），气泡随后：一按就知道「拍了」
+        this.renderer.flashPhotoAt(x, y - 34);
+        this.renderer.showBubble(this.localId, pickVenueLine(PHOTO_LINES, this.venueLineCount));
+        this.venueLineCount += 1;
+        return;
+      case 'meeting':
+        this.renderer.showBubble(this.localId, pickVenueLine(MEETING_LINES, this.venueLineCount));
+        this.venueLineCount += 1;
+        return;
+      default:
+        this.renderer.showBubble(this.localId, pickVenueLine(ZEN_LINES, this.venueLineCount));
+        this.venueLineCount += 1;
+    }
+  }
+
+  /**
+   * 场所静置气泡：与躺床打呼同一条范式，坐满阈值后每隔一段冒一句，
+   * 起身 / 移动由 `standUp()` 清零计时，不需要另设状态机。
+   */
+  /**
+   * 本地座位 → 渲染层的「场所座位」镜像。
+   *
+   * 只在座位 id 变化时下发一次：被创飞 / 昏迷 / 押送这些路径会直接清 `localSeat`
+   * 而不经过 `standUp()`，用一条变化沿兜住所有出口，影厅压暗不会留在空椅子上。
+   */
+  private syncVenueSeat(): void {
+    if (this.localSeat === this.venueSeatApplied) return;
+    this.venueSeatApplied = this.localSeat;
+    this.renderer.setLocalSeatVenue(this.localSeat);
+  }
+
+  private updateVenueIdle(eid: number): void {
+    if (this.localSeat === 0) return;
+    if (Motion.pose[eid] !== POSE.Sit) return;
+    const kind = idleKindOfSeat(this.localSeat);
+    if (!kind) return;
+    if (!venueBubbleDue(kind, this.elapsed - this.venueIdleAt, this.elapsed - this.venueBubbleAt)) return;
+    this.venueBubbleAt = this.elapsed;
+    this.renderer.showBubble(this.localId, pickVenueLine(linesOfIdleKind(kind), this.venueLineCount));
+    this.venueLineCount += 1;
   }
 
   /**
@@ -1932,6 +2137,18 @@ export class GameSession {
   /** 终端小游戏完成一轮：只上报连击数，金额由服务端裁决 */
   claimWork(combo: number): void {
     this.net?.sendWorkClaim(combo);
+  }
+
+  /**
+   * 搬砖终端开 / 关：只驱动工位上的那一圈专注光（纯表现，不发包）。
+   *
+   * 开关由宿主 UI 给出（终端浮窗的 `open`），因为「倒计时」只活在主线程的小游戏里；
+   * 服务端认的是坐姿与领取间隔，与这里的灯无关。
+   */
+  setWorking(active: boolean): void {
+    if (active === this.working) return;
+    this.working = active;
+    this.renderer.setWorking(this.localSeat, active);
   }
 
   /** 领取每日悬赏：进度与当日已领都由服务端判 */
@@ -2115,30 +2332,14 @@ export class GameSession {
     this.net?.sendVilla({ villa: villaId, action });
   }
 
-  /** 进公寓：服务端分配房间频道后把人传送到室内落点 */
+  /** 进公寓：服务端占一个空闲窗口，头就出现在这栋楼的窗洞里（ADR-0098） */
   enterApartment(): void {
     this.net?.sendApartment({ action: 0, arg: 0 });
   }
 
-  /** 出公寓：回到门口台阶，屋内家具与门牌留在频道里 */
+  /** 出公寓：人回到门口台阶，之后就是普通园区玩家 */
   exitApartment(): void {
     this.net?.sendApartment({ action: 1, arg: 0 });
-    this.setInsideRoom(false);
-  }
-
-  /** 户型升级：价格与档位由 `HOUSE_TIERS` 决定，服务端扣币 */
-  upgradeApartment(): void {
-    this.net?.sendApartment({ action: 2, arg: 0 });
-  }
-
-  /** 邀请朋友来串门：对方两分钟内到公寓门口按 F 就会进你这间屋 */
-  inviteRoom(targetId: number): void {
-    this.net?.sendApartmentInvite(targetId);
-  }
-
-  /** 上传家具布局：件数、格子与「有没有买过」都由服务端复核 */
-  saveRoomLayout(placements: ReadonlyArray<FurniturePlacement>): void {
-    this.net?.sendRoomLayout(placements);
   }
 
   /** 赌桌 / 豪宅 / 彩池的快照回调：面板与美术层都读这一份，不各自维护 */
@@ -2164,23 +2365,19 @@ export class GameSession {
     this.callbacks.onArenaPool?.(packet);
   }
 
-  private handleRoomState(packet: RoomStatePacket): void {
-    // 门牌号 → 楼栋：六栋楼各有自己的出口热区（ADR-0095）
-    this.roomSlot = apartmentByDoorNo(packet.doorNo)?.slot ?? -1;
-    this.setInsideRoom(true);
-    this.renderer.setRoomState(packet);
-    this.callbacks.onRoomState?.(packet);
-  }
-
-  /** 屋内 / 屋外切换：提示条要立刻换成「出门」，美术层要叠室内地板 */
-  private setInsideRoom(inside: boolean): void {
-    if (this.inRoom === inside) return;
+  /**
+   * 窗口探头快照（ADR-0098）：全量覆盖，谁在哪栋哪个窗口都在这条包里。
+   *
+   * 「我在不在窗里」也从这份快照反推，不再单独发一条自己的状态包。
+   */
+  private handleApartmentPeek(packet: ApartmentPeekPacket): void {
+    const mine = packet.entries.find((entry) => entry.id === this.localId);
+    const slot = mine ? mine.slot : -1;
+    const inside = slot >= 0;
+    if (this.inRoom !== inside || this.roomSlot !== slot) this.seatHintAt = 0;
     this.inRoom = inside;
-    if (!inside) {
-      this.roomSlot = -1;
-      this.renderer.setRoomState(null);
-    }
-    this.seatHintAt = 0;
+    this.roomSlot = slot;
+    this.renderer.setApartmentPeek(packet.entries);
   }
 
   /**
@@ -2539,6 +2736,7 @@ export class GameSession {
     // 倒地硬直与出招窗口都要冻结位移：前者是「躺在地上动不了」，
     // 后者是「正在头槌，脚不该还在地上滑」（ADR-0051）；颁奖阶段一起定格
     const frozen =
+      this.inRoom ||
       this.escortLocked ||
       this.elapsed < this.stunUntil ||
       this.elapsed < this.ventLockUntil ||
@@ -2613,14 +2811,26 @@ export class GameSession {
       Motion.moving[eid] = 0;
     }
 
-    // 贴着墙角走不动时不能永远顶着：连续 700ms 没有位移就交还控制权
+    // 贴着墙角走不动时不能永远顶着：连续 700ms 没有位移就先原地换一条路，
+    // 还走不动才交还控制权（ADR-0099）
     if (
       this.navigator.active &&
       this.navigator.observe(dt * 1000, Position.x[eid]!, Position.y[eid]!) === 'stuck'
     ) {
       const name = this.navigator.target?.name ?? '目标';
-      this.cancelNavigation();
-      this.showHint(`去${name}的路上被挡住了，试试手动走过去`);
+      const goal = this.navigator.target;
+      const retry =
+        goal && this.navRetries < 1
+          ? planRoute(Position.x[eid]!, Position.y[eid]!, goal.arrive.x, goal.arrive.y, this.navApproach)
+          : null;
+      if (goal && retry && retry.length > 0) {
+        this.navRetries += 1;
+        this.navigator.start(retry, goal);
+        this.showHint('这条路被挡住了，换条路继续走');
+      } else {
+        this.cancelNavigation();
+        this.showHint(`去${name}的路上被挡住了，试试手动走过去`);
+      }
     }
   }
 
@@ -2784,6 +2994,9 @@ export class GameSession {
         this.updateSeatHint(localEid);
       }
       this.updateSnore(localEid);
+      // 开会 / 亭中 / 园内长椅的静置气泡：与打呼同一个节拍
+      this.syncVenueSeat();
+      this.updateVenueIdle(localEid);
       // 上香作揖：同样挂在本地帧节拍上，900ms 包络走完补一次归零
       this.updatePray();
     }

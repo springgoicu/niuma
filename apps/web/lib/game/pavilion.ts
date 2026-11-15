@@ -9,6 +9,7 @@ import {
 } from '@niuma/shared-types';
 import { LANTERN_LIGHT, paintLantern } from './lighting/lanterns';
 import { TOWN_MATERIALS } from './venue-palette';
+import { WINTER_COLORS } from './terrain-palette';
 import type { LightSpec } from './lighting/light-registry';
 import type { DepthSink } from './sort-layer';
 
@@ -53,6 +54,10 @@ const C = {
   // 铜球宝顶
   brass: TOWN_MATERIALS.brass,
   brassDark: 0xa07c34,
+  // 冬季积雪：与地面雪同一色阶（`WINTER_COLORS`），檐口才不会出现两种白
+  snow: WINTER_COLORS.snowBase,
+  snowShade: WINTER_COLORS.snowShade,
+  snowLight: WINTER_COLORS.snowLight,
 } as const;
 
 /** 檐口相对亭心的横向半宽：下檐比上檐宽一圈，重檐才读得出「重」 */
@@ -108,14 +113,33 @@ function lantern(g: Graphics, x: number, hang: number): void {
   paintLantern(g, x, hang - 4);
 }
 
+/**
+ * 檐口积雪：沿檐口底边铺一排 2–4px 的雪齿。
+ *
+ * 一条齐平的白色横带会读成「贴纸」，所以用位置哈希让每段雪高矮不一，
+ * 两端再收窄一档——雪是堆出来的，不是画出来的。
+ */
+function snowEave(g: Graphics, half: number, y: number): void {
+  for (let x = -half + 2; x < half - 2; x += 6) {
+    const width = Math.min(6, half - 2 - x);
+    const tall = ((Math.imul(x + 17, 2654435761) >>> 0) % 3) + 2;
+    g.rect(x, y, width, tall).fill(C.snow);
+    if (tall > 2) g.rect(x, y + tall - 1, width, 1).fill(C.snowShade);
+  }
+  g.rect(-half + 2, y - 1, (half - 2) * 2, 1).fill(C.snowLight);
+}
+
 export class PavilionView {
   private readonly terrace = new Container();
   private readonly rear = new Container();
   private readonly front = new Container();
   /** 四角挂灯的地面光池：半径 48 的暖白漫射（ADR-0096） */
   readonly lights: LightSpec[] = [];
+  /** 冬季：檐口雪线 + 台基雪齿。雪只加在表现层，不参与碰撞 */
+  private readonly winter: boolean;
 
-  constructor() {
+  constructor(winter = false) {
+    this.winter = winter;
     this.terrace.position.set(MOPING_PAVILION.x, MOPING_PAVILION.y);
     this.rear.position.set(MOPING_PAVILION.x, MOPING_PAVILION.y);
     this.front.position.set(MOPING_PAVILION.x, MOPING_PAVILION.y);
@@ -132,6 +156,17 @@ export class PavilionView {
     rect(g, -96, -4, 192, 4, C.terraceEdge);
     rect(g, -94, -14, 188, 1, C.terraceLight);
     for (let x = -84; x <= 84; x += 24) rect(g, x, -13, 1, 9, C.terraceSeam);
+    // 台基积雪：雪从草面爬上石阶，沿三面边缘堆 2–3px 的雪齿，
+    // 台基与草地之间因此不再是一条直角硬边（亭子是半开敞的，雪本来就会飘进来）。
+    if (this.winter) {
+      for (let x = -98; x < 98; x += 7) {
+        const tall = ((Math.imul(x + 29, 2246822519) >>> 0) % 2) + 2;
+        rect(g, x, -14, 7, tall, C.snow);
+      }
+      rect(g, -98, -14, 196, 1, C.snowLight);
+      rect(g, -98, -10, 3, 10, C.snow);
+      rect(g, 95, -10, 3, 10, C.snow);
+    }
     this.terrace.addChild(g);
   }
 
@@ -165,6 +200,12 @@ export class PavilionView {
     eave(g, EAVE_LOW, EAVE_MID, LOW_BOTTOM, LOW_TOP);
     // 上坡屋面
     eave(g, EAVE_MID + 8, EAVE_TOP, HIGH_BOTTOM, HIGH_TOP);
+    // 冬季：两级檐口各压一排雪齿，雪线停在封檐板上、不越进亭内
+    if (this.winter) {
+      snowEave(g, EAVE_LOW, LOW_BOTTOM - 1);
+      snowEave(g, EAVE_MID + 8, HIGH_BOTTOM - 1);
+      rect(g, -4, HIGH_TOP - 18, 8, 2, C.snow);
+    }
     // 宝顶：铜球 + 一截短杆
     rect(g, -2, HIGH_TOP - 12, 4, 12, C.brassDark);
     rect(g, -1, HIGH_TOP - 12, 2, 12, C.brass);

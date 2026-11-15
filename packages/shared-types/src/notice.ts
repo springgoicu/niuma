@@ -27,6 +27,8 @@ export const SYSTEM_NOTICE_KIND = {
   AssaultWarn: 6,
   /** 保安带走动手的人：发给看得见他的人（ADR-0074） */
   DetainedFight: 7,
+  /** 公寓窗口住满了：只发给站在门口按 F 的本人（ADR-0098） */
+  ApartmentFull: 8,
 } as const;
 
 export type SystemNoticeKind = (typeof SYSTEM_NOTICE_KIND)[keyof typeof SYSTEM_NOTICE_KIND];
@@ -61,6 +63,7 @@ const TEMPLATES: Readonly<Record<number, NoticeTemplate>> = {
     '保安盯上你了：园区内不许动手，再打一次就请你进小黑屋。',
   [SYSTEM_NOTICE_KIND.DetainedFight]: ({ name }) =>
     name ? `${name} 被保安请进了小黑屋：园区内不许动手。` : null,
+  [SYSTEM_NOTICE_KIND.ApartmentFull]: () => '这栋楼的窗口都住满了，换一栋试试。',
 };
 
 /**

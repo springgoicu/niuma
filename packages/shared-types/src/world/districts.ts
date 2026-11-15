@@ -80,7 +80,7 @@ export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
     id: 'corporate',
     name: '企业区',
     scene: 'indoor',
-    // 企业楼 2620–3540 × 3200–3960 + 楼前庭 3540–3740
+    // 企业楼 2620–3540 × 3200–3976（走廊加宽后南沿下移 16px）+ 楼前庭 3540–3740
     rects: [{ x: 2600, y: 3170, w: 1130, h: 830 }],
     // 区门立在前庭接广场的那条支路上，避开企业楼自己的木构牌坊
     gate: { x: 3760, y: 3780 },
@@ -171,7 +171,18 @@ export type NavTargetId =
   | 'diceHall'
   | 'villa1'
   | 'villa2'
-  | 'apartment';
+  | 'apartment'
+  // ADR-0099：影音室 / 摸鱼亭 / 急救站补进导览（广场不进本表，见 `PLAZA_HOME`）
+  | 'theater'
+  | 'pavilion'
+  | 'clinic';
+
+/**
+ * 广场不是场所，也不属于任何大区，所以不做成 `NavTarget`（否则会破坏
+ * 「导览目标 ↔ 场所 ↔ 大区」一一对应）。导览卡底部另给一条「回中央广场」，
+ * 终点就是出生点，用同一个自动寻路状态机走回去。
+ */
+export const PLAZA_HOME = { id: 'plaza', name: PLAZA_REGION_NAME } as const;
 
 export interface VenueSpec {
   /** 稳定 id：区域名、测试与小地图共用，不进协议 */
@@ -201,11 +212,11 @@ function venue(
  */
 export const VENUES: ReadonlyArray<VenueSpec> = [
   // ---- 服务区 ----
-  venue('clinic', '护士急救站', 'service', 'indoor', CLINIC_RECT),
+  venue('clinic', '护士急救站', 'service', 'indoor', CLINIC_RECT, 'clinic'),
   venue('restroom', '卫生间', 'service', 'indoor', RESTROOM, 'restroom'),
   venue('jail', '小黑屋', 'service', 'indoor', JAIL),
   // ---- 景观区 ----
-  venue('pavilion', '摸鱼亭', 'scenery', 'outdoor', PAVILION_RECT),
+  venue('pavilion', '摸鱼亭', 'scenery', 'outdoor', PAVILION_RECT, 'pavilion'),
   venue('mopingLake', '摸鱼湖', 'scenery', 'outdoor', MOPING_LAKE_RECT),
   venue('chensiPond', '沉思浅塘', 'scenery', 'outdoor', CHENSI_POND_RECT),
   venue('ringLake', '涟漪湖', 'scenery', 'outdoor', RING_LAKE_RECT),
@@ -239,7 +250,7 @@ export const VENUES: ReadonlyArray<VenueSpec> = [
   venue('ring', '绩效八角笼', 'amusement', 'outdoor', RING_ARENA, 'ring'),
   // ---- 生活区 ----
   venue('lounge', '宿舍区', 'living', 'indoor', LOUNGE, 'lounge'),
-  venue('theater', '家庭影音室', 'living', 'indoor', HOME_THEATER),
+  venue('theater', '家庭影音室', 'living', 'indoor', HOME_THEATER, 'theater'),
   ...VILLA_SPECS.map((spec) =>
     venue(`villa${spec.id + 1}`, spec.name, 'living', 'indoor', spec.rect, spec.id === 0 ? 'villa1' : 'villa2'),
   ),
@@ -301,6 +312,12 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   villa2: { x: VILLA_SPECS[1]!.gate.x, y: VILLA_SPECS[1]!.gate.y + 24 },
   // 公寓门口台阶：六栋楼各有自己的门，导览统一送到 301 栋
   apartment: { x: APARTMENT_SPECS[0]!.outside.x, y: APARTMENT_SPECS[0]!.outside.y },
+  // 影音室：东门内侧的走道（三排座椅东侧），进门两步就能坐下
+  theater: { x: HOME_THEATER.x + HOME_THEATER.w - 60, y: HOME_THEATER.y + 160 },
+  // 摸鱼亭：亭南沿两根廊柱之间，站过去就能上台阶入亭
+  pavilion: { x: PAVILION_RECT.x + PAVILION_RECT.w / 2, y: PAVILION_RECT.y + PAVILION_RECT.h - 4 },
+  // 急救站：西侧人行门洞内侧，进门就是导医柜台
+  clinic: { x: CLINIC_RECT.x + 20, y: CLINIC_RECT.y + 90 },
 };
 
 const NAV_SOURCES: ReadonlyArray<{
@@ -320,9 +337,12 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'ring', name: '绩效八角笼', district: 'amusement', scene: 'outdoor', ...rectCenter(RING_ARENA) },
   { id: 'apartment', name: '牛马公寓', district: 'living', scene: 'indoor', ...rectCenter(APARTMENT_SPECS[0]!.rect) },
   { id: 'lounge', name: '宿舍区', district: 'living', scene: 'indoor', ...rectCenter(LOUNGE) },
+  { id: 'theater', name: '家庭影音室', district: 'living', scene: 'indoor', ...rectCenter(HOME_THEATER) },
   { id: 'villa1', name: VILLA_SPECS[0]!.name, district: 'living', scene: 'indoor', ...rectCenter(VILLA_SPECS[0]!.rect) },
   { id: 'villa2', name: VILLA_SPECS[1]!.name, district: 'living', scene: 'indoor', ...rectCenter(VILLA_SPECS[1]!.rect) },
   { id: 'restroom', name: '卫生间', district: 'service', scene: 'indoor', ...rectCenter(RESTROOM) },
+  { id: 'clinic', name: '护士急救站', district: 'service', scene: 'indoor', ...rectCenter(CLINIC_RECT) },
+  { id: 'pavilion', name: '摸鱼亭', district: 'scenery', scene: 'outdoor', ...rectCenter(PAVILION_RECT) },
 ];
 
 export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(

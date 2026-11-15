@@ -12,8 +12,10 @@ import {
   APARTMENT_SPECS,
   CLINIC_ACCESS_PAVING,
   CLINIC_RECT,
+  COMPANY_CORRIDOR,
   DICE_HALL,
   DICE_HALL_CENTER,
+  DICE_TABLES,
   DISTRICTS,
   PLAZA_CENTER,
   PLAZA_RADIUS,
@@ -24,10 +26,18 @@ import {
   WORLD_LAYOUT,
 } from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
-import { VENUE_COLORS } from './venue-palette';
+import { VENUE_COLORS, mixColor } from './venue-palette';
 
 /** 广场地灯盏数：八向均分，光池与灯位共用同一份角度 */
 export const PLAZA_LAMP_COUNT = 8;
+/**
+ * 广场**真实光源**的盏数：只点亮四个正交方向。
+ *
+ * 斜向那四盏原本与它们脚下的灯柱道具光（`scene-lights` 的 lamp 档，r84 / 0.85）
+ * 完全重复；把这四个名额让出来，才能给「广场中心一枚大半径暖光池」腾位置。
+ * 地面光池仍按 `PLAZA_LAMP_COUNT` 画满八处，视觉上八盏灯都还亮着。
+ */
+export const PLAZA_LIGHT_COUNT = 4;
 
 export function venueLights(): LightSpec[] {
   const lights: LightSpec[] = [];
@@ -70,7 +80,8 @@ export function venueLights(): LightSpec[] {
       y: RING_ARENA.y + RING_ARENA.h,
       radius: 110,
       color: 0xffd08a,
-      intensity: 0.34,
+      // 0.3：南侧补光只负责把围绳外那一圈观众席托起来，压过顶灯就变成两团抢戏
+      intensity: 0.3,
     },
   );
 
@@ -94,28 +105,44 @@ export function venueLights(): LightSpec[] {
     },
   );
 
-  // 诊所：站内冷白顶灯 + 西门外琥珀泊车灯
+  // 两张绿绒桌各一盏：此前桌心离厅内两盏灯都有 190px，桌面在夜里几乎没有直射光。
+  // 强度 0.32 / 半径 84 只照亮桌面与牌位，让「坐下来那一局」有自己的光。
+  for (const table of DICE_TABLES) {
+    lights.push({
+      x: table.x,
+      y: table.y + table.h / 2 - 6,
+      radius: 84,
+      color: 0xffd9a0,
+      intensity: 0.32,
+      flicker: 0.05,
+    });
+  }
+
+  // 诊所：站内冷白顶灯 + 西门外琥珀泊车灯。
+  // 站内压到 0.34、门灯提到 0.4：夜里先看见的是「门」，进门之后才是冷白的诊台。
   lights.push(
     {
       x: CLINIC_RECT.x + CLINIC_RECT.w / 2,
       y: CLINIC_RECT.y + 22,
       radius: 130,
       color: VENUE_COLORS.clinic.glow,
-      intensity: 0.4,
+      intensity: 0.34,
     },
     {
       x: CLINIC_ACCESS_PAVING.x + 60,
       y: CLINIC_ACCESS_PAVING.y + 22,
-      radius: 78,
+      radius: 88,
       color: 0xffb84a,
-      intensity: 0.3,
+      intensity: 0.4,
       flicker: 0.12,
     },
   );
 
-  // 中央广场：八盏地灯绕外圈
-  for (let i = 0; i < PLAZA_LAMP_COUNT; i += 1) {
-    const angle = (i / PLAZA_LAMP_COUNT) * Math.PI * 2 + Math.PI / 8;
+  // 中央广场：四盏地灯绕外圈（斜向四盏交给灯柱道具光，见 PLAZA_LIGHT_COUNT）
+  const plazaStep = PLAZA_LAMP_COUNT / PLAZA_LIGHT_COUNT;
+  for (let i = 0; i < PLAZA_LIGHT_COUNT; i += 1) {
+    const index = i * plazaStep;
+    const angle = (index / PLAZA_LAMP_COUNT) * Math.PI * 2 + Math.PI / 8;
     lights.push({
       x: PLAZA_CENTER.x + Math.cos(angle) * (PLAZA_RADIUS - 36),
       y: PLAZA_CENTER.y + Math.sin(angle) * (PLAZA_RADIUS - 36) * 0.62,
@@ -125,6 +152,18 @@ export function venueLights(): LightSpec[] {
       flicker: 0.08,
     });
   }
+
+  // 广场中心：一枚大半径、极低强度的暖光池。
+  // 半径 300 让动线在夜里读得出「广场是一个圆」，强度 0.2 保证石砖纹理不被洗白；
+  // 这是全园最亮的一枚「面积」而不是最亮的一枚「点」，所以不刺眼。
+  lights.push({
+    x: PLAZA_CENTER.x,
+    y: PLAZA_CENTER.y,
+    radius: 300,
+    color: 0xffd9a0,
+    intensity: 0.2,
+    flicker: 0.03,
+  });
 
   // 茶台：一盏暖黄，烛火级别的抖动
   lights.push({
@@ -136,17 +175,33 @@ export function venueLights(): LightSpec[] {
     flicker: 0.14,
   });
 
-  // 五座区门（ADR-0097）：每座门头一盏低强度暖灯，夜里读得出「这是哪个区的门」
+  // 五座区门（ADR-0097）：每座门头一盏低强度暖灯，夜里读得出「这是哪个区的门」。
+  // 门头两枚亮核是烘焙像素（`?light=0` 时仍在），这盏灯只负责脚下那圈区色光池；
+  // 光心抬到横梁下沿，光池正好落在门槛石与门垫上。
+  // 颜色取「区色混六成暖白」而不是纯区色：服务区是冷青、景观区偏绿，
+  // 直接用区色会在夜里把门头照成一片冷绿，读起来不像有人点的灯。
+  // 区色仍留在匾额与门垫上，门灯只负责「温暖的门洞」。
   for (const district of DISTRICTS) {
     lights.push({
       x: district.gate.x,
-      y: district.gate.y - 24,
-      radius: 56,
-      color: district.color,
-      intensity: 0.28,
+      y: district.gate.y - 30,
+      radius: 66,
+      color: mixColor(district.color, 0xffc98a, 0.6),
+      intensity: 0.34,
       flicker: 0.06,
     });
   }
+
+  // 企业楼走廊：920px 的走廊此前一盏灯都没有，夜里从大门进来是一条黑缝。
+  // 只放一盏在走廊中段，靠光图半径 120 把两端压低，不至于把整条走廊照成白条。
+  lights.push({
+    x: COMPANY_CORRIDOR.x + COMPANY_CORRIDOR.w / 2,
+    y: COMPANY_CORRIDOR.y + COMPANY_CORRIDOR.h / 2,
+    radius: 120,
+    color: 0xffd2a0,
+    intensity: 0.3,
+    flicker: 0.05,
+  });
 
   // 发泄室：顶灯一盏，冷白低强度，只照亮橡胶地中央
   lights.push({

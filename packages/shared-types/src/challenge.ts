@@ -230,7 +230,7 @@ export const SHOP_KIND = {
   Item: 1,
   /** 赛博茶水强化站的装扮货架（ADR-0087） */
   Cosmetic: 2,
-  /** 牛马公寓的家具（买一次永久拥有，摆放不重复扣钱） */
+  /** 曾用于牛马公寓的家具：随 ADR-0098 下线，编号永久留空不复用 */
   Furniture: 3,
 } as const;
 export type ShopKind = (typeof SHOP_KIND)[keyof typeof SHOP_KIND];

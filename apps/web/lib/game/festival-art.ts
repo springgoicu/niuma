@@ -11,6 +11,7 @@ import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
 import {
   BUNTING_LAMP_GAP,
+  DISTRICT_BUNTING_W,
   festivalDecorPlan,
   festivalLights,
   type FestivalAnchor,
@@ -34,6 +35,8 @@ const BUNTING_H = 48;
 /** 门楣彩旗贴在门架横梁上：148 = 两根门架立柱的间距 */
 const GATE_BUNTING_W = 148;
 const GATE_BUNTING_H = 44;
+/** 区门彩旗：宽度必须等于区门横枋的 108，否则左右各溢 20px 会悬空 */
+const DISTRICT_BUNTING_H = 40;
 const TREE_LANTERN_W = 24;
 const TREE_LANTERN_H = 32;
 
@@ -140,6 +143,10 @@ export class FestivalArt {
   attach(depth: DepthSink, renderer: TextureFactory): void {
     const bunting = [0, 1, 2].map((variant) => this.bakeBuntingPair(renderer, PALETTES[variant]!, BUNTING_W, BUNTING_H, 16));
     const gate = [0, 1].map((variant) => this.bakeBuntingPair(renderer, PALETTES[variant]!, GATE_BUNTING_W, GATE_BUNTING_H, 12));
+    // 区门彩旗：108 宽与横枋同宽，下垂量取 10，旗面不会垂到门洞里
+    const district = [0, 1, 2].map((variant) =>
+      this.bakeBuntingPair(renderer, PALETTES[variant]!, DISTRICT_BUNTING_W, DISTRICT_BUNTING_H, 10),
+    );
     const treeTexture = bake(renderer, paintTreeLantern, {
       frame: new Rectangle(0, 0, TREE_LANTERN_W, TREE_LANTERN_H),
     });
@@ -151,6 +158,17 @@ export class FestivalArt {
         sprite.anchor.set(0.5, 0);
         sprite.position.set(anchor.x, anchor.y);
         this.add(depth, anchor, sprite);
+        continue;
+      }
+
+      if (anchor.kind === 'district-bunting') {
+        // 区门彩旗与横枋同宽：锚点取门头中心，旗面正好压在梁面上
+        const pair = district[anchor.variant % 3]!;
+        const sprite = new Sprite(pair[0]);
+        sprite.anchor.set(0.5, 0);
+        sprite.position.set(anchor.x, anchor.y);
+        this.add(depth, anchor, sprite);
+        this.animated.push({ sprite, textures: pair, phase: phaseOf(anchor.x, anchor.y), frame: 0 });
         continue;
       }
 

@@ -1560,7 +1560,6 @@ describe('匿名设备段与 PONG 时钟段（ADR-0081）', () => {
     coins: 42,
     stats: { atkSpeedLv: 1, workEffLv: 0, critLv: 0, armorLv: 0 },
     inventory: { ice_americano: 2 },
-    houseTier: 1,
   });
 
   it('HELLO 带设备号时只在尾部多 9 字节，老段照常量解析', () => {

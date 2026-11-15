@@ -30,8 +30,8 @@ describe('园区导览方位（ADR-0036）', () => {
   it('出生点全部导览目标都可读，顺序与 NAV_TARGETS 一致', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     expect(readings.map((reading) => reading.target.id)).toEqual(NAV_TARGETS.map((target) => target.id));
-    // 室内 5 + 园区 7：新增的赌场、两栋小院与公寓也都有读数
-    expect(readings).toHaveLength(12);
+    // ADR-0099：补上影音室 / 摸鱼亭 / 急救站后共 15 处
+    expect(readings).toHaveLength(15);
     for (const reading of readings) {
       expect(reading.distance).toBeGreaterThan(0);
       expect(reading.seconds).toBe(Math.max(1, Math.round(reading.distance / MOVE_SPEED)));
@@ -58,11 +58,12 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(octant('restroom')).toBe(1);
     expect(octant('lounge')).toBe(4);
     expect(octant('park')).toBe(0);
-    // 每个目标都带大区与场景，导览卡据此分组
+    // 每个目标都带大区与场景，导览卡据此分组（景观区只有摸鱼亭一个目标）
     expect(NAV_TARGETS.filter((target) => target.district === 'corporate')).toHaveLength(4);
     expect(NAV_TARGETS.filter((target) => target.district === 'amusement')).toHaveLength(3);
-    expect(NAV_TARGETS.filter((target) => target.district === 'living')).toHaveLength(4);
-    expect(NAV_TARGETS.filter((target) => target.district === 'service')).toHaveLength(1);
+    expect(NAV_TARGETS.filter((target) => target.district === 'living')).toHaveLength(5);
+    expect(NAV_TARGETS.filter((target) => target.district === 'service')).toHaveLength(2);
+    expect(NAV_TARGETS.filter((target) => target.district === 'scenery')).toHaveLength(1);
     for (const target of NAV_TARGETS) {
       expect(['indoor', 'outdoor', 'semi']).toContain(target.scene);
     }
@@ -70,7 +71,7 @@ describe('园区导览方位（ADR-0036）', () => {
 
   it('五个大区都至少有一个导览目标，且都远于一步', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
-    for (const district of ['corporate', 'amusement', 'living', 'service'] as const) {
+    for (const district of ['corporate', 'amusement', 'living', 'service', 'scenery'] as const) {
       const inDistrict = readings.filter((reading) => reading.target.district === district);
       expect(inDistrict.length, district).toBeGreaterThan(0);
       for (const reading of inDistrict) expect(reading.distance).toBeGreaterThan(MOVE_SPEED);

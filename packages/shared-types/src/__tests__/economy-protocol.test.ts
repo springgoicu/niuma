@@ -44,7 +44,6 @@ const PROFILE = sanitizeEconomyProfile({
   coins: 420,
   stats: { atkSpeedLv: 3, workEffLv: 1, critLv: 0, armorLv: 2 },
   inventory: { ice_americano: 4, slack_shield: 1 },
-  houseTier: 2,
 });
 
 describe('牛马币经济段', () => {
@@ -85,8 +84,8 @@ describe('牛马币经济段', () => {
       undefined,
       PROFILE,
     );
-    // 载荷 = 10 字节固定头 + 2 种道具 × 3 字节
-    const economyAt = packet.byteLength - (2 + 10 + 6);
+    // 载荷 = 9 字节固定头 + 2 种道具 × 3 字节
+    const economyAt = packet.byteLength - (2 + 9 + 6);
     expect(packet[economyAt]).toBe(ECONOMY_EXTENSION_MAGIC);
     expect(readEconomySegment(packet, economyAt)).toEqual(PROFILE);
 
@@ -100,22 +99,19 @@ describe('牛马币经济段', () => {
       coins: -10,
       stats: { atkSpeedLv: 99 },
       inventory: { ice_americano: 500, unknown_item: 9 },
-      houseTier: 42,
     });
     expect(profile.coins).toBe(0);
     expect(profile.stats.atkSpeedLv).toBe(10);
     expect(profile.inventory).toEqual({ ice_americano: 99 });
-    expect(profile.houseTier).toBe(5);
     expect(clampCoins(1e12)).toBe(999_999_999);
   });
 });
 
 describe('钱包同步包', () => {
-  it('携带余额、四维、房屋等级、原因与完整背包', () => {
+  it('携带余额、四维、原因与完整背包', () => {
     const packet = encodeWalletSync({
       coins: 999,
       stats: PROFILE.stats,
-      houseTier: 2,
       reason: WALLET_REASON.MatchReward,
       inventory: { ice_americano: 3 },
     });
@@ -123,21 +119,19 @@ describe('钱包同步包', () => {
     expect(decodeWalletSync(packet)).toEqual({
       coins: 999,
       stats: PROFILE.stats,
-      houseTier: 2,
       reason: WALLET_REASON.MatchReward,
       inventory: { ice_americano: 3 },
     });
   });
 
-  it('背包为空时仍能往返，且最多占 12 字节', () => {
+  it('背包为空时仍能往返，且最多占 11 字节', () => {
     const packet = encodeWalletSync({
       coins: 0,
       stats: PROFILE.stats,
-      houseTier: 0,
       reason: WALLET_REASON.Init,
       inventory: {},
     });
-    expect(packet.byteLength).toBe(12);
+    expect(packet.byteLength).toBe(11);
     expect(decodeWalletSync(packet).inventory).toEqual({});
   });
 
@@ -145,7 +139,6 @@ describe('钱包同步包', () => {
     const packet = encodeWalletSync({
       coins: 1,
       stats: PROFILE.stats,
-      houseTier: 0,
       reason: WALLET_REASON.Init,
       inventory: { ice_americano: 2 },
     });

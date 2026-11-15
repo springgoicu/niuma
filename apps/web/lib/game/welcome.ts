@@ -5,6 +5,8 @@ import { WELCOME_LANDMARKS } from '@niuma/shared-types';
 import { signPlates, type SignPlate } from './signpost';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
+import { WINTER_COLORS } from './terrain-palette';
+import { darken } from './venue-palette';
 
 /**
  * 中央迎宾地标（ADR-0047 / ADR-0049）：霓虹拱门 + 四向园区导览牌。
@@ -63,7 +65,7 @@ function neonLine(g: Graphics, x: number, y: number, w: number, h: number): void
  * 迎宾拱门：两根铸铁/深木立柱 + 横梁 + 奶油底牌。
  * 牌面由 Pixi Text 写「牛马园区 / NIOMA」，Graphics 只负责形与霓虹边。
  */
-function drawArch(g: Graphics, w: number, h: number): void {
+function drawArch(g: Graphics, w: number, h: number, winter = false): void {
   g.ellipse(w / 2, h - 2, w / 2 - 18, 5).fill({ color: COLOR.shadow, alpha: 0.22 });
 
   // 立柱与柱脚
@@ -98,6 +100,22 @@ function drawArch(g: Graphics, w: number, h: number): void {
   ] as const) {
     g.circle(x, y, 3).fill({ color: COLOR.mint, alpha: 0.22 });
     g.rect(x - 1, y - 1, 2, 2).fill(COLOR.mintGlow);
+  }
+
+  // 冬季：横梁与招牌顶上各积一条雪，两根立柱脚下堆雪。
+  // 拱门是薄薄的木架，雪只停在受雪的横平面上，不会沿着立柱往下淌。
+  if (winter) {
+    const snow = WINTER_COLORS.snowBase;
+    for (let x = 10; x < w - 10; x += 8) {
+      const tall = ((Math.imul(x + 7, 2654435761) >>> 0) % 2) + 2;
+      g.rect(x, 6, Math.min(8, w - 10 - x), tall).fill(snow);
+    }
+    g.rect(10, 6, w - 20, 1).fill(WINTER_COLORS.snowLight);
+    for (let x = 26; x < w - 26; x += 10) g.rect(x, 8, 10, 2).fill(snow);
+    for (const x of [10, w - 24]) {
+      g.ellipse(x + 9, h - 4, 13, 4).fill(snow);
+      g.ellipse(x + 7, h - 5, 7, 3).fill(WINTER_COLORS.snowLight);
+    }
   }
 }
 
@@ -163,12 +181,16 @@ function drawSignpost(g: Graphics, w: number, h: number, plates: readonly SignPl
   // 标题左侧的菱形记号：读作「导览」，不冒充指北针
   g.poly([plateX + 12, 3, plateX + 16, 7, plateX + 12, 11, plateX + 8, 7]).fill(COLOR.mintDark);
 
-  // 目的地牌：自上而下按 signPlates() 顺序，行位置由 signPlateTop() 统一给出
+  // 目的地牌：自上而下按 signPlates() 顺序，行位置由 signPlateTop() 统一给出。
+  // 左缘一道 4px 区色「书脊」：牌面因此与区门门灯、小地图、导览卡组标题同色，
+  // 远处一眼就能把这块牌和园区里那座门对上（ADR-0097 的区色标）。
   for (let i = 0; i < plates.length; i += 1) {
     const top = plates[i]!.top;
     box(g, 6, top, w - 12, 13, COLOR.paper, COLOR.paperEdge);
+    g.rect(7, top, 4, 13).fill(darken(plates[i]!.color, 0.45));
+    g.rect(8, top, 2, 13).fill(plates[i]!.color);
     g.rect(6, top + 12, w - 12, 1).fill(COLOR.clothLight);
-    drawArrow(g, 20, top + 6, plates[i]!.octant);
+    drawArrow(g, 22, top + 6, plates[i]!.octant);
   }
 
   // 底牌：反色小标签，给「你在这里」一个视觉落点
@@ -251,6 +273,9 @@ export class WelcomeView {
   private readonly landmarks: Landmark[] = [];
   private readonly texts: Text[] = [];
 
+  /** 冬季：拱门横梁与柱脚积雪。纯表现层，`?season=off` 时不画 */
+  constructor(private readonly winter = false) {}
+
   /** 构造期一次性建成；`devicePxPerTexel` 决定中文位图的分辨率 */
   build(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
     this.buildArch(depth, renderer, devicePxPerTexel);
@@ -291,7 +316,7 @@ export class WelcomeView {
   }
 
   private buildArch(depth: DepthSink, renderer: TextureFactory, devicePxPerTexel: number): void {
-    const texture = bake(renderer, (g) => drawArch(g, ARCH.width, ARCH.height), {
+    const texture = bake(renderer, (g) => drawArch(g, ARCH.width, ARCH.height, this.winter), {
       frame: new Rectangle(0, 0, ARCH.width, ARCH.height),
     });
     const root = new Container();
