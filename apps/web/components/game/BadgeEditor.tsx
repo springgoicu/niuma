@@ -78,7 +78,7 @@ export function BadgeEditor({
         ? '超出头顶宽度，保存时会截断'
         : nameStatus.masked
           ? '不文明用词会自动打码'
-          : '改名会换工号与部门';
+          : '工牌名会同步到头顶与档案';
 
   const close = () => {
     nameRef.current?.blur();

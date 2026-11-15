@@ -11,6 +11,7 @@ import {
   JAIL_PHASE,
   MOVE_SPEED,
   NAV_TARGETS,
+  PATIENT_STATE,
   QUEUE_REJECT_REASON,
   RING_CAPACITY,
   RING_EXIT,
@@ -20,19 +21,25 @@ import {
   SHRINE_ALTAR,
   SIT_RANGE,
   STATE_BITS,
-  TEA_STATION,
   SYSTEM_NOTICE_KIND,
-  VENT_COOLDOWN_MS,
   VENT_STUN_MS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
+  BUFF,
+  BUFF_DEFS,
   clampToRing,
   dequantizeCoord,
   directionFromVector,
+  effectiveVentCooldownMs,
   findNearestSeat,
   formatSystemNotice,
   isInRing,
   isNearRing,
+  nearestHotspotOfKinds,
+  HOTSPOT_PRIORITY,
+  setDynamicSolids,
+  villaDoorSolid,
+  VILLA_SPECS,
   packState,
   quantizeCoord,
   readSync,
@@ -45,6 +52,26 @@ import {
   type BoardMetric,
   type BoardPacket,
   type BossPacket,
+  type EconomyProfile,
+  type ItemEffectPacket,
+  type ItemRejectPacket,
+  type LoudspeakerPacket,
+  PLAYER_EFFECT,
+  type PlayerEffectPacket,
+  type ShoutRejectPacket,
+  type P2PDuelStatePacket,
+  type P2PInviteNotifyPacket,
+  type P2PInviteRequest,
+  type P2PInviteResultPacket,
+  type P2PMatchPacket,
+  P2P_MATCH_PHASE,
+  type P2PRespondRequest,
+  type P2PShowdownPacket,
+  type ShopBuyRequest,
+  type TipPacket,
+  type TipRequest,
+  type UseItemRequest,
+  type WalletSyncPacket,
   type CareerSummary,
   type LikePacket,
   type CharacterAppearance,
@@ -55,10 +82,17 @@ import {
   type JailPacket,
   type MotionTarget,
   type NavTargetId,
+  type PatientStatusPacket,
   type Pose,
   type QueueStatusPacket,
   type ResumeState,
   type RingPacket,
+  type ArenaPoolPacket,
+  type DiceStatePacket,
+  type FurniturePlacement,
+  type RoomInvitePacket,
+  type RoomStatePacket,
+  type VillaStatePacket,
   type SeatInstance,
   type SeatKind,
   type SeatStateEntry,
@@ -87,11 +121,8 @@ import type { AudioEvent, EngineEnv, SessionProfile } from './runtime/engine-env
 import {
   facesBulletin,
   isBulletinHit,
-  isNearBulletin,
-  isNearRankBoard,
-  isNearShrine,
-  isNearTeaStation,
   nearestInteractivePropInto,
+  hintForHotspot,
   pickLine,
   pickVentLine,
   pickVentVictimLine,
@@ -100,7 +131,8 @@ import {
   type InteractiveTarget,
 } from './interactions';
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
-import { localDateKey } from './local-date';
+import { serverDateKey } from './server-date';
+import { applyClockSample, serverNow, serverTzOffsetMin } from './server-clock';
 import { BOW_DURATION_MS, bowTexelsAt, jumpLiftTexels, jumpShadowFor } from './pony-motion';
 import { Navigator } from './navigator';
 import { findPath } from './pathfinding';
@@ -193,10 +225,58 @@ export interface SessionCallbacks {
   /** 工牌点赞变化：目标、计数与「是不是你点的」，宿主据此刷新档案弹窗 */
   onLike?(packet: LikePacket): void;
   /**
-   * 擂台快照：`receivedAt` 是收到包的本机时刻，HUD 用它把 `remainingMs` 本地递减。
+   * 擂台快照：`receivedAt` 是收到包的**服务器时刻**（ADR-0081），HUD 用它把
+   * `remainingMs` 递减——玩家的本机时钟不准也不会把倒计时带偏。
    * `null` 表示离开擂台世界（重连 / 换园区），宿主应清空 HUD。
    */
   onRing?(packet: RingPacket | null, receivedAt: number): void;
+  /**
+   * 服务器时钟校准完成（ADR-0081）：把绝对时刻转发给宿主。
+   * Worker 模式下主线程自己收不到 pong，只能靠这条低频消息共享同一份时钟。
+   */
+  onClock?(sample: { epochMs: number; tzOffsetMin: number }): void;
+  /** 钱包快照：主线程据此落盘并刷新 HUD（ADR-0082） */
+  onWallet?(packet: WalletSyncPacket): void;
+  onInvite?(packet: P2PInviteNotifyPacket): void;
+  onInviteResult?(packet: P2PInviteResultPacket): void;
+  onMatch?(packet: P2PMatchPacket): void;
+  /** 头顶亮牌：React 侧据此推进猜拳回合与结算文案 */
+  onShowdown?(packet: P2PShowdownPacket): void;
+  onDuelState?(packet: P2PDuelStatePacket): void;
+  onTip?(packet: TipPacket): void;
+  onItemEffect?(packet: ItemEffectPacket): void;
+  /** 全服大喇叭：宿主渲染置顶金色横幅 */
+  onLoudspeaker?(packet: LoudspeakerPacket): void;
+  /** 大喇叭被拒（文案为空 / 被审核拦下 / 没有道具 / 冷却中） */
+  onShoutReject?(packet: ShoutRejectPacket): void;
+  /** 道具没生效（目标不可用 / 被护盾挡下 / 保护期 / 保安缺席） */
+  onItemReject?(packet: ItemRejectPacket): void;
+  /**
+   * 茶台按 F：打开属性强化面板（ADR-0085）。
+   *
+   * 由渲染线程发起、主线程开面板：`shopOpen` 这类 UI 状态只活在主线程 store 里，
+   * 会话层不认识 React。
+   */
+  onShopOpen?(tab: 'stats' | 'items' | 'cosmetics'): void;
+  // ---- 热区建筑（ADR-0087）----
+  /** 赌桌前按 F：打开这一桌的下注面板 */
+  onDiceOpen?(tableId: number): void;
+  /** 观战长椅上按 F：打开红蓝押注面板 */
+  onArenaBetOpen?(): void;
+  /** 豪宅门口 / 摇钱树旁按 F：打开小院卡片 */
+  onVillaOpen?(villaId: number): void;
+  /** 公寓门口按 F：打开公寓面板（户型 / 家具 / 邀请） */
+  onApartmentOpen?(): void;
+  /** 赌桌公共局快照：两张桌一包 */
+  onDiceState?(packet: DiceStatePacket): void;
+  /** 豪宅牌匾与锁状态 */
+  onVillaState?(packet: VillaStatePacket): void;
+  /** 八角笼彩池 */
+  onArenaPool?(packet: ArenaPoolPacket): void;
+  /** 房间状态：门牌、房主、家具 */
+  onRoomState?(packet: RoomStatePacket): void;
+  /** 朋友邀你去串门 */
+  onRoomInvite?(packet: RoomInvitePacket): void;
 }
 
 /** 一次会话绑定的园区：构造后不再变化，重连与落盘都以它为准 */
@@ -212,6 +292,11 @@ const STATS_INTERVAL = 500;
 const SEAT_HINT_INTERVAL = 150;
 /** 互动节流：连按 F 的两次气泡至少隔这么久 */
 const INTERACT_COOLDOWN_MS = 900;
+/** 热区 id 里的序号（`dice-table-0` / `villa-1-gate`）：只取第一段数字 */
+function hotspotIndex(id: string): number {
+  const match = id.match(/(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
 /** 瞬时提示的保留时长：房间里的环境提示晚一步再抢回这一行 */
 const HINT_HOLD_MS = 1600;
 /**
@@ -320,6 +405,14 @@ export class GameSession {
    */
   private ventAt = 0;
   private ventLockUntil = 0;
+  /**
+   * 本地 Buff 镜像（ADR-0085）：只记两张到期表，服务端仍是唯一权威。
+   *
+   * 预测必须跟着变，否则冰美式期间客户端比服务端慢、降薪贴期间又会被限速截断，
+   * 两种都会表现为「走两步被拽回来」。
+   */
+  private localHasteUntil = 0;
+  private localPosterUntil = 0;
   /** 被创飞后的硬直截止时刻：期间位移被冻结，姿态钉在躺姿（ADR-0051） */
   private stunUntil = 0;
   /**
@@ -334,6 +427,8 @@ export class GameSession {
   /** 最近一次擂台快照（idle 时清空）与收到时刻：HUD 倒计时与本地冻结都读它 */
   private ring: RingPacket | null = null;
   private ringReceivedAt = 0;
+  /** 公寓屋内状态：门口 / 出口热区二选一，渲染层据此叠室内地板 */
+  private inRoom = false;
   /** 上次上报给 UI 的本地姿态与入座状态，用来去重 */
   private localPose = -1;
   private localSeated = false;
@@ -360,6 +455,11 @@ export class GameSession {
   private localAppearance: CharacterAppearance | null = null;
   /** 本地考勤摘要：由宿主组装，随 HELLO / 补报上行 */
   private localCareer: CareerSummary | null = null;
+  /**
+   * 本地资产摘要（ADR-0082）：由宿主从 localStorage 读入，
+   * 收到钱包快照后同步更新，重连时用它上报而不是开场旧值。
+   */
+  private localEconomy: EconomyProfile | undefined;
   /** netId → 远端外观：分享卡与档案徽标共用，despawn 时清理 */
   private readonly appearanceById = new Map<number, CharacterAppearance>();
   /** netId → 远端考勤摘要；旧服务端或未上报时没有条目 */
@@ -494,21 +594,86 @@ export class GameSession {
       onSeatState: (entries) => this.handleSeatState(entries),
       onVent: (packet) => this.handleVent(packet),
       onJail: (packet) => this.handleJail(packet),
+      onAmbulance: (packet) => this.renderer.setAmbulance(packet),
+      onPatient: (packet) => this.handlePatient(packet),
       onBoss: (packet) => this.handleBoss(packet),
       onRing: (packet) => this.handleRing(packet),
+      onDiceState: (packet) => this.handleDiceState(packet),
+      onVillaState: (packet) => this.handleVillaState(packet),
+      onArenaPool: (packet) => this.handleArenaPool(packet),
+      onRoomState: (packet) => this.handleRoomState(packet),
+      onRoomInvite: (packet) => this.callbacks.onRoomInvite?.(packet),
       onPing: (rtt) => {
         this.ping = rtt;
         this.jitter.onRtt(rtt);
       },
-    }, this.options.wsUrl);
+      // 每个 pong 都是一次对时样本（ADR-0081）：服务端报的是园区时区，
+      // 后面所有「今天」与倒计时都由 server-clock 推算，不再读本机日历
+      onClock: (sample) => {
+        applyClockSample(sample);
+        // 主线程的 HUD / 告示板也要用同一份时钟：转发绝对时刻而不是偏移，
+        // 两个线程的单调时钟基准不同，传偏移必然错位
+        this.callbacks.onClock?.({
+          epochMs: serverNow(),
+          tzOffsetMin: sample.tzOffsetMin,
+        });
+      },
+      onWallet: (packet) => {
+        // 背包与四维以服务端为准；外观 / 每日任务不在这条包里的字段保持本地值
+        this.localEconomy = {
+          coins: packet.coins,
+          stats: packet.stats,
+          unlockedCosmetics: this.localEconomy?.unlockedCosmetics ?? [],
+          inventory: packet.inventory,
+          houseTier: packet.houseTier,
+          dailyQuests: this.localEconomy?.dailyQuests ?? { day: '', progress: {}, claimed: [] },
+        };
+        this.callbacks.onWallet?.(packet);
+      },
+      onInvite: (packet) => this.callbacks.onInvite?.(packet),
+      onInviteResult: (packet) => this.callbacks.onInviteResult?.(packet),
+      onMatch: (packet) => {
+        // 对局结束立刻撤掉血条：掉线 / 超时等路径不会再发 DuelState
+        if (packet.phase === P2P_MATCH_PHASE.Finished) this.renderer.clearDuelHuds();
+        this.callbacks.onMatch?.(packet);
+      },
+      onShowdown: (packet) => {
+        // 渲染线程与网络会话同线程：直接驱动 PixiJS 头顶演出，不走 React
+        this.renderer.showShowdown(packet);
+        this.callbacks.onShowdown?.(packet);
+      },
+      onDuelState: (packet) => {
+        this.renderer.setDuelState(packet);
+        this.callbacks.onDuelState?.(packet);
+      },
+      onTip: (packet) => {
+        // 双方头顶各飘一条：出手方 -N，收钱方 +N
+        this.renderer.showCoinFloat(packet.fromId, -packet.amount);
+        this.renderer.showCoinFloat(packet.toId, packet.amount);
+        this.callbacks.onTip?.(packet);
+      },
+      onItemEffect: (packet) => this.callbacks.onItemEffect?.(packet),
+      onPlayerEffect: (packet) => this.applyPlayerEffect(packet),
+      onLoudspeaker: (packet) => this.callbacks.onLoudspeaker?.(packet),
+      onShoutReject: (packet) => this.callbacks.onShoutReject?.(packet),
+      onItemReject: (packet) => this.callbacks.onItemReject?.(packet),
+    }, this.options.wsUrl, this.env.deviceId);
 
     this.name = profile.name;
     this.status = profile.status ?? '';
     this.species = profile.appearance.species;
     this.localAppearance = profile.appearance;
     this.localCareer = profile.career ?? null;
+    this.localEconomy = profile.economy;
     this.boardDirty = true;
-    this.net.connect(profile.name, profile.appearance, resume, this.status, this.localCareer ?? undefined);
+    this.net.connect(
+      profile.name,
+      profile.appearance,
+      resume,
+      this.status,
+      this.localCareer ?? undefined,
+      this.localEconomy,
+    );
     this.callbacks.onStatus('connecting', '握手');
   }
 
@@ -700,7 +865,7 @@ export class GameSession {
   }
 
   /**
-   * 视野内今日工时榜。零持久化下只能统计当前在线且已上报的人；
+   * 视野内今日工时榜。榜单不落盘，只能统计当前在线且已上报的人；
    * 数值直接取摘要里的今日字段，不再叠加会话增量（那会让工时翻倍）。
    * 缓存 2 秒，避免 2Hz 的工牌推送每次都重新排序。
    */
@@ -978,7 +1143,9 @@ export class GameSession {
    */
   private updateSeatHint(eid: number): void {
     if (this.localSeat !== 0) {
-      this.contextHint = '移动即可起身';
+      // 观战长椅上坐下不是「只能起身」：这里正是押注入口（ADR-0087）
+      const group = seatById(this.localSeat)?.group;
+      this.contextHint = group === 'arena-bench' ? HINT.arenaBet : '移动即可起身';
     } else {
       const x = Position.x[eid]!;
       const y = Position.y[eid]!;
@@ -989,6 +1156,8 @@ export class GameSession {
         : selectContextHint(x, y, direction, {
             isFreeSeat: (id) => !this.seatOwner.has(id),
             propOut: this.interactTarget,
+            seatedGroup: this.localSeat !== 0 ? seatById(this.localSeat)?.group ?? null : null,
+            roomId: this.inRoom ? 1 : 0,
           });
     }
     this.publishHint();
@@ -1058,7 +1227,8 @@ export class GameSession {
       id: msgId,
       name: entityId === this.localId ? '我' : name,
       text,
-      at: Date.now(),
+      // 气泡时间按服务器时刻记：跨时区玩家看到的是同一串时间（ADR-0081）
+      at: serverNow(),
       self: entityId === this.localId,
     });
   }
@@ -1070,7 +1240,7 @@ export class GameSession {
    * 直接信任服务端绝对时间的话，两端时钟不一致会让历史消息显示成「未来」。
    */
   private handleChatHistory(packet: ChatHistoryPacket): void {
-    const now = Date.now();
+    const now = serverNow();
     const entries: ChatEntry[] = packet.entries.map((entry) => ({
       id: entry.msgId,
       // 历史条目自带昵称快照：发送者可能早已离场，名字表里查不到
@@ -1101,7 +1271,7 @@ export class GameSession {
       id: --this.systemSeq,
       name: '',
       text,
-      at: Date.now(),
+      at: serverNow(),
       self: false,
       kind: 'system',
       systemKind: kind,
@@ -1170,8 +1340,12 @@ export class GameSession {
     this.lieAt = 0;
     this.snoreAt = 0;
     this.prayAt = -1;
-    // 换连接后旧的硬直 / 出招窗口 / 押送锁都失去意义：新角色从站立开始
+    // 换连接后旧的硬直 / 出招窗口 / 押送锁 / 急救锁都失去意义：新角色从站立开始
     this.stunUntil = 0;
+    // 旧世界的 Buff 镜像与表现同样作废：新会话的状态等 S2C_PLAYER_EFFECT 再说
+    this.localHasteUntil = 0;
+    this.localPosterUntil = 0;
+    this.renderer.clearBuffVisuals();
     this.escortLocked = false;
     this.ventLockUntil = 0;
     this.ventAt = 0;
@@ -1179,6 +1353,9 @@ export class GameSession {
     this.ringReceivedAt = 0;
     this.renderer.setRing(null);
     this.callbacks.onRing?.(null, 0);
+    // 房间频道随连接重建：新会话从园区门口重新进
+    this.inRoom = false;
+    this.renderer.setRoomState(null);
     this.localId = 0;
     this.localPose = -1;
     this.localSeated = false;
@@ -1354,9 +1531,15 @@ export class GameSession {
         this.startOverlay(eid, 'jump');
         return;
       case 'vent': {
-        // 与服务端同一把尺子：本地先挡一道，连点不会白发包（ADR-0051）
+        // 与服务端同一把尺子：本地先挡一道，连点不会白发包（ADR-0051）。
+        // 冷却随攻速等级与冰美式变化（ADR-0085），读共享函数而不是写死常量。
         if (this.elapsed < this.ventAt) return;
-        this.ventAt = this.elapsed + VENT_COOLDOWN_MS;
+        this.ventAt =
+          this.elapsed +
+          effectiveVentCooldownMs(
+            this.localEconomy?.stats.atkSpeedLv ?? 0,
+            this.localVentCooldownMul(),
+          );
         // 行走中也要能出招：先把姿态从 Walk 落回 Idle，`overlayTrackFor` 才会给叠加轨，
         // 再用 ventLockUntil 冻结位移——否则就是「一边滑步一边头槌」
         if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) {
@@ -1421,48 +1604,78 @@ export class GameSession {
     if (this.elapsed < this.interactAt) return;
     const x = Position.x[eid]!;
     const y = Position.y[eid]!;
-    // 擂台在发泄区西侧，与告示板 / 牛马榜都不相邻；放最前是为了不让设施感应圈抢走 F
+    // 八角笼报名 / 取消 / 领奖离场要读阶段与名额，仍由会话层裁决；
+    // 放在最前是为了不让设施感应圈抢走 F
     if (isNearRing(x, y)) {
       this.interactRing();
       return;
     }
-    if (isNearBulletin(x, y)) {
+    // 其余 F 类互动统一查 `WORLD_HOTSPOTS`（与提示条同一张表、同一个优先级）
+    const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
+      if (candidate.kind === 'ring') return false;
+      if (candidate.kind === 'arenaSeat') {
+        return this.localSeat !== 0 && seatById(this.localSeat)?.group === 'arena-bench';
+      }
+      if (candidate.kind === 'apartmentDoor') return !this.inRoom;
+      if (candidate.kind === 'apartmentExit') return this.inRoom;
+      return true;
+    });
+    if (!def) {
+      const target = this.interactTarget;
+      if (!nearestInteractivePropInto(target, x, y)) {
+        this.showHint('附近没有可互动的设施');
+        return;
+      }
       this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
-      this.callbacks.onBulletinOpen?.();
-      return;
-    }
-    if (isNearRankBoard(x, y)) {
-      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
-      this.callbacks.onBoardOpen?.();
-      return;
-    }
-    // 国风玄学两处（ADR-0061）排在设施之前：茶台就贴在饮水机旁，
-    // 优先级写反了会出现「提示说续杯、按下去却在接水」。感应区已经收窄到 48px，
-    // 站在饮水机西侧仍然按得到 cooler。
-    if (isNearShrine(x, y)) {
-      this.offerIncense(eid);
-      return;
-    }
-    if (isNearTeaStation(x, y)) {
-      this.brewTea();
-      return;
-    }
-    const target = this.interactTarget;
-    if (!nearestInteractivePropInto(target, x, y)) {
-      this.showHint('附近没有可互动的设施');
+      this.emitAudio({ kind: 'interact', target: target.kind, x: target.x, y: target.y });
+      this.renderer.showBubble(this.localId, pickLine(target.kind, this.interactCount));
+      this.interactCount += 1;
       return;
     }
     this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
-    this.emitAudio({ kind: 'interact', target: target.kind, x: target.x, y: target.y });
-    this.renderer.showBubble(this.localId, pickLine(target.kind, this.interactCount));
-    this.interactCount += 1;
+    switch (def.kind) {
+      case 'bulletin':
+        this.callbacks.onBulletinOpen?.();
+        return;
+      case 'board':
+        this.callbacks.onBoardOpen?.();
+        return;
+      case 'shrine':
+        this.offerIncense(eid);
+        return;
+      case 'tea':
+        // 茶台 F 打开属性强化面板（ADR-0085 → ADR-0087 增加装扮页签）
+        this.showHint('赛博茶水强化站：属性与装扮都在这里');
+        this.callbacks.onShopOpen?.('stats');
+        return;
+      case 'diceTable':
+        this.callbacks.onDiceOpen?.(hotspotIndex(def.id));
+        return;
+      case 'arenaSeat':
+        this.callbacks.onArenaBetOpen?.();
+        return;
+      case 'villaGate':
+      case 'villaTree':
+        this.callbacks.onVillaOpen?.(hotspotIndex(def.id));
+        return;
+      case 'apartmentDoor':
+        this.enterApartment();
+        return;
+      case 'apartmentExit':
+        this.exitApartment();
+        return;
+      default:
+        // 提示条已经说了能做什么；走到这里说明是未来的新热区，先冒一句通用提示
+        this.showHint(hintForHotspot(def));
+        return;
+    }
   }
 
   /**
    * 上香（ADR-0061）：作揖 + 磬音 + 财神金光 + 头顶金色飘字。
    *
-   * 「当天首次」只按本地自然日判定，凭据存在 localStorage 里（`incense-day.ts`）：
-   * 零服务端持久化，别人看不到你的光晕，「功德 +1」也只做当次提示、不成账。
+   * 「当天首次」按园区自然日判定（ADR-0081），凭据存在 localStorage 里（`incense-day.ts`）：
+   * 本机私有，别人看不到你的光晕，「功德 +1」也只做当次提示、不成账。
    */
   private offerIncense(eid: number): void {
     this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
@@ -1473,27 +1686,11 @@ export class GameSession {
     this.emitAudio({ kind: 'incense', x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y });
     this.renderer.showFloatText(x, y, INCENSE_FLOAT_TEXT);
 
-    const today = localDateKey();
+    const today = serverDateKey(serverNow(), serverTzOffsetMin());
     if (this.incenseDay === today) return;
     this.incenseDay = today;
     this.env.writeIncenseDay(today);
     this.renderer.grantAura(this.localId, INCENSE_AURA_MS);
-  }
-
-  /**
-   * 续杯（ADR-0061）。
-   *
-   * 「消除疲倦状态」落在仓库里真实存在的两处疲倦表现上：被创飞后的硬直
-   * `stunUntil`，与躺床打盹的计时 `snoreAt`。不新增精力条——那会变成一套
-   * 需要服务端同步的状态机，与零持久化冲突。
-   */
-  private brewTea(): void {
-    this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
-    this.emitAudio({ kind: 'tea', x: TEA_STATION.x, y: TEA_STATION.y });
-    this.showHint('咕嘟咕嘟… 喝了一大口枸杞黄芪老参茶！');
-    this.stunUntil = 0;
-    this.snoreAt = this.elapsed;
-    this.renderer.showBubble(this.localId, '防脱发指数 +10% ｜ 气血恢复中');
   }
 
   /** 作揖包络：只在 900ms 窗口内逐帧写下沉量，窗口结束补一次归零 */
@@ -1537,7 +1734,8 @@ export class GameSession {
    * 3. 刷新提示与渲染层的擂台状态。
    */
   private handleRing(packet: RingPacket): void {
-    const receivedAt = Date.now();
+    // 锚点用服务器时刻：HUD 与本地的隐藏倒计时都以它为准（ADR-0081）
+    const receivedAt = serverNow();
     const previous = this.ring;
     const previousSlot = this.ringSlotOf(previous);
     const nextSlot = this.ringSlotOf(packet);
@@ -1577,7 +1775,7 @@ export class GameSession {
   private ringStunRemainMs(): number {
     const remaining =
       this.ring?.phase === RING_PHASE.Running
-        ? this.ring.remainingMs - (Date.now() - this.ringReceivedAt)
+        ? this.ring.remainingMs - (serverNow() - this.ringReceivedAt)
         : 0;
     return Math.max(VENT_STUN_MS, remaining + 500);
   }
@@ -1640,6 +1838,125 @@ export class GameSession {
     }
     this.net?.sendRingEnter();
     this.showHint(this.ring && this.ring.members.length > 0 ? '已报名，等待第 2 位挑战者' : '已报名，正在传送入场');
+  }
+
+  // ---- 牛马币互动（ADR-0082 / ADR-0083）：只发意图，裁决全在服务端 ----
+
+  /** 发起挑战：菜单点「发起挑战」后由服务端校验距离 / 忙碌 / 余额 */
+  inviteDuel(targetId: number, gameType: number, wager: number): void {
+    this.net?.sendP2PInvite({ targetId, gameType, wager, extra: 0 });
+  }
+
+  /** 回应邀请：接受后服务端冻结赌注并开始对局 */
+  respondInvite(inviteId: number, accept: boolean): void {
+    this.net?.sendP2PRespond({ inviteId, accept });
+  }
+
+  /** 猜拳出拳：只发意图，重复出拳与非法值由服务端忽略 */
+  p2pAction(matchId: number, action: number): void {
+    this.net?.sendP2PAction({ matchId, action });
+  }
+
+  /** 打赏：金额由用户选择，服务端扣款后给目标入账 */
+  tip(targetId: number, amount: number): void {
+    this.net?.sendTip({ targetId, amount });
+  }
+
+  /** 对自己或别人使用消耗品：库存不足时服务端不会上效果 */
+  useItem(targetId: number, itemId: number): void {
+    this.net?.sendUseItem({ targetId, itemId });
+  }
+
+  /** 商店购买：属性升级（kind=0）或买道具（kind=1） */
+  buyShop(kind: number, id: number, count = 1): void {
+    this.net?.sendShopBuy({ kind, id, count });
+  }
+
+  /** 大喇叭：30 字上限在编码侧钳制，审核与扣道具都在服务端 */
+  shout(text: string): void {
+    this.net?.sendShout(text);
+  }
+
+  /**
+   * 赌桌下注（ADR-0087）：只发意图，注额冻结、档位判定与派彩全在服务端。
+   *
+   * 客户端不复算赔率：彩池按所有人注额实时变化，本地算出来的数字只会误导人。
+   */
+  placeDiceBet(tableId: number, side: number, amount: number): void {
+    this.net?.sendDiceBet({ table: tableId, side, amount });
+  }
+
+  /** 八角笼观战押注：必须坐在观战长椅上（服务端复核座位组） */
+  placeArenaBet(side: number, amount: number): void {
+    this.net?.sendArenaBet({ side, amount });
+  }
+
+  /** 豪宅操作：买院 / 锁门 / 收摇钱树，动作码见 `VILLA_ACTION` */
+  villaAction(villaId: number, action: number): void {
+    this.net?.sendVilla({ villa: villaId, action });
+  }
+
+  /** 进公寓：服务端分配房间频道后把人传送到室内落点 */
+  enterApartment(): void {
+    this.net?.sendApartment({ action: 0, arg: 0 });
+  }
+
+  /** 出公寓：回到门口台阶，屋内家具与门牌留在频道里 */
+  exitApartment(): void {
+    this.net?.sendApartment({ action: 1, arg: 0 });
+    this.setInsideRoom(false);
+  }
+
+  /** 户型升级：价格与档位由 `HOUSE_TIERS` 决定，服务端扣币 */
+  upgradeApartment(): void {
+    this.net?.sendApartment({ action: 2, arg: 0 });
+  }
+
+  /** 邀请朋友来串门：对方两分钟内到公寓门口按 F 就会进你这间屋 */
+  inviteRoom(targetId: number): void {
+    this.net?.sendApartmentInvite(targetId);
+  }
+
+  /** 上传家具布局：件数、格子与「有没有买过」都由服务端复核 */
+  saveRoomLayout(placements: ReadonlyArray<FurniturePlacement>): void {
+    this.net?.sendRoomLayout(placements);
+  }
+
+  /** 赌桌 / 豪宅 / 彩池的快照回调：面板与美术层都读这一份，不各自维护 */
+  private handleDiceState(packet: DiceStatePacket): void {
+    this.renderer.setDiceState(packet);
+    this.callbacks.onDiceState?.(packet);
+  }
+
+  private handleVillaState(packet: VillaStatePacket): void {
+    // 锁门 → 动态门栅：客户端预测与服务端裁决读同一组矩形
+    const solids: Array<{ x: number; y: number; w: number; h: number }> = [];
+    for (const spec of VILLA_SPECS) {
+      const info = packet.villas.find((villa) => villa.id === spec.id);
+      const solid = villaDoorSolid(spec, info?.locked === true);
+      if (solid) solids.push({ x: solid.x, y: solid.y, w: solid.w, h: solid.h });
+    }
+    setDynamicSolids(solids);
+    this.renderer.setVillaState(packet);
+    this.callbacks.onVillaState?.(packet);
+  }
+
+  private handleArenaPool(packet: ArenaPoolPacket): void {
+    this.callbacks.onArenaPool?.(packet);
+  }
+
+  private handleRoomState(packet: RoomStatePacket): void {
+    this.setInsideRoom(true);
+    this.renderer.setRoomState(packet);
+    this.callbacks.onRoomState?.(packet);
+  }
+
+  /** 屋内 / 屋外切换：提示条要立刻换成「出门」，美术层要叠室内地板 */
+  private setInsideRoom(inside: boolean): void {
+    if (this.inRoom === inside) return;
+    this.inRoom = inside;
+    if (!inside) this.renderer.setRoomState(null);
+    this.seatHintAt = 0;
   }
 
   /**
@@ -1735,6 +2052,136 @@ export class GameSession {
   }
 
   /** 被按肩：放弃座位、钉成躺姿，输入交给服务端直到松手 */
+  /**
+   * 伤员状态（ADR-0084）。
+   *
+   * 本人：昏迷 / 治疗期间沿用 `stunUntil` 冻结位移与技能输入，治愈包到达即解冻；
+   * 旁人：只把星星、爱心与绿色十字盾交给渲染层，不碰自己的输入。
+   */
+  private handlePatient(packet: PatientStatusPacket): void {
+    this.renderer.setPatientStatus(packet);
+
+    if (packet.entityId !== this.localId) {
+      if (packet.state === PATIENT_STATE.Incapacitated) {
+        this.renderer.showBubble(packet.entityId, '工伤昏迷，等救护车…');
+      } else if (packet.state === PATIENT_STATE.Treating) {
+        this.renderer.showBubble(packet.entityId, '护士姐姐正在处理…');
+      }
+      return;
+    }
+
+    switch (packet.state) {
+      case PATIENT_STATE.Incapacitated:
+        this.stunUntil = this.elapsed + 60000;
+        this.ventLockUntil = 0;
+        this.localSeat = 0;
+        this.entitySeat.delete(this.localId);
+        this.seatIntent = false;
+        this.showHint('你被创晕了！救护车正在赶来…');
+        this.renderer.showBubble(this.localId, '眼冒金星… 等救护车');
+        return;
+      case PATIENT_STATE.Treating:
+        this.stunUntil = this.elapsed + 60000;
+        this.ventLockUntil = 0;
+        this.showHint('护士正在处理工伤，3 秒后原地复活');
+        return;
+      case PATIENT_STATE.Shielded: {
+        this.stunUntil = 0;
+        this.ventLockUntil = 0;
+        const eid = this.ecs.get(this.localId);
+        if (eid) {
+          this.emitAudio({ kind: 'incense', x: Position.x[eid]!, y: Position.y[eid]! });
+          this.renderer.showFloatText(Position.x[eid]!, Position.y[eid]!, '治疗完成 · 工伤保护 15s');
+        }
+        this.showHint('治疗完成：15 秒工伤保护，免疫 E 技能推开与受击计数');
+        return;
+      }
+      default:
+        this.stunUntil = 0;
+    }
+  }
+
+  /** 本地移速乘子：与 `speedMultiplier` 同一组系数，只是数据源换成两张到期表 */
+  private localSpeedMul(now: number): number {
+    let mul = 1;
+    if (now < this.localHasteUntil) mul *= BUFF_DEFS[BUFF.Haste].speedMul;
+    if (now < this.localPosterUntil) mul *= BUFF_DEFS[BUFF.Poster].speedMul;
+    return mul;
+  }
+
+  /** 本地冷却乘子：冰美式让发泄冷却打七折 */
+  private localVentCooldownMul(): number {
+    return this.elapsed < this.localHasteUntil ? BUFF_DEFS[BUFF.Haste].ventCdMul : 1;
+  }
+
+  /**
+   * 玩家特效（ADR-0085）。
+   *
+   * 分工：数值一律由服务端写，这里只做三件事——
+   * 1. 把持续型状态交给渲染层（脚底风 / 护盾环 / 贴纸）；
+   * 2. 本地硬直镜像（滑倒 2 秒、被护盾挡下的一次性飘字）；
+   * 3. 音效与气泡。
+   */
+  private applyPlayerEffect(packet: PlayerEffectPacket): void {
+    const { effect, targetId, extraId, durationMs, blocked } = packet;
+    const eid = this.ecs.get(targetId);
+    const x = eid ? Position.x[eid]! : 0;
+    const y = eid ? Position.y[eid]! : 0;
+
+    // 保安盯梢：extraId 是接单保安的实体 id，喊话挂在保安头顶
+    if (effect === PLAYER_EFFECT.Guard && extraId !== 0) {
+      this.renderer.showBubble(extraId, '盯紧你了！');
+    }
+
+    if (blocked) {
+      // 护盾被打碎：撤掉护盾环 + 头顶飘一句，别让对方以为「打了没反应」
+      this.renderer.clearBuffVisual(targetId, PLAYER_EFFECT.Shield);
+      if (eid) {
+        this.renderer.showFloatText(x, y, '护盾挡住！');
+        this.emitAudio({ kind: 'incense', x, y });
+      }
+      return;
+    }
+
+    if (effect === PLAYER_EFFECT.Slip) {
+      this.renderer.setStun(targetId, durationMs);
+      this.renderer.showBubble(targetId, '滑倒了！');
+      if (eid) this.emitAudio({ kind: 'slip', x, y });
+      if (targetId === this.localId) {
+        // 与服务端同一条硬直口径：躺 2 秒，座位同时释放
+        this.stunUntil = Math.max(this.stunUntil, this.elapsed + durationMs);
+        this.ventLockUntil = 0;
+        this.localSeat = 0;
+        this.entitySeat.delete(this.localId);
+        this.seatIntent = false;
+        if (eid) {
+          this.setLocalPose(eid, POSE.Lie);
+          Motion.moving[eid] = 0;
+          this.clearOverlays(eid);
+        }
+      }
+      return;
+    }
+
+    if (effect === PLAYER_EFFECT.Sparkle) {
+      // 彩带没有状态，只有一层头顶飘字：让目标知道「刚刚被放了一炮」
+      if (eid) this.renderer.showFloatText(x, y, '🎉 彩带礼花！');
+      return;
+    }
+    if (effect === PLAYER_EFFECT.Poster && targetId === this.localId) {
+      this.localPosterUntil = Math.max(this.localPosterUntil, this.elapsed + durationMs);
+    }
+    if (effect === PLAYER_EFFECT.Haste && targetId === this.localId) {
+      this.localHasteUntil = Math.max(this.localHasteUntil, this.elapsed + durationMs);
+      this.showHint('冰美式生效：移速 +15%，发泄冷却再缩 30%');
+    }
+    if (effect === PLAYER_EFFECT.Poster) this.renderer.showBubble(targetId, '🐟 带薪摸鱼');
+    if (effect === PLAYER_EFFECT.Guard && targetId === this.localId) {
+      this.showHint('保安正盯着你，别摸鱼了');
+    }
+    this.renderer.setBuffVisual(targetId, effect, durationMs);
+  }
+
   private beginEscort(): void {
     this.escortLocked = true;
     this.cancelNavigation();
@@ -1896,8 +2343,10 @@ export class GameSession {
     if (moving) {
       const prevX = Position.x[eid]!;
       const prevY = Position.y[eid]!;
-      const nextX = clamp(prevX + vx * MOVE_SPEED * dt, 0, WORLD_WIDTH - 1);
-      const nextY = clamp(prevY + vy * MOVE_SPEED * dt, 0, WORLD_HEIGHT - 1);
+      // 本地预测乘上与 Buff 一致的移速系数：冰美式更快、降薪贴更慢
+      const speed = MOVE_SPEED * this.localSpeedMul(this.elapsed);
+      const nextX = clamp(prevX + vx * speed * dt, 0, WORLD_WIDTH - 1);
+      const nextY = clamp(prevY + vy * speed * dt, 0, WORLD_HEIGHT - 1);
       // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
       resolveMotionInto(this.motion, prevX, prevY, nextX, nextY);
       // 擂台边界与服务端逐字一致：参赛者向内夹取，非参赛者不靠移动跨进围绳

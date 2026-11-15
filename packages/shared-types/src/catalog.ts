@@ -24,8 +24,8 @@ export const TAIL_IDS = ['tuft', 'long'] as const;
  * 头饰 6→9、颈饰 3→5、发型 5→7；字节编号仍是 `[27..30]` 各一字节，
  * 32 字节外观编码不需要改协议，旧档的字节值语义保持原样。
  *
- * 警用件（保安专用）继续追加在末尾：头饰 9、颈饰 6。
- * 捏人界面会过滤掉这两件，只有服务端 NPC 的保安档案会使用它们。
+ * 警用件（保安专用）继续追加在末尾：头饰 9、颈饰 6；护士帽（ADR-0084）头饰 10。
+ * 捏人界面会过滤掉这三件，只有服务端 NPC 的保安 / 护士档案会使用它们。
  */
 export const HEADWEAR_IDS = [
   'none',
@@ -38,6 +38,8 @@ export const HEADWEAR_IDS = [
   'bamboo_hat',
   'curse_hoop',
   'police_cap',
+  // 护士帽（ADR-0084）同样只给服务端 NPC 用，追加在末尾避免旧档字节漂移
+  'nurse_cap',
 ] as const;
 export const EYEWEAR_IDS = ['none', 'round', 'sun', 'monocle'] as const;
 export const NECKWEAR_IDS = [

@@ -72,3 +72,36 @@ describe('老板每日血量', () => {
     expect(boss.nextResetAt).toBe(new Date(2026, 10, 21, 0, 0, 0, 0).getTime());
   });
 });
+
+/**
+ * 快照恢复（ADR-0081）：重启不该白送一条新血，也不该把昨天的尸体留在场上。
+ * 两个分支的判据只有一个——回满点有没有过期。
+ */
+describe('老板快照恢复', () => {
+  it('回满点还在未来：血量与重置点原样接上', () => {
+    const boss = runtimeAt();
+    for (let i = 0; i < 100; i += 1) boss.hit(1, NOON);
+    const saved = boss.snapshot();
+    const revived = new BossRuntime(NOON + 60_000);
+    revived.restore(saved, NOON + 60_000);
+    expect(revived.hp).toBe(BOSS_MAX_HP - 100);
+    expect(revived.nextResetAt).toBe(MIDNIGHT);
+  });
+
+  it('停机跨过零点：满血并推进到当前服务器日的下一个零点', () => {
+    const boss = runtimeAt();
+    for (let i = 0; i < 100; i += 1) boss.hit(1, NOON);
+    const revived = new BossRuntime(NEXT_MIDNIGHT);
+    revived.restore(boss.snapshot(), NEXT_MIDNIGHT);
+    expect(revived.hp).toBe(BOSS_MAX_HP);
+    expect(revived.nextResetAt).toBe(new Date(2026, 10, 16, 0, 0, 0, 0).getTime());
+  });
+
+  it('坏档里的越界血量被夹回合法区间', () => {
+    const boss = runtimeAt();
+    boss.restore({ hp: 99_999, resetAt: MIDNIGHT }, NOON);
+    expect(boss.hp).toBe(BOSS_MAX_HP);
+    boss.restore({ hp: -20, resetAt: MIDNIGHT }, NOON);
+    expect(boss.hp).toBe(0);
+  });
+});

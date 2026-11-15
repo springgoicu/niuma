@@ -66,14 +66,14 @@ export function WelcomeBanner({ compact = false, portrait = false }: { compact?:
               欢迎来到牛马园
             </p>
             <p className="mt-2 font-mono text-[9px] uppercase tracking-[0.28em] text-mist-500">
-              welcome to niuma park · shift 03
+              welcome to niuma park
             </p>
             <p
               className={`mt-2.5 font-mono tracking-[0.06em] text-mist-300 ${compact ? 'text-[9px]' : 'border-t-2 border-ink-700 pt-2.5 text-[10px]'}`}
             >
               {compact
                 ? `${portrait ? '左下' : '左半屏'}拖动移动 · 右下动作盘 · 聊天在左上`
-                : 'WASD 移动 · Z 坐下 · X 躺平 · F 互动 · Enter 打字'}
+                : 'WASD 移动 · Z 坐下 · X 躺平 · F 互动 · Enter 打字 · F2 写代码'}
             </p>
           </div>
           <span className="tag mt-0.5 shrink-0">北门</span>

@@ -25,7 +25,11 @@ export const PACKET_MALFORMED = 1;
 /** 不认识的 opcode：可能是未来版本的包，丢弃即可，不必断线 */
 export const PACKET_UNKNOWN = 2;
 
-const TABLE_SIZE = 0x40;
+/**
+ * 闸门表覆盖到当前最大上行 opcode（`C2S_ROOM_LAYOUT = 0x4e`）之后两档。
+ * 表长必须严格大于最大 opcode，否则 `op >= TABLE_SIZE` 会把新包判成 UNKNOWN。
+ */
+const TABLE_SIZE = 0x52;
 
 /** 1 = 该 opcode 是定长包 */
 const known = new Uint8Array(TABLE_SIZE);
@@ -71,6 +75,24 @@ defineExact(OpCode.C2S_SET_APPEARANCE, 1 + APPEARANCE_BYTES);
 // 擂台报名/取消都是单字节 opcode；容量、阶段与靠近由 sim/ring 二次裁决
 defineExact(OpCode.C2S_RING_ENTER, 1);
 defineExact(OpCode.C2S_RING_LEAVE, 1);
+// 互动包全部定长：长度多一个字节即视为伪造（ADR-0083）
+defineExact(OpCode.C2S_P2P_INVITE, 10); // [op][targetId u16][gameType u8][wager u32][extra u16]
+defineExact(OpCode.C2S_P2P_RESPOND, 6); // [op][inviteId u32][accept u8]
+defineExact(OpCode.C2S_P2P_ACTION, 6); // [op][matchId u32][action u8]
+defineExact(OpCode.C2S_TIP, 7); // [op][targetId u16][amount u32]
+defineExact(OpCode.C2S_USE_ITEM, 4); // [op][targetId u16][itemId u8]
+defineExact(OpCode.C2S_SHOP_BUY, 4); // [op][kind u8][id u8][count u8]
+// 大喇叭：`[op][len u8][utf8]`，长度由 decoder 再截到 30 字（90 字节）
+defineVariable(OpCode.C2S_SHOUT, 2, 1, 1);
+
+// ---- 热区建筑与高阶多人玩法（ADR-0087）----
+defineExact(OpCode.C2S_DICE_BET, 7); // [op][table u8][side u8][amount u32]
+defineExact(OpCode.C2S_VILLA, 3); // [op][villa u8][action u8]
+defineExact(OpCode.C2S_ARENA_BET, 6); // [op][side u8][amount u32]
+defineExact(OpCode.C2S_APARTMENT, 3); // [op][action u8][arg u8]
+defineExact(OpCode.C2S_APARTMENT_INVITE, 3); // [op][targetId u16]
+// 家具布局：`[op][count u8]` + count × 2 字节
+defineVariable(OpCode.C2S_ROOM_LAYOUT, 2, 1, 1);
 
 // ---- 变长包：头部 + 声明长度 ----
 // HELLO 没有长度字段：昵称长度 + 固定外观段是下限，尾部各扩展段按魔数自解析。

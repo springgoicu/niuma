@@ -5,13 +5,13 @@ import { X } from 'lucide-react';
 import { GAME_KEYS } from '@/lib/game/game-keys';
 import {
   HOLIDAY_TABLE_YEARS,
-  dailyAlmanac,
   formatCountdown,
   upcomingHolidays,
   weekProgress,
   weekendCountdown,
 } from '@/lib/game/holiday-calendar';
-import { localDateKey } from '@/lib/game/local-date';
+import { serverDateKey } from '@/lib/game/server-date';
+import { serverNow, serverTzOffsetMin } from '@/lib/game/server-clock';
 import { HolidayCard, Note } from './bulletin/CorkboardPieces';
 import { FishDrum, useFishDrum } from './bulletin/FishDrum';
 
@@ -19,8 +19,8 @@ import { FishDrum, useFishDrum } from './bulletin/FishDrum';
  * 牛马放假告示板（ADR-0059）。
  *
  * 视觉是一块被拉到眼前的软木板：木框 + 软木面 + 钉住的便签，
- * 而不是又一层 ink 玻璃面板。三张便签分别回答三个问题：
- * 这周还剩多久下班、下个假期还有几天、今天宜忌什么。
+ * 而不是又一层 ink 玻璃面板。两张便签只回答两个能核对的问题：
+ * 这周还剩多久下班、下个假期还有几天。
  *
  * 数据全部来自 `holiday-calendar` 的纯函数，与 Worker 里的跑马灯同源；
  * 敲木鱼的账本只写 localStorage，零服务端持久化。
@@ -33,19 +33,19 @@ interface BulletinModalProps {
 export function BulletinModal({ onClose }: BulletinModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const drum = useFishDrum();
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
 
-  // 秒级跳动：只推进本地时钟，不发请求、不碰服务端
+  // 秒级跳动：只读已对时的服务器时钟，不发请求、不碰服务端
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    const timer = window.setInterval(() => setNow(serverNow()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const dateKey = localDateKey(now);
-  const countdown = weekendCountdown(now);
-  const progress = weekProgress(now);
-  const almanac = useMemo(() => dailyAlmanac(dateKey), [dateKey]);
-  const holidays = useMemo(() => upcomingHolidays(now, 3), [dateKey]);
+  const tz = serverTzOffsetMin();
+  const dateKey = serverDateKey(now, tz);
+  const countdown = weekendCountdown(now, tz);
+  const progress = weekProgress(now, tz);
+  const holidays = useMemo(() => upcomingHolidays(now, 3, tz), [dateKey]);
   const weekend = countdown.state === 'IS_WEEKEND';
   const firstYear = HOLIDAY_TABLE_YEARS[0] ?? 2026;
   const lastYear = HOLIDAY_TABLE_YEARS[HOLIDAY_TABLE_YEARS.length - 1] ?? firstYear;
@@ -243,49 +243,6 @@ export function BulletinModal({ onClose }: BulletinModalProps) {
             )}
           </div>
 
-          {/* 板块 C：今日牛马老黄历 */}
-          <div className="mt-3">
-            <Note rotate={0.5} tilt="left">
-              <div className="flex items-baseline justify-between gap-2 border-b border-dashed border-[#b08a5e] pb-1.5">
-                <h3 className="font-display text-[15px] font-semibold tracking-[0.1em] text-[#2a2118]">今日牛马老黄历</h3>
-                <span className="font-mono text-[8px] tracking-[0.14em] text-[#7a5237]">{dateKey}</span>
-              </div>
-
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <div>
-                  <p className="flex items-center gap-1 font-mono text-[9px] font-semibold tracking-[0.16em] text-[#1f7d66]">
-                    <span className="h-2 w-2 bg-[#2fb59a]" aria-hidden="true" />
-                    宜
-                  </p>
-                  <ul className="mt-1 space-y-1">
-                    {almanac.good.map((item) => (
-                      <li key={item} className="text-[11px] leading-snug text-[#2a2118]">
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="border-l border-dashed border-[#b08a5e] pl-2">
-                  <p className="flex items-center gap-1 font-mono text-[9px] font-semibold tracking-[0.16em] text-[#a8402f]">
-                    <span className="h-2 w-2 bg-[#c0503f]" aria-hidden="true" />
-                    忌
-                  </p>
-                  <ul className="mt-1 space-y-1">
-                    {almanac.bad.map((item) => (
-                      <li key={item} className="text-[11px] leading-snug text-[#2a2118]">
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-
-              <p className="mt-2 border-t border-dashed border-[#b08a5e] pt-2 text-[11px] italic leading-relaxed text-[#5c4632]">
-                {almanac.motto}
-              </p>
-            </Note>
-          </div>
-
           {/* 解锁条：只在本次打开期间刚凑满 20 下时出现 */}
           {drum.justUnlocked && (
             <div
@@ -308,7 +265,7 @@ export function BulletinModal({ onClose }: BulletinModalProps) {
                 Esc 收起 · 空格敲木鱼 · 点击板外也能关
               </p>
               <p className="mt-1 font-mono text-[8px] leading-relaxed text-[#5c4632]">
-                农历节日按 {tableYears} 对照表推算 · 连休天数为预期 · 数据只存在本机
+                农历节日按 {tableYears} 对照表推算 · 倒计时按服务器时钟 · 数据只存在本机
               </p>
               <button
                 type="button"

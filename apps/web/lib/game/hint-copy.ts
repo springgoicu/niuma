@@ -19,8 +19,8 @@ export const HINT = {
   interact: '按 F 互动',
   /** 赛博财神供案（ADR-0061） */
   shrine: '[F] 上香祈福',
-  /** 老干部紫砂茶台（ADR-0061） */
-  tea: '[F] 续杯养生茶',
+  /** 老干部紫砂茶台（ADR-0061 → ADR-0085）：改为打开属性强化面板 */
+  tea: '[F] 打开属性强化',
   /** 发泄区老板（ADR-0070）：出招键是 E，不是互动键 F */
   boss: '[E] 发泄·踹老板一脚',
   /** 三人擂台（ADR-0073）：报名入口只有场边 F 传送，围绳不能靠走进去 */
@@ -34,6 +34,19 @@ export const HINT = {
   lieOnSeat: '座位上不能躺，先按 Z 起身',
   sitOnBed: '床上只能躺，按 X 起身',
   bedOnly: '床上只能躺，按 X 上床',
+  // ---- 热区建筑（ADR-0087） ----
+  /** 摸鱼大赌场：坐下就能加入公共局，站着也能在桌边下注 */
+  dice: '[F] 押一把（大 / 小 / 豹子）',
+  /** 绩效八角笼观战长椅 */
+  arenaBet: '[F] 押红方 / 蓝方',
+  /** 豪宅小院门口 */
+  villa: '[F] 查看小院牌匾',
+  /** 院内摇钱树 */
+  villaTree: '[F] 收摇钱树',
+  /** 牛马公寓门口 */
+  apartment: '[F] 进入牛马公寓',
+  /** 公寓屋内出口 */
+  apartmentExit: '[F] 出门回园区',
 } as const;
 
 export type HintCopy = (typeof HINT)[keyof typeof HINT];
@@ -61,7 +74,7 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.bulletin]: { action: 'interact', label: '查看放假倒计时', key: 'F' },
   [HINT.interact]: { action: 'interact', label: '互动', key: 'F' },
   [HINT.shrine]: { action: 'interact', label: '上香祈福', key: 'F' },
-  [HINT.tea]: { action: 'interact', label: '续杯养生茶', key: 'F' },
+  [HINT.tea]: { action: 'interact', label: '打开属性强化', key: 'F' },
   [HINT.boss]: { action: 'vent', label: '发泄', key: 'E' },
   [HINT.ringJoin]: { action: 'interact', label: '报名擂台', key: 'F' },
   [HINT.ringLeave]: { action: 'interact', label: '取消报名', key: 'F' },
@@ -73,6 +86,12 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.lieOnSeat]: null,
   [HINT.sitOnBed]: null,
   [HINT.bedOnly]: null,
+  [HINT.dice]: { action: 'interact', label: '押一把', key: 'F' },
+  [HINT.arenaBet]: { action: 'interact', label: '押注', key: 'F' },
+  [HINT.villa]: { action: 'interact', label: '查看牌匾', key: 'F' },
+  [HINT.villaTree]: { action: 'interact', label: '收摇钱树', key: 'F' },
+  [HINT.apartment]: { action: 'interact', label: '进公寓', key: 'F' },
+  [HINT.apartmentExit]: { action: 'interact', label: '出门', key: 'F' },
 };
 
 /** 可互动提示返回按钮描述；劝阻、状态与未知文案返回 null */
@@ -96,7 +115,7 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.bulletin]: '点「互动」查看放假倒计时',
   [HINT.interact]: '点「互动」',
   [HINT.shrine]: '点「互动」上香祈福',
-  [HINT.tea]: '点「互动」续杯养生茶',
+  [HINT.tea]: '点「互动」打开属性强化',
   [HINT.boss]: '点「发泄」踹老板一脚',
   [HINT.ringJoin]: '点「互动」报名擂台',
   [HINT.ringLeave]: '点「互动」取消报名',
@@ -107,6 +126,12 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.lieOnSeat]: '座位上不能躺，先点「起身」',
   [HINT.sitOnBed]: '床上只能躺，点「起身」',
   [HINT.bedOnly]: '床上只能躺，点「躺平」',
+  [HINT.dice]: '点「互动」押一把',
+  [HINT.arenaBet]: '点「互动」押注',
+  [HINT.villa]: '点「互动」查看牌匾',
+  [HINT.villaTree]: '点「互动」收摇钱树',
+  [HINT.apartment]: '点「互动」进公寓',
+  [HINT.apartmentExit]: '点「互动」出门',
 };
 
 /** 无按键的提示（已到达某地、附近没有设施等）原样透传，不做通用替换 */

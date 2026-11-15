@@ -3,14 +3,15 @@ import {
   encodeBoss,
   type BossPacket,
 } from '@niuma/shared-types';
+import { nextServerMidnight } from '../clock';
 import type { Transport } from './view';
 import type { World } from './world';
 
 /**
- * 发泄区老板的每日血量（ADR-0070）。
+ * 发泄区老板的每日血量（ADR-0070 / ADR-0081）。
  *
- * 全园区共享一条血，只活在进程内存里：进程重启 → 满血，跨本地零点 → 满血。
- * 不做持久化，也不把血量塞进实体快照——老板是静态地标，没有 AOI 与 id。
+ * 全园区共享一条血：跨园区零点 → 满血；进程重启 → 按快照接着打（不再凭空回满）。
+ * 血量不塞进实体快照——老板是静态地标，没有 AOI 与 id。
  */
 export interface BossHitResult {
   hp: number;
@@ -19,24 +20,52 @@ export interface BossHitResult {
   justDied: boolean;
 }
 
+/** 落盘用的最小状态：血量和下一个回满点，别的都能重算 */
+export interface BossSaveState {
+  hp: number;
+  resetAt: number;
+}
+
 /**
- * 下一次本地零点的毫秒时间戳。
+ * 下一次园区零点。
  *
- * 用 `setHours(24, 0, 0, 0)` 而不是手写 24 小时加法：夏令时切换日也能落在
- * 当地真正的午夜，不依赖任何时区库。
+ * 用固定时区偏移（分钟）而不是 `setHours(24, …)`：容器多半跑 UTC，
+ * 而玩家理解的是园区本地零点；固定偏移没有夏令时，也不会在部署环境之间漂。
  */
-function nextLocalMidnight(nowMs: number): number {
-  const next = new Date(nowMs);
-  next.setHours(24, 0, 0, 0);
-  return next.getTime();
+function nextMidnight(nowMs: number, tzOffsetMin: number): number {
+  return nextServerMidnight(nowMs, tzOffsetMin);
 }
 
 export class BossRuntime {
   private currentHp = BOSS_MAX_HP;
   private resetAt: number;
+  private readonly tzOffsetMin: number;
 
-  constructor(nowMs = Date.now()) {
-    this.resetAt = nextLocalMidnight(nowMs);
+  constructor(nowMs = Date.now(), tzOffsetMin = -new Date().getTimezoneOffset()) {
+    this.tzOffsetMin = tzOffsetMin;
+    this.resetAt = nextMidnight(nowMs, tzOffsetMin);
+  }
+
+  /** 落盘快照：只读，不改状态 */
+  snapshot(): BossSaveState {
+    return { hp: this.currentHp, resetAt: this.resetAt };
+  }
+
+  /**
+   * 从快照恢复。
+   *
+   * 回满点已经过期（停机跨过了零点）就直接按当前服务器日重算并满血；
+   * 没过期就接着打，重启不该给玩家白送一条新血。
+   */
+  restore(state: BossSaveState, nowMs: number): void {
+    if (!Number.isFinite(state.resetAt) || state.resetAt <= nowMs) {
+      this.currentHp = BOSS_MAX_HP;
+      this.resetAt = nextMidnight(nowMs, this.tzOffsetMin);
+      return;
+    }
+    const hp = Number.isFinite(state.hp) ? Math.floor(state.hp) : BOSS_MAX_HP;
+    this.currentHp = Math.max(0, Math.min(BOSS_MAX_HP, hp));
+    this.resetAt = Math.floor(state.resetAt);
   }
 
   get hp(): number {
@@ -49,13 +78,13 @@ export class BossRuntime {
   }
 
   /**
-   * 跨过本地零点就把血量与下一个重置点一起推进。返回 true 表示这次调用
+   * 跨过园区零点就把血量与下一个重置点一起推进。返回 true 表示这次调用
    * 真的发生了重置，调用方需要广播一条 `reset` 快照。
    */
   syncDay(nowMs: number): boolean {
     if (nowMs < this.resetAt) return false;
     this.currentHp = BOSS_MAX_HP;
-    this.resetAt = nextLocalMidnight(nowMs);
+    this.resetAt = nextMidnight(nowMs, this.tzOffsetMin);
     return true;
   }
 

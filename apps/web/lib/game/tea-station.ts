@@ -58,6 +58,11 @@ export class TeaStationView {
     drawTeaTable(art);
     this.root.addChild(art);
 
+    // 赛博茶水强化站（ADR-0087）：茶台升格为霓虹小亭，只加灯管与价签，不动壶杯
+    const neon = new Graphics();
+    drawNeon(neon);
+    this.root.addChild(neon);
+
     for (let i = 0; i < STEAM_COUNT; i += 1) {
       const wisp = new Sprite(steamTexture);
       wisp.anchor.set(0.5, 1);
@@ -130,6 +135,29 @@ function drawTeaTable(g: Graphics): void {
     // 茶汤：杯口一圈琥珀色
     rect(g, x + 1, -26, 3, 1, C.tea);
   }
+}
+
+/**
+ * 赛博霓虹：台沿一圈青紫灯管 + 头顶价签。
+ *
+ * 只画两层（管芯 + 外晕），像素风格下比高斯发光更贴；灯管并不参与碰撞，
+ * 按 F 的判定仍然是茶台 48px 热区。
+ */
+function drawNeon(g: Graphics): void {
+  const cyan = 0x5eead4;
+  const violet = 0x8b5cf6;
+  // 外晕
+  g.rect(-25, -23, 50, 5).fill({ color: cyan, alpha: 0.18 });
+  g.rect(-24, -22, 48, 3).fill({ color: cyan, alpha: 0.45 });
+  // 灯管本体
+  g.rect(-23, -21, 46, 1).fill(cyan);
+  g.rect(-23, -37, 1, 16).fill({ color: violet, alpha: 0.7 });
+  g.rect(22, -37, 1, 16).fill({ color: violet, alpha: 0.7 });
+  // 价签：一块黑底 + 两条霓虹横线，读成「属性 / 装扮」
+  g.rect(-15, -48, 30, 12).fill(0x14181c);
+  g.rect(-14, -47, 28, 10).fill(0x1c2228);
+  g.rect(-12, -44, 24, 1).fill(cyan);
+  g.rect(-12, -41, 16, 1).fill(violet);
 }
 
 /** 一股热气：三层半透明白往上收，读成「温热」而不是「烟」 */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BENCH_SEAT_OFFSET,
   CHAIR_GAP,
+  CLINIC_BED_SEAT_IDS,
   DESK_H,
   DESK_W,
   DIRECTION,
@@ -69,8 +70,15 @@ describe('座位布局', () => {
     const benchSeats = seats.filter((seat) => seat.kind === 'bench');
     expect(benches.length).toBeGreaterThan(0);
     expect(benchSeats.length).toBe(benches.length);
-    // 追加在座位表末尾：既有工位 / 床 / 马桶 / 影厅座位的 id 不会后移
-    expect(seats.slice(-benchSeats.length).every((seat) => seat.kind === 'bench')).toBe(true);
+    // 长椅座位仍是既有 id：急救站病床（ADR-0084）追加在长椅之后，不能挤动已存 seatId
+    const clinicBeds = seats.slice(seats.length - CLINIC_BED_SEAT_IDS.length);
+    expect(clinicBeds.map((seat) => seat.id)).toEqual([...CLINIC_BED_SEAT_IDS]);
+    expect(clinicBeds.every((seat) => seat.kind === 'bed')).toBe(true);
+    const benchBlock = seats.slice(
+      seats.length - CLINIC_BED_SEAT_IDS.length - benchSeats.length,
+      seats.length - CLINIC_BED_SEAT_IDS.length,
+    );
+    expect(benchBlock.every((seat) => seat.kind === 'bench')).toBe(true);
 
     for (const prop of benches) {
       const seat = benchSeats.find((item) => item.x === prop.x && item.y === prop.y + BENCH_SEAT_OFFSET);

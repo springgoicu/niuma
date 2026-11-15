@@ -5,6 +5,8 @@ import { PLAZA_CENTER } from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
 import { paintLantern } from './lighting/lanterns';
 import { lightToneAt } from './lighting/tone';
+import { serverHourFraction } from './server-date';
+import { serverNow, serverTzOffsetMin } from './server-clock';
 import type { DepthSink } from './sort-layer';
 import { bake } from './terrain-textures';
 import {
@@ -222,8 +224,7 @@ export class FestivalArt {
    * 与光图的冷蓝底形成「灯自己会亮」的层次。真实亮度仍由 6 处光池负责。
    */
   private applyTone(): void {
-    const now = new Date();
-    const hour = now.getHours() + now.getMinutes() / 60;
+    const hour = serverHourFraction(serverNow(), serverTzOffsetMin());
     const label = lightToneAt(hour, this.winter).label;
     const night = label === 'night';
     const tint = night ? 0xffffff : label === 'dusk' ? 0xf6ead6 : 0xe9dfcd;

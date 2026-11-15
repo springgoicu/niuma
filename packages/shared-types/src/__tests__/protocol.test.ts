@@ -17,10 +17,13 @@ import {
   DANMAKU_COLOR_COUNT,
   DANMAKU_META_BYTES,
   DANMAKU_MODE,
+  DEVICE_EXTENSION_BYTES,
+  DEVICE_EXTENSION_MAGIC,
   DIRECTION,
   ENTITY_ROLE_GUARD,
   LIMIT_KIND,
   MOVE_PACKET_BYTES,
+  PONG_CLOCK_BYTES,
   POSE,
   QUEUE_REJECT_BYTES,
   QUEUE_REJECT_REASON,
@@ -55,6 +58,8 @@ import {
   decodeJail,
   decodeMove,
   decodeNameBroadcast,
+  decodePong,
+  decodePongClock,
   decodeSpawn,
   decodeSetName,
   decodeSetStatus,
@@ -83,6 +88,7 @@ import {
   encodeJail,
   encodeMove,
   encodeNameBroadcast,
+  encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
   encodeSpawn,
@@ -112,6 +118,8 @@ import {
   packState,
   quantizeCoord,
   sanitizeAppearance,
+  sanitizeEconomyProfile,
+  isDeviceId,
   unpackState,
   SYSTEM_NOTICE_KIND,
   formatSystemNotice,
@@ -1544,5 +1552,104 @@ describe('会话续算段（ADR-0060）', () => {
     const plain = encodeWelcome({ entityId: 7, tick: 99, x: 1, y: 2, state: 0 });
     expect(plain.byteLength).toBe(12);
     expect(decodeWelcome(plain).sessionSec).toBeUndefined();
+  });
+});
+
+describe('匿名设备段与 PONG 时钟段（ADR-0081）', () => {
+  const DEVICE = 'a1b2c3d4e5f60718';
+  const ECONOMY = sanitizeEconomyProfile({
+    coins: 42,
+    stats: { atkSpeedLv: 1, workEffLv: 0, critLv: 0, armorLv: 0 },
+    inventory: { ice_americano: 2 },
+    houseTier: 1,
+  });
+
+  it('HELLO 带设备号时只在尾部多 9 字节，老段照常量解析', () => {
+    const plain = encodeHello('牛', DEFAULT_APPEARANCE.cow);
+    const withDevice = encodeHello(
+      '牛',
+      DEFAULT_APPEARANCE.cow,
+      undefined,
+      '',
+      SYNC_FORMAT_COMPACT,
+      undefined,
+      undefined,
+      DEVICE,
+    );
+    expect(withDevice.byteLength).toBe(plain.byteLength + DEVICE_EXTENSION_BYTES);
+    const decoded = decodeHello(withDevice);
+    expect(decoded.deviceId).toBe(DEVICE);
+    expect(decoded.syncFormat).toBe(SYNC_FORMAT_COMPACT);
+  });
+
+  it('不带设备号的 HELLO 解码成空串，与旧包逐字节相同', () => {
+    expect(decodeHello(encodeHello('牛', DEFAULT_APPEARANCE.cow)).deviceId).toBe('');
+  });
+
+  it('设备号写成非法 hex 时整段被忽略，也不会让后面的经济段错位', () => {
+    const packet = encodeHello(
+      '牛',
+      DEFAULT_APPEARANCE.cow,
+      undefined,
+      '',
+      SYNC_FORMAT_COMPACT,
+      undefined,
+      undefined,
+      DEVICE,
+      ECONOMY,
+    );
+    // 把设备号首字节改成 'Z'：段还在，但内容不再是合法 hex
+    const at = packet.lastIndexOf(DEVICE_EXTENSION_MAGIC);
+    packet[at + 1] = 'Z'.charCodeAt(0);
+    const decoded = decodeHello(packet);
+    expect(decoded.deviceId).toBe('');
+    expect(decoded.syncFormat).toBe(SYNC_FORMAT_COMPACT);
+    expect(decoded.economy).toEqual(ECONOMY);
+  });
+
+  it('会话段与设备段同时在场时互不串位', () => {
+    const decoded = decodeHello(
+      encodeHello(
+        '牛',
+        DEFAULT_APPEARANCE.cow,
+        undefined,
+        '摸鱼中',
+        SYNC_FORMAT_COMPACT,
+        undefined,
+        3_600,
+        DEVICE,
+      ),
+    );
+    expect(decoded.sessionSec).toBe(3_600);
+    expect(decoded.deviceId).toBe(DEVICE);
+    expect(decoded.status).toBe('摸鱼中');
+  });
+
+  it('PONG 带时钟段时多 6 字节，旧解码器仍只读 timestamp', () => {
+    const plain = encodePong(1234);
+    const stamped = encodePong(1234, { serverSec: 1_760_000_000, tzOffsetMin: 480 });
+    expect(plain.byteLength).toBe(5);
+    expect(stamped.byteLength).toBe(5 + PONG_CLOCK_BYTES);
+    expect(decodePong(stamped)).toBe(1234);
+    expect(decodePongClock(stamped)).toEqual({
+      timestamp: 1234,
+      serverSec: 1_760_000_000,
+      tzOffsetMin: 480,
+    });
+  });
+
+  it('西半球负偏移按 i16 补码往返', () => {
+    const stamped = encodePong(7, { serverSec: 1_760_000_000, tzOffsetMin: -300 });
+    expect(decodePongClock(stamped)?.tzOffsetMin).toBe(-300);
+  });
+
+  it('旧服务端的 5 字节 PONG 读不到时钟段', () => {
+    expect(decodePongClock(encodePong(9))).toBeUndefined();
+  });
+
+  it('设备号常量只认 16 位小写 hex', () => {
+    expect(isDeviceId(DEVICE)).toBe(true);
+    expect(isDeviceId(DEVICE.toUpperCase())).toBe(false);
+    expect(isDeviceId('a1b2c3')).toBe(false);
   });
 });

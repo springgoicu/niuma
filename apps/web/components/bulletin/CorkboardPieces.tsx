@@ -1,12 +1,14 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { holidayDaysLabel, holidayRestLabel, type Holiday } from '@/lib/game/holiday-calendar';
+import { holidayDaysLabel, type Holiday } from '@/lib/game/holiday-calendar';
+import { serverDateKey } from '@/lib/game/server-date';
+import { serverTzOffsetMin } from '@/lib/game/server-clock';
 
 /**
  * 软木板上的两件实物：便签纸与日历撕页（ADR-0059）。
  *
- * 单独收在这里，是因为弹窗要回答的是「这周还剩多久、下个假期几天、今天宜什么」，
+ * 单独收在这里，是因为弹窗要回答的是「这周还剩多久、下个假期几天」，
  * 纸怎么钉、钉在哪个角度属于陈设，不该和取数与键盘逻辑挤在一个文件里。
  */
 
@@ -36,9 +38,10 @@ export function Note({
   );
 }
 
-/** 日历撕页：红页眉 + 节日名 + 剩余天数 + 连休预期 */
+/** 日历撕页：红页眉 + 节日名 + 剩余天数；不再写每年都不同的「连休 N 天」预期 */
 export function HolidayCard({ holiday, featured }: { holiday: Holiday; featured: boolean }) {
-  const date = new Date(holiday.at);
+  // 月份按园区日历读：节日日期本身就是园区零点，用本机时区会整体错一天
+  const month = Number.parseInt(serverDateKey(holiday.at, serverTzOffsetMin()).slice(5, 7), 10);
   return (
     <article
       className={`relative border bg-[#fff6e0] shadow-[0_1px_0_rgba(60,40,25,0.3),0_6px_12px_-10px_rgba(0,0,0,0.7)] ${
@@ -46,13 +49,12 @@ export function HolidayCard({ holiday, featured }: { holiday: Holiday; featured:
       }`}
     >
       <div className="flex items-center justify-between bg-[#b83b3b] px-1.5 py-0.5 font-mono text-[8px] tracking-[0.14em] text-[#ffe9cf]">
-        <span>{date.getMonth() + 1} 月</span>
+        <span>{month} 月</span>
         <span className="tabular-nums">{holiday.daysLeft === 0 ? 'TODAY' : `${holiday.daysLeft}D`}</span>
       </div>
       <div className="px-2 pb-2 pt-1.5">
         <p className="font-display text-[15px] font-semibold leading-none text-[#2a2118]">{holiday.name}</p>
         <p className="mt-1.5 font-mono text-[10px] tabular-nums text-[#1f7d66]">{holidayDaysLabel(holiday.daysLeft)}</p>
-        <p className="font-mono text-[9px] text-[#7a5237]">{holidayRestLabel(holiday)} 预期</p>
       </div>
       {featured && (
         <span className="absolute -right-1.5 -top-2 rotate-6 border border-amber-400 bg-[#f2c879] px-1 py-px font-mono text-[8px] font-semibold text-[#2a2118]">

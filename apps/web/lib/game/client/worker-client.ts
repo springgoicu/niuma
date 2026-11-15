@@ -3,17 +3,20 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  FurniturePlacement,
   NavTargetId,
   ResumeState,
 } from '@niuma/shared-types';
 import { reloadForStaleAssets, requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
+import { ensureDeviceId } from '../device-id';
 import { readIncenseDay, writeIncenseDay } from '../incense-day';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
 import { MINIMAP_SIZE } from '../minimap-draw';
 import { applyAudioEvent } from '../runtime/audio-sink';
+import { applyClockEpoch } from '../server-clock';
 import { classifyBootMessage } from '../runtime/boot-gate';
 import { createControlWriter, type ControlWriter, type SnapshotPatch } from '../runtime/control-channel';
 import type { SessionProfile } from '../runtime/engine-env';
@@ -199,6 +202,8 @@ export class WorkerGameClient implements GameClient {
           dpr: size.dpr,
           danmaku: this.options.danmakuPrefs,
           incenseDay: readIncenseDay(),
+          // 设备号只在主线程生成：Worker 里 localStorage 不可用
+          deviceId: ensureDeviceId(),
         } satisfies MainToWorker,
         [offscreen],
       );
@@ -426,6 +431,71 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'like', id: targetId });
   }
 
+  invite(targetId: number, gameType: number, wager: number): void {
+    if (this.delegate) return this.delegate.invite(targetId, gameType, wager);
+    this.post({ t: 'p2pInvite', request: { targetId, gameType, wager, extra: 0 } });
+  }
+
+  respond(inviteId: number, accept: boolean): void {
+    if (this.delegate) return this.delegate.respond(inviteId, accept);
+    this.post({ t: 'p2pRespond', request: { inviteId, accept } });
+  }
+
+  p2pAction(matchId: number, action: number): void {
+    if (this.delegate) return this.delegate.p2pAction(matchId, action);
+    this.post({ t: 'p2pAction', request: { matchId, action } });
+  }
+
+  tip(targetId: number, amount: number): void {
+    if (this.delegate) return this.delegate.tip(targetId, amount);
+    this.post({ t: 'tip', request: { targetId, amount } });
+  }
+
+  useItem(targetId: number, itemId: number): void {
+    if (this.delegate) return this.delegate.useItem(targetId, itemId);
+    this.post({ t: 'useItem', request: { targetId, itemId } });
+  }
+
+  buyShop(kind: number, id: number, count = 1): void {
+    if (this.delegate) return this.delegate.buyShop(kind, id, count);
+    this.post({ t: 'shopBuy', request: { kind, id, count } });
+  }
+
+  shout(text: string): void {
+    if (this.delegate) return this.delegate.shout(text);
+    this.post({ t: 'shout', text });
+  }
+
+  diceBet(table: number, side: number, amount: number): void {
+    if (this.delegate) return this.delegate.diceBet(table, side, amount);
+    this.post({ t: 'diceBet', request: { table, side, amount } });
+  }
+
+  villaAction(villa: number, action: number): void {
+    if (this.delegate) return this.delegate.villaAction(villa, action);
+    this.post({ t: 'villa', request: { villa, action } });
+  }
+
+  arenaBet(side: number, amount: number): void {
+    if (this.delegate) return this.delegate.arenaBet(side, amount);
+    this.post({ t: 'arenaBet', request: { side, amount } });
+  }
+
+  apartmentAction(action: number): void {
+    if (this.delegate) return this.delegate.apartmentAction(action);
+    this.post({ t: 'apartment', request: { action, arg: 0 } });
+  }
+
+  apartmentInvite(targetId: number): void {
+    if (this.delegate) return this.delegate.apartmentInvite(targetId);
+    this.post({ t: 'apartmentInvite', targetId });
+  }
+
+  saveRoomLayout(placements: FurniturePlacement[]): void {
+    if (this.delegate) return this.delegate.saveRoomLayout(placements);
+    this.post({ t: 'roomLayout', placements });
+  }
+
   navigateTo(id: NavTargetId): void {
     if (this.delegate) return this.delegate.navigateTo(id);
     this.post({ t: 'navigate', id });
@@ -557,8 +627,75 @@ export class WorkerGameClient implements GameClient {
       case 'like':
         callbacks.onLike?.(message.packet);
         return;
+      case 'wallet':
+        callbacks.onWallet?.(message.packet);
+        return;
+      case 'p2pInvite':
+        callbacks.onInvite?.(message.packet);
+        return;
+      case 'p2pInviteResult':
+        callbacks.onInviteResult?.(message.packet);
+        return;
+      case 'p2pMatch':
+        callbacks.onMatch?.(message.packet);
+        return;
+      case 'p2pShowdown':
+        callbacks.onShowdown?.(message.packet);
+        return;
+      case 'p2pDuelState':
+        callbacks.onDuelState?.(message.packet);
+        return;
+      case 'tip':
+        callbacks.onTip?.(message.packet);
+        return;
+      case 'itemEffect':
+        callbacks.onItemEffect?.(message.packet);
+        return;
+      case 'loudspeaker':
+        callbacks.onLoudspeaker?.(message.packet);
+        return;
+      case 'shoutReject':
+        callbacks.onShoutReject?.(message.packet);
+        return;
+      case 'itemReject':
+        callbacks.onItemReject?.(message.packet);
+        return;
+      case 'shopOpen':
+        callbacks.onShopOpen?.(message.tab);
+        return;
       case 'ring':
         callbacks.onRing?.(message.packet, message.receivedAt);
+        return;
+      case 'dice':
+        callbacks.onDiceState?.(message.packet);
+        return;
+      case 'villa':
+        callbacks.onVillaState?.(message.packet);
+        return;
+      case 'arenaPool':
+        callbacks.onArenaPool?.(message.packet);
+        return;
+      case 'room':
+        callbacks.onRoomState?.(message.packet);
+        return;
+      case 'roomInvite':
+        callbacks.onRoomInvite?.(message.packet);
+        return;
+      case 'diceOpen':
+        callbacks.onDiceOpen?.(message.table);
+        return;
+      case 'arenaBetOpen':
+        callbacks.onArenaBetOpen?.();
+        return;
+      case 'villaOpen':
+        callbacks.onVillaOpen?.(message.villa);
+        return;
+      case 'apartmentOpen':
+        callbacks.onApartmentOpen?.();
+        return;
+      case 'clock':
+        // 主线程自己的 serverNow 从来没对过时（pong 在 Worker 里），这里补上
+        applyClockEpoch(message.epochMs, message.tzOffsetMin);
         return;
       case 'audio':
         applyAudioEvent(message.event, message.listenerX, message.listenerY);

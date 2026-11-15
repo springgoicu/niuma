@@ -6,6 +6,7 @@ import {
   type CareerSummary,
   type CharacterAppearance,
   type LimitKind,
+  type EconomyProfile,
   type QueueRejectReason,
   type QueueStatusPacket,
   type ResumeState,
@@ -32,6 +33,16 @@ export interface HelloPayload {
    * 放行时用它把入场时刻往前挪；排队时间不计入在岗。
    */
   sessionSec?: number;
+  /**
+   * 匿名设备号（ADR-0081）：只用于把点赞与擂台战绩聚合同一台浏览器。
+   * 旧客户端缺席，按「匿名新设备」处理，不参与准入判定。
+   */
+  deviceId?: string;
+  /**
+   * 进园资产摘要（ADR-0082）：已按协议层的上下限洗过一轮，
+   * 放行时直接落位，之后园内以服务端内存为准。
+   */
+  economy?: EconomyProfile;
 }
 
 export interface AdmissionConfig extends GovernorConfig {

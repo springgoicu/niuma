@@ -1,15 +1,16 @@
 'use client';
 
-import { localDateKey } from './local-date';
+import { serverDateKey, serverTzOffsetMin } from './server-date';
+import { serverNow } from './server-clock';
 
 /**
  * 「当天首次上香」的本地凭据（ADR-0061）。
  *
  * 只存**最近一次上香的自然日**，不存次数、不上报服务端：
- * 零持久化约束下，「功德 +1」只能是一次性提示，不能变成账号数值。
+ * 不进服务端存储的前提下，「功德 +1」只能是当次提示，不能变成账号数值。
  * 存日期而不是布尔量，是为了隔天自动失效——不需要任何清理逻辑。
  *
- * `localDateKey` 是本地时区口径（不是 UTC），东八区的 00:00–08:00 不会被算成前一天。
+ * 日期键用**园区时区**（ADR-0081）：跨时区玩家看到的「今天还没上香」必须一致。
  */
 
 const STORAGE_KEY = 'niuma.incense.day';
@@ -35,6 +36,6 @@ export function writeIncenseDay(day: string): void {
 }
 
 /** 今天是否还没上过香 */
-export function isFirstIncenseToday(lastDay: string, now: number = Date.now()): boolean {
-  return lastDay !== localDateKey(now);
+export function isFirstIncenseToday(lastDay: string, now: number = serverNow()): boolean {
+  return lastDay !== serverDateKey(now, serverTzOffsetMin());
 }

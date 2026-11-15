@@ -160,6 +160,33 @@ function overlaps(blocker: Blocker, x: number, y: number, radius: number): boole
   return distanceSqToPolygon(x, y, blocker.points) < radius * radius;
 }
 
+/**
+ * 动态障碍：豪宅锁门时的门栅。
+ *
+ * 静态布局是模块级常量，锁门却是运行期状态；把门栅塞进静态索引就得重建格子，
+ * 而动态障碍至多两条（每栋一处），单独扫一遍比重建索引便宜得多。
+ * 服务端裁决与客户端预测都在收到 `S2C_VILLA_STATE` 时调 `setDynamicSolids`，
+ * 两边读到的是同一组矩形，预测不会与权威打架。
+ */
+let dynamicBlockers: Blocker[] = [];
+
+export function setDynamicSolids(rects: ReadonlyArray<WorldRect>): void {
+  dynamicBlockers = rects.map((rect) => ({
+    kind: 'polygon' as const,
+    points: [
+      [rect.x, rect.y],
+      [rect.x + rect.w, rect.y],
+      [rect.x + rect.w, rect.y + rect.h],
+      [rect.x, rect.y + rect.h],
+    ] as Point[],
+  }));
+}
+
+/** 当前动态障碍条数：测试与调试用 */
+export function dynamicBlockerCount(): number {
+  return dynamicBlockers.length;
+}
+
 /** 该点是否与地形相交；非有限坐标视为被挡，避免 NaN 污染权威状态 */
 export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return true;
@@ -168,6 +195,9 @@ export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS):
   const list = gather(x, y, radius);
   for (const index of list) {
     if (overlaps(blockers[index]!, x, y, radius)) return true;
+  }
+  for (const blocker of dynamicBlockers) {
+    if (overlaps(blocker, x, y, radius)) return true;
   }
   return false;
 }

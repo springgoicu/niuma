@@ -20,8 +20,8 @@ describe('工牌编辑器', () => {
     expect(html).toContain('value="摸鱼中"');
   });
 
-  it('默认提示改名会换工号与部门', () => {
-    expect(render('夜班实习生')).toContain('改名会换工号与部门');
+  it('默认提示名字会同步到头顶与档案', () => {
+    expect(render('夜班实习生')).toContain('工牌名会同步到头顶与档案');
   });
 
   it('空名字就地提示，不等到提交', () => {

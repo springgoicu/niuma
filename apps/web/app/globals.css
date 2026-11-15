@@ -423,6 +423,11 @@
     animation: bulletin-in 200ms var(--ease-out-expo);
   }
 
+  /* 代码工位：显示器点亮，整层从 0.99 缩放 + 4px 位移淡入 */
+  .animate-code-studio-in {
+    animation: code-studio-in 180ms var(--ease-out-expo);
+  }
+
   /* 赛博木鱼：敲击时整只木鱼下沉 2px 再回弹，不做弹跳 */
   .animate-fish-hit {
     animation: fish-hit 140ms var(--ease-out-expo);
@@ -536,6 +541,17 @@
   }
   to {
     transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes code-studio-in {
+  from {
+    transform: translateY(4px) scale(0.99);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
     opacity: 1;
   }
 }
@@ -706,6 +722,30 @@
   100% {
     transform: translate3d(var(--petal-sway, 10px), -118px, 0) rotate(150deg) scale(1);
     opacity: 0;
+  }
+}
+
+/* 牛马币飘字：金色只属于货币，向上淡出，不抢薄荷主色的位置 */
+@keyframes coin-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-28px) scale(1);
+  }
+}
+
+@layer utilities {
+  .coin-pop {
+    animation: coin-rise 900ms ease-out forwards;
+  }
+  .coin-float {
+    animation: coin-rise 1100ms ease-out forwards;
   }
 }
 

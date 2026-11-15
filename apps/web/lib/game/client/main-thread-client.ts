@@ -3,6 +3,7 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  FurniturePlacement,
   NavTargetId,
   ResumeState,
 } from '@niuma/shared-types';
@@ -11,6 +12,7 @@ import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
 import { ACTION_CODE, type ActionKey } from '../input';
 import { KeyboardInput } from '../input-keyboard';
+import { ensureDeviceId } from '../device-id';
 import { readIncenseDay, writeIncenseDay } from '../incense-day';
 import { drawMiniMap, MINIMAP_SIZE, prepareMiniMap, type MiniMapContext } from '../minimap-draw';
 import { applyAudioEvent } from '../runtime/audio-sink';
@@ -88,6 +90,8 @@ export class MainThreadGameClient implements GameClient {
       danmakuPrefs: this.options.danmakuPrefs,
       // 回退模式本来就在主线程：直接读写 localStorage，不必绕一圈消息
       incenseDay: readIncenseDay(),
+      // 回退模式本来就在主线程：设备号直接读 localStorage
+      deviceId: ensureDeviceId(),
       writeIncenseDay: (day) => writeIncenseDay(day),
       writeSnapshot: (patch) => {
         const park = this.options.parkId;
@@ -227,6 +231,60 @@ export class MainThreadGameClient implements GameClient {
 
   like(targetId: number): void {
     this.session?.like(targetId);
+  }
+
+  invite(targetId: number, gameType: number, wager: number): void {
+    this.session?.inviteDuel(targetId, gameType, wager);
+  }
+
+  respond(inviteId: number, accept: boolean): void {
+    this.session?.respondInvite(inviteId, accept);
+  }
+
+  p2pAction(matchId: number, action: number): void {
+    this.session?.p2pAction(matchId, action);
+  }
+
+  tip(targetId: number, amount: number): void {
+    this.session?.tip(targetId, amount);
+  }
+
+  useItem(targetId: number, itemId: number): void {
+    this.session?.useItem(targetId, itemId);
+  }
+
+  buyShop(kind: number, id: number, count = 1): void {
+    this.session?.buyShop(kind, id, count);
+  }
+
+  shout(text: string): void {
+    this.session?.shout(text);
+  }
+
+  diceBet(table: number, side: number, amount: number): void {
+    this.session?.placeDiceBet(table, side, amount);
+  }
+
+  villaAction(villa: number, action: number): void {
+    this.session?.villaAction(villa, action);
+  }
+
+  arenaBet(side: number, amount: number): void {
+    this.session?.placeArenaBet(side, amount);
+  }
+
+  apartmentAction(action: number): void {
+    if (action === 2) this.session?.upgradeApartment();
+    else if (action === 1) this.session?.exitApartment();
+    else this.session?.enterApartment();
+  }
+
+  apartmentInvite(targetId: number): void {
+    this.session?.inviteRoom(targetId);
+  }
+
+  saveRoomLayout(placements: FurniturePlacement[]): void {
+    this.session?.saveRoomLayout(placements);
   }
 
   navigateTo(id: NavTargetId): void {

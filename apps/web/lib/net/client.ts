@@ -3,6 +3,7 @@
 import {
   BOARD_METRIC_ALL,
   OpCode,
+  decodeAmbulance,
   decodeAppearanceBroadcast,
   decodeBoard,
   decodeBoss,
@@ -14,16 +15,41 @@ import {
   decodeJail,
   decodeLike,
   decodeNameBroadcast,
+  decodePatientStatus,
   decodePong,
+  decodePongClock,
   decodeQueueRejected,
   decodeQueueStatus,
   decodeRing,
   decodeSeatState,
   decodeSpawn,
+  decodeItemEffect,
+  decodeItemReject,
+  decodeLoudspeaker,
+  decodePlayerEffect,
+  decodeShoutReject,
+  decodeP2PDuelState,
+  decodeP2PInviteNotify,
+  decodeP2PInviteResult,
+  decodeP2PMatch,
+  decodeP2PShowdown,
   decodeStatusBroadcast,
   decodeSystemNotice,
+  decodeTipBroadcast,
   decodeVent,
+  decodeWalletSync,
   decodeWelcome,
+  decodeDiceState,
+  decodeVillaState,
+  decodeArenaPool,
+  decodeRoomState,
+  decodeRoomInvite,
+  encodeDiceBet,
+  encodeVillaRequest,
+  encodeArenaBet,
+  encodeApartmentRequest,
+  encodeApartmentInvite,
+  encodeRoomLayout,
   encodeBoardRequest,
   encodeCareerReport,
   encodeChatHistoryRequest,
@@ -31,15 +57,23 @@ import {
   encodeHello,
   encodeLikeRequest,
   encodeMoveInto,
+  encodeP2PAction,
+  encodeP2PInvite,
+  encodeP2PRespond,
   encodePing,
   encodeRingEnter,
   encodeRingLeave,
   encodeSetAppearance,
+  encodeShopBuy,
+  encodeShout,
+  encodeTip,
+  encodeUseItem,
   encodeSetName,
   encodeSetStatus,
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
+  type AmbulancePacket,
   type BoardMetric,
   type BoardPacket,
   type BossPacket,
@@ -48,19 +82,46 @@ import {
   type ChatHistoryPacket,
   type ChatPacket,
   type ChatSendPacket,
+  type EconomyProfile,
+  type ItemEffectPacket,
+  type ItemRejectPacket,
   type JailPacket,
   type LikePacket,
+  type LoudspeakerPacket,
   type MovePacket,
+  type PlayerEffectPacket,
+  type P2PActionRequest,
+  type P2PDuelStatePacket,
+  type P2PInviteNotifyPacket,
+  type P2PInviteResultPacket,
+  type P2PMatchPacket,
+  type P2PInviteRequest,
+  type P2PRespondRequest,
+  type P2PShowdownPacket,
+  type PatientStatusPacket,
+  type ShopBuyRequest,
+  type TipPacket,
+  type TipRequest,
+  type UseItemRequest,
+  type WalletSyncPacket,
   type QueueStatusPacket,
   type ResumeState,
   type RingPacket,
   type SeatStateEntry,
+  type ShoutRejectPacket,
   type SpawnPacket,
   type SyncFormat,
   type SystemNoticePacket,
   type VentEventPacket,
   type WelcomePacket,
+  type DiceStatePacket,
+  type VillaStatePacket,
+  type ArenaPoolPacket,
+  type RoomStatePacket,
+  type RoomInvitePacket,
+  type FurniturePlacement,
 } from '@niuma/shared-types';
+import { ensureDeviceId } from '../game/device-id';
 
 export interface NetHandlers {
   onOpen(): void;
@@ -107,11 +168,58 @@ export interface NetHandlers {
   onBoss(packet: BossPacket): void;
   /** 小黑屋处置：警告 / 保安出动 / 押送 / 入狱 / 释放（ADR-0072） */
   onJail(packet: JailPacket): void;
-  /** 擂台快照：阶段变化 / 扣血 / 1Hz 心跳都会广播，客户端按 receivedAt 本地递减倒计时 */
+  /** 救护车四态 / 警灯 / 量化坐标（ADR-0084），停靠静止时不重复下发 */
+  onAmbulance?(packet: AmbulancePacket): void;
+  /** 伤员昏迷 / 治疗 / 工伤保护状态变化，客户端按 seconds 本地倒计时 */
+  onPatient?(packet: PatientStatusPacket): void;
+  /** 擂台快照：阶段变化 / 扣血 / 1Hz 心跳都会广播；会话层用服务器时刻记锚点，本地递减倒计时 */
   onRing(packet: RingPacket): void;
+  /** 赌桌公共局快照（ADR-0087）：两张桌一包，亮牌期 1Hz 心跳 */
+  onDiceState?(packet: DiceStatePacket): void;
+  /** 豪宅牌匾 / 锁状态，1Hz 心跳对齐可收币数 */
+  onVillaState?(packet: VillaStatePacket): void;
+  /** 八角笼彩池快照：押注、开赛与结算各一条 */
+  onArenaPool?(packet: ArenaPoolPacket): void;
+  /** 房间状态：门牌、房主与家具布局，只发给同频道的人 */
+  onRoomState?(packet: RoomStatePacket): void;
+  /** 串门邀请通知 */
+  onRoomInvite?(packet: RoomInvitePacket): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
+  /**
+   * 服务器时钟样本（ADR-0081）：心跳尾段带来的秒级 epoch + 园区时区偏移。
+   * 旧服务端的 pong 没有这一段，不会触发。
+   */
+  onClock?(sample: { serverSec: number; rttMs: number; tzOffsetMin: number }): void;
+  /** 钱包快照：进园纠正 + 每次发币/扣币/升级/背包变动（ADR-0082） */
+  onWallet?(packet: WalletSyncPacket): void;
+  /** 收到别人的对战邀请（15 秒 TTL，前端负责倒计时） */
+  onInvite?(packet: P2PInviteNotifyPacket): void;
+  /** 自己发起的邀请有了结果：接受 / 拒绝 / 超时 */
+  onInviteResult?(packet: P2PInviteResultPacket): void;
+  /** 对局开始与结算：玩法的胜负完全由服务端裁决 */
+  onMatch?(packet: P2PMatchPacket): void;
+  /** 头顶亮牌：骰子 / 猜拳 / 切磋结算，附近 AOI 都会收到 */
+  onShowdown?(packet: P2PShowdownPacket): void;
+  /** 切磋实时血量与倒计时 */
+  onDuelState?(packet: P2PDuelStatePacket): void;
+  /** 打赏到账 / 出手的飘字载体，余额走 onWallet */
+  onTip?(packet: TipPacket): void;
+  /** 道具效果：目标与旁观者都收到同一条，只是 isTarget 不同 */
+  onItemEffect?(packet: ItemEffectPacket): void;
+  /**
+   * 玩家特效（ADR-0085）：脚底风 / 护盾环 / 摸鱼贴纸 / 滑倒 / 保安盯梢。
+   *
+   * 取代 `onItemEffect`：后者只有「谁对谁用了什么」，表达不了时长与「被挡下」。
+   */
+  onPlayerEffect?(packet: PlayerEffectPacket): void;
+  /** 全服大喇叭：所有在线真人都会收到 */
+  onLoudspeaker?(packet: LoudspeakerPacket): void;
+  /** 大喇叭被拒（不扣道具） */
+  onShoutReject?(packet: ShoutRejectPacket): void;
+  /** 道具没生效：只回给操作者本人 */
+  onItemReject?(packet: ItemRejectPacket): void;
 }
 
 function defaultUrl(): string {
@@ -143,6 +251,11 @@ export class NetClient {
   /** 上一次会话的落点：每次（重）连都随 HELLO 上报，由服务端重新校验 */
   private resume: ResumeState | undefined;
   /**
+   * 资产摘要：HELLO 的最后一个段（ADR-0082）。
+   * 本地新变动会先写到这里，重连时随 HELLO 一起上报，避免掉线期间的收益被旧快照覆盖。
+   */
+  private economy: EconomyProfile | undefined;
+  /**
    * 断线前已在线秒数（ADR-0060）：重连时随 HELLO 上报，服务端据此续算在岗时长。
    * 每次新的一轮进园都从 0 起，只有连接断开的那一刻才写入。
    */
@@ -153,6 +266,12 @@ export class NetClient {
   private terminal = false;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 上一次 ping 包里回显的时间戳。
+   *
+   * 用单调时钟而不是 `Date.now()`：RTT 会直接喂给服务器时钟的样本修正，
+   * 系统时间被改一下就能把它算成几秒，顺手把时钟推歪（ADR-0081）。
+   */
   private lastPingAt = 0;
   /**
    * 服务端实际采用的同步条目格式，来自 WELCOME 尾部。
@@ -163,6 +282,11 @@ export class NetClient {
   /** 上行移动包复用：缓冲与对象都只建一次 */
   private readonly moveWriter = new ByteWriter(16);
   private readonly movePacket: MovePacket = { id: 0, x: 0, y: 0, state: 0 };
+  /**
+   * 匿名设备号（ADR-0081）：点赞与擂台战绩的聚合键。
+   * Worker 里读不到 localStorage，所以由 init 消息带进来；主线程回退时才自己生成。
+   */
+  private readonly deviceId: string;
 
   setEntityId(id: number): void {
     this.selfId = id;
@@ -171,7 +295,10 @@ export class NetClient {
   constructor(
     private readonly handlers: NetHandlers,
     private readonly url = defaultUrl(),
-  ) {}
+    deviceId = '',
+  ) {
+    this.deviceId = deviceId !== '' ? deviceId : ensureDeviceId();
+  }
 
   connect(
     name: string,
@@ -179,12 +306,14 @@ export class NetClient {
     resume?: ResumeState,
     status = '',
     career?: CareerSummary,
+    economy?: EconomyProfile,
   ): void {
     this.name = name;
     this.appearance = appearance;
     this.resume = resume;
     this.status = status;
     this.career = career;
+    this.economy = economy;
     this.disposed = false;
     this.terminal = false;
     this.open();
@@ -245,6 +374,10 @@ export class NetClient {
             this.career,
             // 断线续算：旧服务端读完前面的段就停，看不到这 5 字节
             this.sessionSec,
+            // 匿名设备号（ADR-0081）：只做点赞/战绩聚合，旧服务端忽略
+            this.deviceId,
+            // 资产摘要（ADR-0082）：永久层在浏览器，进园时交给服务端清洗
+            this.economy,
           ),
         );
       }
@@ -345,11 +478,79 @@ export class NetClient {
       case OpCode.S2C_JAIL:
         this.handlers.onJail(decodeJail(data));
         break;
+      case OpCode.S2C_AMBULANCE:
+        this.handlers.onAmbulance?.(decodeAmbulance(data));
+        break;
+      case OpCode.S2C_PATIENT:
+        this.handlers.onPatient?.(decodePatientStatus(data));
+        break;
       case OpCode.S2C_RING:
         this.handlers.onRing(decodeRing(data));
         break;
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));
+        break;
+      case OpCode.S2C_WALLET_SYNC: {
+        const packet = decodeWalletSync(data);
+        // 记住最新资产：下一次 HELLO 用它，而不是进园前的旧快照
+        this.economy = {
+          coins: packet.coins,
+          stats: packet.stats,
+          unlockedCosmetics: this.economy?.unlockedCosmetics ?? [],
+          inventory: packet.inventory,
+          houseTier: packet.houseTier,
+          dailyQuests: this.economy?.dailyQuests ?? { day: '', progress: {}, claimed: [] },
+        };
+        this.handlers.onWallet?.(packet);
+        break;
+      }
+      case OpCode.S2C_P2P_INVITE_NOTIFY:
+        this.handlers.onInvite?.(decodeP2PInviteNotify(data));
+        break;
+      case OpCode.S2C_P2P_INVITE_RESULT:
+        this.handlers.onInviteResult?.(decodeP2PInviteResult(data));
+        break;
+      case OpCode.S2C_P2P_MATCH:
+        this.handlers.onMatch?.(decodeP2PMatch(data));
+        break;
+      case OpCode.S2C_P2P_SHOWDOWN:
+        this.handlers.onShowdown?.(decodeP2PShowdown(data));
+        break;
+      case OpCode.S2C_P2P_DUEL_STATE:
+        this.handlers.onDuelState?.(decodeP2PDuelState(data));
+        break;
+      case OpCode.S2C_TIP:
+        this.handlers.onTip?.(decodeTipBroadcast(data));
+        break;
+      case OpCode.S2C_ITEM_EFFECT:
+        this.handlers.onItemEffect?.(decodeItemEffect(data));
+        break;
+      case OpCode.S2C_PLAYER_EFFECT:
+        this.handlers.onPlayerEffect?.(decodePlayerEffect(data));
+        break;
+      case OpCode.S2C_LOUDSPEAKER:
+        this.handlers.onLoudspeaker?.(decodeLoudspeaker(data));
+        break;
+      case OpCode.S2C_SHOUT_REJECT:
+        this.handlers.onShoutReject?.(decodeShoutReject(data));
+        break;
+      case OpCode.S2C_ITEM_REJECT:
+        this.handlers.onItemReject?.(decodeItemReject(data));
+        break;
+      case OpCode.S2C_DICE_STATE:
+        this.handlers.onDiceState?.(decodeDiceState(data));
+        break;
+      case OpCode.S2C_VILLA_STATE:
+        this.handlers.onVillaState?.(decodeVillaState(data));
+        break;
+      case OpCode.S2C_ARENA_POOL:
+        this.handlers.onArenaPool?.(decodeArenaPool(data));
+        break;
+      case OpCode.S2C_ROOM_STATE:
+        this.handlers.onRoomState?.(decodeRoomState(data));
+        break;
+      case OpCode.S2C_ROOM_INVITE:
+        this.handlers.onRoomInvite?.(decodeRoomInvite(data));
         break;
       case OpCode.S2C_QUEUE_REJECTED:
         this.terminal = true;
@@ -357,8 +558,18 @@ export class NetClient {
         break;
       case OpCode.S2C_PONG: {
         const stamp = decodePong(data);
-        const rtt = (Date.now() & 0xffffffff) - stamp;
-        this.handlers.onPing(rtt >= 0 ? rtt : 0);
+        const rtt = (Math.floor(performance.now()) & 0xffffffff) - stamp;
+        const measured = rtt >= 0 ? rtt : 0;
+        this.handlers.onPing(measured);
+        // 尾段时钟（ADR-0081）：和 RTT 同包，天然能把样本挪到发送时刻
+        const clock = decodePongClock(data);
+        if (clock && clock.serverSec > 0) {
+          this.handlers.onClock?.({
+            serverSec: clock.serverSec,
+            rttMs: measured,
+            tzOffsetMin: clock.tzOffsetMin,
+          });
+        }
         break;
       }
       default:
@@ -381,8 +592,8 @@ export class NetClient {
   }
 
   private sendPing(): void {
-    this.lastPingAt = Date.now();
-    this.socket?.send(encodePing(this.lastPingAt & 0xffffffff));
+    this.lastPingAt = Math.floor(performance.now()) & 0xffffffff;
+    this.socket?.send(encodePing(this.lastPingAt));
   }
 
   private stopPing(): void {
@@ -467,10 +678,80 @@ export class NetClient {
     this.socket.send(encodeRingLeave());
   }
 
+  /** 发起对战邀请：距离 / 忙碌 / 赌注都由服务端二次裁决（ADR-0083） */
+  sendP2PInvite(request: P2PInviteRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeP2PInvite(request));
+  }
+
+  sendP2PRespond(request: P2PRespondRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeP2PRespond(request));
+  }
+
+  /** 猜拳出拳：只带 matchId 与 1..3，合法性由服务端复核 */
+  sendP2PAction(request: P2PActionRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeP2PAction(request));
+  }
+
+  sendTip(request: TipRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeTip(request));
+  }
+
+  sendUseItem(request: UseItemRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeUseItem(request));
+  }
+
+  sendShopBuy(request: ShopBuyRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeShopBuy(request));
+  }
+
+  /** 大喇叭：文案已在编码侧截到 30 字，服务端还会再过一遍审核 */
+  sendShout(text: string): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeShout(text));
+  }
+
   /** 牛马榜查询：默认一次拉全部指标；服务端按指标各回一条 */
   sendBoard(metric: BoardMetric | typeof BOARD_METRIC_ALL = BOARD_METRIC_ALL): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeBoardRequest(metric));
+  }
+
+  // ---- 热区建筑（ADR-0087）：上行只带意图，金额与资格由服务端复核 ----
+
+  sendDiceBet(request: { table: number; side: number; amount: number }): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeDiceBet(request));
+  }
+
+  sendVilla(request: { villa: number; action: number }): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeVillaRequest(request));
+  }
+
+  sendArenaBet(request: { side: number; amount: number }): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeArenaBet(request));
+  }
+
+  sendApartment(request: { action: number; arg: number }): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeApartmentRequest(request));
+  }
+
+  sendApartmentInvite(targetId: number): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeApartmentInvite(targetId));
+  }
+
+  sendRoomLayout(placements: ReadonlyArray<FurniturePlacement>): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeRoomLayout(placements));
   }
 
   dispose(): void {

@@ -14,7 +14,7 @@
  * 16 × 1.25 = 20，所以帽子相对头宽的比例和旧版完全一致，不需要重调锚点偏移。
  */
 export const COSMETIC_CATALOG = {
-  head: ['grad', 'cap', 'beret', 'helmet', 'top', 'god_of_wealth', 'bamboo_hat', 'curse_hoop', 'police_cap'],
+  head: ['grad', 'cap', 'beret', 'helmet', 'top', 'god_of_wealth', 'bamboo_hat', 'curse_hoop', 'police_cap', 'nurse_cap'],
   eyes: ['round', 'sun', 'monocle'],
   neck: ['scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant', 'epaulette'],
   hair: ['buzz', 'bangs', 'ponytail', 'afro', 'slick', 'topknot', 'braid'],
@@ -309,6 +309,41 @@ function drawHeadwear(id: string, dir: CosmeticDirection): Icon {
     icon.rect(8, 4, 4, 2, TRIM);
     icon.rect(2, 7, 16, 1, BASE);
     icon.rect(2, 8, 16, 1, SHADE);
+  } else if (id === 'nurse_cap') {
+    // 白色护士帽（ADR-0084）：后高前低的软帽轮廓，正中最上缘留十字压印。
+    // 帽体只用 BASE/SHADE 两档，服务端把 headwear 配色刷成纯白即可；
+    // 红十字由急救站渲染层按固定护士坐标叠上去，避免单色 tint 把红字染成灰字。
+    if (dir === 'up') {
+      icon.rect(7, 1, 6, 1, SHADE);
+      icon.rect(5, 2, 10, 1, BASE);
+      icon.rect(4, 3, 12, 1, BASE);
+      icon.rect(4, 4, 12, 1, BASE);
+      icon.rect(5, 5, 10, 1, SHADE);
+      icon.rect(6, 6, 8, 1, SHADE);
+      return finished(icon);
+    }
+    if (dir === 'side') {
+      icon.rect(9, 1, 5, 1, SHADE);
+      icon.rect(7, 2, 7, 1, BASE);
+      icon.rect(6, 3, 8, 1, BASE);
+      icon.rect(5, 4, 9, 1, BASE);
+      icon.rect(5, 5, 9, 1, SHADE);
+      icon.rect(4, 6, 10, 1, SHADE);
+      return finished(icon);
+    }
+    icon.rect(7, 1, 6, 1, SHADE);
+    icon.rect(5, 2, 10, 1, BASE);
+    icon.rect(4, 3, 12, 1, BASE);
+    icon.rect(4, 4, 12, 1, BASE);
+    icon.rect(3, 5, 14, 1, SHADE);
+    // 正面帽檐：中间压低一格，读成护士帽的前折
+    icon.rect(4, 6, 12, 1, SHADE);
+    icon.rect(8, 5, 4, 1, BASE);
+    // 红十字压印（luma 档，白色 tint 下仍能读出货架十字的轮廓）
+    icon.rect(10, 2, 2, 1, TRIM);
+    icon.rect(9, 3, 1, 1, TRIM);
+    icon.rect(12, 3, 1, 1, TRIM);
+    icon.rect(10, 4, 2, 1, TRIM);
   } else {
     // 赛博紧箍咒（ADR-0061）：贴前额的一圈金箍（row 10–12），
     // 上下各留一档亮边当「自带辉光」，正中 3×3 空心方环读成卷云纹。

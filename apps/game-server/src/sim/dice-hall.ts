@@ -1,0 +1,215 @@
+import {
+  DICE_BET_MS,
+  DICE_GUARD_RAID_CHANCE,
+  DICE_MAX_BET,
+  DICE_MIN_BET,
+  DICE_PHASE,
+  DICE_RAID_TAKE,
+  DICE_REVEAL_MS,
+  DICE_ROLL_MS,
+  DICE_SIDE,
+  DICE_TABLES,
+  HOTSPOT_SERVER_SLACK,
+  WALLET_REASON,
+  classifyDice,
+  encodeDiceState,
+  hotspotById,
+  isWithinHotspot,
+  rollDice,
+  splitPool,
+  type DicePhase,
+  type DiceTablePacket,
+} from '@niuma/shared-types';
+import type { Player, World } from './world';
+import type { Transport } from './view';
+
+/** 经济端口：彩池结算需要的四个动作，全部由 `EconomyService` 提供 */
+export interface DiceHallPorts {
+  /** 冻结注额（成功才记注） */
+  freeze: (player: Player, amount: number) => boolean;
+  /** 清账（输掉） */
+  clear: (player: Player) => void;
+  /** 派彩 */
+  payout: (player: Player, amount: number, reason: number) => void;
+  /** 原路退还（无人命中 / 平局） */
+  refund: (player: Player) => void;
+}
+
+interface DiceBet {
+  side: number;
+  amount: number;
+}
+
+interface TableState {
+  id: number;
+  phase: DicePhase;
+  phaseEndsAt: number;
+  roundId: number;
+  dice: [number, number, number];
+  raid: boolean;
+  bets: Map<number, DiceBet>;
+}
+
+/**
+ * 赌桌公共局状态机（每张桌一份，互相独立）。
+ *
+ * 结算用彩池而不是固定赔率：押中档位的人按注额比例分走全池，
+ * 平台不抽水、货币不增发，天然支持「多人同赢同输」。
+ * 命中档位无人下注时全额退款；每局 5% 概率触发保安查岗，命中者再被抽走 5%。
+ */
+export class DiceHallRuntime {
+  private readonly tables: TableState[];
+
+  constructor(private readonly ports: DiceHallPorts, now: number) {
+    this.tables = DICE_TABLES.map((spec) => ({
+      id: spec.id,
+      phase: DICE_PHASE.Betting,
+      phaseEndsAt: now + DICE_BET_MS,
+      roundId: 1,
+      dice: [0, 0, 0] as [number, number, number],
+      raid: false,
+      bets: new Map<number, DiceBet>(),
+    }));
+  }
+
+  table(id: number): TableState | undefined {
+    return this.tables.find((table) => table.id === id);
+  }
+
+  /** 下注：只有下注窗口、未押过、够近、注额合法才受理 */
+  placeBet(player: Player, tableId: number, side: number, amount: number, now: number): boolean {
+    const table = this.table(tableId);
+    if (!table) return false;
+    if (table.phase !== DICE_PHASE.Betting || now >= table.phaseEndsAt) return false;
+    if (side !== DICE_SIDE.Big && side !== DICE_SIDE.Small && side !== DICE_SIDE.Leopard) return false;
+    if (!Number.isFinite(amount)) return false;
+    const stake = Math.floor(amount);
+    if (stake < DICE_MIN_BET || stake > DICE_MAX_BET) return false;
+    if (table.bets.has(player.id)) return false;
+    // 距离门：必须站在这一桌的热区里，防止离场后伪造包
+    const hotspot = hotspotById(`dice-table-${tableId}`);
+    if (!hotspot || !isWithinHotspot(hotspot, player.x, player.y, HOTSPOT_SERVER_SLACK)) return false;
+    if (!this.ports.freeze(player, stake)) return false;
+    table.bets.set(player.id, { side, amount: stake });
+    return true;
+  }
+
+  /** 每 Tick 推进；返回是否发生了需要广播的状态变化 */
+  tick(now: number, world: World): boolean {
+    let changed = false;
+    for (const table of this.tables) {
+      if (now < table.phaseEndsAt) continue;
+      changed = true;
+      if (table.phase === DICE_PHASE.Betting) {
+        table.dice = rollDice(table.roundId * 7919 + table.id * 104729);
+        table.raid = diceRollGuard(table.roundId * 31 + table.id * 7);
+        table.phase = DICE_PHASE.Rolling;
+        table.phaseEndsAt = now + DICE_ROLL_MS;
+      } else if (table.phase === DICE_PHASE.Rolling) {
+        this.settle(table, now, world);
+        table.phase = DICE_PHASE.Reveal;
+        table.phaseEndsAt = now + DICE_REVEAL_MS;
+      } else {
+        table.phase = DICE_PHASE.Betting;
+        table.phaseEndsAt = now + DICE_BET_MS;
+        table.roundId = table.roundId >= 0xffff ? 1 : table.roundId + 1;
+        table.dice = [0, 0, 0];
+        table.raid = false;
+      }
+    }
+    return changed;
+  }
+
+  /** 1Hz 心跳：亮牌期也要让倒计时走起来，否则 HUD 会停在开局那一刻 */
+  needsHeartbeat(now: number): boolean {
+    return this.tables.some((table) => table.phase !== DICE_PHASE.Betting || now < table.phaseEndsAt);
+  }
+
+  private settle(table: TableState, now: number, world: World): void {
+    const [a, b, c] = table.dice;
+    const hit = classifyDice(a, b, c);
+    let pool = 0;
+    const winners: Array<{ id: number; amount: number }> = [];
+    for (const [id, bet] of table.bets) {
+      pool += bet.amount;
+      if (bet.side === hit) winners.push({ id, amount: bet.amount });
+    }
+    if (table.bets.size === 0) {
+      table.bets.clear();
+      return;
+    }
+    if (winners.length === 0) {
+      // 命中档位没人押：全额退款，谁也不算输
+      for (const [id] of table.bets) {
+        const player = world.get(id);
+        if (player) this.ports.refund(player);
+      }
+      table.bets.clear();
+      return;
+    }
+    const payouts = splitPool(winners, pool);
+    const winnerIds = new Set(payouts.map((entry) => entry.id));
+    for (const entry of payouts) {
+      const player = world.get(entry.id);
+      if (!player) continue;
+      // 保安查岗：本局命中的彩池抽走 5%
+      const take = table.raid ? Math.floor(entry.amount * DICE_RAID_TAKE) : 0;
+      this.ports.payout(player, entry.amount - take, WALLET_REASON.DiceWin);
+    }
+    for (const [id] of table.bets) {
+      if (winnerIds.has(id)) continue;
+      const player = world.get(id);
+      if (player) this.ports.clear(player);
+    }
+    table.bets.clear();
+    void now;
+  }
+
+  /** 组装下行快照：只带观看者自己的注额，避免把全桌注额摊给所有人 */
+  snapshot(viewer: Player, now: number): DiceTablePacket[] {
+    return this.tables.map((table) => {
+      const own = table.bets.get(viewer.id);
+      return {
+        id: table.id,
+        phase: table.phase,
+        remainingMs: Math.max(0, table.phaseEndsAt - now),
+        roundId: table.roundId,
+        dice: table.phase === DICE_PHASE.Betting ? ([0, 0, 0] as const) : (table.dice as [number, number, number]),
+        totalPot: sumBets(table.bets),
+        mySide: own ? own.side : -1,
+        myBet: own ? own.amount : 0,
+        raid: table.raid,
+      };
+    });
+  }
+
+  /** 断线清理：把该玩家未结算的注额原路退回 */
+  onDisconnect(playerId: number, world: World): void {
+    for (const table of this.tables) {
+      if (!table.bets.has(playerId)) continue;
+      table.bets.delete(playerId);
+      const player = world.get(playerId);
+      if (player) this.ports.refund(player);
+    }
+  }
+}
+
+function sumBets(bets: ReadonlyMap<number, DiceBet>): number {
+  let total = 0;
+  for (const bet of bets.values()) total += bet.amount;
+  return total;
+}
+
+/** 查岗掷骰：用整数哈希而不是 Math.random，便于测试复现 */
+function diceRollGuard(seed: number): boolean {
+  const mixed = (Math.imul(seed | 0, 0x85ebca6b) ^ 0x27d4eb2f) >>> 0;
+  return mixed % 10_000 < Math.round(DICE_GUARD_RAID_CHANCE * 10_000);
+}
+
+/** 广播给所有在线连接：一包两张桌，按人填自己的注额 */
+export function broadcastDice(world: World, transport: Transport, now = Date.now()): void {
+  for (const player of world.players.values()) {
+    if (player.wsId === 0) continue;
+    transport.send(player.wsId, encodeDiceState({ tables: world.dice.snapshot(player, now) }));
+  }
+}

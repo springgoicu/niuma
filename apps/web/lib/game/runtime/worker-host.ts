@@ -14,6 +14,13 @@ export interface WorkerScope {
 
 /** 小地图与工牌详情的刷新节拍：4Hz，主线程完全不再参与 */
 const SLOW_FRAME_MS = 250;
+/**
+ * 时钟转发节流（ADR-0081）。
+ *
+ * 心跳是 1Hz，但主线程只用这份时钟画 HUD 倒计时与「今天」的切日，
+ * 5 秒一次足够把误差压在毫秒级；时区变了（重启换部署）则立刻补发。
+ */
+const CLOCK_FORWARD_MS = 5_000;
 
 /**
  * 渲染线程的宿主。
@@ -72,6 +79,9 @@ export function runWorkerHost(scope: WorkerScope): void {
     if (minimapCtx) prepareMiniMap(minimapCtx, minimapDpr);
 
     const block = control;
+    /** 首次一定放行：`-Infinity` 让「刚连上」这一拍不受节流影响 */
+    let clockForwardAt = Number.NEGATIVE_INFINITY;
+    let clockForwardTz = Number.NaN;
     const env: EngineEnv = {
       search: message.search,
       canvas: message.canvas,
@@ -82,6 +92,7 @@ export function runWorkerHost(scope: WorkerScope): void {
       danmakuPrefs: message.danmaku,
       // 当日首香标记同理：读盘在主线程，写回也交回主线程
       incenseDay: message.incenseDay,
+      deviceId: message.deviceId,
       writeIncenseDay: (day) => post({ t: 'incenseDay', day }),
       writeSnapshot: (patch) => {
         block.writeSnapshot(patch);
@@ -113,6 +124,38 @@ export function runWorkerHost(scope: WorkerScope): void {
         onBoard: (packet) => post({ t: 'board', packet }),
         onLike: (packet) => post({ t: 'like', packet }),
         onRing: (packet, receivedAt) => post({ t: 'ring', packet, receivedAt }),
+        onWallet: (packet) => post({ t: 'wallet', packet }),
+        onInvite: (packet) => post({ t: 'p2pInvite', packet }),
+        onInviteResult: (packet) => post({ t: 'p2pInviteResult', packet }),
+        onMatch: (packet) => post({ t: 'p2pMatch', packet }),
+        onShowdown: (packet) => post({ t: 'p2pShowdown', packet }),
+        onDuelState: (packet) => post({ t: 'p2pDuelState', packet }),
+        onTip: (packet) => post({ t: 'tip', packet }),
+        onItemEffect: (packet) => post({ t: 'itemEffect', packet }),
+        onLoudspeaker: (packet) => post({ t: 'loudspeaker', packet }),
+        onShoutReject: (packet) => post({ t: 'shoutReject', packet }),
+        onItemReject: (packet) => post({ t: 'itemReject', packet }),
+        // 茶台 F：把「开面板」这个 React 侧的意图交回主线程
+        onShopOpen: (tab) => post({ t: 'shopOpen', tab }),
+        // 热区建筑（ADR-0087）：开面板意图与下行快照都要透传，漏一条 Worker 模式就丢包
+        onDiceOpen: (table) => post({ t: 'diceOpen', table }),
+        onArenaBetOpen: () => post({ t: 'arenaBetOpen' }),
+        onVillaOpen: (villa) => post({ t: 'villaOpen', villa }),
+        onApartmentOpen: () => post({ t: 'apartmentOpen' }),
+        onDiceState: (packet) => post({ t: 'dice', packet }),
+        onVillaState: (packet) => post({ t: 'villa', packet }),
+        onArenaPool: (packet) => post({ t: 'arenaPool', packet }),
+        onRoomState: (packet) => post({ t: 'room', packet }),
+        onRoomInvite: (packet) => post({ t: 'roomInvite', packet }),
+        onClock: (sample) => {
+          const now = performance.now();
+          if (clockForwardTz === sample.tzOffsetMin && now - clockForwardAt < CLOCK_FORWARD_MS) {
+            return;
+          }
+          clockForwardAt = now;
+          clockForwardTz = sample.tzOffsetMin;
+          post({ t: 'clock', epochMs: sample.epochMs, tzOffsetMin: sample.tzOffsetMin });
+        },
       },
       env,
       { wsUrl: message.wsUrl, parkId: message.parkId },
@@ -190,14 +233,60 @@ export function runWorkerHost(scope: WorkerScope): void {
       case 'like':
         session?.like(message.id);
         return;
+      case 'p2pInvite':
+        session?.inviteDuel(
+          message.request.targetId,
+          message.request.gameType,
+          message.request.wager,
+        );
+        return;
+      case 'p2pRespond':
+        session?.respondInvite(message.request.inviteId, message.request.accept);
+        return;
+      case 'p2pAction':
+        session?.p2pAction(message.request.matchId, message.request.action);
+        return;
+      case 'tip':
+        session?.tip(message.request.targetId, message.request.amount);
+        return;
+      case 'useItem':
+        session?.useItem(message.request.targetId, message.request.itemId);
+        return;
+      case 'shopBuy':
+        session?.buyShop(
+          message.request.kind,
+          message.request.id,
+          message.request.count,
+        );
+        return;
+      case 'shout':
+        session?.shout(message.text);
+        return;
+      case 'diceBet':
+        session?.placeDiceBet(message.request.table, message.request.side, message.request.amount);
+        return;
+      case 'villa':
+        session?.villaAction(message.request.villa, message.request.action);
+        return;
+      case 'arenaBet':
+        session?.placeArenaBet(message.request.side, message.request.amount);
+        return;
+      case 'apartment':
+        if (message.request.action === 2) session?.upgradeApartment();
+        else if (message.request.action === 1) session?.exitApartment();
+        else session?.enterApartment();
+        return;
+      case 'apartmentInvite':
+        session?.inviteRoom(message.targetId);
+        return;
+      case 'roomLayout':
+        session?.saveRoomLayout(message.placements);
+        return;
       case 'navigate':
         session?.navigateTo(message.id);
         return;
       case 'cancelNav':
         session?.cancelNavigation();
-        return;
-      case 'like':
-        session?.like(message.id);
         return;
       case 'pick': {
         const badge = session?.pickAt(message.x, message.y) ?? null;

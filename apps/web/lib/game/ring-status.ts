@@ -1,11 +1,12 @@
 'use client';
 
 import { RING_CAPACITY, RING_PHASE, type RingPacket, type RingSlot } from '@niuma/shared-types';
+import { serverNow } from './server-clock';
 
 /**
  * 擂台 HUD 的纯函数部分（ADR-0073）。
  *
- * 服务端只给「收到那一刻还剩多少毫秒」，倒计时必须由客户端本地递减；
+ * 服务端只给「收到那一刻还剩多少毫秒」，倒计时由客户端按服务器时钟递减；
  * 把这段推导放在纯函数里，测试就能覆盖 10 秒警示、归零与阶段文案，
  * 不用起 React 渲染。
  */
@@ -26,13 +27,13 @@ export function ringSeats(packet: RingPacket): RingSeat[] {
 }
 
 /**
- * 本地剩余时间：`receivedAt` 是收到包的本机时刻。
+ * 剩余时间：`receivedAt` 与 `now` 都是**服务器时刻**（ADR-0081）。
  * 非 running 阶段恒为 0——等待 / 颁奖的进度不由这个字段表达。
  */
 export function ringRemainingMs(
   packet: RingPacket,
   receivedAt: number,
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): number {
   if (packet.phase !== RING_PHASE.Running) return 0;
   const drift = Math.max(0, now - receivedAt);

@@ -32,6 +32,9 @@ import {
   CHAT_HISTORY_MAX_PAGE,
   CHAT_HISTORY_PACKET_BUDGET,
   CHAT_REJECT_BYTES,
+  DEVICE_EXTENSION_BYTES,
+  DEVICE_EXTENSION_MAGIC,
+  PONG_CLOCK_BYTES,
   FALLBACK_NICKNAME,
   MAX_CHAT_CHARS,
   MAX_NAME_BYTES,
@@ -50,8 +53,10 @@ import {
   SESSION_EXTENSION_BYTES,
   SESSION_EXTENSION_MAGIC,
   STATUS_EXTENSION_MAGIC,
+  AMBULANCE_PACKET_BYTES,
   BOSS_PACKET_BYTES,
   JAIL_PACKET_BYTES,
+  PATIENT_PACKET_BYTES,
   SYNC_CAPABILITY_MAGIC,
   SYNC_ENTRY_BYTES,
   SYNC_ENTRY_BYTES_COMPACT,
@@ -64,6 +69,50 @@ import {
   WELCOME_SESSION_MAGIC,
   type SyncFormat,
 } from './constants';
+import { bytesToDeviceId, deviceIdToBytes } from './device';
+import {
+  ECONOMY_EXTENSION_MAGIC,
+  ECONOMY_MAX_BYTES,
+  ECONOMY_MIN_BYTES,
+  MAX_COINS,
+  STAT_KEYS,
+  clampCoins,
+  clampItemCount,
+  clampStatLevel,
+  emptyEconomyProfile,
+  findItemSku,
+  findItemSkuById,
+  sanitizeEconomyProfile,
+  type EconomyProfile,
+  type EconomyStats,
+} from './economy';
+import {
+  P2P_FLAG_SELF_TARGET,
+  type ItemEffectPacket,
+  type P2PActionRequest,
+  type P2PDuelStatePacket,
+  type P2PInviteNotifyPacket,
+  type P2PInviteRequest,
+  type P2PInviteResultPacket,
+  type P2PMatchPacket,
+  type P2PRespondRequest,
+  type P2PShowdownPacket,
+  type ShopBuyRequest,
+  type TipPacket,
+  type TipRequest,
+  type UseItemRequest,
+} from './challenge';
+import {
+  PLAYER_EFFECT_FLAG_BLOCKED,
+  PLAYER_EFFECT_FLAG_SELF,
+  MAX_SHOUT_BYTES,
+  MAX_SHOUT_CHARS,
+  truncateShout,
+  type ItemRejectPacket,
+  type LoudspeakerPacket,
+  type PlayerEffectPacket,
+  type ShoutRejectPacket,
+} from './buffs';
 import { displayWidth } from './name';
 import { DANMAKU_META_BYTES, normalizeDanmakuColor, normalizeDanmakuMode } from './danmaku';
 import {
@@ -75,6 +124,7 @@ import {
   unpackState,
 } from './quantize';
 import type {
+  AmbulancePacket,
   CareerBroadcastPacket,
   CharacterAppearance,
   ChatHistoryEntry,
@@ -87,6 +137,7 @@ import type {
   EntitySnapshot,
   LimitKind,
   MovePacket,
+  PatientStatusPacket,
   QueueRejectedPacket,
   QueueStatusPacket,
   ResumeState,
@@ -95,13 +146,27 @@ import type {
   SystemNoticePacket,
   VentEventPacket,
   WelcomePacket,
+  ApartmentRequest,
+  ArenaBetRequest,
+  ArenaPoolPacket,
+  DiceBetRequest,
+  DiceStatePacket,
+  DiceTablePacket,
+  RoomInvitePacket,
+  RoomStatePacket,
+  VillaRequest,
+  VillaStatePacket,
 } from './types';
 import {
+  AMBULANCE_FLAG_CARRYING,
+  AMBULANCE_FLAG_SIREN,
+  AMBULANCE_STATE,
   BOSS_FLAG_DIED,
   BOSS_FLAG_RESET,
   JAIL_FLAG_SELF,
   JAIL_PHASE,
   OpCode,
+  PATIENT_STATE,
   QUEUE_REJECT_REASON,
   RING_VENT_FLAG_ELIMINATED,
   RING_VENT_FLAG_HIT,
@@ -668,6 +733,86 @@ export function readCareerSegment(data: Uint8Array, offset: number): CareerSumma
   return decodeCareer(data, offset + 2, total - 2);
 }
 
+/** 经济段载荷：余额 + 四维 + 房屋等级 + 背包条目（id 升序，便于测试比对字节） */
+function encodeEconomyPayload(profile: EconomyProfile): Uint8Array {
+  const clean = sanitizeEconomyProfile(profile);
+  const entries: Array<{ id: number; count: number }> = [];
+  for (const [key, count] of Object.entries(clean.inventory)) {
+    const sku = findItemSku(key);
+    if (!sku || count <= 0) continue;
+    entries.push({ id: sku.id, count: clampItemCount(count) });
+  }
+  entries.sort((a, b) => a.id - b.id);
+  const writer = new ByteWriter(ECONOMY_MIN_BYTES + entries.length * 3);
+  writer.u32(clean.coins);
+  for (const key of STAT_KEYS) writer.u8(clean.stats[key]);
+  writer.u8(clean.houseTier).u8(entries.length);
+  for (const entry of entries) writer.u8(entry.id).u16(entry.count);
+  return writer.finish();
+}
+
+function decodeEconomyPayload(data: Uint8Array): EconomyProfile | undefined {
+  const reader = new ByteReader(data);
+  if (reader.remaining < ECONOMY_MIN_BYTES) return undefined;
+  const coins = reader.u32();
+  const stats: EconomyStats = {
+    atkSpeedLv: clampStatLevel(reader.u8()),
+    workEffLv: clampStatLevel(reader.u8()),
+    critLv: clampStatLevel(reader.u8()),
+    armorLv: clampStatLevel(reader.u8()),
+  };
+  const houseTier = reader.u8();
+  const count = reader.u8();
+  if (reader.remaining < count * 3) return undefined;
+  const profile = emptyEconomyProfile();
+  profile.coins = clampCoins(coins);
+  profile.stats = stats;
+  profile.houseTier = houseTier;
+  for (let i = 0; i < count; i += 1) {
+    const sku = findItemSkuById(reader.u8());
+    const itemCount = clampItemCount(reader.u16());
+    // 未知 id 直接丢，但长度仍按协议吃掉：旧服务端新增的道具不该让整段解崩
+    if (sku && itemCount > 0) profile.inventory[sku.key] = itemCount;
+  }
+  return profile;
+}
+
+/** 独立编码一条经济段：`[0xf7][len u8][payload]` */
+export function encodeEconomySegment(profile: EconomyProfile): Uint8Array {
+  const payload = encodeEconomyPayload(profile);
+  const segment = new Uint8Array(2 + payload.length);
+  segment[0] = ECONOMY_EXTENSION_MAGIC;
+  segment[1] = payload.length;
+  segment.set(payload, 2);
+  return segment;
+}
+
+/** 写 HELLO 尾部的 `[0xf7][len u8][payload]`；没有档案时一个字节都不写。 */
+export function writeEconomySegment(writer: ByteWriter, profile: EconomyProfile | undefined): void {
+  if (!profile) return;
+  const payload = encodeEconomyPayload(profile);
+  writer.u8(ECONOMY_EXTENSION_MAGIC).u8(payload.length).raw(payload);
+}
+
+/** 经济段在包里的总字节数；魔数不符或长度不自洽返回 0，后续段不会错位。 */
+export function economySegmentSizeAt(data: Uint8Array, offset: number): number {
+  if (data.length - offset < 2 || data[offset] !== ECONOMY_EXTENSION_MAGIC) return 0;
+  const length = data[offset + 1]!;
+  if (length < ECONOMY_MIN_BYTES || length > ECONOMY_MAX_BYTES) return 0;
+  if (data.length - offset - 2 < length) return 0;
+  return 2 + length;
+}
+
+/** 读经济段；不是经济段或长度不合法都返回 undefined，不消费调用方的 offset。 */
+export function readEconomySegment(
+  data: Uint8Array,
+  offset: number,
+): EconomyProfile | undefined {
+  const total = economySegmentSizeAt(data, offset);
+  if (total === 0) return undefined;
+  return decodeEconomyPayload(data.subarray(offset + 2, offset + total));
+}
+
 /** 补报：`[op 0x22][len u8][payload]` */
 export function encodeCareerReport(career: CareerSummary): Uint8Array {
   const payload = encodeCareer(career);
@@ -1023,6 +1168,83 @@ export function decodeJail(data: Uint8Array): JailPacket {
   return { entityId, phase, self: (flags & JAIL_FLAG_SELF) !== 0, seconds, guardId };
 }
 
+/**
+ * 救护车同步：`[op][id u8][state u8][x u16][y u16][flags u8]`，8 字节定长。
+ *
+ * 坐标与 Tick 同一把量化尺子；警灯与载员走 flags，不新增字段。
+ * 停靠静止时的去脏由发送端负责（ADR-0043）。
+ */
+export function encodeAmbulance(packet: AmbulancePacket): Uint8Array {
+  if (packet.id < 0 || packet.id > 0xff) throw new Error(`ambulance id out of range: ${packet.id}`);
+  if (
+    packet.state !== AMBULANCE_STATE.Idle &&
+    packet.state !== AMBULANCE_STATE.Dispatched &&
+    packet.state !== AMBULANCE_STATE.Transporting &&
+    packet.state !== AMBULANCE_STATE.Returning
+  ) {
+    throw new Error(`ambulance state out of range: ${packet.state}`);
+  }
+  const flags =
+    (packet.flags & AMBULANCE_FLAG_SIREN ? AMBULANCE_FLAG_SIREN : 0) |
+    (packet.flags & AMBULANCE_FLAG_CARRYING ? AMBULANCE_FLAG_CARRYING : 0);
+  const writer = new ByteWriter(AMBULANCE_PACKET_BYTES);
+  writer
+    .u8(OpCode.S2C_AMBULANCE)
+    .u8(packet.id)
+    .u8(packet.state)
+    .u16(quantizeCoord(packet.x))
+    .u16(quantizeCoord(packet.y))
+    .u8(flags);
+  return writer.finish();
+}
+
+export function decodeAmbulance(data: Uint8Array): AmbulancePacket {
+  if (data.byteLength !== AMBULANCE_PACKET_BYTES) {
+    throw new Error(`ambulance packet must be ${AMBULANCE_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_AMBULANCE) throw new Error('not an ambulance packet');
+  const id = reader.u8();
+  const state = reader.u8();
+  if (state > AMBULANCE_STATE.Returning) throw new Error(`ambulance state out of range: ${state}`);
+  const x = dequantizeCoord(reader.u16());
+  const y = dequantizeCoord(reader.u16());
+  const flags = reader.u8();
+  return { id, state: state as AmbulancePacket['state'], x, y, flags };
+}
+
+/** 伤员状态：`[op][entityId u16][state u8][seconds u16]`，6 字节定长。 */
+export function encodePatientStatus(packet: PatientStatusPacket): Uint8Array {
+  if (
+    packet.state !== PATIENT_STATE.None &&
+    packet.state !== PATIENT_STATE.Incapacitated &&
+    packet.state !== PATIENT_STATE.Treating &&
+    packet.state !== PATIENT_STATE.Shielded
+  ) {
+    throw new Error(`patient state out of range: ${packet.state}`);
+  }
+  const writer = new ByteWriter(PATIENT_PACKET_BYTES);
+  writer
+    .u8(OpCode.S2C_PATIENT)
+    .u16(Math.max(0, Math.min(0xffff, packet.entityId)))
+    .u8(packet.state)
+    .u16(Math.max(0, Math.min(0xffff, Math.round(packet.seconds))));
+  return writer.finish();
+}
+
+export function decodePatientStatus(data: Uint8Array): PatientStatusPacket {
+  if (data.byteLength !== PATIENT_PACKET_BYTES) {
+    throw new Error(`patient packet must be ${PATIENT_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_PATIENT) throw new Error('not a patient packet');
+  const entityId = reader.u16();
+  const state = reader.u8();
+  if (state > PATIENT_STATE.Shielded) throw new Error(`patient state out of range: ${state}`);
+  const seconds = reader.u16();
+  return { entityId, state: state as PatientStatusPacket['state'], seconds };
+}
+
 /** 报名/取消都是单字节 opcode，服务端用靠近与阶段做二次裁决。 */
 export function encodeRingEnter(): Uint8Array {
   return Uint8Array.of(OpCode.C2S_RING_ENTER);
@@ -1191,6 +1413,8 @@ export function encodeHello(
   syncFormat: SyncFormat = SYNC_FORMAT_LEGACY,
   career?: CareerSummary,
   sessionSec?: number,
+  deviceId?: string,
+  economy?: EconomyProfile,
 ): Uint8Array {
   const nameBytes = textEncoder.encode(truncateName(name));
   const statusBytes = textEncoder.encode(truncateStatus(status));
@@ -1199,6 +1423,7 @@ export function encodeHello(
   // 不声明紧凑格式就不写能力段：旧服务端与旧客户端看到的帧长完全不变
   const capabilitySize = syncFormat === SYNC_FORMAT_COMPACT ? 2 : 0;
   const carry = hasSessionCarry(sessionSec);
+  const deviceBytes = deviceIdToBytes(deviceId);
   const writer = new ByteWriter(
     2 +
       nameBytes.length +
@@ -1207,7 +1432,9 @@ export function encodeHello(
       statusSize +
       capabilitySize +
       (career ? CAREER_SEGMENT_MAX_BYTES : 0) +
-      (carry ? SESSION_EXTENSION_BYTES : 0),
+      (carry ? SESSION_EXTENSION_BYTES : 0) +
+      (deviceBytes ? DEVICE_EXTENSION_BYTES : 0) +
+      (economy ? 2 + ECONOMY_MAX_BYTES : 0),
   );
   writer.u8(OpCode.C2S_HELLO).u8(nameBytes.length).raw(nameBytes).raw(encodeAppearance(appearance));
   if (resume) {
@@ -1226,6 +1453,10 @@ export function encodeHello(
   writeCareerSegment(writer, career);
   // 会话续算段排在最后（ADR-0060）：旧服务端读完 career 段就停，看不到这 5 字节
   if (carry) writer.u8(SESSION_EXTENSION_MAGIC).u32(Math.floor(sessionSec));
+  // 设备号段再排在会话段之后（ADR-0081）：旧服务端读到 0xf8 也只会忽略尾字节
+  if (deviceBytes) writer.u8(DEVICE_EXTENSION_MAGIC).raw(deviceBytes);
+  // 经济摘要永远排在最后（ADR-0082）：旧服务端读完设备段就停，天然忽略
+  writeEconomySegment(writer, economy);
   return writer.finish();
 }
 
@@ -1241,6 +1472,10 @@ export function decodeHello(data: Uint8Array): {
   career?: CareerSummary;
   /** 断线前已在线秒数；旧客户端整段缺席时为 0（按新一次进园处理） */
   sessionSec: number;
+  /** 进园资产摘要；旧客户端整段缺席时为 undefined（服务端按零资产处理） */
+  economy?: EconomyProfile;
+  /** 匿名设备号；段缺席时为空串 */
+  deviceId: string;
 } {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.C2S_HELLO) throw new Error('not a hello packet');
@@ -1256,7 +1491,9 @@ export function decodeHello(data: Uint8Array): {
     data[reader.offset] !== STATUS_EXTENSION_MAGIC &&
     data[reader.offset] !== SYNC_CAPABILITY_MAGIC &&
     data[reader.offset] !== CAREER_EXTENSION_MAGIC &&
-    data[reader.offset] !== SESSION_EXTENSION_MAGIC
+    data[reader.offset] !== SESSION_EXTENSION_MAGIC &&
+    data[reader.offset] !== DEVICE_EXTENSION_MAGIC &&
+    data[reader.offset] !== ECONOMY_EXTENSION_MAGIC
   ) {
     const version = reader.u8();
     const x = reader.u16();
@@ -1291,9 +1528,19 @@ export function decodeHello(data: Uint8Array): {
   }
   const careerAt = reader.offset;
   const career = readCareerSegment(data, careerAt);
-  // 会话续算段排在 career 段之后（ADR-0060）：先跳过 career 段再窥视魔数，
-  // 段不合法 / 缺席都回落到 0，旧客户端的行为逐字节不变。
-  const sessionSec = readSessionSegment(data, careerAt + careerSegmentSizeAt(data, careerAt));
+  const sessionAt = careerAt + careerSegmentSizeAt(data, careerAt);
+  const sessionSec = readSessionSegment(data, sessionAt);
+  // 设备号段排在会话段之后（ADR-0081）：会话段缺席时也从同一位置开始窥视
+  const deviceAt = sessionAt + sessionSegmentSizeAt(data, sessionAt);
+  const deviceId = readDeviceSegment(data, deviceAt);
+  // 段长按魔数与字节数判断，不看解析结果：设备号写成非法 hex 也要跳过这一段，
+  // 否则后面的经济段会被当成设备段读，整段丢失
+  const deviceSize =
+    data.length - deviceAt >= DEVICE_EXTENSION_BYTES && data[deviceAt] === DEVICE_EXTENSION_MAGIC
+      ? DEVICE_EXTENSION_BYTES
+      : 0;
+  // 经济段再排在设备段之后（ADR-0082）：缺席时整段为空，旧客户端不受影响
+  const economy = readEconomySegment(data, deviceAt + deviceSize);
   const hello: {
     name: string;
     appearance: CharacterAppearance;
@@ -1302,8 +1549,11 @@ export function decodeHello(data: Uint8Array): {
     syncFormat: SyncFormat;
     career?: CareerSummary;
     sessionSec: number;
-  } = { name, appearance, resume, status, syncFormat, sessionSec };
+    deviceId: string;
+    economy?: EconomyProfile;
+  } = { name, appearance, resume, status, syncFormat, sessionSec, deviceId };
   if (career) hello.career = career;
+  if (economy) hello.economy = economy;
   return hello;
 }
 
@@ -1316,6 +1566,22 @@ function readSessionSegment(data: Uint8Array, offset: number): number {
     (data[offset + 1]! | (data[offset + 2]! << 8) | (data[offset + 3]! << 16) | (data[offset + 4]! << 24)) >>>
     0
   );
+}
+
+/** 会话段真实占用的字节数：魔数与长度缺一都按「无此段」处理，后面的设备段才不会错位 */
+function sessionSegmentSizeAt(data: Uint8Array, offset: number): number {
+  if (data.length - offset < SESSION_EXTENSION_BYTES || data[offset] !== SESSION_EXTENSION_MAGIC) {
+    return 0;
+  }
+  return SESSION_EXTENSION_BYTES;
+}
+
+/** HELLO 尾段：`[0xf8][deviceId 8B]`；缺席、截断或字节不足一律回落到空串（匿名新设备）。 */
+function readDeviceSegment(data: Uint8Array, offset: number): string {
+  if (data.length - offset < DEVICE_EXTENSION_BYTES || data[offset] !== DEVICE_EXTENSION_MAGIC) {
+    return '';
+  }
+  return bytesToDeviceId(data.subarray(offset + 1, offset + DEVICE_EXTENSION_BYTES)) ?? '';
 }
 
 export function encodeWelcome(packet: WelcomePacket): Uint8Array {
@@ -1409,9 +1675,27 @@ export function encodePing(timestamp: number): Uint8Array {
   return writer.finish();
 }
 
-export function encodePong(timestamp: number): Uint8Array {
-  const writer = new ByteWriter(5);
+/** 服务器时钟样本：秒级 epoch + 园区时区偏移（分钟，东八区 = 480） */
+export interface ServerClockStamp {
+  serverSec: number;
+  tzOffsetMin: number;
+}
+
+/**
+ * PONG = `[op][timestamp u32]`，可选尾段 `[serverSec u32][tzOffsetMin i16]`。
+ *
+ * 时钟段不新增 opcode：心跳本身就是 1Hz，客户端拿到的每个 pong 都是一次对时样本。
+ * 没有这一段（旧服务端）时包体与旧版逐字节相同，旧客户端读完 timestamp 就停。
+ */
+export function encodePong(timestamp: number, clock?: ServerClockStamp): Uint8Array {
+  const writer = new ByteWriter(clock ? 5 + PONG_CLOCK_BYTES : 5);
   writer.u8(OpCode.S2C_PONG).u32(timestamp);
+  if (clock) {
+    const sec = Math.max(0, Math.floor(clock.serverSec)) >>> 0;
+    // i16 用补码写：ByteWriter 只有 u16，负偏移要手动加回 65536 再落字节
+    const minutes = Math.max(-32_768, Math.min(32_767, Math.floor(clock.tzOffsetMin)));
+    writer.u32(sec).u16(minutes < 0 ? minutes + 0x1_0000 : minutes);
+  }
   return writer.finish();
 }
 
@@ -1425,6 +1709,20 @@ export function decodePong(data: Uint8Array): number {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_PONG) throw new Error('not a pong packet');
   return reader.u32();
+}
+
+/**
+ * 读 PONG 的时钟尾段；旧服务端的 5 字节包返回 undefined（调用方按「未对时」处理）。
+ * `timestamp` 仍按 `decodePong` 的口径读出来，避免调用方解两次包。
+ */
+export function decodePongClock(data: Uint8Array): (ServerClockStamp & { timestamp: number }) | undefined {
+  if (data.length < 5 + PONG_CLOCK_BYTES || data[0] !== OpCode.S2C_PONG) return undefined;
+  const timestamp =
+    (data[1]! | (data[2]! << 8) | (data[3]! << 16) | (data[4]! << 24)) >>> 0;
+  const serverSec = (data[5]! | (data[6]! << 8) | (data[7]! << 16) | (data[8]! << 24)) >>> 0;
+  const rawTz = data[9]! | (data[10]! << 8);
+  const tzOffsetMin = rawTz > 0x7fff ? rawTz - 0x1_0000 : rawTz;
+  return { timestamp, serverSec, tzOffsetMin };
 }
 
 export function encodeSetAppearance(appearance: CharacterAppearance): Uint8Array {
@@ -1705,4 +2003,766 @@ export function decodeQueueRejected(data: Uint8Array): QueueRejectedPacket {
       ? QUEUE_REJECT_REASON.WaitTimeout
       : QUEUE_REJECT_REASON.QueueFull;
   return { reason };
+}
+
+// ---------------------------------------------------------------------------
+// 牛马币钱包（ADR-0082）：`[0x38][coins u32][4×stats u8][houseTier u8][reason u8][count u8]`
+// + count × `[itemId u8][count u16]`。完整背包快照而不是增量：幂等，也不需要合并逻辑。
+// ---------------------------------------------------------------------------
+
+export interface WalletSyncPacket {
+  coins: number;
+  stats: EconomyStats;
+  houseTier: number;
+  reason: number;
+  inventory: Record<string, number>;
+}
+
+export function encodeWalletSync(packet: WalletSyncPacket): Uint8Array {
+  const clean = sanitizeEconomyProfile({
+    coins: packet.coins,
+    stats: packet.stats,
+    houseTier: packet.houseTier,
+    inventory: packet.inventory,
+  });
+  const entries: Array<{ id: number; count: number }> = [];
+  for (const [key, count] of Object.entries(clean.inventory)) {
+    const sku = findItemSku(key);
+    if (sku && count > 0) entries.push({ id: sku.id, count: clampItemCount(count) });
+  }
+  entries.sort((a, b) => a.id - b.id);
+  const writer = new ByteWriter(12 + entries.length * 3);
+  writer.u8(OpCode.S2C_WALLET_SYNC).u32(clean.coins);
+  for (const key of STAT_KEYS) writer.u8(clean.stats[key]);
+  writer.u8(clean.houseTier).u8(packet.reason & 0xff).u8(entries.length);
+  for (const entry of entries) writer.u8(entry.id).u16(entry.count);
+  return writer.finish();
+}
+
+export function decodeWalletSync(data: Uint8Array): WalletSyncPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_WALLET_SYNC) throw new Error('not a wallet sync packet');
+  if (reader.remaining < 11) throw new Error('wallet sync truncated');
+  const coins = clampCoins(reader.u32());
+  const stats: EconomyStats = {
+    atkSpeedLv: clampStatLevel(reader.u8()),
+    workEffLv: clampStatLevel(reader.u8()),
+    critLv: clampStatLevel(reader.u8()),
+    armorLv: clampStatLevel(reader.u8()),
+  };
+  const houseTier = reader.u8();
+  const reason = reader.u8();
+  const count = reader.u8();
+  if (reader.remaining < count * 3) throw new Error('wallet sync inventory truncated');
+  const inventory: Record<string, number> = {};
+  for (let i = 0; i < count; i += 1) {
+    const sku = findItemSkuById(reader.u8());
+    const itemCount = clampItemCount(reader.u16());
+    if (sku && itemCount > 0) inventory[sku.key] = itemCount;
+  }
+  return { coins, stats, houseTier, reason, inventory };
+}
+
+// ---------------------------------------------------------------------------
+// P2P 互动（ADR-0083）
+// ---------------------------------------------------------------------------
+
+export function encodeP2PInvite(request: P2PInviteRequest): Uint8Array {
+  const writer = new ByteWriter(10);
+  writer
+    .u8(OpCode.C2S_P2P_INVITE)
+    .u16(Math.max(0, request.targetId) & 0xffff)
+    .u8(request.gameType & 0xff)
+    .u32(Math.max(0, Math.floor(request.wager)) >>> 0)
+    .u16(Math.max(0, request.extra) & 0xffff);
+  return writer.finish();
+}
+
+export function decodeP2PInvite(data: Uint8Array): P2PInviteRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_P2P_INVITE) throw new Error('not a p2p invite packet');
+  return { targetId: reader.u16(), gameType: reader.u8(), wager: reader.u32(), extra: reader.u16() };
+}
+
+export function encodeP2PRespond(request: P2PRespondRequest): Uint8Array {
+  const writer = new ByteWriter(6);
+  writer.u8(OpCode.C2S_P2P_RESPOND).u32(Math.max(0, request.inviteId) >>> 0).u8(request.accept ? 1 : 0);
+  return writer.finish();
+}
+
+export function decodeP2PRespond(data: Uint8Array): P2PRespondRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_P2P_RESPOND) throw new Error('not a p2p respond packet');
+  return { inviteId: reader.u32(), accept: reader.u8() === 1 };
+}
+
+/** 邀请浮窗：名字长度用 u8，调用方已按 48 字节上限钳过 */
+export function encodeP2PInviteNotify(packet: P2PInviteNotifyPacket): Uint8Array {
+  const nameBytes = textEncoder.encode(truncateName(packet.fromName));
+  const writer = new ByteWriter(16 + nameBytes.length);
+  writer
+    .u8(OpCode.S2C_P2P_INVITE_NOTIFY)
+    .u32(Math.max(0, packet.inviteId) >>> 0)
+    .u16(Math.max(0, packet.fromId) & 0xffff)
+    .u8(packet.gameType & 0xff)
+    .u32(Math.max(0, Math.floor(packet.wager)) >>> 0)
+    .u16(Math.max(0, packet.extra) & 0xffff)
+    .u16(Math.max(0, Math.min(65_535, Math.floor(packet.ttlMs))))
+    .u8(nameBytes.length)
+    .raw(nameBytes);
+  return writer.finish();
+}
+
+export function decodeP2PInviteNotify(data: Uint8Array): P2PInviteNotifyPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_P2P_INVITE_NOTIFY) throw new Error('not an invite notify packet');
+  const inviteId = reader.u32();
+  const fromId = reader.u16();
+  const gameType = reader.u8();
+  const wager = reader.u32();
+  const extra = reader.u16();
+  const ttlMs = reader.u16();
+  const nameLength = reader.u8();
+  if (nameLength > reader.remaining) throw new Error('invite notify name truncated');
+  return { inviteId, fromId, gameType, wager, extra, ttlMs, fromName: reader.utf8(nameLength) };
+}
+
+export function encodeP2PInviteResult(packet: P2PInviteResultPacket): Uint8Array {
+  const writer = new ByteWriter(7);
+  writer
+    .u8(OpCode.S2C_P2P_INVITE_RESULT)
+    .u32(Math.max(0, packet.inviteId) >>> 0)
+    .u8(packet.reason & 0xff)
+    .u8(packet.accepted ? 1 : 0);
+  return writer.finish();
+}
+
+export function decodeP2PInviteResult(data: Uint8Array): P2PInviteResultPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_P2P_INVITE_RESULT) throw new Error('not an invite result packet');
+  return { inviteId: reader.u32(), reason: reader.u8(), accepted: reader.u8() === 1 };
+}
+
+export function encodeP2PMatch(packet: P2PMatchPacket): Uint8Array {
+  const nameBytes = textEncoder.encode(truncateName(packet.opponentName));
+  const writer = new ByteWriter(20 + nameBytes.length);
+  writer
+    .u8(OpCode.S2C_P2P_MATCH)
+    .u32(Math.max(0, packet.matchId) >>> 0)
+    .u8(packet.gameType & 0xff)
+    .u8(packet.phase & 0xff)
+    .u16(Math.max(0, Math.min(65_535, Math.floor(packet.remainingMs))))
+    .u16(Math.max(0, packet.selfId) & 0xffff)
+    .u16(Math.max(0, packet.opponentId) & 0xffff)
+    .u32(Math.max(0, Math.floor(packet.wager)) >>> 0)
+    .u16(Math.max(0, packet.winnerId) & 0xffff)
+    .u8(packet.endReason & 0xff)
+    .u8(nameBytes.length)
+    .raw(nameBytes);
+  return writer.finish();
+}
+
+export function decodeP2PMatch(data: Uint8Array): P2PMatchPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_P2P_MATCH) throw new Error('not a match packet');
+  const matchId = reader.u32();
+  const gameType = reader.u8();
+  const phase = reader.u8();
+  const remainingMs = reader.u16();
+  const selfId = reader.u16();
+  const opponentId = reader.u16();
+  const wager = reader.u32();
+  const winnerId = reader.u16();
+  const endReason = reader.u8();
+  const nameLength = reader.u8();
+  if (nameLength > reader.remaining) throw new Error('match name truncated');
+  return {
+    matchId,
+    gameType,
+    phase,
+    remainingMs,
+    selfId,
+    opponentId,
+    wager,
+    winnerId,
+    endReason,
+    opponentName: reader.utf8(nameLength),
+  };
+}
+
+/** 猜拳出拳：`[0x3e][matchId u32][action u8]` */
+export function encodeP2PAction(request: P2PActionRequest): Uint8Array {
+  const writer = new ByteWriter(6);
+  writer
+    .u8(OpCode.C2S_P2P_ACTION)
+    .u32(Math.max(0, request.matchId) >>> 0)
+    .u8(request.action & 0xff);
+  return writer.finish();
+}
+
+export function decodeP2PAction(data: Uint8Array): P2PActionRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_P2P_ACTION) throw new Error('not a p2p action packet');
+  return { matchId: reader.u32(), action: reader.u8() };
+}
+
+/** 亮牌：固定 24 字节，骰子 6 颗 / 猜拳 2 个手势共用同一段 data */
+export function encodeP2PShowdown(packet: P2PShowdownPacket): Uint8Array {
+  const writer = new ByteWriter(24);
+  writer
+    .u8(OpCode.S2C_P2P_SHOWDOWN)
+    .u32(Math.max(0, packet.matchId) >>> 0)
+    .u8(packet.gameType & 0xff)
+    .u8(packet.round & 0xff)
+    .u16(Math.max(0, packet.aId) & 0xffff)
+    .u16(Math.max(0, packet.bId) & 0xffff)
+    .u16(Math.max(0, packet.winnerId) & 0xffff)
+    .u8(packet.flags & 0xff);
+  for (let i = 0; i < 6; i += 1) {
+    writer.u8(Math.max(0, Math.min(255, Math.floor(packet.dice[i] ?? 0))));
+  }
+  writer
+    .u8(packet.aAction & 0xff)
+    .u8(packet.bAction & 0xff)
+    .u16(Math.max(0, Math.min(65_535, Math.floor(packet.durationMs))));
+  return writer.finish();
+}
+
+export function decodeP2PShowdown(data: Uint8Array): P2PShowdownPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_P2P_SHOWDOWN) throw new Error('not a showdown packet');
+  const matchId = reader.u32();
+  const gameType = reader.u8();
+  const round = reader.u8();
+  const aId = reader.u16();
+  const bId = reader.u16();
+  const winnerId = reader.u16();
+  const flags = reader.u8();
+  const dice: number[] = [];
+  for (let i = 0; i < 6; i += 1) dice.push(reader.u8());
+  const aAction = reader.u8();
+  const bAction = reader.u8();
+  const durationMs = reader.u16();
+  return {
+    matchId,
+    gameType,
+    round,
+    aId,
+    bId,
+    winnerId,
+    flags,
+    dice,
+    aAction,
+    bAction,
+    durationMs,
+  };
+}
+
+/** 切磋实时状态：`[0x40][matchId u32][aId u16][bId u16][hpA u8][hpB u8][remainingMs u16][flags u8]` */
+export function encodeP2PDuelState(packet: P2PDuelStatePacket): Uint8Array {
+  const writer = new ByteWriter(14);
+  writer
+    .u8(OpCode.S2C_P2P_DUEL_STATE)
+    .u32(Math.max(0, packet.matchId) >>> 0)
+    .u16(Math.max(0, packet.aId) & 0xffff)
+    .u16(Math.max(0, packet.bId) & 0xffff)
+    .u8(Math.max(0, Math.min(255, Math.floor(packet.hpA))))
+    .u8(Math.max(0, Math.min(255, Math.floor(packet.hpB))))
+    .u16(Math.max(0, Math.min(65_535, Math.floor(packet.remainingMs))))
+    .u8(packet.flags & 0xff);
+  return writer.finish();
+}
+
+export function decodeP2PDuelState(data: Uint8Array): P2PDuelStatePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_P2P_DUEL_STATE) throw new Error('not a duel state packet');
+  return {
+    matchId: reader.u32(),
+    aId: reader.u16(),
+    bId: reader.u16(),
+    hpA: reader.u8(),
+    hpB: reader.u8(),
+    remainingMs: reader.u16(),
+    flags: reader.u8(),
+  };
+}
+
+export function encodeTipRequest(request: TipRequest): Uint8Array {
+  const writer = new ByteWriter(7);
+  writer
+    .u8(OpCode.C2S_TIP)
+    .u16(Math.max(0, request.targetId) & 0xffff)
+    .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(request.amount))) >>> 0);
+  return writer.finish();
+}
+
+export function decodeTipRequest(data: Uint8Array): TipRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_TIP) throw new Error('not a tip packet');
+  return { targetId: reader.u16(), amount: reader.u32() };
+}
+
+export function encodeTipBroadcast(packet: TipPacket): Uint8Array {
+  const writer = new ByteWriter(12);
+  writer
+    .u8(OpCode.S2C_TIP)
+    .u16(Math.max(0, packet.fromId) & 0xffff)
+    .u16(Math.max(0, packet.toId) & 0xffff)
+    .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(packet.amount))) >>> 0)
+    .u8(packet.received ? P2P_FLAG_SELF_TARGET : 0);
+  return writer.finish();
+}
+
+export function decodeTipBroadcast(data: Uint8Array): TipPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_TIP) throw new Error('not a tip broadcast');
+  const fromId = reader.u16();
+  const toId = reader.u16();
+  const amount = reader.u32();
+  const flags = reader.u8();
+  return { fromId, toId, amount, received: (flags & P2P_FLAG_SELF_TARGET) !== 0 };
+}
+
+export function encodeUseItem(request: UseItemRequest): Uint8Array {
+  const writer = new ByteWriter(4);
+  writer
+    .u8(OpCode.C2S_USE_ITEM)
+    .u16(Math.max(0, request.targetId) & 0xffff)
+    .u8(request.itemId & 0xff);
+  return writer.finish();
+}
+
+export function decodeUseItem(data: Uint8Array): UseItemRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_USE_ITEM) throw new Error('not a use item packet');
+  return { targetId: reader.u16(), itemId: reader.u8() };
+}
+
+export function encodeShopBuy(request: ShopBuyRequest): Uint8Array {
+  const writer = new ByteWriter(4);
+  writer.u8(OpCode.C2S_SHOP_BUY).u8(request.kind & 0xff).u8(request.id & 0xff).u8(request.count & 0xff);
+  return writer.finish();
+}
+
+export function decodeShopBuy(data: Uint8Array): ShopBuyRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_SHOP_BUY) throw new Error('not a shop buy packet');
+  return { kind: reader.u8(), id: reader.u8(), count: reader.u8() };
+}
+
+export function encodeItemEffect(packet: ItemEffectPacket): Uint8Array {
+  const writer = new ByteWriter(8);
+  writer
+    .u8(OpCode.S2C_ITEM_EFFECT)
+    .u16(Math.max(0, packet.sourceId) & 0xffff)
+    .u16(Math.max(0, packet.targetId) & 0xffff)
+    .u8(packet.itemId & 0xff)
+    .u8(packet.isTarget ? P2P_FLAG_SELF_TARGET : 0);
+  return writer.finish();
+}
+
+export function decodeItemEffect(data: Uint8Array): ItemEffectPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_ITEM_EFFECT) throw new Error('not an item effect packet');
+  const sourceId = reader.u16();
+  const targetId = reader.u16();
+  const itemId = reader.u8();
+  const flags = reader.u8();
+  return { sourceId, targetId, itemId, isTarget: (flags & P2P_FLAG_SELF_TARGET) !== 0 };
+}
+
+// ---------------------------------------------------------------------------
+// 道具与 Buff 引擎（ADR-0085）：大喇叭与玩家特效
+//
+// 大喇叭复用聊天那道「长度字段 + utf8」的尺子，但字节上限按 30 字收紧到 90；
+// 玩家特效是定长包——旁观者每 20Hz 都在收同步包，事件包越短越好。
+// ---------------------------------------------------------------------------
+
+/** 大喇叭上行：`[op][len u8][utf8]`；超长与空串在编码侧就截断，服务端仍会再判一次 */
+export function encodeShout(text: string): Uint8Array {
+  let clean = truncateShout(text);
+  let bytes = textEncoder.encode(clean);
+  // 全角字符 3 字节：90 字预算先撞字节上限时按字符退，直到两者都满足
+  if (bytes.length > MAX_SHOUT_BYTES) {
+    clean = Array.from(clean).slice(0, MAX_SHOUT_CHARS).join('');
+    bytes = textEncoder.encode(clean);
+    while (bytes.length > MAX_SHOUT_BYTES) {
+      clean = Array.from(clean).slice(0, -1).join('');
+      bytes = textEncoder.encode(clean);
+    }
+  }
+  const writer = new ByteWriter(2 + bytes.length);
+  writer.u8(OpCode.C2S_SHOUT).u8(bytes.length).raw(bytes);
+  return writer.finish();
+}
+
+export function decodeShout(data: Uint8Array): string {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_SHOUT) throw new Error('not a shout packet');
+  const length = reader.u8();
+  if (length > reader.remaining) return '';
+  return truncateShout(reader.utf8(length));
+}
+
+/** 大喇叭被拒：`[op][reason u8]`，2 字节定长 */
+export function encodeShoutReject(reason: number): Uint8Array {
+  const writer = new ByteWriter(2);
+  writer.u8(OpCode.S2C_SHOUT_REJECT).u8(reason & 0xff);
+  return writer.finish();
+}
+
+export function decodeShoutReject(data: Uint8Array): ShoutRejectPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_SHOUT_REJECT) throw new Error('not a shout reject packet');
+  return { reason: reader.u8() };
+}
+
+/** 全服弹幕：`[op][fromId u16][len u8][utf8]` */
+export function encodeLoudspeaker(packet: LoudspeakerPacket): Uint8Array {
+  const text = truncateShout(packet.text);
+  const bytes = textEncoder.encode(text);
+  const writer = new ByteWriter(4 + bytes.length);
+  writer.u8(OpCode.S2C_LOUDSPEAKER).u16(Math.max(0, packet.fromId) & 0xffff).u8(bytes.length).raw(bytes);
+  return writer.finish();
+}
+
+export function decodeLoudspeaker(data: Uint8Array): LoudspeakerPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_LOUDSPEAKER) throw new Error('not a loudspeaker packet');
+  const fromId = reader.u16();
+  const length = reader.u8();
+  if (length > reader.remaining) return { fromId, text: '' };
+  return { fromId, text: truncateShout(reader.utf8(length)) };
+}
+
+/** 玩家特效：`[op][effect u8][sourceId u16][targetId u16][extraId u16][durationMs u16][flags u8]` */
+export function encodePlayerEffect(packet: PlayerEffectPacket): Uint8Array {
+  let flags = 0;
+  if (packet.isTarget) flags |= PLAYER_EFFECT_FLAG_SELF;
+  if (packet.blocked) flags |= PLAYER_EFFECT_FLAG_BLOCKED;
+  const writer = new ByteWriter(11);
+  writer
+    .u8(OpCode.S2C_PLAYER_EFFECT)
+    .u8(packet.effect & 0xff)
+    .u16(Math.max(0, packet.sourceId) & 0xffff)
+    .u16(Math.max(0, packet.targetId) & 0xffff)
+    .u16(Math.max(0, packet.extraId) & 0xffff)
+    .u16(Math.max(0, Math.min(0xffff, Math.round(packet.durationMs))) & 0xffff)
+    .u8(flags);
+  return writer.finish();
+}
+
+export function decodePlayerEffect(data: Uint8Array): PlayerEffectPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_PLAYER_EFFECT) throw new Error('not a player effect packet');
+  const effect = reader.u8();
+  const sourceId = reader.u16();
+  const targetId = reader.u16();
+  const extraId = reader.u16();
+  const durationMs = reader.u16();
+  const flags = reader.u8();
+  return {
+    effect,
+    sourceId,
+    targetId,
+    extraId,
+    durationMs,
+    isTarget: (flags & PLAYER_EFFECT_FLAG_SELF) !== 0,
+    blocked: (flags & PLAYER_EFFECT_FLAG_BLOCKED) !== 0,
+  };
+}
+
+/** 道具未生效：`[op][reason u8][itemId u8]`，3 字节定长 */
+export function encodeItemReject(reason: number, itemId: number): Uint8Array {
+  const writer = new ByteWriter(3);
+  writer.u8(OpCode.S2C_ITEM_REJECT).u8(reason & 0xff).u8(itemId & 0xff);
+  return writer.finish();
+}
+
+export function decodeItemReject(data: Uint8Array): ItemRejectPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_ITEM_REJECT) throw new Error('not an item reject packet');
+  return { reason: reader.u8(), itemId: reader.u8() };
+}
+
+// ---------------------------------------------------------------------------
+// 热区建筑与高阶多人玩法（ADR-0087）
+//
+// 上行全部定长（赌桌 7 / 豪宅 3 / 押注 6 / 公寓 3），只有家具布局是变长；
+// 下行按「一包一张桌 / 一包全部小院」聚合，20Hz 路径上不新增逐帧包。
+// ---------------------------------------------------------------------------
+
+export function encodeDiceBet(request: DiceBetRequest): Uint8Array {
+  const writer = new ByteWriter(7);
+  writer
+    .u8(OpCode.C2S_DICE_BET)
+    .u8(request.table & 0xff)
+    .u8(request.side & 0xff)
+    .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(request.amount))) >>> 0);
+  return writer.finish();
+}
+
+export function decodeDiceBet(data: Uint8Array): DiceBetRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_DICE_BET) throw new Error('not a dice bet packet');
+  return { table: reader.u8(), side: reader.u8(), amount: reader.u32() };
+}
+
+/** 每张桌的定长部分：id(1) + phase(1) + remaining(2) + round(2) + 三颗骰(3) + 池(4) + 我方(3) + flags(1) */
+const DICE_TABLE_BYTES = 17;
+
+export function encodeDiceState(packet: DiceStatePacket): Uint8Array {
+  const count = Math.min(0xff, packet.tables.length);
+  const writer = new ByteWriter(2 + count * DICE_TABLE_BYTES);
+  writer.u8(OpCode.S2C_DICE_STATE).u8(count);
+  for (const table of packet.tables.slice(0, count)) {
+    writer
+      .u8(table.id & 0xff)
+      .u8(table.phase & 0xff)
+      .u16(Math.max(0, Math.min(0xffff, Math.round(table.remainingMs))))
+      .u16(table.roundId & 0xffff)
+      .u8(table.dice[0] & 0x0f)
+      .u8(table.dice[1] & 0x0f)
+      .u8(table.dice[2] & 0x0f)
+      .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(table.totalPot))) >>> 0)
+      .u8(Math.max(0, Math.min(0xff, table.mySide + 1)))
+      .u16(Math.min(0xffff, Math.max(0, Math.floor(table.myBet))))
+      .u8(table.raid ? 1 : 0);
+  }
+  return writer.finish();
+}
+
+export function decodeDiceState(data: Uint8Array): DiceStatePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_DICE_STATE) throw new Error('not a dice state packet');
+  const count = reader.u8();
+  const tables: DiceTablePacket[] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < DICE_TABLE_BYTES) break;
+    const id = reader.u8();
+    const phase = reader.u8();
+    const remainingMs = reader.u16();
+    const roundId = reader.u16();
+    const d0 = reader.u8();
+    const d1 = reader.u8();
+    const d2 = reader.u8();
+    const totalPot = reader.u32();
+    const mySide = reader.u8() - 1;
+    const myBet = reader.u16();
+    const flags = reader.u8();
+    tables.push({
+      id,
+      phase,
+      remainingMs,
+      roundId,
+      dice: [d0, d1, d2],
+      totalPot,
+      mySide,
+      myBet,
+      raid: (flags & 1) !== 0,
+    });
+  }
+  return { tables };
+}
+
+export function encodeVillaRequest(request: VillaRequest): Uint8Array {
+  const writer = new ByteWriter(3);
+  writer.u8(OpCode.C2S_VILLA).u8(request.villa & 0xff).u8(request.action & 0xff);
+  return writer.finish();
+}
+
+export function decodeVillaRequest(data: Uint8Array): VillaRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_VILLA) throw new Error('not a villa packet');
+  return { villa: reader.u8(), action: reader.u8() };
+}
+
+export function encodeVillaState(packet: VillaStatePacket): Uint8Array {
+  const villas = packet.villas.slice(0, 0xff);
+  let size = 2;
+  const names = villas.map((villa) => truncateName(villa.ownerName));
+  for (const name of names) size += 7 + textEncoder.encode(name).length;
+  const writer = new ByteWriter(size);
+  writer.u8(OpCode.S2C_VILLA_STATE).u8(villas.length);
+  villas.forEach((villa, index) => {
+    const name = names[index]!;
+    const bytes = textEncoder.encode(name);
+    let flags = 0;
+    if (villa.locked) flags |= 1;
+    writer
+      .u8(villa.id & 0xff)
+      .u16(Math.max(0, villa.ownerId) & 0xffff)
+      .u8(flags)
+      .u16(Math.min(0xffff, Math.max(0, Math.floor(villa.pending))))
+      .u8(bytes.length)
+      .raw(bytes);
+  });
+  return writer.finish();
+}
+
+export function decodeVillaState(data: Uint8Array): VillaStatePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_VILLA_STATE) throw new Error('not a villa state packet');
+  const count = reader.u8();
+  const villas = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < 7) break;
+    const id = reader.u8();
+    const ownerId = reader.u16();
+    const flags = reader.u8();
+    const pending = reader.u16();
+    const nameLength = reader.u8();
+    const ownerName = nameLength <= reader.remaining ? reader.utf8(nameLength) : '';
+    villas.push({ id, ownerId, ownerName, locked: (flags & 1) !== 0, pending });
+  }
+  return { villas };
+}
+
+export function encodeArenaBet(request: ArenaBetRequest): Uint8Array {
+  const writer = new ByteWriter(6);
+  writer
+    .u8(OpCode.C2S_ARENA_BET)
+    .u8(request.side & 0xff)
+    .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(request.amount))) >>> 0);
+  return writer.finish();
+}
+
+export function decodeArenaBet(data: Uint8Array): ArenaBetRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_ARENA_BET) throw new Error('not an arena bet packet');
+  return { side: reader.u8(), amount: reader.u32() };
+}
+
+export function encodeArenaPool(packet: ArenaPoolPacket): Uint8Array {
+  const writer = new ByteWriter(14);
+  writer
+    .u8(OpCode.S2C_ARENA_POOL)
+    .u16(packet.matchId & 0xffff)
+    .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(packet.redPool))) >>> 0)
+    .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(packet.bluePool))) >>> 0)
+    .u8(packet.phase & 0xff)
+    .u8(Math.max(0, Math.min(0xff, packet.mySide + 1)))
+    .u32(Math.min(MAX_COINS, Math.max(0, Math.floor(packet.myBet))) >>> 0);
+  return writer.finish();
+}
+
+export function decodeArenaPool(data: Uint8Array): ArenaPoolPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_ARENA_POOL) throw new Error('not an arena pool packet');
+  return {
+    matchId: reader.u16(),
+    redPool: reader.u32(),
+    bluePool: reader.u32(),
+    phase: reader.u8(),
+    mySide: reader.u8() - 1,
+    myBet: reader.u32(),
+  };
+}
+
+export function encodeApartmentRequest(request: ApartmentRequest): Uint8Array {
+  const writer = new ByteWriter(3);
+  writer.u8(OpCode.C2S_APARTMENT).u8(request.action & 0xff).u8(request.arg & 0xff);
+  return writer.finish();
+}
+
+export function decodeApartmentRequest(data: Uint8Array): ApartmentRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_APARTMENT) throw new Error('not an apartment packet');
+  return { action: reader.u8(), arg: reader.u8() };
+}
+
+export function encodeApartmentInvite(targetId: number): Uint8Array {
+  const writer = new ByteWriter(3);
+  writer.u8(OpCode.C2S_APARTMENT_INVITE).u16(Math.max(0, targetId) & 0xffff);
+  return writer.finish();
+}
+
+export function decodeApartmentInvite(data: Uint8Array): number {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_APARTMENT_INVITE) throw new Error('not an apartment invite packet');
+  return reader.u16();
+}
+
+/** 家具布局上行：`[op][count u8]` + count × `[id u8][cell u8]` */
+export function encodeRoomLayout(placements: ReadonlyArray<{ id: number; cell: number }>): Uint8Array {
+  const count = Math.min(0xff, placements.length);
+  const writer = new ByteWriter(2 + count * 2);
+  writer.u8(OpCode.C2S_ROOM_LAYOUT).u8(count);
+  for (const entry of placements.slice(0, count)) {
+    writer.u8(entry.id & 0xff).u8(entry.cell & 0xff);
+  }
+  return writer.finish();
+}
+
+export function decodeRoomLayout(data: Uint8Array): Array<{ id: number; cell: number }> {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_ROOM_LAYOUT) throw new Error('not a room layout packet');
+  const count = reader.u8();
+  const out: Array<{ id: number; cell: number }> = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < 2) break;
+    out.push({ id: reader.u8(), cell: reader.u8() });
+  }
+  return out;
+}
+
+/** 房间状态：`[op][doorNo u16][ownerId u16][tier u8][nameLen u8][name][count u8]` + count × `[id u8][cell u8]` */
+export function encodeRoomState(packet: RoomStatePacket): Uint8Array {
+  const name = truncateName(packet.ownerName);
+  const bytes = textEncoder.encode(name);
+  const count = Math.min(0xff, packet.placements.length);
+  const writer = new ByteWriter(7 + bytes.length + count * 2);
+  writer
+    .u8(OpCode.S2C_ROOM_STATE)
+    .u16(packet.doorNo & 0xffff)
+    .u16(Math.max(0, packet.ownerId) & 0xffff)
+    .u8(packet.tier & 0xff)
+    .u8(bytes.length)
+    .raw(bytes)
+    .u8(count);
+  for (const entry of packet.placements.slice(0, count)) {
+    writer.u8(entry.id & 0xff).u8(entry.cell & 0xff);
+  }
+  return writer.finish();
+}
+
+export function decodeRoomState(data: Uint8Array): RoomStatePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_ROOM_STATE) throw new Error('not a room state packet');
+  const doorNo = reader.u16();
+  const ownerId = reader.u16();
+  const tier = reader.u8();
+  const nameLength = reader.u8();
+  const ownerName = nameLength <= reader.remaining ? reader.utf8(nameLength) : '';
+  const count = reader.remaining > 0 ? reader.u8() : 0;
+  const placements: Array<{ id: number; cell: number }> = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < 2) break;
+    placements.push({ id: reader.u8(), cell: reader.u8() });
+  }
+  return { doorNo, ownerId, ownerName, tier, placements };
+}
+
+/** 串门邀请：`[op][fromId u16][doorNo u16][len u8][name]` */
+export function encodeRoomInvite(packet: RoomInvitePacket): Uint8Array {
+  const name = truncateName(packet.fromName);
+  const bytes = textEncoder.encode(name);
+  const writer = new ByteWriter(6 + bytes.length);
+  writer
+    .u8(OpCode.S2C_ROOM_INVITE)
+    .u16(Math.max(0, packet.fromId) & 0xffff)
+    .u16(packet.doorNo & 0xffff)
+    .u8(bytes.length)
+    .raw(bytes);
+  return writer.finish();
+}
+
+export function decodeRoomInvite(data: Uint8Array): RoomInvitePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_ROOM_INVITE) throw new Error('not a room invite packet');
+  const fromId = reader.u16();
+  const doorNo = reader.u16();
+  const length = reader.u8();
+  const fromName = length <= reader.remaining ? reader.utf8(length) : '';
+  return { fromId, doorNo, fromName };
 }

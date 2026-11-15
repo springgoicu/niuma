@@ -17,7 +17,18 @@ export const LIKE_COOLDOWN_MS = 400;
  *
  * 点赞数只用于展示与「人气」榜，不参与任何权威判定；目标离园即随 Player 回收清零。
  */
-export function handleLike(player: Player, targetId: number, now: number, world: World, transport: Transport): void {
+export function handleLike(
+  player: Player,
+  targetId: number,
+  now: number,
+  world: World,
+  transport: Transport,
+  /**
+   * 计数落盘钩子（ADR-0081）：服务端把赞累加进匿名档案并打脏标记。
+   * 不传就退化为纯内存计数，测试与无持久化部署零改动。
+   */
+  onCounted?: (target: Player) => void,
+): void {
   if (now - player.lastLikeAt < LIKE_COOLDOWN_MS) return;
   const target = world.get(targetId);
   if (!target || target.id === player.id) return;
@@ -33,6 +44,9 @@ export function handleLike(player: Player, targetId: number, now: number, world:
 
   target.likedBy.add(player.id);
   target.likes = Math.min(MAX_LIKES, target.likes + 1);
+  // 钩子可以把展示数改成匿名档案的累计值（跨重启延续），广播读的是改完之后的值
+  onCounted?.(target);
+  target.likes = Math.min(MAX_LIKES, Math.max(0, Math.floor(target.likes)));
 
   const broadcast = encodeLike(target.id, target.likes, 0);
   transport.send(target.wsId, broadcast);

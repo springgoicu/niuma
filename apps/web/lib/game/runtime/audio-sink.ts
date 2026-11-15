@@ -27,5 +27,8 @@ export function applyAudioEvent(event: AudioEvent, listenerX: number, listenerY:
     case 'tea':
       playTeaGulp();
       return;
+    case 'slip':
+      sfx.playSlipSound(event.x, event.y);
+      return;
   }
 }

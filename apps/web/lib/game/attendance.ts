@@ -2,10 +2,12 @@
 
 import { create } from 'zustand';
 import { browserStorage, readJson, writeJson, type StorageLike } from '../storage';
-import { localDateKey } from './local-date';
+import { nextServerMidnight, serverDateKey, serverTzOffsetMin } from './server-date';
+import { serverNow, subscribeClockJump } from './server-clock';
 
 /**
- * 本地考勤引擎：服务端零持久化，所有在岗数据只活在这个浏览器里。
+ * 本地考勤引擎：在岗数据只活在这个浏览器里（不在 ADR-0081 的落盘范围），
+ * 但「今天」的口径由服务器时钟与园区时区判定。
  *
  * 三条硬约束（改之前先读一遍）：
  * 1) tick 只写内存，绝不每秒碰 localStorage；落盘是 30s 的批处理。
@@ -25,11 +27,11 @@ export const ATTENDANCE_FLUSH_MS = 30_000;
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface AttendanceStorage {
-  /** "YYYY-MM-DD"，本地日历口径 */
+  /** "YYYY-MM-DD"，园区日历口径（服务器时区） */
   firstJoinDate: string;
-  /** 每日累计在岗毫秒，键为本地日期 "YYYY-MM-DD" */
+  /** 每日累计在岗毫秒，键为园区日期 "YYYY-MM-DD" */
   dailyRecords: Record<string, number>;
-  /** 每日累计如厕毫秒，键为本地日期；任何时刻都满足 ≤ 同日的 dailyRecords */
+  /** 每日累计如厕毫秒，键为园区日期；任何时刻都满足 ≤ 同日的 dailyRecords */
   dailyToiletRecords: Record<string, number>;
 }
 
@@ -46,13 +48,15 @@ const EMPTY_VIEW: AttendanceView = {
 };
 
 /**
- * 本地日期键。刻意不用 `toISOString()`：那是 UTC 口径，
- * 在东八区会把 00:00–08:00 的打卡记到前一天。
+ * 园区日期键（ADR-0081）：按**服务器时区**切日，不是本机日历。
  *
- * 实现搬到了 `local-date.ts`：Worker 里的节假日引擎也要切日，
- * 但不能顺着 `attendance.ts` 把 zustand store 拖进渲染线程。这里保留同名导出。
+ * 一个在 UTC-5 的玩家看到的「今日工时」必须和东八区邻座一致，所以这里不读
+ * `new Date()` 的本地时区，而是用服务端下发的偏移平移后再取日期。
+ * 实现放在 `server-date.ts`：Worker 里的跑马灯也要同一口径。
  */
-export const dayKey = localDateKey;
+export function dayKey(timestamp: number = serverNow()): string {
+  return serverDateKey(timestamp, serverTzOffsetMin());
+}
 
 /** 毫秒 → HH:MM:SS。小时不封顶，挂在园区一整天也不会砍掉位数。 */
 export function formatDuration(ms: number): string {
@@ -79,10 +83,10 @@ export function formatMinutesClock(minutes: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-/** 今日在岗毫秒；日期键按本地日历，跨零点后自动换到新桶。 */
+/** 今日在岗毫秒；日期键按园区日历，跨零点后自动换到新桶。 */
 export function getTodayMs(
   storage: Pick<AttendanceStorage, 'dailyRecords'>,
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): number {
   const ms = storage.dailyRecords[dayKey(now)];
   return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : 0;
@@ -91,7 +95,7 @@ export function getTodayMs(
 /** 今日如厕毫秒：任何时刻都钳到今日工时以内，防止坏存档出现「如厕 > 工时」。 */
 export function getTodayToiletMs(
   storage: Pick<AttendanceStorage, 'dailyRecords' | 'dailyToiletRecords'>,
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): number {
   const toilet = storage.dailyToiletRecords[dayKey(now)];
   if (typeof toilet !== 'number' || !Number.isFinite(toilet) || toilet <= 0) return 0;
@@ -101,7 +105,7 @@ export function getTodayToiletMs(
 /** 今日在岗分钟，向下取整；榜单与摘要都用这一口径。 */
 export function getTodayMinutes(
   storage: Pick<AttendanceStorage, 'dailyRecords'>,
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): number {
   return Math.floor(getTodayMs(storage, now) / 60_000);
 }
@@ -109,7 +113,7 @@ export function getTodayMinutes(
 /** 今日如厕分钟，向下取整；保证 ≤ 今日工时分钟。 */
 export function getTodayToiletMinutes(
   storage: Pick<AttendanceStorage, 'dailyRecords' | 'dailyToiletRecords'>,
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): number {
   return Math.floor(getTodayToiletMs(storage, now) / 60_000);
 }
@@ -158,9 +162,9 @@ export function getStampTitle(todayHours: number, context?: StampContext): strin
 }
 
 /**
- * 把一个时间区间按本地零点切成若干天，返回新的每日记录。
+ * 把一个时间区间按**园区零点**切成若干天，返回新的每日记录。
  *
- * 纯函数、只依赖本地日历：跨零点、跨 DST、后台标签页补算都走同一条路径，
+ * 纯函数、只依赖园区日历：跨零点、后台标签页补算都走同一条路径，
  * 不需要在 tick 里写一堆「if 过零点了」的分支。
  */
 function splitIntervalInto(
@@ -175,12 +179,7 @@ function splitIntervalInto(
   if (end <= cursor) return next;
 
   while (cursor < end) {
-    const date = new Date(cursor);
-    const nextMidnight = new Date(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate() + 1,
-    ).getTime();
+    const nextMidnight = nextServerMidnight(cursor, serverTzOffsetMin());
     // 理论上 nextMidnight 一定大于 cursor；保险起见给一个最小步长，避免死循环
     const sliceEnd = Math.min(end, nextMidnight > cursor ? nextMidnight : cursor + 1);
     const key = dayKey(cursor);
@@ -279,6 +278,8 @@ export class AttendanceTracker {
   private flushTimer: number | null = null;
   private disposed = false;
   private readonly storage: StorageLike | null;
+  /** 时钟跳变退订句柄：第一次对时可能把游标推进几小时，必须重设而不是补算 */
+  private readonly unsubscribeClockJump: () => void;
 
   private readonly onVisibilityChange = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') this.flush();
@@ -297,10 +298,10 @@ export class AttendanceTracker {
     const stored = loadAttendance(this.storage);
     if (!stored) return;
     this.mergeFrom(stored);
-    this.publish(Date.now());
+    this.publish(serverNow());
   };
 
-  constructor(now: number = Date.now(), storage: StorageLike | null = browserStorage('local')) {
+  constructor(now: number = serverNow(), storage: StorageLike | null = browserStorage('local')) {
     this.storage = storage;
     const stored = loadAttendance(storage);
     const today = dayKey(now);
@@ -312,6 +313,11 @@ export class AttendanceTracker {
     this.state.dailyRecords[today] ??= 0;
     this.state.dailyToiletRecords[today] ??= 0;
     this.lastTickAt = now;
+    // 玩家本机时钟错了 2 小时，第一次对时会把服务器时刻一次推进 2 小时：
+    // 这时要重设游标，否则这 2 小时会被当成「刚在岗」
+    this.unsubscribeClockJump = subscribeClockJump(() => {
+      this.lastTickAt = serverNow();
+    });
     // 只写这一次：把首日与今日空桶落下去；之后交给 30s 批处理
     this.persist();
     this.publish(now);
@@ -333,7 +339,7 @@ export class AttendanceTracker {
    * 坐/离马桶。切换前先把上一段结算到 now，再改标记；
    * 切换后立即落盘一次，页面被关掉也不会丢刚结束的那段如厕。
    */
-  setToilet(active: boolean, now: number = Date.now()): void {
+  setToilet(active: boolean, now: number = serverNow()): void {
     if (this.disposed || this.toiletActive === active) return;
     this.advanceTo(now);
     this.toiletActive = active;
@@ -366,7 +372,7 @@ export class AttendanceTracker {
   /** 每秒一次：只动内存与 zustand，不碰 localStorage */
   private tick = (): void => {
     if (this.disposed) return;
-    const now = Date.now();
+    const now = serverNow();
     this.advanceTo(now);
     this.publish(now);
   };
@@ -384,6 +390,7 @@ export class AttendanceTracker {
     // 收尾：先补最后一拍，再把内存里的今日记录写下去
     this.flush();
     this.disposed = true;
+    this.unsubscribeClockJump();
     if (this.tickTimer !== null) window.clearInterval(this.tickTimer);
     if (this.flushTimer !== null) window.clearInterval(this.flushTimer);
     this.tickTimer = null;

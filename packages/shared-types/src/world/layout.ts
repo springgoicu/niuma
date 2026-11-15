@@ -76,7 +76,25 @@ import {
   PARK_RIDE_SOLIDS,
 } from './park';
 import { BOSS_ARENA, BOSS_SOLID } from './boss';
-import { RING_ARENA, RING_EXIT } from './ring';
+import {
+  RING_ARENA,
+  RING_BENCH_SEAT_DRAFTS,
+  RING_BENCH_SOLIDS,
+  RING_EXIT,
+  RING_FENCE_SOLIDS,
+  RING_SIGNUP,
+} from './ring';
+import {
+  DICE_HALL,
+  DICE_HALL_APRON,
+  DICE_HALL_CENTER,
+  DICE_HALL_SEAT_DRAFTS,
+  DICE_HALL_SOLIDS,
+  DICE_TABLE_SOLIDS,
+  DICE_TABLES,
+} from './dice-hall';
+import { VILLA_SPECS, VILLA_WALL_SOLIDS } from './villas';
+import { APARTMENT, APARTMENT_OUTSIDE, APARTMENT_WALL_SOLIDS } from './apartment';
 
 export {
   BENCH_SEAT_OFFSET,
@@ -794,7 +812,11 @@ export type NavTargetId =
   | 'shrine'
   | 'park'
   | 'bossArena'
-  | 'ring';
+  | 'ring'
+  | 'diceHall'
+  | 'villa1'
+  | 'villa2'
+  | 'apartment';
 
 export interface NavTarget {
   readonly id: NavTargetId;
@@ -828,8 +850,15 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   park: { x: 4096, y: 3020 },
   // 发泄区垫内左下角：老板左脚外侧，离脚底碰撞 80px / 20px，站过去就能出招
   bossArena: { x: BOSS_ARENA.x + 50, y: BOSS_ARENA.y + BOSS_ARENA.h - 20 },
-  // 擂台场边报名点：围绳外 40px、报名半径内，落地就能按 F，不会被困在绳内
-  ring: { x: RING_EXIT.x, y: RING_EXIT.y },
+  // 八角笼南门内的报名区：落地就能按 F 上台，出门走北门或颁奖后自动回南门外
+  ring: { x: RING_SIGNUP.x, y: RING_SIGNUP.y },
+  // 赌场两张桌之间的空地：站过去就同时够得着两张桌的提示
+  diceHall: { x: DICE_HALL_CENTER.x, y: DICE_HALL_CENTER.y },
+  // 两栋小院的院门外台阶
+  villa1: { x: VILLA_SPECS[0]!.gate.x, y: VILLA_SPECS[0]!.gate.y + 24 },
+  villa2: { x: VILLA_SPECS[1]!.gate.x, y: VILLA_SPECS[1]!.gate.y + 24 },
+  // 公寓门口台阶
+  apartment: { x: APARTMENT_OUTSIDE.x, y: APARTMENT_OUTSIDE.y },
 };
 
 const NAV_SOURCES: ReadonlyArray<{
@@ -846,7 +875,11 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'shrine', name: '财神供案', area: 'indoor', x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y },
   { id: 'park', name: '游乐园', area: 'grounds', ...rectCenter(AMUSEMENT_PARK) },
   { id: 'bossArena', name: '发泄区', area: 'grounds', ...rectCenter(BOSS_ARENA) },
-  { id: 'ring', name: '擂台', area: 'grounds', ...rectCenter(RING_ARENA) },
+  { id: 'ring', name: '绩效八角笼', area: 'grounds', ...rectCenter(RING_ARENA) },
+  { id: 'diceHall', name: '摸鱼大赌场', area: 'grounds', ...rectCenter(DICE_HALL) },
+  { id: 'villa1', name: VILLA_SPECS[0]!.name, area: 'grounds', ...rectCenter(VILLA_SPECS[0]!.rect) },
+  { id: 'villa2', name: VILLA_SPECS[1]!.name, area: 'grounds', ...rectCenter(VILLA_SPECS[1]!.rect) },
+  { id: 'apartment', name: '牛马公寓', area: 'grounds', ...rectCenter(APARTMENT) },
 ];
 
 export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(({ id, name, area, x, y }) => ({
@@ -899,6 +932,9 @@ export function isWadingAt(x: number, y: number): boolean {
 }
 
 const REGIONS: RegionSpec[] = [
+  // 护士急救站（ADR-0084）：先于南院/野地命中，站内始终显示医护区域名
+  // 与 CLINIC_REGION_RECT 同值；REGIONS 在本文件前段求值，不能引用后面的 const
+  { name: '护士急救站', rect: { x: 4990, y: 4250, w: 260, h: 230 } },
   // 摸鱼亭（ADR-0061）：必须排在「摸鱼湖」之前，否则站在亭西沿会显示成湖名
   {
     name: '摸鱼亭',
@@ -932,6 +968,10 @@ const REGIONS: RegionSpec[] = [
   { name: '办公区', rect: CAMPUS_RECT },
   // 地图下方的游乐园：区域名只影响状态栏文案
   { name: '游乐园', rect: AMUSEMENT_PARK },
+  // 新建筑（本轮）：赌场亭、两栋小院、牛马公寓
+  { name: '摸鱼大赌场', rect: rectExpanded(DICE_HALL, 10) },
+  ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: rectExpanded(spec.rect, 8) })),
+  { name: '牛马公寓', rect: rectExpanded(APARTMENT, 10) },
   { name: '研发园', rect: SOUTH_YARD },
 ];
 
@@ -1021,6 +1061,14 @@ function isPlantable(x: number, y: number): boolean {
     if (rectContains(rectExpanded(building.rect, 40), x, y)) return false;
   }
   if (rectContains(rectExpanded(AMUSEMENT_PARK, 40), x, y)) return false;
+  // 护士急救站：站台 + 进站铺装外扩 60，树冠不能压到救护车出入口
+  if (rectContains(rectExpanded(CLINIC_RECT, 60), x, y)) return false;
+  if (rectContains(rectExpanded(CLINIC_ACCESS_PAVING, 40), x, y)) return false;
+  // 新建筑地块（摸鱼大赌场 / 豪宅小院 / 牛马公寓）：树带 40px，避免树长进亭柱与院墙
+  if (rectContains(rectExpanded(DICE_HALL, 40), x, y)) return false;
+  if (rectContains(rectExpanded(DICE_HALL_APRON, 24), x, y)) return false;
+  for (const spec of VILLA_SPECS) if (rectContains(rectExpanded(spec.rect, 36), x, y)) return false;
+  if (rectContains(rectExpanded(APARTMENT, 40), x, y)) return false;
   // 竹林留白：这两片交给竹子，普通树不再混长进来（ADR-0061 的「替换部分普通树木」）
   for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
   if (rectContains(rectExpanded(SOUTH_YARD, 40), x, y)) return false;
@@ -1386,7 +1434,8 @@ const PROPS: PropInstance[] = [
  *
  * 坐点固定在长椅底座前方 `BENCH_SEAT_OFFSET` 处，避开自身碰撞盒；
  * 长椅统一面朝南（靠背在北侧），与 `drawProp` 的固定画法一致。
- * 必须追加在 `SEAT_DRAFTS` 末尾——`niuma:session:v1` 里存着既有 seatId。
+ * 必须紧接 `SEAT_DRAFTS` 末尾以保住既有 seatId——`niuma:session:v1` 里存着它；
+ * 后续新增座位（如 ADR-0084 的急救站病床）只能追加在长椅之后。
  */
 const BENCH_SEATS: SeatInstance[] = PROPS.filter((prop) => prop.kind === 'bench').map((prop, index) => ({
   id: SEAT_DRAFTS.length + index + 1,
@@ -1397,10 +1446,89 @@ const BENCH_SEATS: SeatInstance[] = PROPS.filter((prop) => prop.kind === 'bench'
   desk: -1,
 }));
 
+/**
+ * 护士急救站（ADR-0084）：中央广场东南、东侧主路尽端南侧的 248×210 地块。
+ *
+ * 坐标避开研发园东墙、影音室与南院树带；柜台在西、病床在东、救护车位在门前南侧。
+ * 病床只锁头尾两条边，床面留空，昏迷玩家才能被担架放到床心躺下。
+ */
+export const CLINIC_RECT = { x: 5000, y: 4260, w: 248, h: 210 } as const;
+export const CLINIC_REGION_RECT = { x: 4990, y: 4250, w: 260, h: 230 } as const;
+/** 从东侧主路尽端接进站内的无障碍铺装 */
+export const CLINIC_ACCESS_PAVING = { x: 4660, y: 4328, w: 340, h: 44 } as const;
+export const CLINIC_COUNTER = { x: 5012, y: 4278, w: 112, h: 30 } as const;
+export const CLINIC_SIGN = { x: 5006, y: 4254 } as const;
+export const CLINIC_NURSE_SPOTS = [
+  { x: 5044, y: 4272 },
+  { x: 5092, y: 4272 },
+] as const;
+export const CLINIC_BEDS = [
+  { x: 5084, y: 4318, w: 68, h: 48 },
+  { x: 5172, y: 4318, w: 68, h: 48 },
+] as const;
+/** 救护车停靠位（车体中心），站内的两个专用车位 */
+export const CLINIC_AMBULANCE_SPOTS = [
+  { x: 5056, y: 4442 },
+  { x: 5128, y: 4442 },
+] as const;
+/** 救护车抵达后把伤员放下的站内落点 */
+export const CLINIC_DROP = { x: 5030, y: 4380 } as const;
+
+const CLINIC_SEATS: SeatInstance[] = CLINIC_BEDS.map((bed, index) => ({
+  id: SEAT_DRAFTS.length + BENCH_SEATS.length + index + 1,
+  x: bed.x + bed.w / 2,
+  y: bed.y + bed.h / 2,
+  // 床品是横向画法（枕头在右端）：所有 bed 统一朝水平方向，躺姿才不会头在被子中间
+  facing: DIRECTION.Right,
+  kind: 'bed',
+  desk: -1,
+}));
+
+/** 病床 seatId：给急救管理器直接占用，避免再按距离找床 */
+export const CLINIC_BED_SEAT_IDS = CLINIC_SEATS.map((seat) => seat.id);
+
+const CLINIC_SOLIDS: SolidRect[] = [
+  // 导医柜台：只挡柜体，柜台后方留给护士站立
+  { kind: 'desk', x: CLINIC_COUNTER.x, y: CLINIC_COUNTER.y, w: CLINIC_COUNTER.w, h: CLINIC_COUNTER.h },
+  // 两张病床的左右头尾边；床面中段留空，正好容纳躺倒的伤员外沿
+  ...CLINIC_BEDS.flatMap((bed) => [
+    { kind: 'fixture' as const, x: bed.x - 4, y: bed.y, w: 10, h: bed.h },
+    { kind: 'fixture' as const, x: bed.x + bed.w - 6, y: bed.y, w: 10, h: bed.h },
+  ]),
+];
+
+/**
+ * 新建筑座位：赌桌 12 张圆凳 + 八角笼 4 张观战长椅。
+ *
+ * 接在急救站病床之后——`niuma:session:v1` 里存着旧座位的 id，
+ * 只能往后追加，不能插队。
+ */
+const NEW_SEAT_BASE = SEAT_DRAFTS.length + BENCH_SEATS.length + CLINIC_SEATS.length;
+
+const DICE_HALL_SEATS: SeatInstance[] = DICE_HALL_SEAT_DRAFTS.map((seat, index) => ({
+  id: NEW_SEAT_BASE + index + 1,
+  desk: -1,
+  ...seat,
+}));
+
+const RING_BENCH_SEATS: SeatInstance[] = RING_BENCH_SEAT_DRAFTS.map((seat, index) => ({
+  id: NEW_SEAT_BASE + DICE_HALL_SEATS.length + index + 1,
+  desk: -1,
+  ...seat,
+}));
+
 const SEATS: SeatInstance[] = [
   ...SEAT_DRAFTS.map((seat, index) => ({ id: index + 1, ...seat })),
   ...BENCH_SEATS,
+  ...CLINIC_SEATS,
+  ...DICE_HALL_SEATS,
+  ...RING_BENCH_SEATS,
 ];
+
+/** 赌桌座位 id：服务端开奖后把不在座的人请下桌要用 */
+export const DICE_HALL_SEAT_IDS: ReadonlyArray<number> = DICE_HALL_SEATS.map((seat) => seat.id);
+/** 观战长椅座位 id：押注资格判定读它 */
+export const RING_BENCH_SEAT_IDS: ReadonlyArray<number> = RING_BENCH_SEATS.map((seat) => seat.id);
 
 /**
  * 树丛在道具与花箱之后生成：`isPlantable` 要读到 PROPS / PLANTERS 的占地，
@@ -1447,9 +1575,36 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...PARK_ATTRACTION_SOLIDS,
     // 发泄区老板脚底（ADR-0070）：只挡地面那一截
     { kind: 'prop', ...BOSS_SOLID },
+    // 护士急救站（ADR-0084）：导医柜台 + 两张病床的头尾边
+    ...CLINIC_SOLIDS,
+    // 摸鱼大赌场：亭柱、吧台、两张赌桌
+    ...DICE_HALL_SOLIDS,
+    ...DICE_TABLE_SOLIDS,
+    // 豪宅小院：四面院墙（南墙留门洞，锁门时另加动态门栅）
+    ...VILLA_WALL_SOLIDS,
+    // 牛马公寓：整圈封闭的外墙
+    ...APARTMENT_WALL_SOLIDS,
+    // 绩效八角笼：围栏（南北门洞）+ 4 张观战长椅底座
+    ...RING_FENCE_SOLIDS,
+    ...RING_BENCH_SOLIDS,
   ],
-  buildings: [...CAMPUS_BUILDINGS, PARK_BUILDING],
-  paved: [SOUTH_YARD_PAVING, PARK_GATE_PAVING, ...DOOR_PAVING],
+  buildings: [
+    ...CAMPUS_BUILDINGS,
+    PARK_BUILDING,
+    { name: '摸鱼大赌场', rect: DICE_HALL, floor: 'wood' },
+    ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: spec.house, floor: 'wood' as const })),
+    { name: '牛马公寓', rect: APARTMENT, floor: 'concrete' },
+  ],
+  paved: [
+    SOUTH_YARD_PAVING,
+    PARK_GATE_PAVING,
+    CLINIC_RECT,
+    CLINIC_ACCESS_PAVING,
+    DICE_HALL_APRON,
+    ...VILLA_SPECS.map((spec) => spec.rect),
+    APARTMENT,
+    ...DOOR_PAVING,
+  ],
 };
 
 /** 玩家所在区域名：中央圆庭优先，其余按区域表顺序命中，未命中则落到野地 */

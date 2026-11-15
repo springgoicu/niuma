@@ -1,5 +1,6 @@
 import {
   MOVE_SPEED,
+  P2P_DUEL_IFRAME_MS,
   POSE,
   clampWorldX,
   clampWorldY,
@@ -104,6 +105,13 @@ export function applyMove(
     return RESULT;
   }
 
+  // 昏迷 / 拖拽 / 病床治疗期间：位置与姿态全由急救管理器接管，客户端任何输入都不采信
+  if (player.incapacitated) {
+    player.applyState(player.direction, POSE.Lie, false);
+    player.markDirtyIfChanged();
+    return RESULT;
+  }
+
   const state = unpackState(packet.state);
   const pose = sanitizePose(state.pose);
 
@@ -129,7 +137,9 @@ export function applyMove(
   const distance = Math.sqrt(dx * dx + dy * dy);
 
   const elapsed = Math.min(MAX_WINDOW_MS, Math.max(MIN_WINDOW_MS, now - player.lastMoveAt));
-  const allowed = (MOVE_SPEED * elapsed) / 1000 * TOLERANCE + SLACK_PX;
+  // 移速乘子由 Buff 缓存提供（冰美式 1.15 / 降薪贴 0.8）；
+  // 这里只读标量，避免在 20Hz 路径上遍历 activeBuffs
+  const allowed = ((MOVE_SPEED * player.speedMul * elapsed) / 1000) * TOLERANCE + SLACK_PX;
   const clamped = distance > allowed && distance > 0;
   const scale = clamped ? allowed / distance : 1;
 
@@ -164,6 +174,8 @@ export function applyMove(
   // 这里再按 stationary 拦一道，反而会把「边走边按 E」的第一包吃掉（ADR-0051）。
   // 到期由客户端按各自窗口清位，服务端不另设计时器（ADR-0019 / 0051）。
   const stationary = pose !== POSE.Walk && !state.moving;
+  // 跳跃上升沿记 0.4s 无敌帧：头槌结算读 jumpUntilMs，持续按住的后续帧不会续期
+  const jumpStarted = state.jump && !player.jump;
   player.applyState(
     state.direction,
     pose,
@@ -172,6 +184,7 @@ export function applyMove(
     state.jump,
     stationary && state.wave,
   );
+  if (jumpStarted) player.jumpUntilMs = now + P2P_DUEL_IFRAME_MS;
   player.markDirtyIfChanged();
 
   RESULT.accepted = true;

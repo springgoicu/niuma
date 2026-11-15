@@ -2,7 +2,6 @@
 
 import {
   EMPTY_CAREER,
-  ENTITY_ROLE_GUARD,
   type CareerSummary,
   type CharacterAppearance,
   type Pose,
@@ -18,16 +17,9 @@ import {
   getTodayToiletMinutes,
   type AttendanceStorage,
 } from './attendance';
-import {
-  departmentOf,
-  employeeNumber,
-  poseLabel,
-  seatLabel,
-  shiftOf,
-  type BoardEntry,
-  type PlayerBadge,
-} from './badge';
+import { poseLabel, seatLabel, type BoardEntry, type PlayerBadge } from './badge';
 import { EMPTY_CAREER_DAY, PX_PER_STEP, type CareerStats } from './career';
+import { serverNow } from './server-clock';
 import type { GeoInfo } from './geo';
 import type { ShareCardData } from './share-card';
 
@@ -42,7 +34,6 @@ import type { ShareCardData } from './share-card';
  */
 export interface BadgeArchive {
   name: string;
-  employeeNo: string;
   species: Species;
   appearance: CharacterAppearance;
   isSelf: boolean;
@@ -50,8 +41,6 @@ export interface BadgeArchive {
   likes: number;
   /** 当前连接是否已给这块工牌点过赞；本人档案恒为 false */
   liked: boolean;
-  department: string;
-  shift: string;
   jobTitle: string;
   jobWarning?: string;
   jobColor: string;
@@ -135,9 +124,18 @@ function toiletRatio(toiletMinutes: number, todayMinutes: number): number {
   return Math.min(1, Math.max(0, toiletMinutes / todayMinutes));
 }
 
+/**
+ * 出勤地点：只拼真实查到的地区，查不到就写「未上报」。
+ * 不再用「赛博空间 · 边缘节点」这类编造地名兜底。
+ */
+function formatLocation(region: string, city: string): string {
+  const parts = ['中国', region, city].filter((part) => part !== '');
+  return parts.length > 1 ? parts.join(' · ') : '未上报';
+}
+
 /** 本人档案：数据来自本地 store，不经过网络。 */
 export function buildSelfArchive(input: SelfArchiveInput): BadgeArchive {
-  const now = input.now ?? Date.now();
+  const now = input.now ?? serverNow();
   const todayMinutes = getTodayMinutes(input.attendance, now);
   const todayToiletMinutes = Math.min(getTodayToiletMinutes(input.attendance, now), todayMinutes);
   const day = input.stats.daily[dayKey(now)] ?? EMPTY_CAREER_DAY;
@@ -151,20 +149,17 @@ export function buildSelfArchive(input: SelfArchiveInput): BadgeArchive {
   });
   return {
     name: input.name,
-    employeeNo: employeeNumber(input.name),
     species: input.species,
     appearance: input.appearance,
     isSelf: true,
     likes: clampCount(input.likes ?? 0),
     liked: false,
-    department: departmentOf(input.name),
-    shift: shiftOf(input.name),
     jobTitle: job.title,
     ...(job.warning ? { jobWarning: job.warning } : {}),
     jobColor: job.color,
     status: input.status,
     region: input.region || '园区',
-    location: `中国 · ${input.geo.region} · ${input.geo.city}`,
+    location: formatLocation(input.geo.region, input.geo.city),
     pose: poseLabel(input.pose, false, input.seated),
     seat: seatLabel(input.seatKind),
     todayDuration: formatMinutesClock(todayMinutes),
@@ -206,19 +201,13 @@ export function buildRemoteArchive(badge: PlayerBadge, _now = Date.now()): Badge
         rank: badge.rank,
       })
     : '未上报';
-  // 3 位保安都叫「园区保安」：用实体 id 当 salt 拉开三张工牌；
-  // 真人（role 0 / undefined）与普通同事不传，固定工号语义保持不变。
-  const salt = badge.role === ENTITY_ROLE_GUARD ? badge.id : undefined;
   return {
     name: badge.name,
-    employeeNo: employeeNumber(badge.name, salt),
     species: badge.species,
     appearance: badge.appearance,
     isSelf: false,
     likes: clampCount(badge.likes),
     liked: badge.liked,
-    department: departmentOf(badge.name, salt),
-    shift: shiftOf(badge.name, salt),
     jobTitle: hasCareer ? job.title : '未上报',
     ...(hasCareer && job.warning ? { jobWarning: job.warning } : {}),
     jobColor: hasCareer ? job.color : 'text-mist-500',
@@ -255,7 +244,6 @@ export function buildRemoteArchive(badge: PlayerBadge, _now = Date.now()): Badge
 export function toShareCardData(archive: BadgeArchive): ShareCardData {
   return {
     name: archive.name,
-    employeeNo: archive.employeeNo,
     jobTitle: archive.jobTitle,
     species: archive.species,
     appearance: archive.appearance,
@@ -263,8 +251,6 @@ export function toShareCardData(archive: BadgeArchive): ShareCardData {
     todayDuration: archive.todayDuration,
     todayToiletMinutes: archive.todayToiletMinutes,
     stamp: archive.stamp,
-    department: archive.department,
-    shift: archive.shift,
     activity: archive.activity,
     rank: archive.rank,
     isSelf: archive.isSelf,

@@ -149,13 +149,6 @@ export function NoticeBoard({ compact = false }: { compact?: boolean }) {
             </button>
           </header>
 
-          <div className="border-b-2 border-ink-700 bg-mint-400/[0.06] px-3 py-2">
-            <p className="font-mono text-[9px] tracking-[0.18em] text-mint-400">园区重装修完成</p>
-            <p className="mt-1 text-[10px] leading-relaxed text-mist-300">
-              北门内四角新院已启用：工作区、会议室、宿舍区、卫生间各自归位。
-            </p>
-          </div>
-
           {compact ? (
             <div className="flex items-start gap-2.5 px-3 py-2.5">
               <QrTray size={108} attempt={attempt} onRetry={() => setAttempt((value) => value + 1)} />

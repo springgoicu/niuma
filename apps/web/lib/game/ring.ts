@@ -4,17 +4,20 @@ import { Container, Graphics, Sprite, Text, type Application, type Texture } fro
 import {
   RING_ARENA,
   RING_AWARD_MS,
+  RING_BENCHES,
   RING_PHASE,
   RING_PODIUM_SLOTS,
   type RingPacket,
 } from '@niuma/shared-types';
 import {
+  RING_BENCH_FRAME,
   RING_COLORS,
   RING_GROUND_FRAME,
   RING_POST_FRAME,
   RING_STEP_FRAME,
   RING_TROPHY_FRAME,
   drawPodiumStep,
+  drawRingBench,
   drawRingGround,
   drawRingPost,
   drawTrophy,
@@ -72,6 +75,8 @@ function easeOutCubic(t: number): number {
 export class RingView {
   private readonly groundRoot = new Container();
   private readonly postRoots: Container[] = [];
+  /** 4 张观战长椅：底边中心进排序层 */
+  private readonly benchRoots: Container[] = [];
   private readonly overlayRoot = new Container();
   private readonly podiumRoot = new Container();
   private readonly trophy: Sprite;
@@ -98,17 +103,30 @@ export class RingView {
     this.groundRoot.position.set(RING_ARENA.x, RING_ARENA.y);
     this.groundRoot.addChild(new Sprite(groundTexture));
 
-    const title = this.makeText('南院擂台', 20, RING_COLORS.cream, 6, '600');
+    const title = this.makeText('绩效八角笼', 20, RING_COLORS.cream, 6, '600');
     title.anchor.set(0.5, 0);
     title.position.set(RING_ARENA.w / 2, 26);
     title.alpha = 0.86;
     this.groundRoot.addChild(title);
 
-    const rule = this.makeText('10 血 · 三人为限 · 打完即开奖', 10, RING_COLORS.rope, 2);
+    const rule = this.makeText('红蓝 1v1 · 报名 50 币 · 胜者通吃', 10, RING_COLORS.rope, 2);
     rule.anchor.set(0.5, 0);
     rule.position.set(RING_ARENA.w / 2, 52);
     rule.alpha = 0.7;
     this.groundRoot.addChild(rule);
+
+    // 四张观战长椅：底边中心进排序层，坐上去的人会被椅背挡住半截
+    const benchTexture = this.track(
+      bake(renderer, (g) => drawRingBench(g), { frame: RING_BENCH_FRAME }),
+    );
+    for (const bench of RING_BENCHES) {
+      const root = new Container();
+      const sprite = new Sprite(benchTexture);
+      sprite.anchor.set(0.5, 1);
+      root.position.set(bench.x, bench.y);
+      root.addChild(sprite);
+      this.benchRoots.push(root);
+    }
 
     // 角柱：四根独立容器，各自按脚底 y 进排序层
     const postTexture = this.track(bake(renderer, (g) => drawRingPost(g), { frame: RING_POST_FRAME }));
@@ -199,6 +217,7 @@ export class RingView {
   build(depth: DepthSink, ground: Container, overlay: Container): void {
     ground.addChild(this.groundRoot);
     for (const root of this.postRoots) depth.add(root.position.y, root);
+    for (const root of this.benchRoots) depth.add(root.position.y, root);
     overlay.addChild(this.overlayRoot);
   }
 

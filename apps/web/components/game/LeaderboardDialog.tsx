@@ -17,6 +17,8 @@ import {
   metricMeta,
 } from '@/lib/game/leaderboard';
 import { nextTabIndex, type TabNavKey } from '@/lib/game/tab-keyboard';
+import { formatClockSeconds } from '@/lib/game/clock';
+import { serverNow } from '@/lib/game/server-clock';
 
 /**
  * 牛马榜面板（ADR-0054）：把中央广场那块木框纸签板拉近到屏幕上。
@@ -216,7 +218,7 @@ export function LeaderboardDialog({
       }
     }
     seenBoards.current = boards;
-    if (fresh) setSnapshotAt(Date.now());
+    if (fresh) setSnapshotAt(serverNow());
   }, [boards]);
 
   useEffect(
@@ -290,10 +292,8 @@ export function LeaderboardDialog({
   }, []);
 
   const online = packet?.online ?? 0;
-  const snapshotTime =
-    snapshotAt > 0
-      ? new Date(snapshotAt).toLocaleTimeString('zh-CN', { hour12: false })
-      : '--:--:--';
+  // 页脚的「快照时刻」按园区时区渲染：换台机器看榜单不该差几个小时
+  const snapshotTime = snapshotAt > 0 ? formatClockSeconds(snapshotAt) : '--:--:--';
   const selfOutsideTop =
     packet !== undefined && packet.selfRank > 0 && packet.selfRank > rows.length;
 

@@ -5,7 +5,8 @@ export const dynamic = 'force-dynamic';
  * IP 归属地：无状态代理，不写任何存储，也绝不因为上游挂了返回 500。
  *
  * 读取顺序按部署形态固定：`x-forwarded-for` 第一段（最靠近用户的代理写的那一段）
- * 优先，其次 `x-real-ip`。内网、缺头、非法值都直接走本地兜底，不发出公网请求。
+ * 优先，其次 `x-real-ip`。内网、缺头、非法值都直接返回空值，不发出公网请求，
+ * 也不拿编造地名冒充归属地。
  */
 interface GeoInfo {
   region: string;
@@ -13,8 +14,8 @@ interface GeoInfo {
   isp: string;
 }
 
-const LOCAL_GEO: GeoInfo = { region: '园区局域网', city: '工位内网', isp: '直连' };
-const FALLBACK_GEO: GeoInfo = { region: '赛博空间', city: '边缘节点', isp: '未知网络' };
+/** 内网、缺头、上游失败：统一返回空值，由界面显示「未上报」，不编造地名 */
+const UNKNOWN_GEO: GeoInfo = { region: '', city: '', isp: '' };
 
 const PRIMARY_TIMEOUT_MS = 2_000;
 const SECONDARY_TIMEOUT_MS = 1_500;
@@ -93,11 +94,7 @@ function parseIpApi(raw: unknown): GeoInfo | null {
   const region = asString(value.regionName) || asString(value.country);
   const city = asString(value.city);
   if (!region && !city) return null;
-  return {
-    region: region || '赛博空间',
-    city: city || '边缘节点',
-    isp: asString(value.isp) || '未知网络',
-  };
+  return { region, city, isp: asString(value.isp) };
 }
 
 /** ipapi.co：HTTPS 备选，字段名与 ip-api 不同 */
@@ -108,11 +105,7 @@ function parseIpapiCo(raw: unknown): GeoInfo | null {
   const region = asString(value.region) || asString(value.country_name);
   const city = asString(value.city);
   if (!region && !city) return null;
-  return {
-    region: region || '赛博空间',
-    city: city || '边缘节点',
-    isp: asString(value.org) || '未知网络',
-  };
+  return { region, city, isp: asString(value.org) };
 }
 
 async function resolvePublic(ip: string): Promise<GeoInfo> {
@@ -125,7 +118,7 @@ async function resolvePublic(ip: string): Promise<GeoInfo> {
   if (fromPrimary) return fromPrimary;
 
   const secondary = await fetchJson(`https://ipapi.co/${encoded}/json/`, SECONDARY_TIMEOUT_MS);
-  return parseIpapiCo(secondary) ?? FALLBACK_GEO;
+  return parseIpapiCo(secondary) ?? UNKNOWN_GEO;
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -136,12 +129,12 @@ export async function GET(request: Request): Promise<Response> {
       normalizeIp(forwarded?.split(',')[0] ?? null) ??
       normalizeIp(request.headers.get('x-real-ip'));
 
-    // 没有转发头 / 非法 IP / 内网：一律按园区内网处理，不去打扰公网服务
-    if (!ip || !isIpLike(ip) || isPrivateIp(ip)) return json(LOCAL_GEO);
+    // 没有转发头 / 非法 IP / 内网：一律返回空值，不去打扰公网服务
+    if (!ip || !isIpLike(ip) || isPrivateIp(ip)) return json(UNKNOWN_GEO);
 
     return json(await resolvePublic(ip));
   } catch {
     // 任何未预期错误都降级，绝不把 500 抛给前端
-    return json(FALLBACK_GEO);
+    return json(UNKNOWN_GEO);
   }
 }

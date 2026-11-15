@@ -26,6 +26,9 @@ describe('国风配件的 32 字节编码位（ADR-0061）', () => {
     expect(catalogIndexOf(HEADWEAR_IDS, 'police_cap')).toBe(9);
     expect(catalogIndexOf(NECKWEAR_IDS, 'epaulette')).toBe(6);
 
+    // 护士帽（ADR-0084）排在警帽之后：值班护士的字节编号同样不能漂移
+    expect(catalogIndexOf(HEADWEAR_IDS, 'nurse_cap')).toBe(10);
+
     expect(catalogIndexOf(HAIR_IDS, 'slick')).toBe(5);
     expect(catalogIndexOf(HAIR_IDS, 'topknot')).toBe(6);
     expect(catalogIndexOf(HAIR_IDS, 'braid')).toBe(7);

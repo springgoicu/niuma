@@ -4,6 +4,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import { BULLETIN_BOARD } from '@niuma/shared-types';
 import { TICKER_HEIGHT, TICKER_WIDTH, tickerOffset, tickerSlot } from './bulletin-ticker';
 import { tickerMessages } from './holiday-calendar';
+import { serverNow, serverTzOffsetMin } from './server-clock';
 import type { DepthSink } from './sort-layer';
 
 export { TICKER_HEIGHT, TICKER_SLOT_MS, TICKER_SLOTS, TICKER_WIDTH, tickerOffset, tickerSlot } from './bulletin-ticker';
@@ -107,14 +108,15 @@ export class BulletinView {
    * 每帧推进：滚动只写坐标；文案每整秒重算一次。
    * 文案来自 `tickerMessages`——与弹窗共用同一份纯函数，两处不会各说各话。
    */
-  update(dtMs: number, now: number = Date.now()): void {
+  update(dtMs: number, now: number = serverNow()): void {
     if (this.destroyed) return;
     this.elapsedMs += Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
 
-    const second = Math.floor((Number.isFinite(now) ? now : Date.now()) / 1000);
+    const at = Number.isFinite(now) ? now : serverNow();
+    const second = Math.floor(at / 1000);
     if (second !== this.lastSecond) {
       this.lastSecond = second;
-      const next = tickerMessages(Number.isFinite(now) ? now : Date.now());
+      const next = tickerMessages(at, serverTzOffsetMin());
       if (next[0] !== this.messages[0] || next[1] !== this.messages[1] || next[2] !== this.messages[2]) {
         this.messages = next;
       }

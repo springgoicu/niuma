@@ -19,6 +19,7 @@ import {
   ringSeats,
   type RingSeat,
 } from '@/lib/game/ring-status';
+import { serverNow } from '@/lib/game/server-clock';
 
 /**
  * 擂台 HUD（ADR-0073）。
@@ -135,15 +136,16 @@ export function RingHud({ touch = false }: { touch?: boolean }) {
   const selfId = useGameUi((state) => state.selfId);
   const x = useGameUi((state) => state.x);
   const y = useGameUi((state) => state.y);
-  const [now, setNow] = useState(() => Date.now());
+  // 倒计时锚点用服务器时刻（ADR-0081）：本机时钟快慢、时区远近都不影响剩余秒数
+  const [now, setNow] = useState(() => serverNow());
 
   const running = ring?.packet.phase === RING_PHASE.Running;
 
   useEffect(() => {
     if (!running) return;
-    setNow(Date.now());
+    setNow(serverNow());
     // 200ms 足够让「最后 10 秒」跳得利落，又不会把 React 每帧叫醒
-    const timer = window.setInterval(() => setNow(Date.now()), 200);
+    const timer = window.setInterval(() => setNow(serverNow()), 200);
     return () => window.clearInterval(timer);
   }, [running, ring]);
 

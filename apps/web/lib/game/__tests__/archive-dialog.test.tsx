@@ -67,10 +67,11 @@ describe('archive dialog static render', () => {
     expect(html).toContain('aria-selected="true"');
     expect(html).toContain('aria-controls="archive-panel"');
     expect(html).toContain('role="tabpanel"');
-    expect(html).toContain('固定工号');
+    expect(html).not.toContain('固定工号');
+    expect(html).toContain('今日称号');
     expect(html).toContain('复制工卡');
     expect(html).toContain('考勤小票');
-    expect(html).toContain('NIOMA HR · VERIFIED');
+    expect(html).not.toContain('NIOMA HR');
     expect(html).toContain('收到的赞');
     expect(html).toContain('4');
   });

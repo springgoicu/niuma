@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
-  ALMANAC_BAD,
-  ALMANAC_GOOD,
   HOLIDAY_TABLE_YEARS,
-  dailyAlmanac,
-  djb2,
   formatCountdown,
   holidayCalendar,
   tickerMessages,
@@ -101,9 +97,7 @@ describe('法定节假日池', () => {
     const list = upcomingHolidays(MON);
     expect(list.map((item) => item.name)).toEqual(['清明节', '劳动节', '端午节']);
     expect(list[0]!.daysLeft).toBe(6);
-    expect(list[0]!.restDays).toBe(3);
     expect(list[1]!.daysLeft).toBe(32);
-    expect(list[1]!.restDays).toBe(5);
     expect(list[2]!.daysLeft).toBe(81);
   });
 
@@ -154,38 +148,7 @@ describe('法定节假日池', () => {
   });
 });
 
-describe('每日牛马黄历', () => {
-  it('同一天永远同一份，换一天才会换', () => {
-    const a = dailyAlmanac('2026-03-30');
-    const b = dailyAlmanac('2026-03-30');
-    expect(a).toEqual(b);
-    expect(a.good).toEqual(b.good);
-    expect(a.bad).toEqual(b.bad);
-    const c = dailyAlmanac('2026-03-31');
-    expect(c.hash).not.toBe(a.hash);
-  });
 
-  it('宜忌各 2 项、互不重复，且全部来自预设池', () => {
-    for (let day = 1; day <= 28; day += 1) {
-      const key = `2026-02-${String(day).padStart(2, '0')}`;
-      const almanac = dailyAlmanac(key);
-      expect(almanac.good).toHaveLength(2);
-      expect(almanac.bad).toHaveLength(2);
-      expect(new Set(almanac.good).size).toBe(2);
-      expect(new Set(almanac.bad).size).toBe(2);
-      for (const item of almanac.good) expect(ALMANAC_GOOD).toContain(item);
-      for (const item of almanac.bad) expect(ALMANAC_BAD).toContain(item);
-      expect(almanac.motto.length).toBeGreaterThan(4);
-    }
-  });
-
-  it('djb2 按码点推进，负数与非 ASCII 也稳定', () => {
-    expect(djb2('')).toBe(5381);
-    expect(djb2('2026-03-30')).toBe(djb2('2026-03-30'));
-    expect(djb2('牛马')).toBeGreaterThan(0);
-    expect(djb2('a')).toBe((5381 * 33 + 97) >>> 0);
-  });
-});
 
 describe('格式化与跑马灯文案', () => {
   it('倒计时按 02天 06小时 41分 28秒 补齐两位', () => {

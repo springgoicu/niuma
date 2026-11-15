@@ -1,7 +1,8 @@
 'use client';
 
 import { browserStorage, readJson, writeJson } from '../storage';
-import { localDateKey } from './local-date';
+import { serverNow } from './server-clock';
+import { serverDateKey, serverTzOffsetMin } from './server-date';
 
 /**
  * 赛博木鱼的本地账本（ADR-0059）。
@@ -85,16 +86,16 @@ export function writeAlmanac(state: AlmanacStore): void {
 }
 
 /** 记录一次敲击并落盘：返回今天第几下与是否刚解锁 */
-export function recordFishKnock(now: number = Date.now()): FishKnockResult {
-  const result = applyFishKnock(readAlmanac(), localDateKey(now));
+export function recordFishKnock(now: number = serverNow()): FishKnockResult {
+  const result = applyFishKnock(readAlmanac(), serverDateKey(now, serverTzOffsetMin()));
   writeAlmanac(result.state);
   return result;
 }
 
-/** 今天已经敲了多少下；跨日的旧记录按 0 算 */
-export function todayKnocks(now: number = Date.now()): number {
+/** 今天已经敲了多少下；跨日的旧记录按 0 算（“今天”按园区日历） */
+export function todayKnocks(now: number = serverNow()): number {
   const stored = readAlmanac();
-  return stored.day === localDateKey(now) ? stored.knocks : 0;
+  return stored.day === serverDateKey(now, serverTzOffsetMin()) ? stored.knocks : 0;
 }
 
 /** 工牌「已解锁成就」：目前只有木鱼这一枚，后续新成就往这里追加 */

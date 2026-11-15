@@ -20,3 +20,9 @@ apps/web/public/**/*.gz
 
 # 安装参数（含 Gitee 凭据），只存在本机
 deploy/production/install.env
+
+# 园区共享运行态快照（ADR-0081）：运行时数据，不进版本库
+apps/game-server/data/
+**/world-state.json
+**/world-state.json.tmp
+**/world-state.json.bad-*

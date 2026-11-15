@@ -1,22 +1,21 @@
 'use client';
 
 import type { BadgeArchive } from '@/lib/game/archive';
-import { Barcode, Chip, FakeQr } from './BadgeArt';
+import { FISH_UNLOCK_COUNT } from '@/lib/game/almanac-store';
 import { FieldRow } from './ArchiveFields';
 import { StampSeal } from './StampSeal';
 
 /**
  * 证件页：工牌正面。
  *
- * 条码、二维码、芯片与印章都留在这里，让「证件」这一页真的像一张实体卡，
- * 而不是另一列字段。
+ * 只写有数据来源的字段：职级称谓、首次入职、出勤地点、园区区域与已解锁成就。
+ * 工号、部门、班次与条码 / 二维码 / 芯片都已删除——它们没有真实来源，
+ * 只是用昵称哈希编出来的身份证件观感。
  */
 export function IdentityPanel({ archive }: { archive: BadgeArchive }) {
   return (
     <div className="animate-archive-panel-in">
       <dl className="grid gap-2 px-4 pt-3.5 font-mono text-[10px] sm:text-[11px]">
-        <FieldRow label="固定工号" value={archive.employeeNo} accent />
-        <FieldRow label="部门 / 班次" value={`${archive.department} · ${archive.shift}`} />
         <div className="flex items-baseline justify-between gap-3 border-b border-dotted border-ink-600/80 pb-2">
           <dt className="shrink-0 text-mist-500">职级称谓</dt>
           <dd className="min-w-0 text-right">
@@ -38,17 +37,6 @@ export function IdentityPanel({ archive }: { archive: BadgeArchive }) {
         <FieldRow label="园区区域" value={archive.region} />
       </dl>
 
-      <div className="flex items-end gap-3 border-t-2 border-ink-600 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <Barcode value={archive.employeeNo} />
-          <p className="mt-1 font-mono text-[9px] tracking-[0.18em] text-mist-500">
-            {archive.employeeNo} · 仅供自嘲
-          </p>
-        </div>
-        <FakeQr value={archive.employeeNo} />
-        <Chip />
-      </div>
-
       {/* 成就戳印：与主章分开，告诉玩家这里的小章是可以一枚枚攒的 */}
       {archive.achievements.length > 0 && (
         <div className="border-t-2 border-ink-600 px-4 py-3">
@@ -64,7 +52,7 @@ export function IdentityPanel({ archive }: { archive: BadgeArchive }) {
             ))}
           </div>
           <p className="mt-1.5 font-mono text-[8px] leading-relaxed text-mist-500">
-            在广场北侧的放假告示板敲满 20 下木鱼即可盖上，记录只存在这台设备。
+            在广场北侧的放假告示板敲满 {FISH_UNLOCK_COUNT} 下木鱼即可盖上，记录只存在这台设备。
           </p>
         </div>
       )}

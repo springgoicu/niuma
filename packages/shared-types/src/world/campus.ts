@@ -51,6 +51,13 @@ export interface SeatInstance {
   kind: SeatKind;
   desk: number;
   variant?: number;
+  /**
+   * 座位组（可选）：同一张赌桌、同一排观战长椅共用一个组 id。
+   *
+   * 热区表用 `seatGroupId` 指向它，赌桌公共局与长椅押注据此判断
+   * 「我坐的是哪一桌 / 哪一排」，不必再按像素距离反推。
+   */
+  group?: string;
 }
 
 /**

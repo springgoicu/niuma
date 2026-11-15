@@ -307,3 +307,34 @@ describe('擂台快照', () => {
     expect(ring.snapshot(T0, world)).toMatchObject({ phase: RING_PHASE.Idle, members: [] });
   });
 });
+
+/**
+ * 快照恢复（ADR-0081）：局号连续、上局摘要还在，但进行中的比赛一律收尾为 idle。
+ * 参赛者的连接停机时已经全断了，复活「幽灵比赛」只会让下一个人空等 120 秒。
+ */
+describe('擂台快照恢复', () => {
+  it('只接局号与摘要：名单清空、阶段归 idle', () => {
+    const ring = new RingRuntime();
+    const lastMatch = { matchId: 40, endedAt: T0, top: [{ name: '牛马', rank: 1, hp: 10 }] };
+    ring.restore({ matchId: 41, nextMatchId: 42, lastMatch });
+    expect(ring.phase).toBe(RING_PHASE.Idle);
+    expect(ring.count).toBe(0);
+    expect(ring.endsAt).toBe(0);
+    expect(ring.matchId).toBe(41);
+    expect(ring.snapshotForSave()).toEqual({ matchId: 41, nextMatchId: 42, lastMatch });
+  });
+
+  it('恢复后开新局从快照的下一号继续，不从 1 重数', () => {
+    const { ring, players } = setup();
+    ring.restore({ matchId: 41, nextMatchId: 42, lastMatch: null });
+    enter(ring, players[0]!, T0);
+    expect(ring.matchId).toBe(42);
+  });
+
+  it('坏档里的负数局号被夹回合法值', () => {
+    const ring = new RingRuntime();
+    ring.restore({ matchId: -3, nextMatchId: 0, lastMatch: null });
+    expect(ring.matchId).toBe(0);
+    expect(ring.snapshotForSave().nextMatchId).toBe(1);
+  });
+});

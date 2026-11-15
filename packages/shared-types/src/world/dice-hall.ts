@@ -1,0 +1,190 @@
+/**
+ * 摸鱼大赌场（DICE_HALL）：西带空地上的开放式豪华亭子 + 两张 6 人绿绒赌桌。
+ *
+ * 与 layout.ts 同一条纪律：坐标全部手写，不依赖 Math.random / Math.sin / Math.cos，
+ * 服务端裁决、客户端渲染与布局测试共用这一份真相。
+ *
+ * 地块选在西主路以南、涟漪湖以北的草带（x 2620–3040 / y 3480–3880）：
+ * 北离西主路 44px，南离湖岸 90px，西离岛界 60px，不压花海与竹林。
+ */
+
+import { DIRECTION } from '../constants';
+import type { SeatInstance, SolidRect } from './campus';
+import type { WorldRect } from './geometry';
+
+/** 亭子整体占地：也是小地图上的建筑填色块 */
+export const DICE_HALL: WorldRect = { x: 2620, y: 3480, w: 420, h: 400 };
+
+/** 亭心：招牌与灯串围绕它对称摆放 */
+export const DICE_HALL_CENTER = { x: DICE_HALL.x + DICE_HALL.w / 2, y: DICE_HALL.y + 190 } as const;
+
+/** 南侧迎宾铺装：把亭子接到西主路的弯道上 */
+export const DICE_HALL_APRON: WorldRect = { x: 2738, y: 3860, w: 184, h: 76 };
+
+/** 北侧吧台与霓虹招牌底座：只挡柜台那一截，人在柜前点单 */
+export const DICE_HALL_BAR: WorldRect = { x: 2700, y: 3514, w: 260, h: 30 };
+
+/** 六根朱红廊柱：南北各两根，东西居中各一根，中间留空让人走向赌桌 */
+export const DICE_HALL_COLUMNS: ReadonlyArray<{ x: number; y: number }> = [
+  { x: 2648, y: 3516 },
+  { x: 3012, y: 3516 },
+  { x: 2648, y: 3800 },
+  { x: 3012, y: 3800 },
+  { x: 2648, y: 3658 },
+  { x: 3012, y: 3658 },
+];
+
+export const DICE_HALL_SOLIDS: ReadonlyArray<SolidRect> = [
+  { kind: 'prop', ...DICE_HALL_BAR },
+  ...DICE_HALL_COLUMNS.map((column) => ({
+    kind: 'prop' as const,
+    x: column.x - 7,
+    y: column.y - 7,
+    w: 14,
+    h: 14,
+  })),
+];
+
+/** 一张赌桌：id / 座位组 / 显示名 / 桌面矩形（中心点 + 尺寸） */
+export interface DiceTableSpec {
+  readonly id: number;
+  readonly group: string;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** 两张桌横向并排，桌心相距 210：6 人一圈坐下不会和邻桌挤在一起 */
+export const DICE_TABLES: ReadonlyArray<DiceTableSpec> = [
+  { id: 0, group: 'dice-a', name: '翡翠桌', x: DICE_HALL.x + 105, y: DICE_HALL_CENTER.y, w: 100, h: 68 },
+  { id: 1, group: 'dice-b', name: '鎏金桌', x: DICE_HALL.x + 315, y: DICE_HALL_CENTER.y, w: 100, h: 68 },
+];
+
+/** 桌面碰撞：两张桌各自一块，桌沿外留出座位的落地空间 */
+export const DICE_TABLE_SOLIDS: ReadonlyArray<SolidRect> = DICE_TABLES.map((table) => ({
+  kind: 'desk' as const,
+  x: table.x - table.w / 2,
+  y: table.y - table.h / 2,
+  w: table.w,
+  h: table.h,
+}));
+
+/** 每桌 6 个座位（左 / 右 / 上二 / 下二），全部是圆凳 */
+export const DICE_SEATS_PER_TABLE = 6;
+
+function tableSeats(table: DiceTableSpec): Array<Omit<SeatInstance, 'id' | 'desk'>> {
+  const { x, y, group } = table;
+  return [
+    { x: x - 66, y, facing: DIRECTION.Right, kind: 'stool', group },
+    { x: x + 66, y, facing: DIRECTION.Left, kind: 'stool', group },
+    { x: x - 30, y: y - 58, facing: DIRECTION.Down, kind: 'stool', group },
+    { x: x + 30, y: y - 58, facing: DIRECTION.Down, kind: 'stool', group },
+    { x: x - 30, y: y + 58, facing: DIRECTION.Up, kind: 'stool', group },
+    { x: x + 30, y: y + 58, facing: DIRECTION.Up, kind: 'stool', group },
+  ];
+}
+
+/** 12 个赌桌座位：接在既有座位表末尾，id 由 layout.ts 统一分配 */
+export const DICE_HALL_SEAT_DRAFTS: ReadonlyArray<Omit<SeatInstance, 'id' | 'desk'>> =
+  DICE_TABLES.flatMap(tableSeats);
+
+/** 按 id 取赌桌；越界返回 undefined */
+export function diceTableById(id: number): DiceTableSpec | undefined {
+  return DICE_TABLES.find((table) => table.id === id);
+}
+
+/** 按座位组取赌桌 */
+export function diceTableByGroup(group: string): DiceTableSpec | undefined {
+  return DICE_TABLES.find((table) => table.group === group);
+}
+
+/* ------------------------------------------------------------------ *
+ * 公共局规则（服务端权威）
+ *
+ * 每局三段：10 秒下注 → 1.5 秒摇骰演出 → 4 秒亮牌结算。
+ * 结算用彩池：命中档位按注额比例分走全池，0% 抽水，货币不增发；
+ * 命中档位无人下注时全额退款（不算赢也不算输）。
+ * 每局 5% 概率触发保安查岗彩蛋：命中者分到的彩池再被抽走 5%。
+ * ------------------------------------------------------------------ */
+
+export const DICE_BET_MS = 10_000;
+export const DICE_ROLL_MS = 1_500;
+export const DICE_REVEAL_MS = 4_000;
+export const DICE_MIN_BET = 10;
+export const DICE_MAX_BET = 500;
+/** 保安查岗概率（每局独立掷一次） */
+export const DICE_GUARD_RAID_CHANCE = 0.05;
+/** 查岗抽水比例 */
+export const DICE_RAID_TAKE = 0.05;
+
+/** 押注档位：线协议 u8 */
+export const DICE_SIDE = {
+  Big: 0,
+  Small: 1,
+  Leopard: 2,
+} as const;
+export type DiceSide = (typeof DICE_SIDE)[keyof typeof DICE_SIDE];
+
+export const DICE_SIDE_NAME: Record<number, string> = {
+  [DICE_SIDE.Big]: '大',
+  [DICE_SIDE.Small]: '小',
+  [DICE_SIDE.Leopard]: '豹子',
+};
+
+/** 局内阶段：0 等待开局 / 1 下注 / 2 摇骰 / 3 亮牌 */
+export const DICE_PHASE = {
+  Idle: 0,
+  Betting: 1,
+  Rolling: 2,
+  Reveal: 3,
+} as const;
+export type DicePhase = (typeof DICE_PHASE)[keyof typeof DICE_PHASE];
+
+/** 三颗骰子：豹子优先，其余按点数和 11 以上为大、10 以下为小 */
+export function classifyDice(a: number, b: number, c: number): DiceSide {
+  if (a === b && b === c) return DICE_SIDE.Leopard;
+  return a + b + c >= 11 ? DICE_SIDE.Big : DICE_SIDE.Small;
+}
+
+/**
+ * 确定性摇骰：给定局号得到三颗 1–6。
+ *
+ * 不用 Math.random —— 服务端与回放、测试要能复现同一局；
+ * 局号由服务端递增，客户端只接收结果，无法预测。
+ */
+export function rollDice(seed: number): [number, number, number] {
+  let state = (Math.imul(seed | 0, 0x9e3779b1) ^ 0x51ed270b) >>> 0;
+  const next = (): number => {
+    state ^= state << 13;
+    state >>>= 0;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    state >>>= 0;
+    return (state % 6) + 1;
+  };
+  return [next(), next(), next()];
+}
+
+/** 把「命中档位 + 总池」拆成每人应得：整数余数按注额降序、id 升序兜底，保证确定性 */
+export function splitPool(
+  winners: ReadonlyArray<{ id: number; amount: number }>,
+  pool: number,
+): Array<{ id: number; amount: number }> {
+  const total = Math.max(0, Math.floor(pool));
+  const stake = winners.reduce((sum, entry) => sum + Math.max(0, Math.floor(entry.amount)), 0);
+  if (stake <= 0 || total <= 0) return [];
+  const sorted = [...winners].sort((a, b) => b.amount - a.amount || a.id - b.id);
+  const out = sorted.map((entry) => ({
+    id: entry.id,
+    amount: Math.floor((total * Math.max(0, Math.floor(entry.amount))) / stake),
+  }));
+  let assigned = out.reduce((sum, entry) => sum + entry.amount, 0);
+  for (const entry of out) {
+    if (assigned >= total) break;
+    entry.amount += 1;
+    assigned += 1;
+  }
+  return out;
+}

@@ -6,12 +6,20 @@ import { LogOut, Maximize, Minimize, Shuffle } from 'lucide-react';
 import {
   BOARD_METRIC,
   CAREER_REPORT_INTERVAL_MS,
+  ITEM_REJECT_LABEL,
   RING_PHASE,
+  SHOUT_REJECT_LABEL,
   type BoardMetric,
   type BoardPacket,
+  P2P_INVITE_REASON_LABEL,
+  SHOP_KIND,
+  WALLET_REASON,
+  findCosmeticSkuById,
+  furnitureById,
   type ChatSendPacket,
   type NavTargetId,
 } from '@niuma/shared-types';
+import { loadEconomy, saveEconomy } from '@/lib/economy';
 import { BadgeCard } from '@/components/BadgeCard';
 import { BulletinModal } from '@/components/BulletinModal';
 import { RemoteArchiveDialog } from '@/components/badge/RemoteArchiveDialog';
@@ -42,6 +50,8 @@ import { loadGeo, readCachedGeo } from '@/lib/game/geo';
 import { createGameClient } from '@/lib/game/client/create-game-client';
 import type { GameClient } from '@/lib/game/client/game-client';
 import type { ActionKey } from '@/lib/game/input';
+import { isEditableTarget } from '@/lib/game/input-keyboard';
+import { serverNow } from '@/lib/game/server-clock';
 import { loadSnapshot, resumeForPark } from '@/lib/game/snapshot';
 import type { ParkEntry } from '@/lib/park';
 import {
@@ -55,6 +65,8 @@ import {
 import { ActionBar } from './ActionBar';
 import type { BadgeSavePayload } from './BadgeEditor';
 import { ChatDock } from './ChatDock';
+import { CodeStudio } from './CodeStudio';
+import { EconomyLayer } from './EconomyLayer';
 import {
   ConnectionBanner,
   HudDivider,
@@ -72,6 +84,8 @@ import { NavCard } from './NavCard';
 import { NoticeBoard } from './NoticeBoard';
 import { QueueGate } from './QueueGate';
 import { RingHud } from './RingHud';
+import { ShopButton } from './ShopButton';
+import { WalletBadge } from './WalletBadge';
 import { WelcomeBanner } from './WelcomeBanner';
 import { Joystick, TouchActions } from './TouchControls';
 import { useImmersiveStage, useIsPortrait, useIsTouch, useVisualViewportSize } from '@/lib/use-touch-stage';
@@ -130,6 +144,8 @@ export function GameViewport({
   const [boardOpen, setBoardOpen] = useState(false);
   /** 牛马放假告示板：靠近按 F 或点击牌面展开软木看板（ADR-0059） */
   const [bulletinOpen, setBulletinOpen] = useState(false);
+  /** 代码工位彩蛋（F2）：只在电脑端有入口，整层盖住园区 HUD */
+  const [studioOpen, setStudioOpen] = useState(false);
   /** 五个指标的快照：一次请求回五条，页签切换只读本地缓存 */
   const [boards, setBoards] = useState<Partial<Record<BoardMetric, BoardPacket>>>({});
   /** 行为统计门面：距离 / 摸鱼 / 被喷 / 加班都从这里记 */
@@ -218,6 +234,26 @@ export function GameViewport({
 
   const closeBulletin = useCallback(() => setBulletinOpen(false), []);
 
+  /**
+   * 打开代码工位（F2 彩蛋）：与其它面板同一条纪律——先收回移动控制权，
+   * 再把可能开着的工牌档案 / 牛马榜 / 告示板收起，整层盖上去时背后不留打开态。
+   */
+  const openStudio = useCallback(() => {
+    clientRef.current?.clearMovement();
+    useGameUi.getState().setStatusOpen(false);
+    setInspectId(null);
+    setBoardOpen(false);
+    setBulletinOpen(false);
+    setStudioOpen(true);
+  }, []);
+
+  /** 关闭代码工位：再清一次掩码（Esc 时可能还按着方向键），焦点还给画布 */
+  const closeStudio = useCallback(() => {
+    clientRef.current?.clearMovement();
+    setStudioOpen(false);
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  }, []);
+
   /** 拉全部指标：打开面板、手动刷新与 20 秒自动刷新都走这里 */
   const requestBoard = useCallback(() => {
     clientRef.current?.requestBoard();
@@ -230,6 +266,8 @@ export function GameViewport({
 
   useEffect(() => {
     useGameUi.getState().reset();
+    // 钱包在进园前先从本地档案落位：HUD 首帧显示上一局的余额，而不是 0
+    useGameUi.getState().setWallet(loadEconomy());
     // reset 会清空 chatOpen：必须排在其后恢复上次的常驻状态（只开面板，不抢焦点）
     useGameUi.getState().restoreChatOpen();
     setInspectId(null);
@@ -311,7 +349,7 @@ export function GameViewport({
    */
   const selfBoardValue = useCallback((metric: BoardMetric): number => {
     const clockState = useAttendance.getState();
-    const now = clockState.now > 0 ? clockState.now : Date.now();
+    const now = clockState.now > 0 ? clockState.now : serverNow();
     const day = useCareer.getState().daily[dayKey(now)];
     switch (metric) {
       case BOARD_METRIC.TodayMinutes:
@@ -340,6 +378,27 @@ export function GameViewport({
     const timer = window.setTimeout(() => setBossDown(null), 4500);
     return () => window.clearTimeout(timer);
   }, [bossDown]);
+
+  /**
+   * F2 全局彩蛋：园区任意位置都能切到代码工位。
+   *
+   * 用 capture 阶段是为了赶在 `KeyboardInput` 的 bubble 监听之前——它只认 F2 之外的
+   * 游戏键，所以这里只要拦下 F2 本身。正在输入框里打字时不抢键：那一下 F2 属于输入。
+   * 打开期间的按键由 `CodeStudio` 自己接管，这里不再重复注册。
+   */
+  useEffect(() => {
+    if (!entering) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (studioOpen) return;
+      if (event.code !== 'F2' || event.repeat) return;
+      if (isEditableTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openStudio();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [entering, studioOpen, openStudio]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -410,11 +469,92 @@ export function GameViewport({
         onBoardOpen: openBoard,
         onBulletinOpen: openBulletin,
         onBoard: (packet) => setBoards((prev) => ({ ...prev, [packet.metric]: packet })),
+        onWallet: (packet) => {
+          const ui = useGameUi.getState();
+          const before = ui.wallet.coins;
+          // 外观 / 每日任务不在这条包里，必须用本地档案补齐而不是覆盖成空
+          const local = loadEconomy();
+          const next = {
+            ...local,
+            coins: packet.coins,
+            stats: packet.stats,
+            inventory: packet.inventory,
+            houseTier: packet.houseTier,
+          };
+          // 赌注冻结不落盘：刷新页面导致的断线会退款，落盘反而会把冻结额永久吃掉
+          if (packet.reason !== WALLET_REASON.EscrowFreeze) saveEconomy(next);
+          ui.setWallet(next);
+          if (packet.coins !== before) ui.pushCoinPop(packet.coins - before, packet.reason);
+        },
+        onInvite: (packet) => {
+          // TTL 用服务器时刻换算：本机时钟偏快 / 偏慢都不影响 15 秒倒计时
+          useGameUi.getState().setInvite({ packet, expiresAt: serverNow() + packet.ttlMs });
+        },
+        onInviteResult: (packet) => {
+          const ui = useGameUi.getState();
+          ui.setInviteResult(packet);
+          // 接受 / 拒绝 / 超时都只给一行提示，真正的对局浮层由 S2C_P2P_MATCH 接管
+          if (!packet.accepted) {
+            ui.setHint(P2P_INVITE_REASON_LABEL[packet.reason] ?? '邀请未达成');
+          }
+        },
+        onMatch: (packet) => {
+          const ui = useGameUi.getState();
+          ui.setMatch(packet);
+          // 开新局 / 结算时清掉上一局的亮牌与血量，避免旧回合残留在 HUD 上
+          ui.setShowdown(null);
+          ui.setDuel(null);
+        },
+        onShowdown: (packet) => useGameUi.getState().setShowdown(packet),
+        onDuelState: (packet) => useGameUi.getState().setDuel(packet),
+        onTip: (packet) =>
+          useGameUi
+            .getState()
+            .pushCoinPop(packet.received ? packet.amount : -packet.amount, 0),
+        onItemEffect: (packet) => {
+          // 飘字只用现有 hint 通道：道具没有额外面板，反馈要立刻可见
+          useGameUi.getState().setHint(packet.isTarget ? '有人对你用了道具' : '道具已生效');
+        },
+        onLoudspeaker: (packet) => {
+          // 置顶金色横幅：全服广播，与聊天弹幕互不影响（ADR-0085）
+          useGameUi.getState().pushShoutBanner(packet.fromId, packet.text);
+        },
+        onShoutReject: (packet) => {
+          useGameUi.getState().setHint(SHOUT_REJECT_LABEL[packet.reason] ?? '大喇叭没发出去');
+        },
+        onItemReject: (packet) => {
+          useGameUi.getState().setHint(ITEM_REJECT_LABEL[packet.reason] ?? '道具没生效');
+        },
+        onShopOpen: (tab) => {
+          // 茶台 F：直接落到属性页（ADR-0085），不再走「喝枸杞茶」的本地反馈
+          useGameUi.getState().setShopOpen(true, tab);
+        },
+        // ---- 热区建筑（ADR-0087）：开面板意图与下行快照 ----
+        onDiceOpen: (table) => useGameUi.getState().setDiceOpen(table),
+        onArenaBetOpen: () => useGameUi.getState().setArenaBetOpen(true),
+        onVillaOpen: (villa) => useGameUi.getState().setVillaOpen(villa),
+        onApartmentOpen: () => useGameUi.getState().setApartmentOpen(true),
+        onDiceState: (packet) => useGameUi.getState().setDice(packet),
+        onVillaState: (packet) => useGameUi.getState().setVillas(packet),
+        onArenaPool: (packet) => useGameUi.getState().setArenaPool(packet),
+        onRoomState: (packet) => useGameUi.getState().setRoom(packet),
+        onRoomInvite: (packet) => useGameUi.getState().setRoomInvite(packet),
       },
       // Enter 与点选都发生在主线程：键盘监听不经过渲染线程，命中判定在渲染线程
       onRequestChat: openChat,
       onPick: (id, badge) => {
-        setInspectId(id);
+        if (id === null) {
+          // 点空 / 点到自己：收起快捷菜单，同时保留关闭档案弹窗的旧行为
+          useGameUi.getState().setMenuTarget(null);
+          setInspectId(null);
+          return;
+        }
+        // 点人先弹快捷菜单；工牌按钮再进入档案弹窗（与旧行为保持同一份 seed）
+        useGameUi.getState().setMenuTarget({
+          id,
+          name: badge?.name ?? `同事 #${id}`,
+          badge: badge ?? null,
+        });
         setInspectSeed(badge ?? null);
       },
     })
@@ -431,7 +571,8 @@ export function GameViewport({
         // 换过园区时 resumeForPark 会把它丢掉，角色从新园区门口开始
         await client.start(
           host,
-          { ...current, career: buildCareerReport() },
+          // 本地资产随 HELLO 上报：服务端清洗后会回一条 init 钱包快照纠正本地
+          { ...current, career: buildCareerReport(), economy: loadEconomy() },
           resumeForPark(loadSnapshot(), parkId),
         );
         if (cancelled) return;
@@ -581,6 +722,8 @@ export function GameViewport({
   const closePanels = useCallback(() => {
     const ui = useGameUi.getState();
     ui.setStatusOpen(false);
+    ui.setMenuTarget(null);
+    ui.setActionTarget(null);
     setInspectId(null);
     // 面板常驻后输入框可能还拿着焦点：点画布 / 落摇杆要把焦点还给移动，
     // 但不动 chatOpen——收面板只能由用户按 Esc 或点头部按钮决定。
@@ -595,6 +738,8 @@ export function GameViewport({
    */
   const hudToolButtons = (
     <>
+      {/* 摸鱼百宝箱（ADR-0085）：随时买消耗品，与金币徽标的属性页分工 */}
+      <ShopButton compact={isTouch} />
       <NoticeBoard compact={isTouch} />
       <InstallAppButton compact={isTouch} />
       <SfxToggle compact={isTouch} />
@@ -724,6 +869,7 @@ export function GameViewport({
                 {portrait ? (
                   <div className="pointer-events-auto flex flex-col border-2 border-ink-600 bg-ink-900/92 backdrop-blur-sm">
                     <HudStatus compact />
+                    <WalletBadge compact />
                     <span aria-hidden className="h-px w-full bg-ink-700" />
                     <div className="grid grid-cols-2 gap-1 p-1">
                       {hudToolButtons}
@@ -734,6 +880,7 @@ export function GameViewport({
                 ) : (
                   <HudDock>
                     <HudStatus compact={isTouch} />
+                    <WalletBadge compact={isTouch} />
                     <HudDivider />
                     {hudToolButtons}
                     {hudSwitchButton && (
@@ -769,6 +916,52 @@ export function GameViewport({
               </div>
             )}
           </div>
+
+          {/* 牛马币互动层：快捷菜单 / 邀请 / 对局 / 商店 / 飘字共享同一 z-index */}
+          <EconomyLayer
+            onChallenge={(id, gameType, wager) =>
+              clientRef.current?.invite(id, gameType, wager)
+            }
+            onQuickTip={(id) => clientRef.current?.tip(id, 10)}
+            onInspect={(id) => setInspectId(id)}
+            onTip={(id, amount) => clientRef.current?.tip(id, amount)}
+            onUseItem={(id, itemId) => clientRef.current?.useItem(id, itemId)}
+            onUseSelf={(itemId) => {
+              // 自用道具的目标永远是自己：netId 由 HUD 的 selfId 提供，服务端还会再判一次
+              const selfId = useGameUi.getState().selfId;
+              if (selfId > 0) clientRef.current?.useItem(selfId, itemId);
+            }}
+            onBuy={(kind, id, count) => {
+              // 装扮 / 家具的「已解锁」不在钱包包里（结构不变），本地先乐观记账；
+              // 服务端拒掉时下一次 HELLO 会用权威值盖回来（ADR-0087）
+              if (kind === SHOP_KIND.Cosmetic || kind === SHOP_KIND.Furniture) {
+                const key =
+                  kind === SHOP_KIND.Cosmetic
+                    ? findCosmeticSkuById(id)?.key
+                    : furnitureById(id)
+                      ? `furn:${id}`
+                      : undefined;
+                if (key) {
+                  const local = loadEconomy();
+                  if (!local.unlockedCosmetics.includes(key)) {
+                    const next = { ...local, unlockedCosmetics: [...local.unlockedCosmetics, key] };
+                    saveEconomy(next);
+                    useGameUi.getState().setWallet(next);
+                  }
+                }
+              }
+              clientRef.current?.buyShop(kind, id, count);
+            }}
+            onRespond={(inviteId, accept) => clientRef.current?.respond(inviteId, accept)}
+            onP2PAction={(matchId, action) => clientRef.current?.p2pAction(matchId, action)}
+            onShout={(text) => clientRef.current?.shout(text)}
+            onDiceBet={(table, side, amount) => clientRef.current?.diceBet(table, side, amount)}
+            onArenaBet={(side, amount) => clientRef.current?.arenaBet(side, amount)}
+            onVilla={(villa, action) => clientRef.current?.villaAction(villa, action)}
+            onApartment={(action) => clientRef.current?.apartmentAction(action)}
+            onInviteRoom={(targetId) => clientRef.current?.apartmentInvite(targetId)}
+            onSaveRoomLayout={(placements) => clientRef.current?.saveRoomLayout(placements)}
+          />
 
           {/* 他人工牌：桌面与手机共用同一个完整档案弹窗，避免两套布局的字段漂移 */}
           <RemoteArchiveDialog
@@ -836,6 +1029,8 @@ export function GameViewport({
               </div>
             </div>
           )}
+          {/* 代码工位（F2 彩蛋）：整层盖住 HUD 与摇杆，Esc 回园区；世界与连接照常跑 */}
+          {studioOpen && <CodeStudio onClose={closeStudio} />}
         </>
       )}
     </div>

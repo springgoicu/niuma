@@ -20,7 +20,8 @@ import { playWoodfish } from '@/lib/game/woodfish-audio';
  * 同一个 `strike()` 必须既能被按钮点击，也能被 capture 阶段的 keydown 调用。
  */
 
-const WORDS = ['放假进度 +1s', '功德 +1', '离自由更近一步'] as const;
+/** 每一下的飘字：只报真实计数，不掺「放假进度 +1s」这类编造的进度 */
+const KNOCK_WORD = '功德 +1';
 const MAX_WORDS = 4;
 const WORD_LIFE_MS = 1_100;
 
@@ -76,7 +77,7 @@ export function useFishDrum(): FishDrumState {
     const id = seq.current;
     const word: FishWord = {
       id,
-      text: WORDS[id % WORDS.length]!,
+      text: KNOCK_WORD,
       drift: ((id % 5) - 2) * 6,
     };
     setWords((prev) => [...prev.slice(-(MAX_WORDS - 1)), word]);

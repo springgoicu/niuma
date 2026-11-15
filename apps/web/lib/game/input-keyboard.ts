@@ -11,7 +11,7 @@ const BLOCKED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Spa
  * 这一层留在主线程是刻意的：输入法组合态只有 DOM 事件里能看到
  * （`isComposing` / `keyCode 229`），Worker 拿到掩码时这个信息已经丢了。
  */
-function isEditableTarget(target: EventTarget | null): boolean {
+export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
   const tag = target.tagName;

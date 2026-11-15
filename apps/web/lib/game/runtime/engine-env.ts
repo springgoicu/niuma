@@ -1,4 +1,4 @@
-import type { CareerSummary, CharacterAppearance } from '@niuma/shared-types';
+import type { CareerSummary, CharacterAppearance, EconomyProfile } from '@niuma/shared-types';
 import type { DanmakuPrefs } from '../danmaku-prefs';
 import type { InteractiveKind } from '../interactions';
 import type { ControlBlock, SnapshotPatch, ViewportInfo } from './control-channel';
@@ -10,6 +10,8 @@ export interface SessionProfile {
   status?: string;
   /** 本人自报的考勤摘要：随 HELLO 上报，后续由 updateCareer 补报 */
   career?: CareerSummary;
+  /** 本地资产摘要（ADR-0082）：只作为 HELLO 上报值，服务端会清洗并回权威快照 */
+  economy?: EconomyProfile;
 }
 
 /**
@@ -29,7 +31,9 @@ export type AudioEvent =
   /** 上香：寺庙磬音（ADR-0061） */
   | { kind: 'incense'; x: number; y: number }
   /** 续杯：喝茶的咕嘟声（ADR-0061） */
-  | { kind: 'tea'; x: number; y: number };
+  | { kind: 'tea'; x: number; y: number }
+  /** 整蛊：踩到香蕉皮的滑倒短音（ADR-0085） */
+  | { kind: 'slip'; x: number; y: number };
 
 /**
  * 引擎对"平台"的全部依赖，注入而不是直接摸全局。
@@ -65,6 +69,13 @@ export interface EngineEnv {
    * Worker 侧由 init 消息带进来（与 `danmakuPrefs` 同一条通路）。
    */
   readonly incenseDay: string;
+  /**
+   * 匿名设备号（ADR-0081，16 位小写 hex，空串表示取不到存储）。
+   *
+   * 服务端只用它聚合同一台浏览器的点赞与擂台战绩，不做身份认证。
+   * 与 `incenseDay` 同一条通路：localStorage 只能在主线程读，Worker 靠 init 带进来。
+   */
+  readonly deviceId: string;
   /**
    * 上香后写回主线程落盘。只记日期不记次数——「功德 +1」是当次提示，不做累计。
    */

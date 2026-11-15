@@ -38,7 +38,7 @@ export interface PlayerBadge {
   seatKind: SeatKind | null;
   /** 本人自报的考勤摘要；旧服务端或未上报时为 undefined */
   career?: CareerSummary;
-  /** 实体角色（0 普通 / 1 保安）：3 位保安同名，工牌靠 role + id 区分 */
+  /** 实体角色（0 普通 / 1 保安）：保安带头顶警灯，并参与押送与执法 */
   role?: number;
   /** 服务端内存里的工牌点赞数（ADR-0057）；0 表示没人点过 */
   likes: number;
@@ -72,54 +72,6 @@ export function seatLabel(seatKind: SeatKind | null): string {
   if (seatKind === 'cinema') return '影厅座椅';
   if (seatKind === 'bench') return '长椅';
   return '马桶';
-}
-
-/**
- * 昵称哈希：djb2，按码点推进。工号、部门与班次共用同一把尺子。
- *
- * `salt` 只给「同名实体」用：3 位保安都叫「园区保安」，靠实体 id 混进哈希才能分开；
- * 真人与普通同事不传，固定工号语义保持不变。
- */
-export function hashName(name: string, salt?: number): number {
-  let hash = 5381;
-  // \u0000 把名字与 salt 分段：避免「名字尾部是数字」与 salt 拼接时撞成同一个输入
-  const text = salt === undefined ? name : `${name}\u0000${salt}`;
-  for (const char of text) {
-    hash = ((hash << 5) + hash + (char.codePointAt(0) ?? 0)) >>> 0;
-  }
-  return hash;
-}
-
-/**
- * 固定工号：djb2 对昵称按码点哈希，取后 5 位补零，形如 `#NM-09527`。
- *
- * 纯函数、与时间无关：同一个昵称今天与明年都是同一张工牌，
- * 换名字才会换号——这正是「固定工号」该有的行为。
- * `salt` 只用于区分同名 NPC，真人永不传。
- */
-export function employeeNumber(name: string, salt?: number): string {
-  return `#NM-${String(hashName(name, salt) % 100_000).padStart(5, '0')}`;
-}
-
-const DEPARTMENTS = [
-  '研发部',
-  '运营部',
-  '市场部',
-  '后勤部',
-  '财务部',
-  '摸鱼办',
-] as const;
-
-const SHIFTS = ['白班', '夜班', '弹性班', '连班'] as const;
-
-/** 部门：由昵称哈希稳定派生，不占协议字段，也不会因为刷新而换组。 */
-export function departmentOf(name: string, salt?: number): string {
-  return DEPARTMENTS[hashName(name, salt) % DEPARTMENTS.length]!;
-}
-
-/** 班次：取哈希的高位，避免与部门总是同进同退。 */
-export function shiftOf(name: string, salt?: number): string {
-  return SHIFTS[(hashName(name, salt) >>> 8) % SHIFTS.length]!;
 }
 
 /** 点击命中盒：以脚底为原点，覆盖角色本体与头顶昵称，和 `EntityView` 的锚点一致 */

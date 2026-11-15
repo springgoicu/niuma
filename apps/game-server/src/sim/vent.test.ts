@@ -310,7 +310,7 @@ describe('发泄的边沿与限频', () => {
     const hitX = env.b.x;
     sent.length = 0;
 
-    // 抬手再按一次：边沿标记重新置位，但 lastVentAt 还没过 700ms
+    // 抬手再按一次：边沿标记重新置位，但 lastVentAt 还没过 1200ms 基础冷却
     env.a.applyState(DIRECTION.Right as never, POSE.Idle, false, false);
     env.a.applyState(DIRECTION.Right as never, POSE.Idle, false, true);
     ventTick(env, transport, 10_200);
@@ -327,7 +327,7 @@ describe('发泄的边沿与限频', () => {
     env.a.applyState(DIRECTION.Right as never, POSE.Idle, false, true);
     // 目标已经倒地，这一下会被跳过——但它仍然算一次出招，会发空放包
     const before = env.b.x;
-    ventTick(env, transport, 11_000);
+    ventTick(env, transport, 11_300);
     expect(env.b.x).toBe(before);
   });
 

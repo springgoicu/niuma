@@ -10,12 +10,21 @@ import {
 import {
   ENTITY_ROLE_GUARD,
   ISLAND,
+  PATIENT_STATE,
   WORLD_LAYOUT,
   isWadingAt,
   seatById,
+  type AmbulancePacket,
   type CharacterAppearance,
+  type P2PDuelStatePacket,
+  type P2PShowdownPacket,
+  type PatientStatusPacket,
   type RingPacket,
+  type DiceStatePacket,
+  type RoomStatePacket,
+  type VillaStatePacket,
 } from '@niuma/shared-types';
+import { ClinicView } from './clinic-view';
 import { loadAtlas, type Atlas } from './atlas';
 import { BossView } from './boss';
 import { BulletinView } from './bulletin';
@@ -28,6 +37,9 @@ import { ParkView } from './park';
 import { PavilionView } from './pavilion';
 import { PlaqueView } from './plaques';
 import { RingView } from './ring';
+import { DiceHallView } from './dice-hall-view';
+import { VillasView } from './villas-view';
+import { ApartmentView } from './apartment-view';
 import { RitualFx } from './ritual-fx';
 import { ShrineView } from './shrine';
 import { TeaStationView } from './tea-station';
@@ -54,7 +66,9 @@ import {
   statusStackHeight,
   NAME_STROKE_WIDTH,
 } from './nameplate';
+import { P2PFx } from './p2p-showdown';
 import { PonyRenderer } from './pony';
+import { BuffFx } from './buff-fx';
 import type { PonyMotion } from './pony-motion';
 import {
   BEACON_BLUE,
@@ -202,12 +216,37 @@ class EntityView {
   private readonly FADE_DURATION = 400; // 淡出持续时间 ms
 
   readonly bubble = new Container();
+  /** P2P 头顶演出层：骰子 / 手势 / 血条 / 打赏飘字，跟随 labels 一起跳跃与入座 */
+  readonly p2p = new Container();
   /** 是否保安：只有保安才有警灯，也只在 beacons 集合里逐帧更新 */
   readonly isGuard: boolean;
   /** 警灯容器：挂在 labels 上，不被树冠遮挡 */
   private beacon: Container | null = null;
   private beaconRed: Graphics | null = null;
   private beaconBlue: Graphics | null = null;
+  /** 工伤保护盾：绿色盾牌 + 白十字，懒创建，只有被治愈过的人才有 */
+  private shield: Graphics | null = null;
+
+  /** 切换头顶的绿色十字盾牌（ADR-0084）；星星由 StunStars 单独管理 */
+  setShield(visible: boolean): void {
+    if (visible) {
+      if (!this.shield) {
+        const g = new Graphics();
+        // 盾牌轮廓：12×13，上圆下尖
+        g.poly([-6, -12, 6, -12, 6, -4, 0, 0, -6, -4]).fill(0x1f9d55);
+        g.poly([-5, -11, 5, -11, 5, -5, 0, -1, -5, -5]).fill(0x32c470);
+        // 白十字
+        g.rect(-1, -9, 2, 6).fill(0xf4fff8);
+        g.rect(-3, -7, 6, 2).fill(0xf4fff8);
+        g.position.set(0, this.nameBottom - this.label.height - 4);
+        this.labels.addChild(g);
+        this.shield = g;
+      }
+      this.shield.visible = true;
+      return;
+    }
+    if (this.shield) this.shield.visible = false;
+  }
 
   constructor(
     private readonly atlas: Atlas,
@@ -306,7 +345,19 @@ class EntityView {
     // 状态行先入层：它永远在昵称与气泡之上，层级顺序不影响永不重叠的几何
     if (this.statusText) this.labels.addChild(this.statusText);
     if (this.beacon) this.labels.addChild(this.beacon);
-    this.labels.addChild(this.label, this.bubble);
+    // 头顶演出不参与点选：点人命中仍只看角色本体
+    this.p2p.eventMode = 'none';
+    this.labels.addChild(this.label, this.bubble, this.p2p);
+  }
+
+  /**
+   * P2P 头顶演出的锚点 y：压在状态行 / 昵称之上，内容从锚点向上生长。
+   * 外观改名会改 `nameBottom`，所以每次演出都重读，不缓存。
+   */
+  get p2pTopY(): number {
+    const nameTop = this.nameBottom - this.label.height;
+    const statusTop = this.statusText ? nameTop - this.statusHeight - 2 : nameTop;
+    return statusTop - 4;
   }
 
   /** 警灯相位：红蓝交替；没有警灯的实体不在 beacons 集合里，不会被调用 */
@@ -678,6 +729,16 @@ class StunStars {
     }
   }
 
+  /** 治愈 / 断开：只收指定实体头顶的星，不影响同屏其他伤员 */
+  clearEntity(id: number): void {
+    for (let slot = 0; slot < STUN_SLOTS; slot += 1) {
+      if (this.ids[slot] !== id) continue;
+      this.ids[slot] = 0;
+      this.sprites[slot * 2]!.visible = false;
+      this.sprites[slot * 2 + 1]!.visible = false;
+    }
+  }
+
   /** 星点全部收掉：实体离场或整层销毁时调用 */
   clear(): void {
     for (let slot = 0; slot < STUN_SLOTS; slot += 1) {
@@ -720,14 +781,26 @@ export class GameRenderer {
   private shrine?: ShrineView;
   /** 老干部紫砂茶台：紫砂壶、白瓷杯与蒸汽（ADR-0061） */
   private tea?: TeaStationView;
+  /** 护士急救站：站台、病床、停车位与两辆救护车（ADR-0084） */
+  private clinic?: ClinicView;
+  /** 按实体记下最后一次伤员状态：视图进入 AOI 时用它补画星星 / 盾牌 */
+  private readonly patientStates = new Map<number, PatientStatusPacket['state']>();
   /** 发泄区胖老板：地面垫子、200×256 本体、血条与倒地纸板（ADR-0070） */
   private boss?: BossView;
   /** 三人擂台：垫子、角柱、领奖台、奖杯与彩带（ADR-0073） */
   private ring?: RingView;
+  /** P2P 头顶演出：骰子 / 猜拳手势 / 切磋血条 / 打赏飘字 */
+  private readonly p2pFx = new P2PFx();
   /** 擂台覆盖层：领奖台与彩带必须压在排序层之后，才不会被角色吃掉 */
   private readonly ringOverlay = new Container();
   /** 门头牌匾与对联：三座自建牌坊（ADR-0061） */
   private plaques?: PlaqueView;
+  /** 摸鱼大赌场：亭台、两张绿绒赌桌与亮牌骰子（ADR-0087） */
+  private dice?: DiceHallView;
+  /** 豪宅小院：院墙、牌匾与摇钱树 */
+  private villas?: VillasView;
+  /** 牛马公寓：外立面 + 屋内覆盖层 */
+  private apartment?: ApartmentView;
   /** 游乐园：入口门头、滑梯、秋千、跷跷板、旋转木马与灯串 */
   private park?: ParkView;
   /** 上香 / 续杯的一次性反馈：金色飘字与当日首香光晕（ADR-0061） */
@@ -736,6 +809,8 @@ export class GameRenderer {
   private auraEid = 0;
   /** 头顶眩晕星星：被发泄命中的角色脚下不倒，头上转圈（ADR-0051） */
   private stunStars?: StunStars;
+  /** 持续型 Buff 表现：脚底风 / 护盾环 / 绿色贴纸（ADR-0085） */
+  private buffFx?: BuffFx;
   /** 园区小动物与蝴蝶：纯客户端氛围，`?critters=0` 时整层不构造（ADR-0042） */
   private critters?: CritterField;
   /** 河道小鱼：与 critters 共用图集，`?fish=0` 时只关鱼（ADR-0045） */
@@ -966,6 +1041,14 @@ export class GameRenderer {
     this.tea = new TeaStationView(this.app.renderer);
     this.tea.build(this.sortLayer);
 
+    // 护士急救站（ADR-0084）：地面/柜台走常规深度，救护车与护士帽红十字进覆盖层
+    this.clinic = new ClinicView();
+    this.clinic.build(this.sortLayer, this.props.base);
+    // 入场快照可能早于图集构建：把先到的治疗状态补喂给爱心层
+    for (const [id, state] of this.patientStates) {
+      this.clinic.setPatient({ entityId: id, state, seconds: 0 });
+    }
+
     // 发泄区（ADR-0070）：垫子铺在地面层，本体按脚底 y 排序，血条与名牌进标签层
     this.boss = new BossView(this.app.renderer, this.metrics.devicePxPerTexel);
     this.boss.build(this.sortLayer, this.props.base, this.labels);
@@ -977,6 +1060,15 @@ export class GameRenderer {
     // 门头牌匾（ADR-0061）：墙体是平铺色带没有立面，所以每处门头自带一座牌坊
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
+
+    // 热区建筑（ADR-0087）：赌场亭、豪宅小院、牛马公寓外立面。
+    // 三处都自己按底边 y 进排序层，与树、长椅、角色共用同一套遮挡；冬季传 winter 标记
+    this.dice = new DiceHallView(this.season.winter, this.metrics.devicePxPerTexel);
+    this.dice.build(this.sortLayer, this.props.base);
+    this.villas = new VillasView(this.season.winter, this.metrics.devicePxPerTexel);
+    this.villas.build(this.sortLayer, this.props.base);
+    this.apartment = new ApartmentView(this.season.winter, this.metrics.devicePxPerTexel);
+    this.apartment.build(this.sortLayer, this.props.base);
 
     // 游乐园：入口门头、滑梯与三件器械；滑梯的深度键在塔顶，滑下时不会被盖住
     this.park = new ParkView(this.app.renderer, this.metrics.devicePxPerTexel);
@@ -999,10 +1091,16 @@ export class GameRenderer {
     this.waterFx = new WaterFx(this.app.renderer);
     this.world.addChild(this.waterFx.container);
 
+    // 公寓室内地板压在排序层之下：屋里的角色站在自己的地板上，而不是被地板盖住
+    if (this.apartment) this.world.addChild(this.apartment.interiorLayer);
+
     this.world.addChild(this.sortLayer.container);
 
     // 擂台的领奖台与彩带压在 y 排序层之后：角色站在台上时不该把台面盖住
     this.world.addChild(this.ringOverlay);
+
+    // 护士站的救护车与护士帽红十字：动态物体，压在同层角色之上，避免车头被身体啃掉
+    if (this.clinic) this.world.addChild(this.clinic.overlay);
 
     // 仪式反馈压在 y 排序层之后：金色飘字从头顶升起，不能被树冠或角色吃掉
     this.ritual = new RitualFx(this.app.renderer, this.metrics.devicePxPerTexel);
@@ -1011,6 +1109,11 @@ export class GameRenderer {
     // 星星在 y 排序层之后入场景：它绕在头顶，不该被树冠或角色身体挡住
     this.stunStars = new StunStars(this.app.renderer);
     this.world.addChild(this.stunStars.container);
+
+    // 持续型 Buff：脚底风压在角色之下不重要，统一放在排序层之后，
+    // 保证贴纸不会被树冠或邻座的身体吃掉
+    this.buffFx = new BuffFx();
+    this.world.addChild(this.buffFx.container);
 
     // 氛围层：地面小动物进 y 排序层（会被树冠挡住），蝴蝶单独一层浮在景物之上、昵称之下。
     // `?critters=0` 时整层不构造：烘焙与撒点都发生在构造函数里，关掉就是真的零开销。
@@ -1116,6 +1219,8 @@ export class GameRenderer {
     // 所有检查通过，正式加入渲染系统
     this.views.set(id, view);
     if (view.isGuard) this.beacons.add(view);
+    // 伤员状态包可能早于 AOI 里的实体视图到达：补一次，保证盾牌 / 星星不丢
+    this.applyPatientStatus(id, view, this.patientStates.get(id));
     // 先把位置摆好再挂进 band：否则首帧会停在 (0,0)，在地图左上角闪一下
     const sx = snapTexel(x);
     const sy = snapTexel(y);
@@ -1132,6 +1237,7 @@ export class GameRenderer {
     if (view) {
       this.views.delete(id);
       this.beacons.delete(view);
+      this.p2pFx.drop(id);
       view.destroy();
     }
     
@@ -1222,6 +1328,26 @@ export class GameRenderer {
     this.views.get(id)?.showBubble(text, performance.now());
   }
 
+  /** P2P 亮牌：骰子 / 猜拳 / 切磋结算，挂在参与者头顶，附近 AOI 都能看到 */
+  showShowdown(packet: P2PShowdownPacket): void {
+    this.p2pFx.show(this.views, packet);
+  }
+
+  /** 切磋实时血量与倒计时：只在该玩法里创建血条 */
+  setDuelState(packet: P2PDuelStatePacket): void {
+    this.p2pFx.duel(this.views, packet);
+  }
+
+  /** 打赏飘字：双方头顶各自 +N / -N */
+  showCoinFloat(id: number, amount: number): void {
+    this.p2pFx.coin(this.views, id, amount);
+  }
+
+  /** 对局结束：清掉切磋血条，亮牌继续按自己的 4s 时长淡出 */
+  clearDuelHuds(): void {
+    this.p2pFx.clearDuelHuds();
+  }
+
   /**
    * 弹幕上屏（ADR-0056）。
    *
@@ -1254,9 +1380,44 @@ export class GameRenderer {
     this.stunStars.set(id, performance.now() + durationMs);
   }
 
+  /**
+   * 持续型 Buff 表现（ADR-0085）：脚底风 / 护盾环 / 头顶绿色贴纸。
+   *
+   * 与 `setStun` 一样由调用方给时长，渲染层不推断「为什么有状态」——
+   * 服务端广播的 `durationMs` 是唯一真相，本地不另算过期。
+   */
+  setBuffVisual(id: number, effect: number, durationMs: number): void {
+    this.buffFx?.set(id, effect, durationMs, performance.now());
+  }
+
+  /** 护盾被消耗：只撤那一类表现，别顺手抹掉同时挂着的其它 Buff */
+  clearBuffVisual(id: number, effect?: number): void {
+    this.buffFx?.clear(id, effect);
+  }
+
+  /** 重连 / 换园区：所有临时状态都不该漂在新世界里 */
+  clearBuffVisuals(): void {
+    this.buffFx?.clearAll();
+  }
+
   /** 擂台快照：阶段变化时驱动领奖台升降与彩带，其余情况只更新内部阶段（ADR-0073） */
   setRing(packet: RingPacket | null): void {
     this.ring?.setState(packet);
+  }
+
+  /** 赌桌公共局快照：亮牌期在桌心摆出三颗骰子（ADR-0087） */
+  setDiceState(packet: DiceStatePacket): void {
+    this.dice?.setState(packet);
+  }
+
+  /** 豪宅牌匾：房主名、锁形图标与门扇开合 */
+  setVillaState(packet: VillaStatePacket): void {
+    this.villas?.setState(packet);
+  }
+
+  /** 公寓室内：null 表示回到园区，整层地板与家具隐藏 */
+  setRoomState(packet: RoomStatePacket | null): void {
+    this.apartment?.setRoomState(packet);
   }
 
   /**
@@ -1298,8 +1459,46 @@ export class GameRenderer {
     this.boss?.flashHit();
   }
 
+  /** 救护车四态同步（ADR-0084）；停泊时服务端不发冗余包，入场靠 snapshot 补一次 */
+  setAmbulance(packet: AmbulancePacket): void {
+    this.clinic?.setAmbulance(packet);
+  }
+
+  /** 伤员状态：昏迷挂星星、治疗冒爱心、治愈亮绿色十字盾（ADR-0084） */
+  setPatientStatus(packet: PatientStatusPacket): void {
+    this.clinic?.setPatient(packet);
+    if (packet.state === PATIENT_STATE.None) this.patientStates.delete(packet.entityId);
+    else this.patientStates.set(packet.entityId, packet.state);
+    const view = this.views.get(packet.entityId);
+    if (view) this.applyPatientStatus(packet.entityId, view, packet.state);
+  }
+
+  /** 把状态应用到已存在的视图：状态包与 AOI spawn 谁先到都能落到同一套图标上 */
+  private applyPatientStatus(
+    id: number,
+    view: EntityView,
+    state: PatientStatusPacket['state'] | undefined,
+  ): void {
+    switch (state) {
+      case PATIENT_STATE.Incapacitated:
+      case PATIENT_STATE.Treating:
+        this.stunStars?.set(id, Number.POSITIVE_INFINITY);
+        view.setShield(false);
+        return;
+      case PATIENT_STATE.Shielded:
+        this.stunStars?.clearEntity(id);
+        view.setShield(true);
+        return;
+      default:
+        this.stunStars?.clearEntity(id);
+        view.setShield(false);
+    }
+  }
+
   tickBubbles(dtMs: number): void {
     const now = performance.now();
+    // 救护车警灯与护士头顶爱心共用同一条帧时钟，400ms 相位不额外维护状态
+    this.clinic?.update(now);
 
     // 活跃气泡通常 0–3 个，复用一块数组：原来每帧新建数组 + 每个气泡一个
     // `{id, view, bubbleUntil}` 对象 + 一次 sort，哪怕一个气泡都没有。
@@ -1333,6 +1532,8 @@ export class GameRenderer {
 
     // 星星与气泡同一个节拍：两者都挂在头顶，同一帧推进不会互相错位
     this.stunStars?.update(now, this.views);
+    this.buffFx?.update(now, this.views);
+    this.p2pFx.update(now);
 
     // 警灯只遍历保安集合：普通实体与真人不会被每帧白算一次
     for (const view of this.beacons) view.updateBeacon(now);
@@ -1512,6 +1713,9 @@ export class GameRenderer {
     this.park?.setTextResolution(next.devicePxPerTexel);
     this.boss?.setTextResolution(next.devicePxPerTexel);
     this.ring?.setTextResolution(next.devicePxPerTexel);
+    this.dice?.setTextResolution(next.devicePxPerTexel);
+    this.villas?.setTextResolution(next.devicePxPerTexel);
+    this.apartment?.setTextResolution(next.devicePxPerTexel);
   }
 
   get entityCount(): number {
@@ -1583,7 +1787,11 @@ export class GameRenderer {
     this.boss?.destroy();
     this.ring?.destroy();
     this.plaques?.destroy();
+    this.dice?.destroy();
+    this.villas?.destroy();
+    this.apartment?.destroy();
     this.park?.destroy();
+    this.clinic?.destroy();
     this.ritual?.destroy();
     // 冬季与室内陈设的精灵先交给 app.destroy 统一回收，纹理在这里手动释放
     this.winterArt?.destroy();

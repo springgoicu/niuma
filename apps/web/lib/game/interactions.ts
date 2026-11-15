@@ -3,15 +3,17 @@
 import {
   BULLETIN_BOARD,
   DIRECTION,
+  HOTSPOT_PRIORITY,
   POSE,
-  SHRINE_ALTAR,
   SIT_RANGE,
-  TEA_STATION,
-  WELCOME_LANDMARKS,
   WORLD_LAYOUT,
   bossHitPoint,
   findNearestSeat,
+  hotspotById,
+  isWithinHotspot,
+  nearestHotspotOfKinds,
   type Direction,
+  type HotspotDef,
   type Pose,
   type PropKind,
   type SeatKind,
@@ -21,7 +23,7 @@ import { HINT } from './hint-copy';
 /**
  * 轻互动：售货机、饮水机、咖啡机的一次性反馈，与躺床打呼。
  *
- * 全部留在客户端：不新增协议、不进服务端状态机（零持久化的取舍见 ADR-0024）。
+ * 全部留在客户端：不新增协议、不进服务端状态机（取舍见 ADR-0024）。
  * 这里是纯函数，`GameSession` 只负责「按键 → 查最近设施 → 冒气泡」。
  */
 
@@ -37,13 +39,22 @@ export const INTERACT_RANGE = 56;
  */
 export const BOARD_INTERACT_RANGE = 96;
 
+/**
+ * 热区查表：所有 F 类判定现在都只认 `WORLD_HOTSPOTS`。
+ *
+ * 半径可在调用侧覆盖（老测试会传自定义 range），坐标永远来自热区表，
+ * 不再出现「提示按一套坐标、服务端校验按另一套」的漂移。
+ */
+function nearHotspotId(id: string, x: number, y: number, range?: number): boolean {
+  const def = hotspotById(id);
+  if (!def) return false;
+  if (range === undefined) return isWithinHotspot(def, x, y);
+  return isWithinHotspot({ ...def, radius: range }, x, y);
+}
+
 /** 是否站在公告栏旁边：坐标取地标底座中心，与碰撞盒同一份真相 */
 export function isNearRankBoard(x: number, y: number, range: number = BOARD_INTERACT_RANGE): boolean {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
-  const board = WELCOME_LANDMARKS.rankBoard;
-  const dx = x - board.x;
-  const dy = y - board.y;
-  return dx * dx + dy * dy <= range * range;
+  return nearHotspotId('rank-board', x, y, range);
 }
 
 /**
@@ -57,10 +68,7 @@ export const BULLETIN_INTERACT_RANGE = 64;
 
 /** 是否站在放假告示板周围：坐标取地标底边中心，与碰撞盒同一份真相 */
 export function isNearBulletin(x: number, y: number, range: number = BULLETIN_INTERACT_RANGE): boolean {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
-  const dx = x - BULLETIN_BOARD.x;
-  const dy = y - BULLETIN_BOARD.y;
-  return dx * dx + dy * dy <= range * range;
+  return nearHotspotId('bulletin', x, y, range);
 }
 
 /**
@@ -92,10 +100,7 @@ export const SHRINE_INTERACT_RANGE = 72;
 
 /** 是否站在供案前：坐标取案面底边中心，与碰撞盒同一份真相 */
 export function isNearShrine(x: number, y: number, range: number = SHRINE_INTERACT_RANGE): boolean {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
-  const dx = x - SHRINE_ALTAR.x;
-  const dy = y - SHRINE_ALTAR.y;
-  return dx * dx + dy * dy <= range * range;
+  return nearHotspotId('shrine', x, y, range);
 }
 
 /**
@@ -108,10 +113,7 @@ export const TEA_INTERACT_RANGE = 48;
 
 /** 是否站在茶台旁：坐标取桌面底边中心 */
 export function isNearTeaStation(x: number, y: number, range: number = TEA_INTERACT_RANGE): boolean {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(range)) return false;
-  const dx = x - TEA_STATION.x;
-  const dy = y - TEA_STATION.y;
-  return dx * dx + dy * dy <= range * range;
+  return nearHotspotId('tea-station', x, y, range);
 }
 
 /** 四向朝向向量（屏幕坐标：+x 向右、+y 向下），下标与 DIRECTION 一致 */
@@ -215,17 +217,52 @@ export interface ContextHintOptions {
   /** 复用调用方的设施查询槽，避免每拍造一份短命字面量 */
   propOut?: InteractiveTarget;
   sitRange?: number;
+  /** 当前坐着的座位组：观战长椅押注提示只在「坐在 arena-bench 上」时出现 */
+  seatedGroup?: string | null;
+  /** 当前所在房间频道：0 = 园区，非 0 = 公寓屋内 */
+  roomId?: number;
+}
+
+/** 热区 → 提示文案：label 已在共享表里声明，这里只做一次映射 */
+export function hintForHotspot(def: HotspotDef): string {
+  switch (def.kind) {
+    case 'bulletin':
+      return HINT.bulletin;
+    case 'board':
+      return HINT.board;
+    case 'shrine':
+      return HINT.shrine;
+    case 'tea':
+      return HINT.tea;
+    case 'diceTable':
+      return HINT.dice;
+    case 'arenaSeat':
+      return HINT.arenaBet;
+    case 'villaGate':
+      return HINT.villa;
+    case 'villaTree':
+      return HINT.villaTree;
+    case 'apartmentDoor':
+      return HINT.apartment;
+    case 'apartmentExit':
+      return HINT.apartmentExit;
+    default:
+      return HINT.interact;
+  }
 }
 
 /**
  * 当前站位该显示哪一条环境提示；不在任何感应区时返回 null。
  *
- * 顺序与 `GameSession.interact()` 严格一致（告示板 → 牛马榜 → 供案 → 茶台 → 设施），
- * 避免出现「提示说续杯、按下去却在接水」。
+ * 判定全部走 `WORLD_HOTSPOTS`（按 `HOTSPOT_PRIORITY` 逐级取最近命中），
+ * 与 `GameSession.interact()` 用同一张表、同一个优先级，
+ * 不会出现「提示说续杯、按下去却在接水」。
  *
- * 与旧实现的关键差别：F 类互动整体排在 Z/X 类（座位 → 床）之前。旧顺序把座位放最前，
- * 而座位半径 90px 比设施 56px 大得多——办公区椅子密集，站在咖啡机 / 饮水机旁时
- * 几乎永远只看到「按 Z 坐下」，互动提示被静默顶掉。
+ * 三类需要运行时状态的热区在这里过滤：
+ * - 告示板要面朝牌面；
+ * - 观战长椅要真的坐在 `arena-bench` 组上；
+ * - 公寓门口 / 屋内出口按 `roomId` 二选一。
+ * 擂台报名提示由会话层负责（要读阶段与名额）。
  */
 export function selectContextHint(
   x: number,
@@ -234,11 +271,17 @@ export function selectContextHint(
   options: ContextHintOptions,
 ): string | null {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  if (isNearBulletin(x, y) && facesBulletin(x, y, direction)) return HINT.bulletin;
-  if (isNearRankBoard(x, y)) return HINT.board;
-  if (isNearShrine(x, y)) return HINT.shrine;
+  const roomId = options.roomId ?? 0;
+  const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
+    if (candidate.kind === 'bulletin') return facesBulletin(x, y, direction);
+    if (candidate.kind === 'ring') return false;
+    if (candidate.kind === 'arenaSeat') return options.seatedGroup === 'arena-bench';
+    if (candidate.kind === 'apartmentDoor') return roomId === 0;
+    if (candidate.kind === 'apartmentExit') return roomId !== 0;
+    return true;
+  });
+  if (def) return hintForHotspot(def);
   if (isNearBoss(x, y)) return HINT.boss;
-  if (isNearTeaStation(x, y)) return HINT.tea;
   const prop = options.propOut ?? { kind: 'vending', x: 0, y: 0 };
   if (nearestInteractivePropInto(prop, x, y)) return HINT.interact;
   const range = options.sitRange ?? SIT_RANGE;

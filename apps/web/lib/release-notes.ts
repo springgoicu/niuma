@@ -2,7 +2,7 @@
  * 版本工报（release notes）的解析与读取。
  *
  * 数据源是仓库里的 `data/release-notes.json`，构建期打进服务端 bundle：
- * 随代码一起发布，不写数据库、不落运行时存储，符合服务端零持久化（ADR-0043）。
+ * 随代码一起发布，不写数据库、不落运行时存储，也不进园区快照（ADR-0043）。
  * 解析对坏字段一律丢弃而不是抛错：一条手写错误不该让首页整块白屏。
  */
 import rawReleaseNotes from '../data/release-notes.json';

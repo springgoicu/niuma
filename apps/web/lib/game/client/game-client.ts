@@ -3,6 +3,7 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  FurniturePlacement,
   NavTargetId,
   ResumeState,
 } from '@niuma/shared-types';
@@ -49,6 +50,33 @@ export interface GameClient {
   requestBoard(metric?: BoardMetric | 0): void;
   /** 给看得见的人点个赞（ADR-0057）：服务端裁决，重复请求是幂等的 */
   like(targetId: number): void;
+  /** 发起 1v1 邀请（ADR-0083）：服务端裁决视距 / 忙碌 / 余额 */
+  invite(targetId: number, gameType: number, wager: number): void;
+  /** 回应邀请：接受后赌注冻结并开始对局 */
+  respond(inviteId: number, accept: boolean): void;
+  /** 猜拳出拳：action 见 P2P_ACTION，合法性由服务端复核 */
+  p2pAction(matchId: number, action: number): void;
+  /** 打赏目标牛马币（ADR-0082） */
+  tip(targetId: number, amount: number): void;
+  /** 对目标使用背包道具：库存由服务端扣减 */
+  useItem(targetId: number, itemId: number): void;
+  /** 商店购买：kind 见 SHOP_KIND，属性升级或补货 */
+  buyShop(kind: number, id: number, count?: number): void;
+  /** 全服大喇叭：文案由服务端审核，通过才扣道具（ADR-0085） */
+  shout(text: string): void;
+  // ---- 热区建筑（ADR-0087）：上行只带意图，裁决在服务端 ----
+  /** 赌桌下注：side 见 DICE_SIDE，注额由服务端夹到上下限 */
+  diceBet(table: number, side: number, amount: number): void;
+  /** 豪宅：买院 / 锁门 / 收摇钱树，action 见 VILLA_ACTION */
+  villaAction(villa: number, action: number): void;
+  /** 八角笼观战押注：必须坐在观战长椅上，服务端复核座位组 */
+  arenaBet(side: number, amount: number): void;
+  /** 公寓：0 进屋 / 1 出屋 / 2 升级户型 */
+  apartmentAction(action: number): void;
+  /** 邀请朋友来串门 */
+  apartmentInvite(targetId: number): void;
+  /** 上传家具布局（件数与格子由服务端按户型档位校验） */
+  saveRoomLayout(placements: FurniturePlacement[]): void;
   navigateTo(id: NavTargetId): void;
   cancelNavigation(): void;
   /** 舞台局部坐标 → 命中角色的 netId（经 `options.onPick` 回调） */

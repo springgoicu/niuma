@@ -11,14 +11,13 @@ function render(): string {
 }
 
 describe('牛马放假告示板弹窗', () => {
-  it('是模态对话框，三个板块都在', () => {
+  it('是模态对话框，两个板块都在', () => {
     const html = render();
     expect(html).toContain('role="dialog"');
     expect(html).toContain('aria-modal="true"');
     expect(html).toContain('牛马放假告示板');
     expect(html).toContain('本周下班冲刺');
     expect(html).toContain('最近重大假日');
-    expect(html).toContain('今日牛马老黄历');
   });
 
   it('本周冲刺给的是秒级时钟、进度条与起止刻度', () => {
@@ -29,11 +28,12 @@ describe('牛马放假告示板弹窗', () => {
     expect(html).toContain('周五 18:00');
   });
 
-  it('黄历带宜忌标签与评语，日期口径写在标题旁', () => {
+  it('不再出现无数据来源的宜忌抽签、评语与连休预期', () => {
     const html = render();
-    expect(html).toContain('>宜<');
-    expect(html).toContain('>忌<');
-    expect(html).toMatch(/2026-\d{2}-\d{2}/);
+    expect(html).not.toContain('今日牛马老黄历');
+    expect(html).not.toContain('>宜<');
+    expect(html).not.toContain('>忌<');
+    expect(html).not.toContain('连休');
   });
 
   it('木鱼进度与收起入口都在，农历表口径有交代', () => {

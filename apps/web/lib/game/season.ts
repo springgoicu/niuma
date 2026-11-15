@@ -1,5 +1,8 @@
 'use client';
 
+import { serverMonth } from './server-date';
+import { serverNow, serverTzOffsetMin } from './server-clock';
+
 /**
  * 季节判定：整个冬季雪景只有这一个入口。
  *
@@ -33,9 +36,9 @@ export function isWinterMonth(month: number): boolean {
   return Number.isInteger(month) && WINTER_MONTHS.includes(month);
 }
 
-/** 纯函数：按本地日期判断（与 `lighting/tone.ts` 一样只读本地时钟） */
-export function isWinterDate(date: Date): boolean {
-  return isWinterMonth(date.getMonth());
+/** 纯函数：按园区日期判断；只看月份，所以固定时区偏移已足够 */
+export function isWinterDate(date: Date, tz: number = serverTzOffsetMin()): boolean {
+  return isWinterMonth(serverMonth(date.getTime(), tz));
 }
 
 /** `?season=` 的取值：只有明确的开关才覆盖日期，非法值一律回落到日期 */
@@ -56,10 +59,14 @@ function readSeasonFlag(raw: string | null): SeasonSource | null {
  * - `?season=off` 强制关冬（1 月退回改动前的常夏园区）
  * - `?snow=0` 只关飘雪粒子，用于定位「是雪粒吵还是雪景本身有问题」
  */
-export function readSeason(search: string, now: Date = new Date()): SeasonState {
+export function readSeason(
+  search: string,
+  now: Date = new Date(serverNow()),
+  tz: number = serverTzOffsetMin(),
+): SeasonState {
   const params = new URLSearchParams(search);
   const flag = readSeasonFlag(params.get('season'));
-  const winter = flag === 'url-on' ? true : flag === 'url-off' ? false : isWinterDate(now);
+  const winter = flag === 'url-on' ? true : flag === 'url-off' ? false : isWinterDate(now, tz);
   const snowRaw = params.get('snow');
   const snow = winter && snowRaw !== '0' && snowRaw !== 'off';
   return {

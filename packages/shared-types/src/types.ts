@@ -167,6 +167,87 @@ export const OpCode = {
    * 旧客户端走 default 静默忽略（ADR-0072）。
    */
   S2C_JAIL: 0x30,
+  /**
+   * 救护车同步：`[op][id u8][state u8][x u16][y u16][flags u8]`，8 字节定长。
+   * 停靠静止时不重复下发（ADR-0043 去脏）。
+   */
+  S2C_AMBULANCE: 0x31,
+  /** 伤员状态：`[op][entityId u16][state u8][seconds u16]`，6 字节定长。 */
+  S2C_PATIENT: 0x32,
+  // ---- 牛马币经济与 P2P 互动（ADR-0082 / ADR-0083），从 0x33 继续追加 ----
+  /** 发起挑战：`[op][targetId u16][gameType u8][wager u32][extra u16]`，10 字节定长。 */
+  C2S_P2P_INVITE: 0x33,
+  /** 回应邀请：`[op][inviteId u32][accept u8]`，6 字节定长。 */
+  C2S_P2P_RESPOND: 0x34,
+  /** 打赏：`[op][targetId u16][amount u32]`，7 字节定长。 */
+  C2S_TIP: 0x35,
+  /** 使用消耗品：`[op][targetId u16][itemId u8]`，4 字节定长。 */
+  C2S_USE_ITEM: 0x36,
+  /** 商店购买：`[op][kind u8][id u8][count u8]`，4 字节定长。 */
+  C2S_SHOP_BUY: 0x37,
+  /** 钱包快照：余额 + 四维 + 房屋等级 + 原因 + 完整背包，见 `encodeWalletSync`。 */
+  S2C_WALLET_SYNC: 0x38,
+  /** 邀请浮窗：含发起者名字与 TTL，见 `encodeP2PInviteNotify`。 */
+  S2C_P2P_INVITE_NOTIFY: 0x39,
+  /** 邀请结果：接受 / 拒绝 / 过期 / 校验失败，7 字节定长。 */
+  S2C_P2P_INVITE_RESULT: 0x3a,
+  /** 对局开始 / 结束快照，见 `encodeP2PMatch`。 */
+  S2C_P2P_MATCH: 0x3b,
+  /** 打赏广播：`[op][fromId u16][toId u16][amount u32][flags u8]`，12 字节定长。 */
+  S2C_TIP: 0x3c,
+  /**
+   * 旧道具效果广播：`[op][sourceId u16][targetId u16][itemId u8][flags u8]`。
+   *
+   * ADR-0085 起由 `S2C_PLAYER_EFFECT`(0x44) 取代，服务端不再发送；
+   * 编号永久留空不复用，旧客户端仍能解析历史回放。
+   */
+  S2C_ITEM_EFFECT: 0x3d,
+  /** P2P 行动：`[op][matchId u32][action u8]`，猜拳盲选出拳。 */
+  C2S_P2P_ACTION: 0x3e,
+  /** P2P 亮牌：双方与附近 AOI 都能看到的头顶像素演出。 */
+  S2C_P2P_SHOWDOWN: 0x3f,
+  /** 切磋实时状态：双方血量 + 剩余时间，扣血 / 1Hz 心跳时广播。 */
+  S2C_P2P_DUEL_STATE: 0x40,
+  // ---- 道具与 Buff 引擎（ADR-0085），从 0x41 继续追加 ----
+  /** 大喇叭文案：`[op][len u8][utf8]`，≤ 30 字（90 字节）。 */
+  C2S_SHOUT: 0x41,
+  /** 大喇叭被拒：`[op][reason u8]`，2 字节定长；不扣道具。 */
+  S2C_SHOUT_REJECT: 0x42,
+  /** 全服弹幕：`[op][fromId u16][len u8][utf8]`，不含审核信息。 */
+  S2C_LOUDSPEAKER: 0x43,
+  /**
+   * 玩家特效广播：`[op][effect u8][sourceId u16][targetId u16][extraId u16]
+   * [durationMs u16][flags u8]`，11 字节定长，见 `PlayerEffectPacket`。
+   *
+   * 取代 0x3d（S2C_ITEM_EFFECT，已停止发送、编号永久留空）：旧包只能表达
+   * 「谁对谁用了哪件道具」，表达不了「持续多久、是否被护盾挡下、保安是谁」。
+   */
+  S2C_PLAYER_EFFECT: 0x44,
+  /** 道具未生效：`[op][reason u8][itemId u8]`，只回给操作者，见 `ITEM_REJECT`。 */
+  S2C_ITEM_REJECT: 0x45,
+  // ---- 热区建筑与高阶多人玩法（ADR-0087），从 0x46 继续追加 ----
+  /** 赌桌下注：`[op][table u8][side u8][amount u32]`，7 字节定长 */
+  C2S_DICE_BET: 0x46,
+  /** 赌桌公共局快照：两张桌一包下发，见 `encodeDiceState` */
+  S2C_DICE_STATE: 0x47,
+  /** 豪宅操作：`[op][villa u8][action u8]`，3 字节定长 */
+  C2S_VILLA: 0x48,
+  /** 豪宅状态：`[op][count u8]` + 每栋一条，见 `encodeVillaState` */
+  S2C_VILLA_STATE: 0x49,
+  /** 八角笼观战押注：`[op][side u8][amount u32]`，6 字节定长 */
+  C2S_ARENA_BET: 0x4a,
+  /** 八角笼彩池快照：`[op][matchId u16][red u32][blue u32][phase u8][mySide u8][myBet u32]` */
+  S2C_ARENA_POOL: 0x4b,
+  /** 公寓操作：`[op][action u8][arg u8]`，3 字节定长 */
+  C2S_APARTMENT: 0x4c,
+  /** 邀请串门：`[op][targetId u16]`，3 字节定长 */
+  C2S_APARTMENT_INVITE: 0x4d,
+  /** 上传家具布局：`[op][count u8]` + count × `[id u8][cell u8]`，变长 */
+  C2S_ROOM_LAYOUT: 0x4e,
+  /** 房间状态（门牌 / 房主 / 家具）：只发给同频道的玩家 */
+  S2C_ROOM_STATE: 0x4f,
+  /** 串门邀请通知：`[op][fromId u16][doorNo u16][len u8][name]` */
+  S2C_ROOM_INVITE: 0x50,
 } as const;
 
 /** 老板血量包：flags bit0 = 本次归零，bit1 = 跨日重置 */
@@ -203,6 +284,44 @@ export interface JailPacket {
   self: boolean;
   seconds: number;
   guardId: number;
+}
+
+/** 救护车四态：停泊 / 出警 / 拖拽 / 空车返航 */
+export const AMBULANCE_STATE = {
+  Idle: 0,
+  Dispatched: 1,
+  Transporting: 2,
+  Returning: 3,
+} as const;
+export type AmbulanceState = (typeof AMBULANCE_STATE)[keyof typeof AMBULANCE_STATE];
+
+/** 救护车 flags：bit0 警灯鸣闪，bit1 车厢内有伤员 */
+export const AMBULANCE_FLAG_SIREN = 1;
+export const AMBULANCE_FLAG_CARRYING = 1 << 1;
+
+export interface AmbulancePacket {
+  id: number;
+  state: AmbulanceState;
+  /** 量化坐标（1/8 像素） */
+  x: number;
+  y: number;
+  flags: number;
+}
+
+/** 伤员状态：昏迷 / 病床治疗 / 工伤保护 */
+export const PATIENT_STATE = {
+  None: 0,
+  Incapacitated: 1,
+  Treating: 2,
+  Shielded: 3,
+} as const;
+export type PatientState = (typeof PATIENT_STATE)[keyof typeof PATIENT_STATE];
+
+export interface PatientStatusPacket {
+  entityId: number;
+  state: PatientState;
+  /** 剩余秒数：治疗倒计时 / 免疫护盾剩余时间；昏迷为 0 */
+  seconds: number;
 }
 
 /** 擂台命中 flags：bit0 表示这一击来自擂台，bit1 表示目标因此淘汰 */
@@ -383,6 +502,106 @@ export interface RingPacket {
   matchId: number;
   remainingMs: number;
   members: RingSlot[];
+}
+
+/* ------------------------------------------------------------------ *
+ * 热区建筑与高阶多人玩法（ADR-0087）
+ * ------------------------------------------------------------------ */
+
+/** 赌桌下注请求 */
+export interface DiceBetRequest {
+  table: number;
+  side: number;
+  amount: number;
+}
+
+/** 一张赌桌的公共局快照；`dice` 为 [0,0,0] 表示还没亮牌 */
+export interface DiceTablePacket {
+  id: number;
+  phase: number;
+  remainingMs: number;
+  roundId: number;
+  dice: readonly [number, number, number];
+  totalPot: number;
+  /** 观战者自己的押注档位与注额（-1 / 0 表示没押） */
+  mySide: number;
+  myBet: number;
+  /** 本局是否触发保安查岗彩蛋 */
+  raid: boolean;
+}
+
+export interface DiceStatePacket {
+  tables: DiceTablePacket[];
+}
+
+/** 豪宅操作 */
+export interface VillaRequest {
+  villa: number;
+  action: number;
+}
+
+export const VILLA_ACTION = {
+  Buy: 0,
+  ToggleLock: 1,
+  Collect: 2,
+} as const;
+
+/** 一栋小院的公开状态 */
+export interface VillaPacket {
+  id: number;
+  ownerId: number;
+  ownerName: string;
+  locked: boolean;
+  /** 摇钱树当前可收币数（只有房主看得出准确值，其他人读到 0） */
+  pending: number;
+}
+
+export interface VillaStatePacket {
+  villas: VillaPacket[];
+}
+
+/** 八角笼观战押注请求 */
+export interface ArenaBetRequest {
+  side: number;
+  amount: number;
+}
+
+/** 八角笼彩池快照：`mySide = -1` 表示没押 */
+export interface ArenaPoolPacket {
+  matchId: number;
+  redPool: number;
+  bluePool: number;
+  phase: number;
+  mySide: number;
+  myBet: number;
+}
+
+/** 公寓操作：0 进屋 / 1 出屋 / 2 升级户型 */
+export const APARTMENT_ACTION = {
+  Enter: 0,
+  Exit: 1,
+  Upgrade: 2,
+} as const;
+
+export interface ApartmentRequest {
+  action: number;
+  arg: number;
+}
+
+/** 房间状态：门牌号、房主与家具布局 */
+export interface RoomStatePacket {
+  doorNo: number;
+  ownerId: number;
+  ownerName: string;
+  tier: number;
+  placements: ReadonlyArray<{ id: number; cell: number }>;
+}
+
+/** 串门邀请通知 */
+export interface RoomInvitePacket {
+  fromId: number;
+  doorNo: number;
+  fromName: string;
 }
 
 /**

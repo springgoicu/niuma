@@ -53,6 +53,23 @@ export interface EscortTask {
   towY: number;
 }
 
+/**
+ * 一次盯梢任务（ADR-0085，雇佣保安卡）：追到目标身边后贴身跟着，到期自动收工。
+ *
+ * 与押送的关键差别：不锁目标、不写目标姿态、不改变目标位置——
+ * 它只是「多了一双眼睛」，目标仍然照常自由行动。
+ */
+export interface FollowTask {
+  targetId: number;
+  /** 任务到期时刻：到点原地停半秒再恢复巡逻 */
+  until: number;
+  path: NpcSpot[];
+  index: number;
+  replanAt: number;
+  lastTargetX: number;
+  lastTargetY: number;
+}
+
 export interface NpcAgent {
   readonly player: Player;
   /** 像素/秒：MOVE_SPEED × speedFactor */
@@ -60,6 +77,8 @@ export interface NpcAgent {
   phase: NpcPhase;
   /** 正在执行的押送任务；null 表示正常巡逻 */
   escort: EscortTask | null;
+  /** 正在执行的盯梢任务；与 `escort` 互斥 */
+  follow: FollowTask | null;
   target: NpcSpot;
   /** 本次停顿的结束时刻 */
   pauseUntil: number;
@@ -127,6 +146,7 @@ export function createAgent(
     speed: MOVE_SPEED * speedFactor,
     phase: 'pause',
     escort: null,
+    follow: null,
     target: pickWaypoint(rng, { x: player.x, y: player.y }),
     // 出生后先站一会儿：五个人同时起步会像列队
     pauseUntil: now + rng.int(400, 2_400),

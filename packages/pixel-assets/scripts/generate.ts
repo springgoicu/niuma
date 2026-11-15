@@ -38,9 +38,10 @@ const EXTRA_COUNT: Record<SpeciesName, number> = { cow: 4, horse: 3 };
  * v8：16-24 列由「张嘴呼叫」重绘为「后撤蓄力 / 前冲头槌 / 后坐力」，并带 1px 速度线。
  * v9（ADR-0061）：配件目录追加 7 件国风件（头饰 3 / 颈饰 2 / 发型 2），列号不变但
  * `cos/` 下多出 28 张 PNG，旧 manifest 的 cosmeticFiles 缺这些键，必须靠版本号失效。
+ * v10（ADR-0084）：头饰追加护士帽，`cos/` 再多 4 张 PNG；旧缓存没有该键必须失效。
  * 这些列的内容变了，缓存中的旧图集必须失效——版本号与列号是同一份契约。
  */
-const ATLAS_VERSION = 9;
+const ATLAS_VERSION = 10;
 
 interface RenderOptions {
   tail: number;

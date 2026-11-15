@@ -7,6 +7,8 @@ import {
   type Light,
   type LightSpec,
 } from './light-registry';
+import { serverHourFraction } from '../server-date';
+import { serverNow, serverTzOffsetMin } from '../server-clock';
 import { bakeLightTexture } from './light-texture';
 import { TONE_SAMPLE_MS, ambientMultiplierOf, lightToneAt, localLightGain, type LightTone } from './tone';
 
@@ -220,8 +222,7 @@ export class LightmapLayer {
   private sampleTone(nowMs: number): LightTone {
     if (!this.tone || nowMs >= this.nextToneAt) {
       this.nextToneAt = nowMs + TONE_SAMPLE_MS;
-      const now = new Date();
-      const hour = now.getHours() + now.getMinutes() / 60;
+      const hour = serverHourFraction(serverNow(), serverTzOffsetMin());
       // 旧 AmbientLight 漏传 winter，冬季锚点从未生效；这里显式传
       this.tone = lightToneAt(hour, this.winter);
     }

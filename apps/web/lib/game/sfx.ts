@@ -81,6 +81,8 @@ class SfxPlayer {
   /** 破空与钝击各自计时：命中音不能被 90ms 的挥空窗口吞掉（同一次出招里只隔一个 RTT） */
   private lastWhiffAt = 0;
   private lastImpactAt = 0;
+  /** 滑倒音自己的节流窗口：与挥空共用窗口会让人以为「踩了不响」 */
+  private lastSlipAt = 0;
   private noise: NoiseChain | null = null;
   private warned = false;
   /** 听者坐标：本地玩家世界坐标，由 session 每帧写入（标量赋值，零分配） */
@@ -195,6 +197,56 @@ class SfxPlayer {
       }
     }
     this.noiseBurst(now, distanceGain, pan, hit);
+  }
+
+  /**
+   * 香蕉皮滑倒（ADR-0085）：一声下滑的短哨音 + 一半音量的沙沙。
+   *
+   * 只用一个 Voice：滑倒是一瞬间的事，给它垫低频「砰」反而像被打了。
+   */
+  playSlipSound(sourceX: number, sourceY: number): void {
+    if (this.muted || typeof window === 'undefined') return;
+    const dx = sourceX - this.listenerX;
+    const dy = sourceY - this.listenerY;
+    const distanceGain = attenuationFor(dx, dy);
+    if (distanceGain <= 0) return;
+
+    const ctx = this.ensureContext();
+    if (!ctx || !this.master) return;
+
+    const wall = performance.now();
+    if (wall - this.lastSlipAt < MIN_GAP_MS) return;
+    this.lastSlipAt = wall;
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+
+    const now = ctx.currentTime;
+    const pan = panFor(dx);
+    const voice = this.acquire(now);
+    if (voice) {
+      this.prepare(voice, now, pan);
+      voice.filter.type = 'lowpass';
+      voice.filter.frequency.setValueAtTime(2400, now);
+      voice.filter.frequency.exponentialRampToValueAtTime(700, now + 0.28);
+      voice.filter.Q.setValueAtTime(3.5, now);
+      voice.body.type = 'sawtooth';
+      voice.body.frequency.setValueAtTime(880, now);
+      voice.body.frequency.exponentialRampToValueAtTime(220, now + 0.3);
+      voice.bodyGain.gain.setValueAtTime(0.8, now);
+      voice.sub.type = 'sine';
+      voice.sub.frequency.setValueAtTime(160, now);
+      voice.sub.frequency.exponentialRampToValueAtTime(60, now + 0.25);
+      voice.subGain.gain.setValueAtTime(0.3, now);
+      voice.lfo.type = 'sine';
+      voice.lfo.frequency.setValueAtTime(18, now);
+      voice.lfoDepth.gain.setValueAtTime(40, now);
+      const amp = voice.amp.gain;
+      amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.5 * distanceGain), now + 0.02);
+      amp.exponentialRampToValueAtTime(0.0001, now + 0.32);
+      const end = now + 0.34;
+      amp.linearRampToValueAtTime(0, end);
+      voice.endAt = end;
+    }
+    this.noiseBurst(now, distanceGain * 0.5, pan, false);
   }
 
   /** 噪音链：一次建好常驻，之后每次只重排滤波与包络 */

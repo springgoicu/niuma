@@ -1,19 +1,26 @@
 /**
- * 牛马节假日 / 黄历引擎（ADR-0059）。
+ * 牛马节假日引擎（ADR-0059 / ADR-0081 / ADR-0086）。
+ *
+ * 只留可核对的内容：节日日期（农历对照表内）与按服务器时钟走的倒计时 / 工时窗。
+ * 每日「宜 / 忌 / 评语」是日期哈希抽的固定文案池，没有任何数据来源，已整体删除。
  *
  * 三条纪律：
  * 1. **纯前端、零服务端**：只依赖原生 `Date`，不引入农历库、不请求接口；
  *    世界跑马灯（Worker）与弹窗（主线程）共用这一份函数，两处文案不会打架。
- * 2. **按本地时区切日**：日期键与天数差全部走 `local-date.ts`，禁止 `toISOString()`。
+ * 2. **按园区时区切日**：日期键与天数差全部走 `server-date.ts`，偏移由服务端下发。
+ *    一个在 UTC-5 的玩家和东八区邻座看到的倒计时必须一模一样。
  * 3. **不猜日期**：农历节日只认 2026–2028 对照表；表外年份标成「待更新」，
  *    宁可在界面上写一句实话，也不给玩家一个假倒计时。
  *
  * 周末口径：本周周一 09:00 上班 → 周五 18:00 下班；周五 18:00 到下周一 09:00 判为周末。
  */
 
-import { addLocalDays, localDayDiff, startOfLocalDay, startOfLocalWeek } from './local-date';
+import { serverNow, serverTzOffsetMin } from './server-clock';
+import { serverDayAtHour, serverDayDiff, startOfServerDay, startOfServerWeek } from './server-date';
 
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+const MINUTE_MS = 60_000;
 /** 一周工时：周一 09:00 → 周五 18:00 = 4 天 9 小时 */
 const WORK_WEEK_MS = 105 * HOUR_MS;
 
@@ -39,18 +46,14 @@ export interface WeekendCountdown {
   seconds: number;
 }
 
-/** 某个时刻所在周（或之后最近一周）的周五 18:00 */
-function fridayTargetOf(timestamp: number): number {
-  const friday = new Date(addLocalDays(startOfLocalWeek(timestamp), 4));
-  friday.setHours(18, 0, 0, 0);
-  return friday.getTime();
+/** 某个时刻所在周（或之后最近一周）的周五 18:00（园区时区） */
+function fridayTargetOf(timestamp: number, tz: number): number {
+  return serverDayAtHour(startOfServerWeek(timestamp, tz) + 4 * DAY_MS, 18);
 }
 
-/** 周五 18:00 之后的那个周一 09:00 */
-function weekendEndOf(fridayTarget: number): number {
-  const monday = new Date(addLocalDays(fridayTarget, 3));
-  monday.setHours(9, 0, 0, 0);
-  return monday.getTime();
+/** 周五 18:00 之后的那个周一 09:00（园区时区） */
+function weekendEndOf(fridayTarget: number, tz: number): number {
+  return serverDayAtHour(startOfServerDay(fridayTarget, tz) + 3 * DAY_MS, 9);
 }
 
 function splitToParts(ms: number): Pick<WeekendCountdown, 'days' | 'hours' | 'minutes' | 'seconds'> {
@@ -63,17 +66,20 @@ function splitToParts(ms: number): Pick<WeekendCountdown, 'days' | 'hours' | 'mi
   };
 }
 
-export function weekendCountdown(now: number = Date.now()): WeekendCountdown {
-  const at = Number.isFinite(now) ? now : Date.now();
-  const target = fridayTargetOf(at);
+export function weekendCountdown(
+  now: number = serverNow(),
+  tz: number = serverTzOffsetMin(),
+): WeekendCountdown {
+  const at = Number.isFinite(now) ? now : serverNow();
+  const target = fridayTargetOf(at, tz);
 
   /**
    * 周末窗口有两种落法，必须都判：
    * - 周五 18:00 之后：窗口从本周五开始；
    * - 周一 00:00–09:00：本周五还没到，但上一周的周末窗口还没关。
    */
-  const windowStart = at >= target ? target : fridayTargetOf(at - 7 * 86_400_000);
-  const windowEnd = weekendEndOf(windowStart);
+  const windowStart = at >= target ? target : fridayTargetOf(at - 7 * DAY_MS, tz);
+  const windowEnd = weekendEndOf(windowStart, tz);
 
   if (at >= windowStart && at < windowEnd) {
     return {
@@ -91,7 +97,7 @@ export function weekendCountdown(now: number = Date.now()): WeekendCountdown {
     state: 'WEEKDAY',
     targetMs: target,
     remainingMs,
-    weekendEndsAt: weekendEndOf(target),
+    weekendEndsAt: weekendEndOf(target, tz),
     weekendRemainingMs: 0,
     ...splitToParts(remainingMs),
   };
@@ -106,19 +112,20 @@ export interface WeekProgress {
   done: boolean;
 }
 
-export function weekProgress(now: number = Date.now()): WeekProgress {
-  const at = Number.isFinite(now) ? now : Date.now();
-  const weekStart = startOfLocalWeek(at);
-  const clockIn = new Date(weekStart);
-  clockIn.setHours(9, 0, 0, 0);
-  const clockOut = new Date(addLocalDays(weekStart, 4));
-  clockOut.setHours(18, 0, 0, 0);
-  const elapsedMs = Math.min(WORK_WEEK_MS, Math.max(0, at - clockIn.getTime()));
+export function weekProgress(
+  now: number = serverNow(),
+  tz: number = serverTzOffsetMin(),
+): WeekProgress {
+  const at = Number.isFinite(now) ? now : serverNow();
+  const weekStart = startOfServerWeek(at, tz);
+  const clockIn = serverDayAtHour(weekStart, 9);
+  const clockOut = serverDayAtHour(weekStart + 4 * DAY_MS, 18);
+  const elapsedMs = Math.min(WORK_WEEK_MS, Math.max(0, at - clockIn));
   return {
     percent: Math.round((elapsedMs / WORK_WEEK_MS) * 100),
     elapsedMs,
     totalMs: WORK_WEEK_MS,
-    done: at >= clockOut.getTime(),
+    done: at >= clockOut,
   };
 }
 
@@ -140,8 +147,6 @@ export interface HolidaySpec {
   name: string;
   /** 节日当天本地零点；农历表外年份为 NaN */
   at: number;
-  /** 连休天数预期：官方调休每年不同，文案统一标「预期」 */
-  restDays: number;
   /** 日期是否已确定（农历节日依赖对照表） */
   scheduled: boolean;
 }
@@ -154,17 +159,17 @@ export interface Holiday extends HolidaySpec {
 /** 农历对照表覆盖的年份：表外年份不猜日期 */
 export const HOLIDAY_TABLE_YEARS: readonly number[] = [2026, 2027, 2028];
 
-const FIXED_HOLIDAYS: ReadonlyArray<{ id: HolidayId; name: string; month: number; day: number; restDays: number }> = [
-  { id: 'new-year', name: '元旦', month: 1, day: 1, restDays: 3 },
-  { id: 'labour', name: '劳动节', month: 5, day: 1, restDays: 5 },
-  { id: 'national-day', name: '国庆节', month: 10, day: 1, restDays: 7 },
+const FIXED_HOLIDAYS: ReadonlyArray<{ id: HolidayId; name: string; month: number; day: number }> = [
+  { id: 'new-year', name: '元旦', month: 1, day: 1 },
+  { id: 'labour', name: '劳动节', month: 5, day: 1 },
+  { id: 'national-day', name: '国庆节', month: 10, day: 1 },
 ];
 
-const LUNAR_META: ReadonlyArray<{ id: HolidayId; name: string; restDays: number }> = [
-  { id: 'spring-festival', name: '春节', restDays: 8 },
-  { id: 'qingming', name: '清明节', restDays: 3 },
-  { id: 'dragon-boat', name: '端午节', restDays: 3 },
-  { id: 'mid-autumn', name: '中秋节', restDays: 3 },
+const LUNAR_META: ReadonlyArray<{ id: HolidayId; name: string }> = [
+  { id: 'spring-festival', name: '春节' },
+  { id: 'qingming', name: '清明节' },
+  { id: 'dragon-boat', name: '端午节' },
+  { id: 'mid-autumn', name: '中秋节' },
 ];
 
 /**
@@ -192,15 +197,24 @@ const LUNAR_TABLE: Readonly<Record<number, Partial<Record<HolidayId, readonly [n
   },
 };
 
+/** 园区日历年份：跨年附近不能用本机时区的年份 */
+function serverYearOf(nowMs: number, tz: number): number {
+  return new Date(nowMs + tz * MINUTE_MS).getUTCFullYear();
+}
+
+/** 某个园区日期的零点时间戳；固定偏移下一天恒等 24 小时 */
+function serverDateAt(year: number, month: number, day: number, tz: number): number {
+  return Date.UTC(year, month - 1, day) - tz * MINUTE_MS;
+}
+
 /** 某一公历年的 7 个法定节日：固定日期 + 农历对照；按时间升序，未知日期排在最后 */
-export function holidayCalendar(year: number): HolidaySpec[] {
+export function holidayCalendar(year: number, tz: number = serverTzOffsetMin()): HolidaySpec[] {
   const specs: HolidaySpec[] = [];
   for (const item of FIXED_HOLIDAYS) {
     specs.push({
       id: item.id,
       name: item.name,
-      at: new Date(year, item.month - 1, item.day, 0, 0, 0, 0).getTime(),
-      restDays: item.restDays,
+      at: serverDateAt(year, item.month, item.day, tz),
       scheduled: true,
     });
   }
@@ -210,8 +224,7 @@ export function holidayCalendar(year: number): HolidaySpec[] {
     specs.push({
       id: item.id,
       name: item.name,
-      at: date ? new Date(year, date[0] - 1, date[1], 0, 0, 0, 0).getTime() : Number.NaN,
-      restDays: item.restDays,
+      at: date ? serverDateAt(year, date[0], date[1], tz) : Number.NaN,
       scheduled: date !== undefined,
     });
   }
@@ -223,11 +236,11 @@ export function holidayCalendar(year: number): HolidaySpec[] {
 }
 
 /** 从 today 起往后扫三年：跨年的元旦与春节都在候选里 */
-function scheduledCandidates(now: number): HolidaySpec[] {
-  const year = new Date(now).getFullYear();
+function scheduledCandidates(now: number, tz: number): HolidaySpec[] {
+  const year = serverYearOf(now, tz);
   const out: HolidaySpec[] = [];
   for (let offset = 0; offset <= 2; offset += 1) {
-    for (const spec of holidayCalendar(year + offset)) {
+    for (const spec of holidayCalendar(year + offset, tz)) {
       if (spec.scheduled && Number.isFinite(spec.at)) out.push(spec);
     }
   }
@@ -235,105 +248,34 @@ function scheduledCandidates(now: number): HolidaySpec[] {
 }
 
 /** 自动过滤过期节日，按时间自然排序；`limit` 默认 3（弹窗只置顶最近三个） */
-export function upcomingHolidays(now: number = Date.now(), limit: number = 3): Holiday[] {
-  const at = Number.isFinite(now) ? now : Date.now();
-  const today = startOfLocalDay(at);
+export function upcomingHolidays(
+  now: number = serverNow(),
+  limit: number = 3,
+  tz: number = serverTzOffsetMin(),
+): Holiday[] {
+  const at = Number.isFinite(now) ? now : serverNow();
+  const today = startOfServerDay(at, tz);
   const max = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 3;
-  return scheduledCandidates(at)
+  return scheduledCandidates(at, tz)
     .filter((spec) => spec.at >= today)
     .sort((a, b) => a.at - b.at)
     .slice(0, max)
-    .map((spec) => ({ ...spec, daysLeft: localDayDiff(at, spec.at) }));
+    .map((spec) => ({ ...spec, daysLeft: serverDayDiff(at, spec.at, tz) }));
 }
 
 /** 最近的一个指定节日：跑马灯只关心春节 / 元旦，不受「最近三个」限制 */
-export function nextHoliday(id: HolidayId, now: number = Date.now()): Holiday | undefined {
-  const at = Number.isFinite(now) ? now : Date.now();
-  const today = startOfLocalDay(at);
-  const candidates = scheduledCandidates(at)
+export function nextHoliday(
+  id: HolidayId,
+  now: number = serverNow(),
+  tz: number = serverTzOffsetMin(),
+): Holiday | undefined {
+  const at = Number.isFinite(now) ? now : serverNow();
+  const today = startOfServerDay(at, tz);
+  const candidates = scheduledCandidates(at, tz)
     .filter((spec) => spec.id === id && spec.at >= today)
     .sort((a, b) => a.at - b.at);
   const next = candidates[0];
-  return next ? { ...next, daysLeft: localDayDiff(at, next.at) } : undefined;
-}
-
-/* ------------------------------------------------------------------ *
- * 每日确定性黄历
- * ------------------------------------------------------------------ */
-
-/** 今日宜：从这些里抽 2 项 */
-export const ALMANAC_GOOD: readonly string[] = [
-  '带薪如厕',
-  '对齐颗粒度',
-  '装模作样敲代码',
-  '准点踩线打卡',
-  '中庭大步吃草',
-  '把会议开成茶话会',
-  '摸鱼时保持在线',
-  '把周报写成散文',
-];
-
-/** 今日忌：从这些里抽 2 项 */
-export const ALMANAC_BAD: readonly string[] = [
-  '答应临时加需求',
-  '秒回老板微信',
-  '深夜看周报',
-  '和高管同乘电梯',
-  '主动承担责任',
-  '在群里回复「收到」',
-  '帮同事改 PPT',
-  '周五下午提上线',
-];
-
-const ALMANAC_MOTTOS: readonly string[] = [
-  '摸鱼不是偷懒，是把命留给自己。',
-  '工资是租的，命是自己的。',
-  '今天也要做一株安静的韭菜。',
-  '别急，放假总会来的。',
-  '准点下班，是最高级的自律。',
-  '牛马也有抬头看天的时候。',
-];
-
-/**
- * djb2：按码点推进，与 `badge.ts` 的昵称哈希同一把尺子。
- * 同一天、任何设备、任何时区偏移都不会改变结果，所以全服看到同一份黄历。
- */
-export function djb2(text: string): number {
-  let hash = 5381;
-  for (const char of text) {
-    hash = ((hash << 5) + hash + (char.codePointAt(0) ?? 0)) >>> 0;
-  }
-  return hash;
-}
-
-export interface Almanac {
-  /** 计算用的公历日期键 `YYYY-MM-DD` */
-  dateKey: string;
-  good: readonly [string, string];
-  bad: readonly [string, string];
-  motto: string;
-  /** 原始哈希：测试与调试用，UI 不展示 */
-  hash: number;
-}
-
-/** 从池里取两个不重复的下标：第二个下标从 `len - 1` 里取，跨过第一个 */
-function pickTwo(pool: readonly string[], seed: number): [string, string] {
-  const first = seed % pool.length;
-  let second = (seed >>> 8) % (pool.length - 1);
-  if (second >= first) second += 1;
-  return [pool[first]!, pool[second]!];
-}
-
-/** 每日黄历：输入 `YYYY-MM-DD`，输出宜 2 项、忌 2 项与一句评语 */
-export function dailyAlmanac(dateKey: string): Almanac {
-  const hash = djb2(dateKey);
-  return {
-    dateKey,
-    good: pickTwo(ALMANAC_GOOD, hash),
-    bad: pickTwo(ALMANAC_BAD, hash >>> 13),
-    motto: ALMANAC_MOTTOS[(hash >>> 24) % ALMANAC_MOTTOS.length]!,
-    hash,
-  };
+  return next ? { ...next, daysLeft: serverDayDiff(at, next.at, tz) } : undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -351,25 +293,23 @@ export function formatCountdown(ms: number): string {
 }
 
 /** 世界跑马灯的三句：周五倒计时 → 春节 → 元旦，每 6 秒轮换一次 */
-export function tickerMessages(now: number = Date.now()): readonly [string, string, string] {
-  const at = Number.isFinite(now) ? now : Date.now();
-  const countdown = weekendCountdown(at);
+export function tickerMessages(
+  now: number = serverNow(),
+  tz: number = serverTzOffsetMin(),
+): readonly [string, string, string] {
+  const at = Number.isFinite(now) ? now : serverNow();
+  const countdown = weekendCountdown(at, tz);
   const first =
     countdown.state === 'IS_WEEKEND'
       ? '🏖️ 合法摸鱼周末进行中！'
       : `🎉 距离周五下班还剩 ${countdown.days}天 ${pad2(countdown.hours)}:${pad2(countdown.minutes)}:${pad2(countdown.seconds)}`;
-  const spring = nextHoliday('spring-festival', at);
-  const newYear = nextHoliday('new-year', at);
+  const spring = nextHoliday('spring-festival', at, tz);
+  const newYear = nextHoliday('new-year', at, tz);
   return [
     first,
     spring ? `🧧 距离春节还有 ${spring.daysLeft} 天` : '🧧 春节日期待更新',
     newYear ? `🧨 距离元旦还有 ${newYear.daysLeft} 天` : '🧨 元旦日期待更新',
   ];
-}
-
-/** 假日卡上的第二行：`连休 8 天`；表外年份写「日期待更新」 */
-export function holidayRestLabel(holiday: HolidaySpec): string {
-  return holiday.scheduled ? `连休 ${holiday.restDays} 天` : '日期待更新';
 }
 
 /** 假日卡上的第一行：`还有 42 天` / `就是今天` */

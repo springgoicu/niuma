@@ -30,7 +30,6 @@ export const SHARE_CARD_SITE_DOMAIN = 'bangying.top';
 
 export interface ShareCardData {
   name: string;
-  employeeNo: string;
   jobTitle: string;
   species: Species;
   appearance: CharacterAppearance;
@@ -40,11 +39,8 @@ export interface ShareCardData {
   todayDuration: string;
   /** 今日如厕分钟：工时的一部分，小票单独占一格 */
   todayToiletMinutes?: number;
-  /** 倾斜盖章文案，如「终身免下班」 */
+  /** 今日称号，如「终身免下班」；由工时 / 步数 / 摸鱼次数真实派生 */
   stamp: string;
-  /** 部门 / 班次 */
-  department?: string;
-  shift?: string;
   /** 今日行为统计 */
   activity?: {
     steps: number;
@@ -59,22 +55,6 @@ export interface ShareCardData {
   isSelf?: boolean;
   /** false 表示对方未上报考勤：卡面显示「未上报」，不用 0 冒充 */
   hasCareer?: boolean;
-  /** 不传则从金句池随机抽一条 */
-  quote?: string;
-}
-
-export const WORKPLACE_QUOTES = [
-  '工资到位，工位坐穿',
-  '没有危险的时候，上班就是最大的危险',
-  '今天也是带薪摸鱼的一天',
-  '工牌一挂，烦恼下线',
-  '牛马不是一天养成的',
-  '打卡是信仰，下班是意外',
-] as const;
-
-export function pickWorkplaceQuote(random: () => number = Math.random): string {
-  const index = Math.floor(random() * WORKPLACE_QUOTES.length);
-  return WORKPLACE_QUOTES[Math.min(index, WORKPLACE_QUOTES.length - 1)]!;
 }
 
 // ---------------------------------------------------------------------------
@@ -496,25 +476,16 @@ function drawIdentity(ctx: CanvasRenderingContext2D, data: ShareCardData): void 
   ctx.textAlign = 'center';
   ctx.fillText(data.jobTitle, chipX + titleWidth / 2, 426);
 
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#7a684c';
-  ctx.font = `11px ${FONT_MONO}`;
-  ctx.fillText(data.employeeNo, 28, 448);
-
-  // 部门 / 班次 / 今日名次：原来这一行是空白，正好塞下三枚轻量身份标签
-  const extras = [
-    data.department,
-    data.shift,
+  // 今日名次是姓名下唯一有真实来源的补充信息
+  const extras =
     data.hasCareer === false || data.rank === null || data.rank === undefined
-      ? null
-      : `今日工时第 ${data.rank} 名`,
-  ]
-    .filter((item): item is string => Boolean(item))
-    .join(' · ');
+      ? ''
+      : `同屏劳模榜 · 今日工时第 ${data.rank} 名`;
   if (extras) {
     ctx.fillStyle = '#8c7a5c';
     ctx.font = `10px ${FONT_SANS}`;
-    ctx.fillText(fitText(ctx, extras, 424), 28, 464);
+    ctx.textAlign = 'left';
+    ctx.fillText(fitText(ctx, extras, 424), 28, 448);
   }
 }
 
@@ -561,88 +532,6 @@ function drawDetails(ctx: CanvasRenderingContext2D, rows: DetailRow[]): void {
   }
 }
 
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  maxLines: number,
-): string[] {
-  const chars = Array.from(text);
-  const lines: string[] = [];
-  let index = 0;
-  while (index < chars.length && lines.length < maxLines) {
-    let line = '';
-    while (index < chars.length) {
-      const next = line + chars[index]!;
-      if (ctx.measureText(next).width > maxWidth && line.length > 0) break;
-      line = next;
-      index += 1;
-    }
-    lines.push(line);
-  }
-  // 被截断时补一个省略号：最后一行的宽度一定还有富余
-  if (index < chars.length && lines.length > 0) {
-    const last = lines[lines.length - 1]!;
-    if (!last.endsWith('…')) lines[lines.length - 1] = `${last}…`;
-  }
-  return lines;
-}
-
-function drawQuote(ctx: CanvasRenderingContext2D, quote: string): void {
-  ctx.strokeStyle = 'rgba(58, 49, 40, 0.35)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(28, 580);
-  ctx.lineTo(452, 580);
-  ctx.stroke();
-
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#7a684c';
-  ctx.font = `12px ${FONT_SANS}`;
-  const lines = wrapText(ctx, `“${quote}”`, 424, 2);
-
-  let y = 596;
-  for (const line of lines) {
-    ctx.fillText(line, 28, y);
-    y += 16;
-  }
-}
-
-function drawBarcode(
-  ctx: CanvasRenderingContext2D,
-  value: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): void {
-  ctx.fillStyle = '#f6f1e4';
-  ctx.fillRect(x, y, width, height);
-  ctx.strokeStyle = '#2b241d';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
-
-  const hash = hashString(value);
-  let cursor = x + 6;
-  let index = 0;
-  while (cursor < x + width - 8) {
-    const barWidth = 1 + ((hash >>> (index % 24)) & 1);
-    if (index % 2 === 0) {
-      ctx.fillStyle = '#2b241d';
-      ctx.fillRect(cursor, y + 5, barWidth, height - 12);
-    }
-    cursor += barWidth + 1 + ((hash >>> ((index + 9) % 26)) & 1);
-    index += 1;
-  }
-
-  ctx.fillStyle = '#2b241d';
-  ctx.font = `9px ${FONT_MONO}`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText(value, x, y + height + 12);
-}
-
 function drawStamp(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -669,9 +558,6 @@ function drawStamp(
   ctx.textBaseline = 'middle';
   ctx.font = `700 14px ${FONT_MONO}`;
   ctx.strokeText(text, 0, -3);
-  ctx.font = `8px ${FONT_MONO}`;
-  ctx.fillStyle = color;
-  ctx.fillText('NIOMA HR · VERIFIED', 0, 17);
   ctx.restore();
 }
 
@@ -723,7 +609,7 @@ async function waitForFonts(): Promise<void> {
 
 /** 考勤小票：不发立绘，只把今日结算与行为统计排成一张可贴工位的小票。 */
 function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void {
-  drawPaper(ctx, data.employeeNo);
+  drawPaper(ctx, data.name);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
@@ -753,16 +639,6 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
   ctx.fillStyle = '#2b241d';
   ctx.font = `600 24px ${FONT_SANS}`;
   ctx.fillText(fitText(ctx, data.name, 280), 28, 126);
-  ctx.fillStyle = '#7a684c';
-  ctx.font = `11px ${FONT_MONO}`;
-  ctx.fillText(data.employeeNo, 28, 148);
-  ctx.fillStyle = '#8c7a5c';
-  ctx.font = `10px ${FONT_SANS}`;
-  ctx.fillText(
-    [data.department, data.shift].filter(Boolean).join(' · ') || '未上报部门',
-    28,
-    166,
-  );
 
   ctx.font = `600 12px ${FONT_SANS}`;
   const titleWidth = Math.ceil(ctx.measureText(data.jobTitle).width) + 18;
@@ -863,7 +739,7 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
     baseline += 22;
   }
 
-  // 名次 + 金句
+  // 名次：小票上唯一的排名口径，来自视野内今日工时榜
   ctx.textAlign = 'left';
   ctx.fillStyle = '#7a684c';
   ctx.font = `10px ${FONT_MONO}`;
@@ -872,7 +748,6 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
     28,
     536,
   );
-  drawQuote(ctx, data.quote ?? pickWorkplaceQuote());
 
   ctx.strokeStyle = '#3a3128';
   ctx.lineWidth = 2;
@@ -881,7 +756,6 @@ function drawTimesheet(ctx: CanvasRenderingContext2D, data: ShareCardData): void
   ctx.lineTo(452, 624);
   ctx.stroke();
 
-  drawBarcode(ctx, data.employeeNo, 28, 632, 252, 42);
   drawStamp(ctx, data.stamp, 382, 662, '#c0392b');
   drawPromoBand(ctx, data.isSelf ?? true);
 }
@@ -911,9 +785,9 @@ export async function renderShareCard(
     return canvas;
   }
 
-  drawPaper(ctx, data.employeeNo);
+  drawPaper(ctx, data.name);
   drawHeader(ctx, data.isSelf ?? true);
-  drawPortraitPanel(ctx, data.employeeNo);
+  drawPortraitPanel(ctx, data.name);
 
   let characterDrawn = false;
   try {
@@ -926,7 +800,6 @@ export async function renderShareCard(
   drawIdentity(ctx, data);
 
   drawDetails(ctx, [
-    { label: '工号', value: data.employeeNo },
     { label: '出勤地点', value: data.location },
     { label: '今日工时', value: data.todayDuration },
     {
@@ -947,8 +820,6 @@ export async function renderShareCard(
     },
   ]);
 
-  drawQuote(ctx, data.quote ?? pickWorkplaceQuote());
-
   ctx.strokeStyle = '#3a3128';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -956,7 +827,6 @@ export async function renderShareCard(
   ctx.lineTo(452, 624);
   ctx.stroke();
 
-  drawBarcode(ctx, data.employeeNo, 28, 632, 252, 42);
   drawStamp(ctx, data.stamp, 382, 662, '#c0392b');
   drawPromoBand(ctx, data.isSelf ?? true);
 
@@ -967,8 +837,12 @@ export async function renderShareCard(
 // 分享通路：优先剪贴板，任何一步失败都退回下载
 // ---------------------------------------------------------------------------
 
-export function shareCardFileName(employeeNo: string): string {
-  return `牛马工牌-${employeeNo.replace(/^#/, '')}.png`;
+export function shareCardFileName(name: string): string {
+  const safe = Array.from(name)
+    .filter((char) => !/[\\/:*?"<>|\s]/.test(char))
+    .join('')
+    .slice(0, 20);
+  return `牛马工牌-${safe || '匿名'}.png`;
 }
 
 export function canCopyImageToClipboard(): boolean {
@@ -988,10 +862,10 @@ export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-export function downloadShareCard(canvas: HTMLCanvasElement, employeeNo: string): void {
+export function downloadShareCard(canvas: HTMLCanvasElement, name: string): void {
   const link = document.createElement('a');
   link.href = canvas.toDataURL('image/png');
-  link.download = shareCardFileName(employeeNo);
+  link.download = shareCardFileName(name);
   link.rel = 'noopener';
   document.body.appendChild(link);
   link.click();
@@ -1006,7 +880,7 @@ export type ShareResult = 'clipboard' | 'download';
  */
 export async function shareOrDownload(
   canvasPromise: Promise<HTMLCanvasElement>,
-  employeeNo: string,
+  name: string,
 ): Promise<ShareResult> {
   if (canCopyImageToClipboard()) {
     try {
@@ -1021,6 +895,6 @@ export async function shareOrDownload(
   }
 
   const canvas = await canvasPromise;
-  downloadShareCard(canvas, employeeNo);
+  downloadShareCard(canvas, name);
   return 'download';
 }

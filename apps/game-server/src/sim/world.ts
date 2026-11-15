@@ -6,16 +6,22 @@ import {
   EMPTY_CAREER,
   MAX_ENTITIES,
   MAX_ENTITY_ID,
+  PATIENT_STATE,
   POSE,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
   buildSpawnBody,
+  emptyStats,
   encodeCareerSegment,
   packState,
   quantizeCoord,
+  sanitizeEconomyProfile,
   type CareerSummary,
   type CharacterAppearance,
   type Direction,
+  type EconomyProfile,
+  type EconomyStats,
+  type PatientState,
   type Pose,
   type SyncFormat,
 } from '@niuma/shared-types';
@@ -41,10 +47,17 @@ export class Player {
   /** 上一次考勤补报的时刻：按连接限频，防止伪造包把视野广播当放大器 */
   lastCareerAt = 0;
   /**
-   * 收到的工牌点赞数（ADR-0057）：服务端内存计数，离园 / 进程重启即清零。
-   * 只用于展示与「人气」榜，不参与任何权威判定。
+   * 收到的工牌点赞数（ADR-0057 / ADR-0081）：入场时从匿名档案预置，点赞时回写档案。
+   * 只用于展示与「人气」榜，不参与任何权威判定；没带设备号的老客户端退化为会话计数。
    */
   likes = 0;
+  /**
+   * 匿名设备号（ADR-0081）：8 字节随机数的 hex，只当点赞 / 战绩的聚合键。
+   *
+   * 它不是账号、不做认证、也不回显给其他玩家；重连会拿到新的 Player，
+   * 因此这里只承载「同一个浏览器」的连续性，不承载任何会话状态。
+   */
+  deviceId = '';
   /** 谁点过我：一个连接对同一目标只能点一次；点赞者离开时从所有目标里清掉 */
   readonly likedBy = new Set<number>();
   /** 上一次点赞时刻：按连接限频，防止伪造包把点赞广播当放大器 */
@@ -81,6 +94,8 @@ export class Player {
    */
   ventPending = false;
   jump = false;
+  /** 跳跃闪避截止时刻：头槌命中判定读它，0 表示不在无敌帧 */
+  jumpUntilMs = 0;
   wave = false;
   dirty = false;
   needsViewRefresh = false;
@@ -125,13 +140,114 @@ export class Player {
    * 这里还兼作边沿闸门的第二道保险：限频窗口内的重复上报一律不结算，连点也刷不出第二下。
    */
   lastVentAt = 0;
+
+  // ---- 牛马币经济（ADR-0082）：永久层在浏览器 localStorage，这里的值是本次进园的权威 ----
+  /** 可用余额（已扣除托管中的赌注） */
+  coins = 0;
+  stats: EconomyStats = emptyStats();
+  inventory: Record<string, number> = {};
+  houseTier = 0;
+  /** 已解锁的外观件与家具（`furn:<id>`）：装扮货架与公寓家具共用这条清单 */
+  unlockedCosmetics: string[] = [];
+  /** 已冻结赌注：从 coins 扣出但尚未裁决，退款按这个数原路返还 */
+  escrowedCoins = 0;
+  /**
+   * 正在参与的互动 id，0 表示空闲。
+   *
+   * 邀请表、对局表、打赏与道具都读这一个字段判忙碌——绝不允许出现
+   * 「邀请说空闲、对局说占用」的第二份真相。
+   */
+  busyMatchId = 0;
+  /** 待回应的邀请 id，0 表示没有；与 busyMatchId 一起构成「忙碌」判定 */
+  pendingInviteId = 0;
+  /**
+   * 统一 Buff 表（ADR-0085）：`BuffType → expiresAt`（毫秒）。
+   *
+   * 冰美式、摸鱼护盾、降薪贴、滑倒、保安盯梢都写这一张表，
+   * 到期由 Tick 的 `pruneBuffs` 单遍清理；判定层（移动 / 冷却 / 击倒）只读
+   * 下面的乘子缓存，不在 20Hz 路径上遍历它。
+   */
+  activeBuffs = new Map<number, number>();
+  /**
+   * 整蛊保护截止：命中一次控制类整蛊（香蕉皮 / 降薪贴）后写入，
+   * 60 秒内同目标不再吃第二次控制——防恶意无限控死。
+   *
+   * 用单个时间戳而不是 Map：保护对「控制类」整体生效，
+   * 按道具分别计时反而会让人用两件道具各控一次。
+   */
+  trickGuardUntil = 0;
+  /** 护盾层数：每次被 E 撞飞或整蛊消耗 1 层，归零时同时撤掉 Shield 状态 */
+  shieldCharges = 0;
+  /** 移速乘子缓存（`applyMove` 只读它）：由 `sim/buffs` 在状态变更时重算 */
+  speedMul = 1;
+  /** 发泄冷却乘子缓存（`resolveVents` 只读它） */
+  ventCdMul = 1;
+  /** 大喇叭限频时间戳 */
+  lastShoutAt = 0;
+  /** 互动包限频时间戳：邀请 / 打赏 / 道具 / 购买共用同一个闸门 */
+  lastP2PAt = 0;
+
+  /** 进园落位：HELLO 经济段是不可信输入，必须再过一次 sanitize */
+  applyEconomy(profile: EconomyProfile | undefined): void {
+    const clean = sanitizeEconomyProfile(profile);
+    this.coins = clean.coins;
+    this.stats = clean.stats;
+    this.inventory = clean.inventory;
+    this.houseTier = clean.houseTier;
+    this.unlockedCosmetics = [...clean.unlockedCosmetics];
+    this.escrowedCoins = 0;
+    this.busyMatchId = 0;
+    this.pendingInviteId = 0;
+    // 本次进园是全新会话：上一局残留的 Buff / 护盾 / 整蛊保护一律不继承
+    this.activeBuffs.clear();
+    this.trickGuardUntil = 0;
+    this.shieldCharges = 0;
+    this.speedMul = 1;
+    this.ventCdMul = 1;
+    this.lastShoutAt = 0;
+    this.lastP2PAt = 0;
+  }
+
+  /** 发钱包同步包时读的快照：只带服务端权威字段，每日任务留在本地 */
+  economyProfile(): EconomyProfile {
+    return sanitizeEconomyProfile({
+      coins: this.coins,
+      stats: this.stats,
+      inventory: this.inventory,
+      houseTier: this.houseTier,
+      unlockedCosmetics: this.unlockedCosmetics,
+    });
+  }
+
   /**
    * 倒地硬直截止时刻（毫秒）。期间姿态被强制为躺姿、位置不接受客户端上报。
    * 由 `resolveVents` 写入，`applyMove` 读取。
    */
   stunUntil = 0;
+  /** 15 秒内的受击计数与上次命中 Tick（会话态，不落盘） */
+  recentHits = 0;
+  lastHitTick = -10000;
+  /** 治愈后的工伤保护截止（毫秒与 Tick 双写：前者供判定，后者供协议/调试） */
+  immunityUntilMs = 0;
+  immunityUntilTick = 0;
+  /** 昏迷：强制躺倒、封禁移动与技能，直到护士完成治疗或在队列超时后就地包扎 */
+  incapacitated = false;
+  /** 正在被哪辆救护车拖拽；0 表示未被挂载 */
+  carriedBy = 0;
+  /** 当前占用座位的护理阶段：0 无 / 2 治疗中（供 Tick 状态广播去重） */
+  patientState: PatientState = PATIENT_STATE.None;
+  patientUntil = 0;
   /** 当前占用的座位 id，0 表示站立或地面坐 */
   seat = 0;
+  /**
+   * 所在房间频道：0 = 园区，1..6 = 牛马公寓的房间。
+   *
+   * 房间是同一段坐标上的不同频道：同频道互相可见，跨频道与屋外互不可见。
+   * 视野过滤在 `refreshView` 里做，移动与碰撞完全复用园区的实现。
+   */
+  roomId = 0;
+  /** 八角笼连胜：同一人连续拿冠军的次数，断线或换人夺冠即清零 */
+  ringStreak = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
   known = new Set<number>();
   /** 每人一个可复用发送缓冲，避免每 Tick 新建 */
@@ -204,6 +320,7 @@ export class Player {
     this.lastCareerAt = 0;
     this.lastBoardAt = 0;
     this.likes = 0;
+    this.deviceId = '';
     this.likedBy.clear();
     this.lastLikeAt = 0;
     this.joinedAt = 0;
@@ -216,8 +333,11 @@ export class Player {
     this.vent = false;
     this.ventPending = false;
     this.jump = false;
+    this.jumpUntilMs = 0;
     this.wave = false;
     this.seat = 0;
+    this.roomId = 0;
+    this.ringStreak = 0;
     this.dirty = false;
     this.needsViewRefresh = false;
     this.lastBroadcastQx = -1;
@@ -236,7 +356,31 @@ export class Player {
     this.lastRenameAt = 0;
     this.lastHistoryAt = 0;
     this.lastVentAt = 0;
+    this.coins = 0;
+    this.stats = emptyStats();
+    this.inventory = {};
+    this.houseTier = 0;
+    this.unlockedCosmetics = [];
+    this.escrowedCoins = 0;
+    this.busyMatchId = 0;
+    this.pendingInviteId = 0;
+    // 对象池复用：Buff / 护盾 / 整蛊保护必须逐项归零，否则下一个玩家会继承上一个人的贴纸
+    this.activeBuffs.clear();
+    this.trickGuardUntil = 0;
+    this.shieldCharges = 0;
+    this.speedMul = 1;
+    this.ventCdMul = 1;
+    this.lastShoutAt = 0;
+    this.lastP2PAt = 0;
     this.stunUntil = 0;
+    this.recentHits = 0;
+    this.lastHitTick = -10000;
+    this.immunityUntilMs = 0;
+    this.immunityUntilTick = 0;
+    this.incapacitated = false;
+    this.carriedBy = 0;
+    this.patientState = 0;
+    this.patientUntil = 0;
     this.spawnBodyCache = null;
     this.known.clear();
   }
@@ -263,13 +407,23 @@ export class Player {
   }
 }
 
-/** 进程内世界：没有数据库、没有快照、断开即回收 */
+/**
+ * 世界：实体与共享运行态的容器。
+ *
+ * 老板与擂台由外部构造后注入：它们的时区与恢复数据来自进程级配置与快照
+ * （ADR-0081），不再各自偷偷读 `Date.now()` / 本地时区。
+ */
 export class World {
   readonly players = new Map<number, Player>();
   /** 发泄区老板：静态地标，不占实体 id，也不进入 AOI 与同步快照 */
-  readonly boss = new BossRuntime();
-  /** 发泄区擂台：进程内状态机，重启即清空 */
-  readonly ring = new RingRuntime();
+  readonly boss: BossRuntime;
+  /** 发泄区擂台：状态机；重启后按快照恢复局号，但不复活进行中的比赛 */
+  readonly ring: RingRuntime;
+
+  constructor(boss = new BossRuntime(), ring = new RingRuntime()) {
+    this.boss = boss;
+    this.ring = ring;
+  }
   private readonly pool: Player[] = [];
   private nextId = 1;
   /** 真人数：准入、排队与在线统计的唯一口径，NPC 永不参与 */
@@ -297,6 +451,7 @@ export class World {
     y: number,
     status = '',
     joinedAt = Date.now(),
+    deviceId = '',
   ): Player | null {
     if (this.players.size >= MAX_ENTITIES) return null;
     // 与紧凑条目的 10 bit id 对齐：回绕点必须在 MAX_ENTITY_ID 上，否则 id 会被位表截断成别人。
@@ -316,6 +471,7 @@ export class World {
     player.appearance = appearance;
     player.status = status;
     player.joinedAt = joinedAt;
+    player.deviceId = deviceId;
     player.x = x;
     player.y = y;
     player.applyState(DIRECTION.Down, POSE.Idle, false);

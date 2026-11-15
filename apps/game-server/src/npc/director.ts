@@ -5,6 +5,7 @@ import type { SpatialGrid } from '../spatial/grid';
 import { createAgent, directionOf, updateAgent, type NpcAgent } from './brain';
 import type { NpcConfig } from './config';
 import { ESCORT, stepEscort } from './escort';
+import { finishFollow, stepFollow } from './follow';
 import { createRng } from './rng';
 import { GUARD_COUNT, NPC_ROLE_GUARD, buildNpcRoster } from './roster';
 import { pickSpawnPoint, type NpcSpot } from './spots';
@@ -32,6 +33,15 @@ export interface NpcDirector {
   dispatchEscort(targetId: number, now: number): number;
   /** 目标已释放 / 断线：清掉对应任务，保安原地停半秒后继续巡逻 */
   cancelEscort(targetId: number): void;
+  /**
+   * 盯梢派单（ADR-0085，雇佣保安卡）：返回接单保安的实体 id，0 表示没有可用保安。
+   *
+   * 允许打断正在巡逻（walk/pause）的保安；押送中的保安不接单，
+   * 免得「被抓去小黑屋的人身边突然少了一个押送员」。
+   */
+  dispatchFollow(targetId: number, until: number, now: number): number;
+  /** 目标断线 / 离开：取消盯梢 */
+  cancelFollow(targetId: number): void;
   /** 押送事件出口：server 用它转给 sim/detention，不让 NPC 层认识 Detention */
   setEscortListener(listener: ((event: EscortEvent) => void) | null): void;
 }
@@ -72,6 +82,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     let bestDistanceSq = Number.POSITIVE_INFINITY;
     for (const agent of agents.values()) {
       if (agent.escort) continue;
+      if (agent.follow) continue;
       if (agent.player.role !== NPC_ROLE_GUARD) continue;
       // 被发泄踹倒的保安不接单；站起来再说
       if (now < agent.player.stunUntil) continue;
@@ -114,6 +125,65 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     for (const agent of agents.values()) {
       if (agent.escort?.targetId !== targetId) continue;
       finishEscort(agent, now, 600);
+    }
+  }
+
+  /**
+   * 盯梢派单：最近的一名「既没押送、也没在盯人」的保安接单。
+   *
+   * 与押送同样按距离挑人，但允许打断巡逻——雇佣保安卡的价值就在于「立刻有人来」，
+   * 若只等空闲保安，三班里总有两班在路上，玩家花了 150 币却看不到人。
+   */
+  function dispatchFollow(targetId: number, until: number, now: number): number {
+    const target = world.get(targetId);
+    if (!target || target.isNpc || target.wsId === 0) return 0;
+
+    let best: NpcAgent | null = null;
+    let bestDistanceSq = Number.POSITIVE_INFINITY;
+    for (const agent of agents.values()) {
+      if (agent.escort || agent.follow) continue;
+      if (agent.player.role !== NPC_ROLE_GUARD) continue;
+      if (now < agent.player.stunUntil) continue;
+      const dx = agent.player.x - target.x;
+      const dy = agent.player.y - target.y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        best = agent;
+      }
+    }
+    if (!best) return 0;
+
+    const guard = best.player;
+    best.follow = {
+      targetId,
+      until,
+      path: [],
+      index: 0,
+      replanAt: now,
+      lastTargetX: target.x,
+      lastTargetY: target.y,
+    };
+    // 打断巡逻：立刻起步，不等当前停顿结束
+    best.phase = 'walk';
+    best.stuckCount = 0;
+    best.lastProgressAt = now;
+    best.lastProgressX = guard.x;
+    best.lastProgressY = guard.y;
+    guard.applyState(
+      directionOf(target.x - guard.x, target.y - guard.y, guard.direction),
+      POSE.Walk,
+      true,
+    );
+    guard.markDirtyIfChanged();
+    return guard.id;
+  }
+
+  function cancelFollow(targetId: number): void {
+    const now = Date.now();
+    for (const agent of agents.values()) {
+      if (agent.follow?.targetId !== targetId) continue;
+      finishFollow(agent, now);
     }
   }
 
@@ -181,6 +251,9 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
           const target = world.get(escortTargetId);
           if (target && grid.update(target.id, target.x, target.y)) target.needsViewRefresh = true;
         }
+      } else if (agent.follow) {
+        // 盯梢只动保安自己：目标的位置与姿态完全不受影响
+        if (stepFollow(agent, agent.follow, world, now) === 'done') finishFollow(agent, now);
       } else {
         updateAgent(agent, rng, config, now);
       }
@@ -198,8 +271,8 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
 
       // 跨格才重算视野：与真人的 AOI 维护同一条路径
       if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
-      // 押送中不做招手 / 让路，避免把保安拉回停顿态
-      if (!agent.escort) updateSocial(agent, social, now);
+      // 押送 / 盯梢中不做招手 / 让路，避免把保安拉回停顿态
+      if (!agent.escort && !agent.follow) updateSocial(agent, social, now);
     }
     updateMs = performance.now() - started;
   }
@@ -218,6 +291,8 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     },
     dispatchEscort,
     cancelEscort,
+    dispatchFollow,
+    cancelFollow,
     setEscortListener(listener) {
       escortListener = listener;
     },

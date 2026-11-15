@@ -101,7 +101,6 @@ describe('self archive', () => {
     expect(archive.activity.ringSilver).toBe(0);
     expect(archive.pose).toBe('入座摸鱼');
     expect(archive.seat).toBe('工位椅');
-    expect(archive.employeeNo).toMatch(/^#NM-\d{5}$/);
     expect(archive.rank).toBe(1);
     expect(archive.stamp).toBe('卷王之王');
   });
@@ -126,17 +125,6 @@ describe('remote archive', () => {
     expect(archive.board).toHaveLength(1);
   });
 
-  it('distinguishes same-named guards by entity id, keeps fixed numbers for players', () => {
-    const guards = [1, 2, 3].map((id) =>
-      buildRemoteArchive(remoteBadge({ name: '园区保安', role: 1, id }), NOW),
-    );
-    expect(new Set(guards.map((archive) => archive.employeeNo)).size).toBe(guards.length);
-
-    const plainA = buildRemoteArchive(remoteBadge({ name: '园区保安', role: 0, id: 1 }), NOW);
-    const plainB = buildRemoteArchive(remoteBadge({ name: '园区保安', id: 2 }), NOW);
-    expect(plainA.employeeNo).toBe(plainB.employeeNo);
-  });
-
   it('shows 未上报 instead of zeros when the peer did not report', () => {
     const archive = buildRemoteArchive(remoteBadge({ career: undefined, rank: null }), NOW);
     expect(archive.hasCareer).toBe(false);
@@ -156,8 +144,6 @@ describe('share data', () => {
     expect(data.isSelf).toBe(false);
     expect(data.todayDuration).toBe('01:00');
     expect(data.todayToiletMinutes).toBe(15);
-    expect(data.department).toBeTruthy();
-    expect(data.shift).toBeTruthy();
     expect(data.activity?.steps).toBe(5_000);
     expect(data.rank).toBe(1);
     expect(data.hasCareer).toBe(true);

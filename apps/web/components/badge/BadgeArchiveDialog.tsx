@@ -28,7 +28,7 @@ interface BadgeArchiveDialogProps {
  *
  * 固定高度外壳 + 三页签：头部身份带与底部分享区常驻，只有当前页滚动。
  * 本人与他人的差异只在取数壳：这里只认 `BadgeArchive`，
- * 印章、条码、分享、焦点与按键处理都只有一份。
+ * 称号、分享、焦点与按键处理都只有一份。
  */
 export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -45,7 +45,7 @@ export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDia
   // 换人 / 本人↔代打切换时回到证件页，避免打开别人的档案先看到上一页签
   useEffect(() => {
     setTab('identity');
-  }, [archive.employeeNo, archive.isSelf]);
+  }, [archive.name, archive.isSelf]);
 
   // 换人时清掉上一块的「点赞中」，避免旧计时器在新档案上弹失败提示
   useEffect(() => {
@@ -56,7 +56,7 @@ export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDia
         likeTimer.current = null;
       }
     };
-  }, [archive.employeeNo]);
+  }, [archive.name]);
 
   // 服务端确认后立刻收回 pending；别人点赞不会误点亮「已点赞」
   useEffect(() => {
@@ -159,7 +159,7 @@ export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDia
     try {
       // 在点击调用栈里同步启动渲染：Safari 的 ClipboardItem 需要这段 Promise
       const canvasPromise = renderShareCard(toShareCardData(archive));
-      await shareOrDownload(canvasPromise, archive.employeeNo);
+      await shareOrDownload(canvasPromise, archive.name);
       notify(archive.isSelf ? SELF_TOAST : OTHER_TOAST);
     } catch {
       notify(FAILURE_TEXT);
@@ -173,7 +173,7 @@ export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDia
     setBusy('download');
     try {
       const canvas = await renderShareCard(toShareCardData(archive));
-      downloadShareCard(canvas, archive.employeeNo);
+      downloadShareCard(canvas, archive.name);
       notify(archive.isSelf ? SELF_TOAST : OTHER_TOAST);
     } catch {
       notify(FAILURE_TEXT);
@@ -187,7 +187,7 @@ export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDia
     setBusy('timesheet');
     try {
       const canvas = await renderShareCard(toShareCardData(archive), 'timesheet');
-      downloadShareCard(canvas, archive.employeeNo);
+      downloadShareCard(canvas, archive.name);
       notify(archive.isSelf ? '考勤小票已出票，拿去贴工位' : 'TA 的考勤小票已出票');
     } catch {
       notify(FAILURE_TEXT);
@@ -286,9 +286,7 @@ export function BadgeArchiveDialog({ archive, onClose, onLike }: BadgeArchiveDia
                 <span className="border border-ink-500 px-1 py-0.5 uppercase tracking-[0.08em]">
                   {archive.species}
                 </span>
-                <span className="truncate">
-                  {archive.department} · {archive.shift}
-                </span>
+                <span className="truncate">今日工时 {archive.todayDuration}</span>
                 <span className="border border-mint-400/40 px-1 py-0.5 uppercase tracking-[0.08em] text-mint-400">
                   {archive.isSelf ? '本人' : '代打存档'}
                 </span>

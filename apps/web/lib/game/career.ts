@@ -2,6 +2,8 @@
 
 import { MAX_COUNT, MAX_STEPS, type CareerSummary } from '@niuma/shared-types';
 import { create } from 'zustand';
+import { serverHour, serverTzOffsetMin } from './server-date';
+import { serverNow } from './server-clock';
 import {
   dayKey,
   getTodayMinutes,
@@ -14,9 +16,10 @@ import { browserStorage, readJson, writeJson, type StorageLike } from '../storag
  * 行为统计：搬砖步数、摸鱼、被创、击倒、加班。
  *
  * 与考勤一样是本地优先：只写内存，30 秒批处理落盘，切后台 / 关页补写。
- * 与服务端的唯一交集是随考勤摘要一起上报——服务端只转发，不落盘。
+ * 与服务端的交集是随考勤摘要一起上报——服务端只转发；只有赞与擂台名次
+ * 会进匿名设备档案落盘（ADR-0081），本文件的计数不进服务端存储。
  *
- * 只统计今天：存档按 `localDateKey` 分桶，午夜自然换日；历史累计不再保留，
+ * 只统计今天：存档按园区日期（服务器时区）分桶，午夜自然换日；历史累计不再保留，
  * 也不会在部署 / 刷新后把旧总量灌进今日桶。
  */
 export const CAREER_STORAGE_KEY = 'niuma:career:v1';
@@ -167,7 +170,7 @@ export class CareerTracker {
   }
 
   /** 2Hz 坐标采样喂进来：超远跳变按传送处理，不计入今日里程。 */
-  recordDistance(deltaPx: number, now: number = Date.now()): void {
+  recordDistance(deltaPx: number, now: number = serverNow()): void {
     if (this.disposed) return;
     if (!Number.isFinite(deltaPx) || deltaPx <= 0 || deltaPx > MAX_SAMPLE_JUMP_PX) return;
     this.mutateDay(now, (day) => ({
@@ -177,19 +180,19 @@ export class CareerTracker {
   }
 
   /** 坐下且不是床：算一次摸鱼。起身不计，边沿判定由调用方保证。 */
-  recordSlack(now: number = Date.now()): void {
+  recordSlack(now: number = serverNow()): void {
     if (this.disposed) return;
     this.mutateDay(now, (day) => ({ ...day, slackCount: clampCount(day.slackCount + 1) }));
   }
 
   /** 被创飞：只记本地玩家，旁观别人挨打不算自己的抗压记录。 */
-  recordVented(now: number = Date.now()): void {
+  recordVented(now: number = serverNow()): void {
     if (this.disposed) return;
     this.mutateDay(now, (day) => ({ ...day, ventedCount: clampCount(day.ventedCount + 1) }));
   }
 
   /** 成功击倒他人：只在服务端 S2C_VENT 归因到本人时调用，空放不计。 */
-  recordKnockdown(now: number = Date.now()): void {
+  recordKnockdown(now: number = serverNow()): void {
     if (this.disposed) return;
     this.mutateDay(now, (day) => ({ ...day, knockdownCount: clampCount(day.knockdownCount + 1) }));
   }
@@ -198,7 +201,7 @@ export class CareerTracker {
    * 擂台名次入账：一局只记一次，按 matchId 去重由调用方保证。
    * 只有冠亚季军会走到这里，第四名及以后不存在（容量就是 3）。
    */
-  recordRingMedal(rank: 1 | 2 | 3, now: number = Date.now()): void {
+  recordRingMedal(rank: 1 | 2 | 3, now: number = serverNow()): void {
     if (this.disposed) return;
     this.mutateDay(now, (day) => {
       if (rank === 1) return { ...day, ringGold: clampCount(day.ringGold + 1) };
@@ -207,11 +210,11 @@ export class CareerTracker {
     });
   }
 
-  /** 21:00 之后仍在岗，每天最多记一次。 */
-  recordOvertime(now = Date.now()): void {
+  /** 园区 21:00 之后仍在岗，每天最多记一次。 */
+  recordOvertime(now = serverNow()): void {
     if (this.disposed) return;
-    const date = new Date(now);
-    if (date.getHours() < 21) return;
+    // 加班判定按园区时钟：玩家在别的时区不该把「晚上九点」算错
+    if (serverHour(now, serverTzOffsetMin()) < 21) return;
     this.mutateDay(now, (day) =>
       day.overtimeCount > 0 ? day : { ...day, overtimeCount: 1 },
     );
@@ -329,7 +332,7 @@ export function buildCareerSummary(
   attendance: AttendanceStorage | null,
   stats: CareerStats,
   province: string,
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): CareerSummary {
   const storage: Pick<AttendanceStorage, 'firstJoinDate' | 'dailyRecords' | 'dailyToiletRecords'> =
     attendance ?? { firstJoinDate: '', dailyRecords: {}, dailyToiletRecords: {} };

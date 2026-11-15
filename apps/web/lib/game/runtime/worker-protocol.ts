@@ -4,13 +4,41 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  ItemEffectPacket,
+  ItemRejectPacket,
   LikePacket,
+  LoudspeakerPacket,
+  PlayerEffectPacket,
+  ShoutRejectPacket,
   NavTargetId,
+  P2PActionRequest,
+  P2PDuelStatePacket,
+  P2PInviteNotifyPacket,
+  P2PInviteRequest,
+  P2PInviteResultPacket,
+  P2PMatchPacket,
+  P2PRespondRequest,
+  P2PShowdownPacket,
   Pose,
+  ShopBuyRequest,
+  TipPacket,
+  TipRequest,
+  UseItemRequest,
+  WalletSyncPacket,
   QueueStatusPacket,
   ResumeState,
   RingPacket,
   SeatKind,
+  ApartmentRequest,
+  ArenaBetRequest,
+  ArenaPoolPacket,
+  DiceBetRequest,
+  DiceStatePacket,
+  FurniturePlacement,
+  RoomInvitePacket,
+  RoomStatePacket,
+  VillaRequest,
+  VillaStatePacket,
 } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
@@ -48,6 +76,8 @@ export type MainToWorker =
       danmaku: DanmakuPrefs;
       /** 最近一次上香的自然日（ADR-0061）：同样只能主线程读 */
       incenseDay: string;
+      /** 匿名设备号（ADR-0081）：Worker 里 localStorage 不可用，只能由主线程带进来 */
+      deviceId: string;
     }
   /** 小地图画布：可能晚于 init 到达，Worker 侧只换绘制目标 */
   | { t: 'minimap'; canvas: OffscreenCanvas }
@@ -66,6 +96,22 @@ export type MainToWorker =
   | { t: 'board'; metric: BoardMetric | 0 }
   /** 工牌点赞：服务端裁决，重复请求幂等 */
   | { t: 'like'; id: number }
+  /** 牛马币互动（ADR-0082 / ADR-0083）：上行只带意图，裁决在服务端 */
+  | { t: 'p2pInvite'; request: P2PInviteRequest }
+  | { t: 'p2pRespond'; request: P2PRespondRequest }
+  | { t: 'p2pAction'; request: P2PActionRequest }
+  | { t: 'tip'; request: TipRequest }
+  | { t: 'useItem'; request: UseItemRequest }
+  | { t: 'shopBuy'; request: ShopBuyRequest }
+  /** 大喇叭文案：编码侧截到 30 字，服务端再过一次审核（ADR-0085） */
+  | { t: 'shout'; text: string }
+  /** 热区建筑（ADR-0087）：上行只带意图 */
+  | { t: 'diceBet'; request: DiceBetRequest }
+  | { t: 'villa'; request: VillaRequest }
+  | { t: 'arenaBet'; request: ArenaBetRequest }
+  | { t: 'apartment'; request: ApartmentRequest }
+  | { t: 'apartmentInvite'; targetId: number }
+  | { t: 'roomLayout'; placements: FurniturePlacement[] }
   | { t: 'navigate'; id: NavTargetId }
   | { t: 'cancelNav' }
   | { t: 'pick'; x: number; y: number }
@@ -106,10 +152,43 @@ export type WorkerToMain =
   | { t: 'boardOpen' }
   /** 在放假告示板旁按 F / 点击牌面：主线程展开软木看板（ADR-0059） */
   | { t: 'bulletinOpen' }
-  /** 擂台快照：低频事件（阶段变化 / 扣血 / 1Hz 心跳），`receivedAt` 供 HUD 本地递减 */
+  /** 擂台快照：低频事件（阶段变化 / 扣血 / 1Hz 心跳），`receivedAt` 是服务器时刻，供 HUD 递减 */
   | { t: 'ring'; packet: RingPacket | null; receivedAt: number }
+  /**
+   * 服务器时钟样本（ADR-0081）：Worker 侧 1Hz 收到 pong，转发到主线程时按 5s 节流，
+   * 只传「此刻的服务器毫秒 + 园区时区」。两侧单调时钟基准不同，所以传绝对时刻而不是偏移。
+   */
+  | { t: 'clock'; epochMs: number; tzOffsetMin: number }
   /** 牛马榜快照：一个指标一条，主线程按 metric 归并 */
   | { t: 'board'; packet: BoardPacket }
+  /** 钱包快照：主线程据此落盘并刷新 HUD（ADR-0082） */
+  | { t: 'wallet'; packet: WalletSyncPacket }
+  | { t: 'p2pInvite'; packet: P2PInviteNotifyPacket }
+  | { t: 'p2pInviteResult'; packet: P2PInviteResultPacket }
+  | { t: 'p2pMatch'; packet: P2PMatchPacket }
+  | { t: 'p2pShowdown'; packet: P2PShowdownPacket }
+  | { t: 'p2pDuelState'; packet: P2PDuelStatePacket }
+  | { t: 'tip'; packet: TipPacket }
+  | { t: 'itemEffect'; packet: ItemEffectPacket }
+  /** 玩家特效（ADR-0085）：脚底风 / 护盾环 / 贴纸 / 滑倒 / 保安盯梢 */
+  | { t: 'playerEffect'; packet: PlayerEffectPacket }
+  /** 全服大喇叭：主线程渲染置顶金色横幅 */
+  | { t: 'loudspeaker'; packet: LoudspeakerPacket }
+  | { t: 'shoutReject'; packet: ShoutRejectPacket }
+  | { t: 'itemReject'; packet: ItemRejectPacket }
+  /** 茶台按 F：主线程打开商店并切到指定页签（ADR-0085 / ADR-0087 增加装扮页签） */
+  | { t: 'shopOpen'; tab: 'stats' | 'items' | 'cosmetics' }
+  /** 赌桌 / 八角笼 / 豪宅 / 公寓的「按 F 开面板」意图 */
+  | { t: 'diceOpen'; table: number }
+  | { t: 'arenaBetOpen' }
+  | { t: 'villaOpen'; villa: number }
+  | { t: 'apartmentOpen' }
+  /** 热区建筑的下行快照 */
+  | { t: 'dice'; packet: DiceStatePacket }
+  | { t: 'villa'; packet: VillaStatePacket }
+  | { t: 'arenaPool'; packet: ArenaPoolPacket }
+  | { t: 'room'; packet: RoomStatePacket }
+  | { t: 'roomInvite'; packet: RoomInvitePacket }
   /** 工牌点赞变化：主线程更新工牌与已赞集合 */
   | { t: 'like'; packet: LikePacket }
   /** 发声请求：`AudioContext` 只能在主线程，所以连听者坐标一起带回来 */

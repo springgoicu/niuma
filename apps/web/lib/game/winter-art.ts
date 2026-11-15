@@ -3,6 +3,8 @@
 import { Container, Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
 import { WORLD_LAYOUT } from '@niuma/shared-types';
 import { lightToneAt } from './lighting/tone';
+import { serverHourFraction } from './server-date';
+import { serverNow, serverTzOffsetMin } from './server-clock';
 import type { DepthSink } from './sort-layer';
 import { WINTER_COLORS as W } from './terrain-palette';
 import { bake } from './terrain-textures';
@@ -204,8 +206,7 @@ export class WinterArt {
 
   /** 灯串亮度：白天几乎不显（0.22），黄昏起亮，夜里拉满；30s 才改一次 */
   private applyBulbBrightness(): void {
-    const now = new Date();
-    const hour = now.getHours() + now.getMinutes() / 60;
+    const hour = serverHourFraction(serverNow(), serverTzOffsetMin());
     const label = lightToneAt(hour, true).label;
     const alpha = label === 'night' ? 1 : label === 'dusk' ? 0.62 : 0.22;
     for (const sprite of this.bulbs) sprite.alpha = alpha;

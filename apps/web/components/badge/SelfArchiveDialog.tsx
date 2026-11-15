@@ -8,6 +8,7 @@ import { buildSelfArchive } from '@/lib/game/archive';
 import { useAttendance } from '@/lib/game/attendance';
 import { useCareer } from '@/lib/game/career';
 import type { GeoInfo } from '@/lib/game/geo';
+import { serverNow } from '@/lib/game/server-clock';
 import { BadgeArchiveDialog } from './BadgeArchiveDialog';
 
 interface SelfArchiveDialogProps {
@@ -65,7 +66,7 @@ export function SelfArchiveDialog({
     rank,
     likes: myLikes,
     achievements,
-    now: now || Date.now(),
+    now: now || serverNow(),
   });
 
   return <BadgeArchiveDialog archive={archive} onClose={onClose} />;

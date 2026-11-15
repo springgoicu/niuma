@@ -149,10 +149,10 @@ export function extraOptions(species: Species): readonly string[] {
 }
 
 /**
- * 捏人界面可选的配件目录：警用件只给服务端保安使用，不对玩家开放。
- * 外观编码仍保留完整目录，玩家旧档如果带着警用索引也会被正常解析。
+ * 捏人界面可选的配件目录：警用 / 护士件只给服务端 NPC 使用，不对玩家开放。
+ * 外观编码仍保留完整目录，玩家旧档如果带着这些索引也会被正常解析。
  */
-export const PLAYER_HEADWEAR_IDS = HEADWEAR_IDS.filter((id) => id !== 'police_cap');
+export const PLAYER_HEADWEAR_IDS = HEADWEAR_IDS.filter((id) => id !== 'police_cap' && id !== 'nurse_cap');
 export const PLAYER_NECKWEAR_IDS = NECKWEAR_IDS.filter((id) => id !== 'epaulette');
 
 const EXTRA_LABELS: Record<Species, Record<string, string>> = {
@@ -189,6 +189,7 @@ export const PART_META: Record<
       bamboo_hat: '江湖斗笠',
       curse_hoop: '赛博紧箍',
       police_cap: '大檐警帽',
+      nurse_cap: '护士帽',
     },
   },
   eyewear: {

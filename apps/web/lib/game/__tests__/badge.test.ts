@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { POSE } from '@niuma/shared-types';
-import {
-  PICK_HALF_WIDTH,
-  PICK_TOP,
-  departmentOf,
-  employeeNumber,
-  pickCharacter,
-  poseLabel,
-  seatLabel,
-  shiftOf,
-} from '../badge';
+import { PICK_HALF_WIDTH, PICK_TOP, pickCharacter, poseLabel, seatLabel } from '../badge';
 
 describe('badge labels', () => {
   it('names the current pose, splitting seated and ground sitting', () => {
@@ -29,36 +20,6 @@ describe('badge labels', () => {
     expect(seatLabel('bench')).toBe('长椅');
     expect(seatLabel('bed')).toBe('床位');
     expect(seatLabel('toilet')).toBe('马桶');
-  });
-});
-
-describe('department and shift', () => {
-  it('derive stably from the same nickname hash', () => {
-    expect(departmentOf('夜班实习生')).toBe(departmentOf('夜班实习生'));
-    expect(shiftOf('夜班实习生')).toBe(shiftOf('夜班实习生'));
-    expect(['研发部', '运营部', '市场部', '后勤部', '财务部', '摸鱼办']).toContain(
-      departmentOf('夜班实习生'),
-    );
-    expect(['白班', '夜班', '弹性班', '连班']).toContain(shiftOf('夜班实习生'));
-  });
-
-  it('can change when the nickname changes', () => {
-    const first = `${departmentOf('夜班实习生')}${shiftOf('夜班实习生')}`;
-    const second = `${departmentOf('摸鱼老黄牛')}${shiftOf('摸鱼老黄牛')}`;
-    // 不保证一定不同，但同一套派生必须可重复；这里只验证不抛错且非空
-    expect(first.length).toBeGreaterThan(0);
-    expect(second.length).toBeGreaterThan(0);
-  });
-
-  it('同名保安按实体 id 区分工牌，不传 salt 时保持固定派生', () => {
-    const ids = [1, 2, 3];
-    const numbers = ids.map((id) => employeeNumber('园区保安', id));
-    expect(new Set(numbers).size).toBe(ids.length);
-
-    // 真人不传 salt：同一昵称仍是同一张工牌
-    expect(employeeNumber('夜班实习生')).toBe(employeeNumber('夜班实习生', undefined));
-    expect(departmentOf('夜班实习生')).toBe(departmentOf('夜班实习生', undefined));
-    expect(shiftOf('夜班实习生')).toBe(shiftOf('夜班实习生', undefined));
   });
 });
 

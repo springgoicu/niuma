@@ -6,6 +6,7 @@ import {
   SPAWN_RADIUS,
 } from '@niuma/shared-types';
 import type { AdmissionConfig } from './admission/controller';
+import { resolveTzOffsetMin } from './clock';
 import { loadNpcConfig, type NpcConfig } from './npc/config';
 
 export interface ModerationConfig {
@@ -44,6 +45,21 @@ export interface SecurityConfig {
   chatCooldownMs: number;
 }
 
+/**
+ * 共享运行态快照（ADR-0081）。
+ *
+ * `path` 留空 = 关闭持久化，回到「重启即空场」的老行为；
+ * 其余两项只影响写盘频率与文件体积，不影响帧循环。
+ */
+export interface StateConfig {
+  /** 快照文件路径（相对进程 cwd）；空串表示不落盘 */
+  path: string;
+  /** 变更合并窗口（毫秒） */
+  saveDelayMs: number;
+  /** 匿名档案（设备号）容量上限 */
+  maxProfiles: number;
+}
+
 export interface ServerConfig {
   port: number;
   hostname: string;
@@ -73,6 +89,13 @@ export interface ServerConfig {
   };
   /** 反渗透：Origin 白名单、移动包频率、聊天冷却 */
   security: SecurityConfig;
+  /** 园区共享运行态快照（擂台 / 老板 / 匿名档案） */
+  state: StateConfig;
+  /**
+   * 园区时区偏移（分钟）：所有「今天」的切日口径。
+   * 多园区部署时每台各配一个，不跟着宿主机时区漂。
+   */
+  tzOffsetMin: number;
 }
 
 function readInt(value: string | undefined, fallback: number): number {
@@ -164,5 +187,13 @@ export function loadConfig(): ServerConfig {
       moveHardLimit: readInt(process.env.GAME_MOVE_HARD_HZ, 35),
       chatCooldownMs: readIntWithZero(process.env.GAME_CHAT_COOLDOWN_MS, 500),
     },
+    state: {
+      // 缺省就写盘：账号化的点赞/战绩要靠它续命。显式设空串才退回零持久化
+      path: process.env.GAME_STATE_PATH ?? 'data/world-state.json',
+      saveDelayMs: readIntWithZero(process.env.GAME_STATE_SAVE_MS, 1000),
+      maxProfiles: readInt(process.env.GAME_STATE_MAX_PROFILES, 512),
+    },
+    // 显式配置优先；不填就跟宿主机时区（容器跑 UTC 也不会把零点错位）
+    tzOffsetMin: resolveTzOffsetMin(process.env.GAME_TZ_OFFSET_MIN),
   };
 }

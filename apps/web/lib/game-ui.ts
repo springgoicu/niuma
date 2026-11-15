@@ -2,15 +2,27 @@
 
 import {
   POSE,
+  emptyEconomyProfile,
+  type ArenaPoolPacket,
+  type DiceStatePacket,
+  type EconomyProfile,
   type NavTargetId,
+  type P2PDuelStatePacket,
+  type P2PInviteNotifyPacket,
+  type P2PInviteResultPacket,
+  type P2PMatchPacket,
+  type P2PShowdownPacket,
   type Pose,
   type QueueStatusPacket,
   type RingPacket,
+  type RoomInvitePacket,
+  type RoomStatePacket,
   type SeatKind,
+  type VillaStatePacket,
 } from '@niuma/shared-types';
 import { create } from 'zustand';
 import { loadChatOpen, saveChatOpen } from './chat-prefs';
-import type { BoardEntry } from './game/badge';
+import type { BoardEntry, PlayerBadge } from './game/badge';
 import type { ChatEntry, SessionStats } from './game/session';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'queued' | 'online' | 'offline' | 'error';
@@ -75,10 +87,79 @@ interface GameUiState {
   /**
    * 擂台快照与收到时刻。
    *
-   * 服务端只在阶段变化 / 扣血 / 1Hz 心跳时广播，倒计时靠 `receivedAt + remainingMs`
-   * 本地递减，所以 HUD 必须拿到这两个值，不能只存 remainingMs。
+   * 服务端只在阶段变化 / 扣血 / 1Hz 心跳时广播，`receivedAt` 是收到包时的**服务器时刻**
+   * （ADR-0081），HUD 用 `serverNow() - receivedAt` 本地递减；所以必须存这两个值，
+   * 不能只存 remainingMs。
    */
   ring: { packet: RingPacket; receivedAt: number } | null;
+  /** 牛马币钱包（ADR-0082）：服务端权威快照，金币变动时整块替换 */
+  wallet: EconomyProfile;
+  /** 收到但还没回应的邀请；`expiresAt` 用服务器时刻，倒计时不受本机时钟影响 */
+  invite: { packet: P2PInviteNotifyPacket; expiresAt: number } | null;
+  /** 自己发起的邀请结果：拒绝 / 超时 / 余额不足等，短暂展示后清除 */
+  inviteResult: P2PInviteResultPacket | null;
+  /** 当前对局：Started 时开始倒计时，Finished 时展示结算 */
+  match: P2PMatchPacket | null;
+  /** 最近一次头顶亮牌：猜拳回合推进与结算文案都读它 */
+  showdown: { packet: P2PShowdownPacket; receivedAt: number } | null;
+  /** 切磋实时血量：HUD 与结算卡共用 */
+  duel: { packet: P2PDuelStatePacket; receivedAt: number } | null;
+  /** 点人选中的快捷菜单目标；null 表示菜单收起 */
+  menuTarget: { id: number; name: string; badge: PlayerBadge | null } | null;
+  /** 打赏 / 道具子面板的目标；null 表示没开 */
+  actionTarget: { id: number; name: string; mode: 'tip' | 'item' } | null;
+  shopOpen: boolean;
+  /** 商店当前页签（ADR-0085）：茶台 F 与金币徽标落到属性页，购物车按钮落到消耗品页 */
+  shopTab: 'stats' | 'items';
+  /** 大喇叭输入面板：买下之后才允许打开 */
+  shoutOpen: boolean;
+  /** 置顶金色横幅：`key` 自增，组件按它重播入场动画 */
+  shoutBanner: { key: number; fromId: number; text: string } | null;
+  /** 金币飘字：`key` 自增，组件按它错开动画 */
+  coinPops: Array<{ key: number; amount: number; id: number }>;
+  // ---- 热区建筑（ADR-0087）----
+  /** 赌桌面板：桌号，null 表示收起 */
+  diceOpen: number | null;
+  /** 赌桌公共局快照：面板与桌心骰子都读它 */
+  dice: DiceStatePacket | null;
+  /** 八角笼观战押注面板 */
+  arenaBetOpen: boolean;
+  /** 八角笼彩池快照 */
+  arenaPool: ArenaPoolPacket | null;
+  /** 豪宅卡片：villaId，null 表示收起 */
+  villaOpen: number | null;
+  /** 两栋小院的牌匾 / 锁状态 */
+  villas: VillaStatePacket | null;
+  /** 牛马公寓面板（户型 / 家具 / 邀请） */
+  apartmentOpen: boolean;
+  /** 当前房间状态：门牌、房主与家具布局 */
+  room: RoomStatePacket | null;
+  /** 最近的串门邀请：右上角小提示，5 秒后自行消失 */
+  roomInvite: RoomInvitePacket | null;
+  setDiceOpen: (table: number | null) => void;
+  setDice: (packet: DiceStatePacket | null) => void;
+  setArenaBetOpen: (open: boolean) => void;
+  setArenaPool: (packet: ArenaPoolPacket | null) => void;
+  setVillaOpen: (villa: number | null) => void;
+  setVillas: (packet: VillaStatePacket | null) => void;
+  setApartmentOpen: (open: boolean) => void;
+  setRoom: (packet: RoomStatePacket | null) => void;
+  setRoomInvite: (packet: RoomInvitePacket | null) => void;
+  setWallet: (wallet: EconomyProfile) => void;
+  setInvite: (invite: { packet: P2PInviteNotifyPacket; expiresAt: number } | null) => void;
+  setInviteResult: (result: P2PInviteResultPacket | null) => void;
+  setMatch: (match: P2PMatchPacket | null) => void;
+  setShowdown: (packet: P2PShowdownPacket | null) => void;
+  setDuel: (packet: P2PDuelStatePacket | null) => void;
+  setMenuTarget: (target: { id: number; name: string; badge: PlayerBadge | null } | null) => void;
+  setActionTarget: (target: { id: number; name: string; mode: 'tip' | 'item' } | null) => void;
+  /** `tab` 缺省时保留当前页签：老调用点只有一个布尔量，不该被新参数打断 */
+  setShopOpen: (open: boolean, tab?: 'stats' | 'items' | 'cosmetics') => void;
+  setShoutOpen: (open: boolean) => void;
+  pushShoutBanner: (fromId: number, text: string) => void;
+  clearShoutBanner: (key: number) => void;
+  pushCoinPop: (amount: number, id: number) => void;
+  clearCoinPop: (key: number) => void;
   setLocalState: (state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }) => void;
   setRing: (packet: RingPacket | null, receivedAt: number) => void;
   setHint: (hint: string | null) => void;
@@ -156,7 +237,32 @@ const INITIAL = {
   hint: null,
   navTarget: null as { id: NavTargetId; name: string } | null,
   ring: null as { packet: RingPacket; receivedAt: number } | null,
+  wallet: emptyEconomyProfile(),
+  invite: null as { packet: P2PInviteNotifyPacket; expiresAt: number } | null,
+  inviteResult: null as P2PInviteResultPacket | null,
+  match: null as P2PMatchPacket | null,
+  showdown: null as { packet: P2PShowdownPacket; receivedAt: number } | null,
+  duel: null as { packet: P2PDuelStatePacket; receivedAt: number } | null,
+  menuTarget: null as { id: number; name: string; badge: PlayerBadge | null } | null,
+  actionTarget: null as { id: number; name: string; mode: 'tip' | 'item' } | null,
+  shopOpen: false,
+  shopTab: 'items' as 'stats' | 'items' | 'cosmetics',
+  shoutOpen: false,
+  shoutBanner: null as { key: number; fromId: number; text: string } | null,
+  coinPops: [] as Array<{ key: number; amount: number; id: number }>,
+  diceOpen: null as number | null,
+  dice: null as DiceStatePacket | null,
+  arenaBetOpen: false,
+  arenaPool: null as ArenaPoolPacket | null,
+  villaOpen: null as number | null,
+  villas: null as VillaStatePacket | null,
+  apartmentOpen: false,
+  room: null as RoomStatePacket | null,
+  roomInvite: null as RoomInvitePacket | null,
 };
+let coinPopSeq = 0;
+let shoutSeq = 0;
+const MAX_COIN_POPS = 5;
 
 export const useGameUi = create<GameUiState>((set) => ({
   ...INITIAL,
@@ -164,6 +270,56 @@ export const useGameUi = create<GameUiState>((set) => ({
   setLocalState: ({ pose, seated, seatKind }) => set({ localPose: pose, seated, seatKind }),
 
   setRing: (packet, receivedAt) => set({ ring: packet ? { packet, receivedAt } : null }),
+
+  setWallet: (wallet) => set({ wallet }),
+
+  setInvite: (invite) => set({ invite }),
+
+  setInviteResult: (inviteResult) =>
+    set(inviteResult ? { inviteResult, invite: null } : { inviteResult: null }),
+
+  setMatch: (match) => set({ match }),
+
+  setShowdown: (packet) =>
+    set(packet ? { showdown: { packet, receivedAt: performance.now() } } : { showdown: null }),
+
+  setDuel: (packet) =>
+    set(packet ? { duel: { packet, receivedAt: performance.now() } } : { duel: null }),
+
+  setMenuTarget: (menuTarget) => set({ menuTarget }),
+
+  setActionTarget: (actionTarget) => set({ actionTarget }),
+
+  setShopOpen: (shopOpen, tab) =>
+    set((state) => ({ shopOpen, shopTab: tab ?? state.shopTab })),
+
+  setShoutOpen: (shoutOpen) => set({ shoutOpen }),
+
+  // 横幅用 key 驱动重播：同一个人连发两条也要重新滑入，而不是停在原地换字
+  pushShoutBanner: (fromId, text) =>
+    set({ shoutBanner: { key: ++shoutSeq, fromId, text } }),
+
+  clearShoutBanner: (key) =>
+    set((state) => (state.shoutBanner?.key === key ? { shoutBanner: null } : {})),
+
+  pushCoinPop: (amount, id) =>
+    set((state) => ({
+      coinPops: [...state.coinPops.slice(-(MAX_COIN_POPS - 1)), { key: ++coinPopSeq, amount, id }],
+    })),
+
+  clearCoinPop: (key) =>
+    set((state) => ({ coinPops: state.coinPops.filter((pop) => pop.key !== key) })),
+
+  // ---- 热区建筑（ADR-0087）----
+  setDiceOpen: (diceOpen) => set({ diceOpen }),
+  setDice: (dice) => set({ dice }),
+  setArenaBetOpen: (arenaBetOpen) => set({ arenaBetOpen }),
+  setArenaPool: (arenaPool) => set({ arenaPool }),
+  setVillaOpen: (villaOpen) => set({ villaOpen }),
+  setVillas: (villas) => set({ villas }),
+  setApartmentOpen: (apartmentOpen) => set({ apartmentOpen }),
+  setRoom: (room) => set({ room }),
+  setRoomInvite: (roomInvite) => set({ roomInvite }),
 
   setHint: (hint) => set({ hint }),
 
@@ -272,5 +428,6 @@ export const useGameUi = create<GameUiState>((set) => ({
   setInstallOpen: (installOpen) =>
     set(installOpen ? { installOpen, noticeOpen: false } : { installOpen }),
 
-  reset: () => set(INITIAL),
+  // 钱包不清零：换园区 / 重连都沿用同一份资产，reset 只清会话态
+  reset: () => set((state) => ({ ...INITIAL, wallet: state.wallet, coinPops: [] })),
 }));

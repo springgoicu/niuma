@@ -54,7 +54,7 @@ describe('设施提示按钮映射', () => {
     [HINT.bulletin, 'interact', '查看放假倒计时', 'F'],
     [HINT.interact, 'interact', '互动', 'F'],
     [HINT.shrine, 'interact', '上香祈福', 'F'],
-    [HINT.tea, 'interact', '续杯养生茶', 'F'],
+    [HINT.tea, 'interact', '打开属性强化', 'F'],
     [HINT.ringJoin, 'interact', '报名擂台', 'F'],
     [HINT.ringLeave, 'interact', '取消报名', 'F'],
     [HINT.ringAwardLeave, 'interact', '领奖离场', 'F'],

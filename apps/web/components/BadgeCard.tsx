@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import type { CharacterAppearance, Species } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { formatMinutesClock, getTodayMinutes, useAttendance } from '@/lib/game/attendance';
-import { GEO_FALLBACK, loadGeo, readCachedGeo, type GeoInfo } from '@/lib/game/geo';
+import { EMPTY_GEO, geoLabel, loadGeo, readCachedGeo, type GeoInfo } from '@/lib/game/geo';
 import { BadgeEditor, type BadgeSavePayload } from './game/BadgeEditor';
 import { SelfArchiveDialog } from './badge/SelfArchiveDialog';
 
@@ -56,7 +56,7 @@ export function BadgeCard({
   const setChatOpen = useGameUi((state) => state.setChatOpen);
   const [detailOpen, setDetailOpen] = useState(false);
   // 首帧先读会话缓存：回访时不必等请求就能显示上次的归属地
-  const [geo, setGeo] = useState<GeoInfo>(() => readCachedGeo() ?? GEO_FALLBACK);
+  const [geo, setGeo] = useState<GeoInfo>(() => readCachedGeo() ?? EMPTY_GEO);
 
   useEffect(() => {
     let alive = true;
@@ -136,9 +136,7 @@ export function BadgeCard({
           >
             <span aria-hidden="true">📍</span>
             <span className="shrink-0">出勤地：</span>
-            <span className="min-w-0 truncate text-mist-300">
-              {geo.region} · {geo.city}
-            </span>
+            <span className="min-w-0 truncate text-mist-300">{geoLabel(geo)}</span>
           </span>
 
           <span

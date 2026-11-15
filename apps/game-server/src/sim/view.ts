@@ -82,7 +82,8 @@ export function refreshView(player: Player, world: World, grid: SpatialGrid, tra
       continue;
     }
     const other = world.get(id);
-    if (!other || !withinView(player, other)) nearScratch.delete(id);
+    // 房间频道隔离：公寓里的玩家与屋外玩家互不可见（坐标是同一个矩形）
+    if (!other || other.roomId !== player.roomId || !withinView(player, other)) nearScratch.delete(id);
   }
 
   removals.length = 0;

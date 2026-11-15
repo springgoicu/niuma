@@ -9,6 +9,8 @@
 export const ENTITY_ROLE_PLAYER = 0;
 /** 保安：客户端据此在头顶画红蓝警灯 */
 export const ENTITY_ROLE_GUARD = 1;
+/** 护士：急救站固定站桩 NPC，红十字由急救站渲染层按站位叠加 */
+export const ENTITY_ROLE_NURSE = 2;
 
 /** spawn 尾段：`[0xfd][role u8]`，只有 role > 0 时才写 */
 export const ROLE_EXTENSION_MAGIC = 0xfd;

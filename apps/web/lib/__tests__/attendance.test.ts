@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import { employeeNumber } from '../game/badge';
 import {
   ATTENDANCE_KEY,
   AttendanceTracker,
@@ -211,15 +210,6 @@ describe('如厕计时', () => {
     expect(saved.dailyRecords[today]!).toBeGreaterThanOrEqual(1_200_000);
     expect(saved.dailyToiletRecords[today]!).toBeGreaterThanOrEqual(480_000);
     expect(saved.dailyToiletRecords[today]!).toBeLessThanOrEqual(saved.dailyRecords[today]!);
-  });
-});
-
-describe('固定工号', () => {
-  it('同一昵称稳定生成 #NM- 加 5 位编号', () => {
-    const first = employeeNumber('夜班实习生');
-    expect(first).toMatch(/^#NM-\d{5}$/);
-    expect(employeeNumber('夜班实习生')).toBe(first);
-    expect(employeeNumber('摸鱼老黄牛')).not.toBe(first);
   });
 });
 

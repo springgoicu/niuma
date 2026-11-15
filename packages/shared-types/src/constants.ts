@@ -88,6 +88,23 @@ export const SESSION_EXTENSION_BYTES = 5;
 export const WELCOME_SESSION_MAGIC = 0xf9;
 export const WELCOME_SESSION_BYTES = 5;
 /**
+ * HELLO 尾部的「匿名设备号」段：`[0xf8][deviceId 8 字节]`。
+ *
+ * 0xf8 比 0xf9 再小一档，同样大于 MAX_STATUS_BYTES(48)，不可能是合法状态长度；
+ * 段永远追加在最后，旧解码器与旧服务端读完已知段就停，天然忽略这 9 字节。
+ * 设备号只用于把点赞与擂台战绩聚合同一台浏览器，不做账号、不进准入判定。
+ */
+export const DEVICE_EXTENSION_MAGIC = 0xf8;
+/** 设备段总字节数：魔数 1 + 8 字节二进制设备号 */
+export const DEVICE_EXTENSION_BYTES = 9;
+/**
+ * S2C_PONG 尾部的服务器时钟段：`[serverSec u32][tzOffsetMin i16]`。
+ *
+ * 心跳本来就是 1Hz，等于免费拿到 1Hz 的服务器时间样本；旧客户端读完 timestamp
+ * 就停，多出的 6 字节天然忽略。秒级 epoch 到 2106 年才回绕，比毫秒多活 68 年。
+ */
+export const PONG_CLOCK_BYTES = 6;
+/**
  * 会话续算上限：一天。
  *
  * 客户端上报的续算秒数只影响展示型的在岗榜，但虚报一整天也能霸榜，
@@ -171,6 +188,10 @@ export const BOSS_PACKET_BYTES = 6;
 
 /** 小黑屋处置包：op(1) + entityId(2) + phase(1) + flags(1) + seconds(2) + guardId(2) */
 export const JAIL_PACKET_BYTES = 9;
+/** 救护车同步：op(1) + id(1) + state(1) + x(2) + y(2) + flags(1) */
+export const AMBULANCE_PACKET_BYTES = 8;
+/** 伤员状态：op(1) + entityId(2) + state(1) + seconds(2) */
+export const PATIENT_PACKET_BYTES = 6;
 /** 排队拒绝：op(1) + reason(1) */
 export const QUEUE_REJECT_BYTES = 2;
 /** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */
