@@ -149,10 +149,6 @@ const COLOR = {
   qingshiDark: 0x8f8877,
   qingshiLight: 0xd8d1c0,
   stoneBase: 0xb5ad9c,
-  // 石鼓凳：汉白玉鼓身，比木凳更冷更亮
-  drumStone: 0xe9e3d6,
-  drumStoneDark: 0xb0a794,
-  drumStoneLight: 0xfcf8ee,
 } as const;
 
 /**
@@ -194,8 +190,6 @@ const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
 
 const TOILET_SPRITE = { w: 22, h: 28 };
 const STOOL_SPRITE = { w: 18, h: 22 };
-/** 石鼓凳（ADR-0061）：鼓身矮胖、两端鼓钉各一圈，座面比木凳低 5 纹素 */
-const DRUM_SPRITE = { w: 20, h: 22 };
 const SOFA_SPRITE = { w: 58, h: 30 };
 /**
  * 床：横向 64×42，躺下的角色正好横卧在床垫上。
@@ -741,29 +735,6 @@ function drawStool(g: Graphics): void {
   box(g, 13, 13, 2, 8, COLOR.woodDark);
 }
 
-/**
- * 石鼓凳（ADR-0061）：鼓腹 + 两道弦纹 + 四枚鼓钉，汉白玉本色。
- * 与木凳的区别必须靠三处同时成立——冷白配色、鼓起的腰线、贴地的鼓足，
- * 少一处就会读成「刷白了的木凳子」。
- */
-function drawDrumStool(g: Graphics): void {
-  const { w, h } = DRUM_SPRITE;
-  shadow(g, w / 2, h - 1, 8, 2);
-  // 鼓腹：上下收、中间鼓，靠两条弦纹把鼓面分割出来
-  box(g, 2, 4, 16, 13, COLOR.drumStone, COLOR.outline);
-  rect(g, 3, 5, 14, 1, COLOR.drumStoneLight);
-  rect(g, 3, 8, 14, 1, COLOR.drumStoneDark);
-  rect(g, 3, 11, 14, 1, COLOR.drumStoneDark);
-  // 鼓钉：上下各两枚
-  for (const x of [5, 12]) {
-    rect(g, x, 6, 1, 1, COLOR.drumStoneDark);
-    rect(g, x, 13, 1, 1, COLOR.drumStoneDark);
-  }
-  // 鼓足：贴地一圈深色，坐下时不至于「浮」在草地上
-  rect(g, 4, 17, 12, 2, COLOR.drumStoneDark);
-  rect(g, 5, 19, 10, 2, COLOR.drumStone);
-}
-
 /** 沙发：靠背在上、两个座垫在下，两侧各一只扶手（保留给旧数据 / 单座沙发） */
 function drawSofa(g: Graphics): void {
   const { w, h } = SOFA_SPRITE;
@@ -1231,10 +1202,9 @@ export class PropsView {
     const couchRight = bake(renderer, (g) => drawCouchHalf(g, 1), {
       frame: frame(COUCH_HALF.w, COUCH_HALF.h),
     });
-    const seatTextures: Record<'toilet' | 'stool' | 'drum' | 'sofa' | 'bed', Texture> = {
+    const seatTextures: Record<'toilet' | 'stool' | 'sofa' | 'bed', Texture> = {
       toilet: bake(renderer, drawToilet, { frame: frame(TOILET_SPRITE.w, TOILET_SPRITE.h) }),
       stool: bake(renderer, drawStool, { frame: frame(STOOL_SPRITE.w, STOOL_SPRITE.h) }),
-      drum: bake(renderer, drawDrumStool, { frame: frame(DRUM_SPRITE.w, DRUM_SPRITE.h) }),
       sofa: bake(renderer, drawSofa, { frame: frame(SOFA_SPRITE.w, SOFA_SPRITE.h) }),
       bed: bake(renderer, drawBed, { frame: frame(BED_SPRITE.w, BED_SPRITE.h) }),
     };

@@ -7,7 +7,6 @@ import {
   PARK_RIDES,
   PARK_SLIDE,
   PARK_SOUTH_GATE,
-  parkFencePosts,
   type ParkAttraction,
   type ParkAttractionKind,
 } from '@niuma/shared-types';
@@ -23,7 +22,7 @@ import { bulbPulse, ferrisStep } from './venue-motion';
 /**
  * 游乐园（本轮新增）：晴天下班后的糖果色游乐场。
  *
- * 与 `pavilion.ts` / `welcome.ts` 同一条纪律：
+ * 与 `welcome.ts` 同一条纪律：
  * 1) 坐标只从 `@niuma/shared-types` 的 `AMUSEMENT_PARK` / `PARK_*` 读，渲染层不写第二份；
  * 2) 所有像素画在构造期烘焙一次，帧循环只改标量；滑梯、秋千、跷跷板与旋转木马都不参与碰撞
  *    （碰撞底座已经在共享布局的 `PARK_RIDE_SOLIDS` 里）；
@@ -431,14 +430,6 @@ function drawStringLights(g: Graphics): void {
   });
 }
 
-function drawFence(g: Graphics): void {
-  for (const post of parkFencePosts()) {
-    rect(g, post.x - 3, post.y - 10, 6, 12, C.ink);
-    rect(g, post.x - 2, post.y - 9, 4, 9, C.wood);
-    rect(g, post.x - 1, post.y - 8, 2, 2, C.cream);
-  }
-}
-
 export class ParkView {
   private readonly textures: Texture[] = [];
   /** 入口彩灯 + 旋转木马两处地标光；灯柱本身由 propLights 统一出光 */
@@ -669,15 +660,14 @@ export class ParkView {
   }
 
   /**
-   * `base` 收围栏与灯串（贴地、始终在角色下方）；`depth` 收立体器械。
+   * `base` 收灯串（贴地、始终在角色下方）；`depth` 收立体器械。
+   * ADR-0103 之后游乐园不再围矮栅栏，场地边界交给橡胶地面本身。
    * 滑梯的深度键用塔顶而不是落地点：角色沿滑道下来时不会被整张精灵盖住。
    */
   build(depth: DepthSink, base: Container): void {
-    const fence = new Graphics();
-    drawFence(fence);
     const lights = new Graphics();
     drawStringLights(lights);
-    base.addChild(fence, lights);
+    base.addChild(lights);
 
     for (const item of this.items) depth.add(item.depthY, item.root);
   }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { RING_BENCH_SEAT_GROUP } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
 import { ArenaBetDialog } from './ArenaBetDialog';
 import { ChallengeDialog } from './ChallengeDialog';
@@ -70,6 +71,7 @@ export function EconomyLayer({
   const setArenaBetOpen = useGameUi((state) => state.setArenaBetOpen);
   const arenaPool = useGameUi((state) => state.arenaPool);
   const ring = useGameUi((state) => state.ring);
+  const seatGroup = useGameUi((state) => state.seatGroup);
   const villaOpen = useGameUi((state) => state.villaOpen);
   const setVillaOpen = useGameUi((state) => state.setVillaOpen);
   const villas = useGameUi((state) => state.villas);
@@ -120,6 +122,7 @@ export function EconomyLayer({
           pool={arenaPool}
           ring={ring?.packet ?? null}
           coins={wallet.coins}
+          seated={seatGroup === RING_BENCH_SEAT_GROUP}
           onClose={() => setArenaBetOpen(false)}
           onBet={onArenaBet}
         />

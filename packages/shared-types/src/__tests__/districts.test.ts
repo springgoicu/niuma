@@ -57,8 +57,8 @@ describe('五区注册表（ADR-0097）', () => {
   });
 
   it('每个场所都在自己申报的区里，没有「无区场所」', () => {
-    // ADR-0101 把六栋公寓并成一栋后是 20 处：合并楼栋不该顺手弄丢别的场所
-    expect(VENUES.length).toBeGreaterThanOrEqual(20);
+    // ADR-0101 合并公寓后 20 处，ADR-0105 拆掉摸鱼亭后 19 处：删场所不该顺手带走别的场所
+    expect(VENUES.length).toBeGreaterThanOrEqual(19);
     expect(new Set(VENUES.map((venue) => venue.id)).size).toBe(VENUES.length);
     for (const venue of VENUES) {
       const center = { x: venue.rect.x + venue.rect.w / 2, y: venue.rect.y + venue.rect.h / 2 };
@@ -86,6 +86,14 @@ describe('五区注册表（ADR-0097）', () => {
       expect(isBlocked(district.gate.x, district.gate.y), `${district.id} 门被挡`).toBe(false);
       expect(regionAt(district.gate.x, district.gate.y)).not.toBe(FALLBACK_REGION);
     }
+  });
+
+  it('摸鱼亭拆除后的原址仍报景观区，场所表里不再有亭子', () => {
+    // ADR-0105：原址（5250,4710 起 200×180）并回景观区草地，不再有独立场所名
+    expect(VENUES.some((venue) => venue.id === 'pavilion')).toBe(false);
+    expect(venueAt(5350, 4800)).toBeUndefined();
+    expect(regionAt(5350, 4800)).toBe('景观区');
+    expect(districtAt(5350, 4800)?.id).toBe('scenery');
   });
 
   it('岛上一块空地仍会如实报野地，不会被硬塞进某个区', () => {

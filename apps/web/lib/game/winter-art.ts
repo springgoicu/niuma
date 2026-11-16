@@ -1,7 +1,7 @@
 'use client';
 
 import { Container, Graphics, Rectangle, Sprite, type Application, type Texture } from 'pixi.js';
-import { DISTRICTS, DOOR_PLAQUES, WELCOME_LANDMARKS, WORKROOM_GATE, WORLD_LAYOUT } from '@niuma/shared-types';
+import { DOOR_PLAQUES, WELCOME_LANDMARKS, WORLD_LAYOUT } from '@niuma/shared-types';
 import { lightToneAt } from './lighting/tone';
 import { serverHourFraction } from './server-date';
 import { serverNow, serverTzOffsetMin } from './server-clock';
@@ -219,18 +219,16 @@ export class WinterArt {
    * 雪层只有「岛轮廓」一级遮罩（`terrain.ts` 的 `addSnowCover`），
    * 而边缘系统的六种材质里没有「铺装 / 室内地板」，所以雪与铺装的交界此前是硬切。
    * 这里沿每条铺装的四条外边各撒一排 1–3px 的雪齿，**画在铺装外侧**：
-   * 门洞、区门、拱门与楼门口 44px 内自动跳过，天然在门口断开，不糊住门槛。
+   * 门洞与拱门 44px 内自动跳过，天然在门口断开，不糊住门槛。
    *
    * 全部合成一张 Graphics：几百个矩形、一次绘制，无逐帧成本，也不参与碰撞。
    */
   private addSnowDrifts(base: Container): void {
     const drifts = new Graphics();
-    // 门洞列表：门牌（每处场所入口）、五座区门、迎宾拱门与企业楼大门
+    // 门洞列表：门牌（每处场所入口）与迎宾拱门
     const holes: ReadonlyArray<{ x: number; y: number }> = [
       ...DOOR_PLAQUES.map((plaque) => ({ x: plaque.x, y: plaque.depthY })),
-      ...DISTRICTS.map((district) => ({ x: district.gate.x, y: district.gate.y })),
       { x: WELCOME_LANDMARKS.arch.x, y: WELCOME_LANDMARKS.arch.y },
-      { x: WORKROOM_GATE.x, y: WORKROOM_GATE.y },
     ];
     const blocked = (x: number, y: number): boolean => {
       for (const hole of holes) {

@@ -264,6 +264,8 @@ export interface ContextHintOptions {
   roomId?: number;
   /** 当前所在楼栋（ADR-0101 后恒为 0）：出口热区只认这一栋，未知传 -1 */
   roomSlot?: number;
+  /** 脚下有未抢的红包：F 的优先级高于一切热区（ADR-0088） */
+  redPacketNear?: boolean;
 }
 
 /** 热区 → 提示文案：label 已在共享表里声明，这里只做一次映射 */
@@ -304,7 +306,8 @@ export function hintForVenueSpot(kind: VenueSpotKind): string {
     case 'parkPhoto':
       return HINT.parkPhoto;
     default:
-      return HINT.pavilion;
+      // 新增本地点却忘了配文案时，退回通用互动提示，不静默给出一条错的口令
+      return HINT.interact;
   }
 }
 
@@ -320,6 +323,43 @@ export function needSeatHint(def: HotspotDef): string {
     default:
       return HINT.interact;
   }
+}
+
+/**
+ * 当前座位下该选哪个热区。
+ *
+ * 入座类玩法（工位 / 赌桌 / 观战长椅）有一个硬优先级：坐在自己座位上时，
+ * **匹配当前座位的热区优先**，不再被旁边的茶台 / 供案按全局顺序抢走。
+ * 这不是「提示与按键各写一套」——`selectContextHint` 与 `interact()`
+ * 都必须调这一个函数，才能保证「提示什么、按 F 就是什么」。
+ */
+export function hotspotAtForSeat(
+  x: number,
+  y: number,
+  seatId: number,
+  accept?: (def: HotspotDef) => boolean,
+): HotspotDef | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  if (seatId !== 0) {
+    const seated = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (def) => {
+      if (accept && !accept(def)) return false;
+      return hotspotRequiresSeat(def) && seatMatchesHotspot(def, seatId);
+    });
+    if (seated) return seated;
+  }
+  const nearby = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (def) => {
+    if (accept && !accept(def)) return false;
+    // 坐错座位 / 没坐下时，座位热区不能抢走旁边的茶台、供案
+    if (seatId !== 0 && hotspotRequiresSeat(def)) return false;
+    return true;
+  });
+  if (nearby) return nearby;
+  // 旁边没有别的互动、但确实坐在错座位上：仍然给出「先坐下」，
+  // 否则玩家只会看到「附近没有可互动的设施」，不知道该换座位
+  if (seatId !== 0) {
+    return nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (def) => !accept || accept(def));
+  }
+  return null;
 }
 
 /**
@@ -348,7 +388,14 @@ export function selectContextHint(
   const seatId = options.seatId ?? 0;
   // 人在公寓窗口里（ADR-0098）：没有别的可做，唯一提示就是出门
   if (roomId !== 0) return HINT.apartmentExit;
-  const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
+  // 红包雨优先于一切热区，与 interact() 的分发顺序一致
+  if (options.redPacketNear) return HINT.redPacket;
+  // 坐在场所座位上：会议室 / 影厅 / 凉亭的动作优先于旁边设施
+  if (seatId !== 0) {
+    const seatedVenue = venueSpotAt(x, y, seatId);
+    if (seatedVenue) return hintForVenueSpot(seatedVenue.kind);
+  }
+  const def = hotspotAtForSeat(x, y, seatId, (candidate) => {
     if (candidate.kind === 'bulletin') return facesBulletin(x, y, direction);
     if (candidate.kind === 'ring') return false;
     return true;
@@ -361,7 +408,7 @@ export function selectContextHint(
   // 指路牌不是热区（走客户端本地判定），提示排在热区之后、老板之前
   if (isNearDirectory(x, y)) return HINT.directory;
   if (isNearBoss(x, y)) return HINT.boss;
-  // 弱交互场所（会议室 / 影音室 / 摸鱼亭 / 游乐园打卡点）：纯客户端演出，
+  // 弱交互场所（会议室 / 影音室 / 游乐园打卡点）：纯客户端演出，
   // 坐姿类只在坐下后命中，站着时仍然把提示让给「按 Z 坐下」。
   const venueSpot = venueSpotAt(x, y, seatId);
   if (venueSpot) return hintForVenueSpot(venueSpot.kind);
@@ -370,6 +417,8 @@ export function selectContextHint(
   if (nearestInteriorSpotInto(options.spotOut ?? HINT_SPOT, x, y)) return HINT.interact;
   const prop = options.propOut ?? { kind: 'vending', x: 0, y: 0 };
   if (nearestInteractivePropInto(prop, x, y)) return HINT.interact;
+  // 已经坐着时不再提示「按 Z 坐下」：当前座位的动作由会话层兜底
+  if (seatId !== 0) return null;
   const range = options.sitRange ?? SIT_RANGE;
   const seat = findNearestSeat(x, y, options.isFreeSeat, range, (item) => item.kind !== 'bed');
   if (seat) return seat.kind === 'toilet' ? HINT.toilet : HINT.seat;

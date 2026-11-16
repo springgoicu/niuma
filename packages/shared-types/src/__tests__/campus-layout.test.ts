@@ -3,6 +3,8 @@ import {
   CAMPUS_RECT,
   COMPANY_CORRIDOR,
   CORRIDOR_H,
+  HOME_THEATER,
+  JAIL,
   LOUNGE,
   MEETING_ROOM,
   RESTROOM,
@@ -20,10 +22,10 @@ import { WORLD_CENTER, WORLD_LAYOUT, regionAt } from '../world/layout';
 import { rectContains, rectExpanded, type WorldRect } from '../world/geometry';
 
 /**
- * 企业楼与三处独立房间（ADR-0097 / ADR-0099）：
+ * 企业楼与三处独立房间（ADR-0097 / ADR-0099 / ADR-0103）：
  * - 企业楼是一栋 920×776 的两层小楼：北排工作区 / 会议室，中间一条 56px 走廊，南排一整间发泄室；
  * - 宿舍区、影音室、卫生间、小黑屋各自独立成栋，落在各自的大区里；
- * - 工作区仍是唯一无墙的房间，卫生间仍是男 / 洗手池 / 女 三区。
+ * - ADR-0103 之后只有卫生间与小黑屋还砌墙，其余房间都是开放平面，边界交给地面材质。
  */
 
 const { solids, seats, props } = WORLD_LAYOUT;
@@ -76,29 +78,28 @@ describe('企业楼（ADR-0097）', () => {
     expect(RESTROOM.h).toBe(RESTROOM_H);
   });
 
-  it('工作区只有楼体外墙，朝走廊一侧整段敞开', () => {
-    const workWalls = solids.filter((solid) => solid.kind === 'wall' && rectsOverlap(solid, WORKROOM));
-    // 北墙 + 西墙（东侧与会议室共用，南侧朝走廊敞口）
-    expect(workWalls.length).toBeGreaterThan(0);
-    for (let x = WORKROOM.x + 20; x < WORKROOM.x + WORKROOM.w - 20; x += 40) {
-      expect(wallAt(x, WORKROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(false);
+  it('ADR-0103：开放平面的房间矩形内没有任何墙体', () => {
+    for (const room of [WORKROOM, MEETING_ROOM, VENT_ROOM, LOUNGE, HOME_THEATER]) {
+      const walls = solids.filter((solid) => solid.kind === 'wall' && rectsOverlap(solid, room));
+      expect(walls.length, `${regionAt(room.x + room.w / 2, room.y + room.h / 2)} 不该再有外墙`).toBe(0);
     }
-    for (const room of [MEETING_ROOM, VENT_ROOM, LOUNGE, RESTROOM]) {
+    // 卫生间与小黑屋是仅有的两间还砌墙的房间
+    for (const room of [RESTROOM, JAIL]) {
       expect(solids.filter((solid) => solid.kind === 'wall' && rectsOverlap(solid, room)).length).toBeGreaterThan(0);
     }
   });
 
-  it('会议室与发泄室的门都开向楼内走廊，宿舍区与卫生间朝区内广场', () => {
-    // 会议室南墙、发泄室北墙各留一扇 60px 门洞
-    expect(wallAt(MEETING_ROOM.x + 360, MEETING_ROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(false);
-    expect(wallAt(VENT_ROOM.x + 330, VENT_ROOM.y + WALL_THICKNESS / 2)).toBe(false);
-    expect(wallAt(LOUNGE.x + 230, LOUNGE.y + WALL_THICKNESS / 2)).toBe(false);
+  it('卫生间仍朝北开门、小黑屋仍从西墙进，开放房间四面沿线上都没有墙', () => {
     expect(wallAt(RESTROOM.x + 180, RESTROOM.y + WALL_THICKNESS / 2)).toBe(false);
-    // 同一面墙的门洞之外仍然是实体墙
-    expect(wallAt(MEETING_ROOM.x + 40, MEETING_ROOM.y + ROOM_H - WALL_THICKNESS / 2)).toBe(true);
-    expect(wallAt(VENT_ROOM.x + 40, VENT_ROOM.y + WALL_THICKNESS / 2)).toBe(true);
-    expect(wallAt(LOUNGE.x + 40, LOUNGE.y + WALL_THICKNESS / 2)).toBe(true);
     expect(wallAt(RESTROOM.x + 40, RESTROOM.y + WALL_THICKNESS / 2)).toBe(true);
+    expect(wallAt(JAIL.x + WALL_THICKNESS / 2, JAIL.y + 160)).toBe(false);
+    expect(wallAt(JAIL.x + WALL_THICKNESS / 2, JAIL.y + 60)).toBe(true);
+    for (const room of [MEETING_ROOM, VENT_ROOM, LOUNGE, HOME_THEATER]) {
+      expect(wallAt(room.x + 40, room.y + WALL_THICKNESS / 2)).toBe(false);
+      expect(wallAt(room.x + 40, room.y + room.h - WALL_THICKNESS / 2)).toBe(false);
+      expect(wallAt(room.x + WALL_THICKNESS / 2, room.y + 40)).toBe(false);
+      expect(wallAt(room.x + room.w - WALL_THICKNESS / 2, room.y + 40)).toBe(false);
+    }
   });
 
   it('卫生间是男 / 洗手池 / 女 三区，洗手池在中间', () => {

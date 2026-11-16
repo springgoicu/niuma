@@ -142,13 +142,6 @@ describe('弱交互场所提示', () => {
     ).toBe(HINT.theater);
   });
 
-  it('石鼓凳：坐上去提示对着湖发呆', () => {
-    const drum = firstSeatOfKind('drum');
-    expect(
-      selectContextHint(drum.x, drum.y, DIRECTION.Down, { isFreeSeat: allSeatsFree, seatId: drum.id }),
-    ).toBe(HINT.pavilion);
-  });
-
   it('游乐园打卡点：站着按 F 拍照，且不会盖掉旁边长椅的坐下提示', () => {
     const photo = PARK_PHOTO_SPOTS[0]!;
     expect(selectContextHint(photo.x, photo.y, DIRECTION.Down, { isFreeSeat: noSeats, seatId: 0 })).toBe(
@@ -171,6 +164,16 @@ describe('入座类玩法的提示（ADR-0093）', () => {
     if (stool === undefined) throw new Error(`没有 ${group} 的凳子`);
     return stool;
   }
+
+  it('脚下有红包时提示抢红包，优先于赌桌等热区', () => {
+    const table = DICE_TABLES[0]!;
+    const hint = selectContextHint(table.x, table.y, DIRECTION.Down, {
+      isFreeSeat: noSeats,
+      seatId: 0,
+      redPacketNear: true,
+    });
+    expect(hint).toBe(HINT.redPacket);
+  });
 
   it('站在赌桌旁没坐下：只提示先入座，且不给可点的按钮', () => {
     const table = DICE_TABLES[0]!;

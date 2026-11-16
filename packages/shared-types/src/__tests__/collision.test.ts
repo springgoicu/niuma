@@ -19,7 +19,6 @@ import { MEETING_ROOM } from '../world/campus';
 const CENTER = WORLD_CENTER;
 const OFFICE = WORLD_LAYOUT.office;
 const SOUTH = OFFICE.y + OFFICE.h;
-const NORTH = OFFICE.y;
 const EAST = OFFICE.x + OFFICE.w;
 const WEST = OFFICE.x;
 
@@ -39,11 +38,11 @@ describe('中央广场与五向出街', () => {
     );
   });
 
-  it('企业楼自身有墙，楼门前的走廊与大门是通的', () => {
-    // 会议室与发泄室的外墙挡人（工作区是开放区，本身无墙）
-    expect(isBlocked(MEETING_ROOM.x + 40, MEETING_ROOM.y + 2)).toBe(true);
-    expect(isBlocked(WEST + 40, SOUTH - 2)).toBe(true);
-    // 大门就是走廊东端：站在门外（楼体东侧）与站在走廊里都是空的
+  it('企业楼没有外墙：会议室、发泄室与走廊连成一片可自由穿行', () => {
+    // ADR-0103：整栋楼改成开放平面，原来的外墙位置现在是可走的地面
+    expect(isBlocked(MEETING_ROOM.x + 40, MEETING_ROOM.y + 2)).toBe(false);
+    expect(isBlocked(WEST + 40, SOUTH - 2)).toBe(false);
+    // 走廊东端与楼内都能直接走进去
     expect(isBlocked(EAST + 10, OFFICE.y + 380)).toBe(false);
     expect(isBlocked(EAST - 40, OFFICE.y + 380)).toBe(false);
   });

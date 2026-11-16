@@ -37,8 +37,6 @@ import {
   formatSystemNotice,
   isInRing,
   isNearRing,
-  nearestHotspotOfKinds,
-  HOTSPOT_PRIORITY,
   setDynamicSolids,
   villaDoorSolid,
   VILLA_SPECS,
@@ -56,6 +54,7 @@ import {
   type BoardPacket,
   type BossPacket,
   type EconomyProfile,
+  type InteractRejectPacket,
   type ItemEffectPacket,
   type ItemRejectPacket,
   type LoudspeakerPacket,
@@ -120,6 +119,7 @@ import {
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
 import { type BoardEntry, type PlayerBadge } from './badge';
+import { bossHitFeedback } from './boss-feedback';
 import { ventOutcome } from './vent-outcome';
 import { toSnapshotPatch } from './snapshot';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
@@ -141,6 +141,7 @@ import {
   nearestInteractivePropInto,
   hintForHotspot,
   isNearBulletin,
+  hotspotAtForSeat,
   pickLine,
   pickVentLine,
   pickVentVictimLine,
@@ -157,10 +158,8 @@ import {
 import {
   MEETING_LINES,
   PHOTO_LINES,
-  ZEN_LINES,
   idleKindOfSeat,
   isMeetingSeat,
-  isPavilionSeat,
   isTheaterScreenHit,
   isTheaterSeat,
   linesOfIdleKind,
@@ -315,6 +314,11 @@ export interface SessionCallbacks {
   /** 道具没生效（目标不可用 / 被护盾挡下 / 保护期 / 保安缺席） */
   onItemReject?(packet: ItemRejectPacket): void;
   /**
+   * 互动被服务端拒绝（ADR-0104）：宿主把动作 + 原因映射成一句中文。
+   * 这是「点了没反应」的统一出口——赌桌、擂台、别墅、搬砖、悬赏都走它。
+   */
+  onInteractReject?(packet: InteractRejectPacket): void;
+  /**
    * 茶台按 F：打开属性强化面板（ADR-0085）。
    *
    * 由渲染线程发起、主线程开面板：`shopOpen` 这类 UI 状态只活在主线程 store 里，
@@ -362,6 +366,11 @@ const STATS_INTERVAL = 500;
 const SEAT_HINT_INTERVAL = 150;
 /** 互动节流：连按 F 的两次气泡至少隔这么久 */
 const INTERACT_COOLDOWN_MS = 900;
+/**
+ * 抢红包的最小间隔：服务端对 C2S_EVENT_CLAIM 有 500ms 闸门，
+ * 客户端必须比它慢一点，否则本地已经把红包隐藏、服务端却按超频拒掉。
+ */
+const EVENT_CLAIM_INTERVAL_MS = 520;
 /** 热区 id 里的序号（`dice-table-0` / `villa-1-gate`）：只取第一段数字 */
 function hotspotIndex(id: string): number {
   const match = id.match(/(\d+)/);
@@ -383,6 +392,13 @@ const INCENSE_AURA_MS = 60_000;
  * 即使浏览器直接被杀掉，最多也只在关页面前有 2s 的位移丢失。
  */
 const SNAPSHOT_INTERVAL_MS = 2000;
+/**
+ * 老板伤害飘字的合并窗口（ADR-0105）。
+ *
+ * 发泄区可能同时有十几个人在踢，20Hz 的连击逐条飘字会互相覆盖，
+ * 也会把 RitualFx 的三个槽位刷成跑马灯；窗口内的伤害先攒着，一个数字说清。
+ */
+const BOSS_DAMAGE_MERGE_MS = 600;
 
 /**
  * 本地玩家与服务端坐标的最大合法偏差（像素）。
@@ -467,6 +483,8 @@ export class GameSession {
   private readonly claimedPackets = new Set<number>();
   /** 自动拾取的节流时刻（performance.now 口径） */
   private autoPickAt = 0;
+  /** 上一次真正发出抢红包包的时刻：比服务端 500ms 闸门略慢 */
+  private lastEventClaimAt = 0;
   /** 已发出入座 / 上床请求且尚未起身：只有此时服务端的占座结果才会吸附本地角色 */
   private seatIntent = false;
   /** 环境提示：按位置 / 朝向持续算出；瞬时文案只让它暂时让位，不阻断判定 */
@@ -579,6 +597,15 @@ export class GameSession {
   private readonly likedTargets = new Set<number>();
   /** 本地玩家收到的赞：随 2Hz stats 推给本人档案 */
   private localLikes = 0;
+  /**
+   * 老板血量镜像（ADR-0070 / ADR-0105）：-1 表示还没收到过快照。
+   * 只用来算「这一脚掉了多少血」，血条本身仍由渲染层按 `setBossHp` 维护。
+   */
+  private lastBossHp = -1;
+  /** 合并窗口内尚未显示的老板伤害：连击先攒在这里，到期一次飘出 */
+  private bossDamage = 0;
+  /** 下一次允许飘字的最早时刻 */
+  private bossDamageReadyAt = 0;
   /** 视野内今日工时榜与名次：缓存 2 秒，不在 20Hz / 4Hz 推送里重复排序 */
   private careerBoard: BoardEntry[] = [];
   private readonly rankById = new Map<number, number>();
@@ -727,11 +754,11 @@ export class GameSession {
         });
       },
       onWallet: (packet) => {
-        // 背包与四维以服务端为准；外观 / 每日任务不在这条包里的字段保持本地值
+        // 背包 / 四维 / 装扮以服务端为准；每日任务不在这条包里的字段保持本地值
         this.localEconomy = {
           coins: packet.coins,
           stats: packet.stats,
-          unlockedCosmetics: this.localEconomy?.unlockedCosmetics ?? [],
+          unlockedCosmetics: packet.unlockedCosmetics ?? this.localEconomy?.unlockedCosmetics ?? [],
           inventory: packet.inventory,
           dailyQuests: this.localEconomy?.dailyQuests ?? { day: '', progress: {}, claimed: [] },
         };
@@ -764,6 +791,7 @@ export class GameSession {
       onLoudspeaker: (packet) => this.callbacks.onLoudspeaker?.(packet),
       onShoutReject: (packet) => this.callbacks.onShoutReject?.(packet),
       onItemReject: (packet) => this.callbacks.onItemReject?.(packet),
+      onInteractReject: (packet) => this.callbacks.onInteractReject?.(packet),
       onWorkResult: (packet) => {
         // 金额由服务端算：本地只在角色头顶飘一条 +N
         this.renderer.showCoinFloat(this.localId, packet.amount);
@@ -984,6 +1012,10 @@ export class GameSession {
     this.likesById.set(packet.targetId, packet.likes);
     if ((packet.flags & LIKE_FLAG_SELF) !== 0) this.likedTargets.add(packet.targetId);
     if (packet.targetId === this.localId) this.localLikes = packet.likes;
+    // 世界内反馈（ADR-0105）：服务端已把这条包广播给目标与视野内所有人，
+    // 每块屏幕都该看见「有人被点了赞」，而不是只有面板里的数字悄悄 +1
+    const eid = this.ecs.get(packet.targetId);
+    if (eid) this.renderer.showFloatText(Position.x[eid]!, Position.y[eid]!, '赞 +1');
     // 与榜单同一条纪律：状态留在会话里，通知主线程去刷新对应的 UI
     this.callbacks.onLike?.(packet);
   }
@@ -1299,29 +1331,40 @@ export class GameSession {
    * 两者相距 272px，不会出现两条提示抢位。
    */
   private updateSeatHint(eid: number): void {
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    const direction = Motion.direction[eid]! as Direction;
     if (this.localSeat !== 0) {
+      // 先走与 F 完全相同的热区 / 场所 / 陈设判定；座位专属文案只做兜底。
+      // 这样坐在工位椅上靠近茶台时，提示与按 F 的结果不会再各说各话。
+      const hinted = selectContextHint(x, y, direction, {
+        isFreeSeat: (id) => !this.seatOwner.has(id),
+        propOut: this.interactTarget,
+        spotOut: this.interiorTarget,
+        seatId: this.localSeat,
+        roomId: this.inRoom ? 1 : 0,
+        roomSlot: this.roomSlot,
+        redPacketNear: this.nearestRedPacketIndex(x, y, WORLD_EVENT.RedPacketPickRange) >= 0,
+      });
+      if (hinted) {
+        this.contextHint = hinted;
+        this.publishHint();
+        return;
+      }
       const group = seatById(this.localSeat)?.group ?? null;
       if (isWorkDeskSeat(this.localSeat)) {
-        // 工位上坐着时 F 就是开工（ADR-0088），「移动即可起身」在这里是最没用的一句话
         this.contextHint = HINT.work;
       } else if (group !== null && diceTableByGroup(group) !== undefined) {
-        // 赌桌圆凳：坐下即入局（ADR-0093），面板被手动关掉后按 F 还能再开
         this.contextHint = HINT.dice;
       } else if (isTheaterSeat(this.localSeat)) {
-        // 影厅座椅：坐下后 F 就是换频道（纯客户端切画面）
         this.contextHint = HINT.theater;
       } else if (isMeetingSeat(this.localSeat)) {
         this.contextHint = HINT.meeting;
-      } else if (isPavilionSeat(this.localSeat)) {
-        this.contextHint = HINT.pavilion;
       } else {
         // 观战长椅上坐下不是「只能起身」：这里正是押注入口（ADR-0087）
         this.contextHint = group === RING_BENCH_SEAT_GROUP ? HINT.arenaBet : '移动即可起身';
       }
     } else {
-      const x = Position.x[eid]!;
-      const y = Position.y[eid]!;
-      const direction = Motion.direction[eid]! as Direction;
       // 擂台提示独立于设施优先级：场边只有这一条路能进去，不能被别的感应圈顶掉
       this.contextHint = isNearRing(x, y)
         ? this.ringHint()
@@ -1333,6 +1376,7 @@ export class GameSession {
             seatId: this.localSeat,
             roomId: this.inRoom ? 1 : 0,
             roomSlot: this.roomSlot,
+            redPacketNear: this.nearestRedPacketIndex(x, y, WORLD_EVENT.RedPacketPickRange) >= 0,
           });
     }
     this.publishHint();
@@ -1526,6 +1570,8 @@ export class GameSession {
     // 重连后前端可能还挂着上一座园区的旧文案：这里主动清一次
     this.callbacks.onHint(null);
     this.interactAt = 0;
+    this.lastEventClaimAt = 0;
+    this.autoPickAt = 0;
     this.lieAt = 0;
     this.snoreAt = 0;
     this.prayAt = -1;
@@ -1831,35 +1877,49 @@ export class GameSession {
     }
     const x = Position.x[eid]!;
     const y = Position.y[eid]!;
+    const direction = Motion.direction[eid]! as Direction;
     // 红包雨优先于一切热区：站在红包上按 F 一定是抢钱，不该先弹面板（ADR-0088）
-    if (
-      this.pickRedPacket(
-        this.nearestRedPacketIndex(x, y, WORLD_EVENT.RedPacketPickRange),
-      )
-    ) {
-      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+    const redPacket = this.nearestRedPacketIndex(x, y, WORLD_EVENT.RedPacketPickRange);
+    if (redPacket >= 0) {
+      if (this.pickRedPacket(redPacket)) {
+        this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+      } else {
+        this.showHint('抢红包太快了，稍等一下');
+      }
       return;
     }
-    // 八角笼报名 / 取消 / 领奖离场要读阶段与名额，仍由会话层裁决；
-    // 放在最前是为了不让设施感应圈抢走 F
-    if (isNearRing(x, y)) {
+    // 坐在场所座位上：会议室 / 影厅 / 凉亭的动作优先于旁边设施，与提示条同一把尺
+    if (this.localSeat !== 0) {
+      const seatedVenue = venueSpotAt(x, y, this.localSeat);
+      if (seatedVenue) {
+        this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+        this.activateVenueSpot(seatedVenue, x, y);
+        return;
+      }
+    }
+    // 八角笼报名 / 取消 / 领奖离场要读阶段与名额，仍由会话层裁决。
+    // 只对「没坐下」的人生效：坐在观战长椅上按 F 是押注，不是把自己送进擂台。
+    if (this.localSeat === 0 && isNearRing(x, y)) {
       this.interactRing();
       return;
     }
-    // 指路牌：只展开导览卡，纯客户端（与牛马榜 / 放假告示板同口径，不发包）
-    if (isNearDirectory(x, y)) {
-      this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
-      this.callbacks.onDirectoryOpen?.();
-      return;
-    }
-    // 其余 F 类互动统一查 `WORLD_HOTSPOTS`（与提示条同一张表、同一个优先级）
-    const def = nearestHotspotOfKinds(x, y, HOTSPOT_PRIORITY, (candidate) => {
+    // 其余 F 类互动统一查 `WORLD_HOTSPOTS`（与提示条同一张表、同一个优先级）。
+    // 坐在自己座位上时，匹配座位的热区优先，不会被旁边的茶台 / 供案抢走。
+    const def = hotspotAtForSeat(x, y, this.localSeat, (candidate) => {
       if (candidate.kind === 'ring') return false;
-      // 入座类热区（赌桌 / 长椅 / 工位）不再过滤：没坐上时下面各自给出「先坐下」
+      // 与提示条同一把尺：背对放假告示板时 F 不打开，提示也不会出现
+      if (candidate.kind === 'bulletin') return facesBulletin(x, y, direction);
       return true;
     });
     if (!def) {
-      // 弱交互场所（会议室 / 影音室 / 摸鱼亭 / 游乐园打卡点）：纯客户端演出，
+      // 指路牌：只展开导览卡，纯客户端（与牛马榜 / 放假告示板同口径，不发包）。
+      // 排在热区之后，与提示条顺序一致；牌旁若真叠了互动，F 仍先给互动。
+      if (isNearDirectory(x, y)) {
+        this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
+        this.callbacks.onDirectoryOpen?.();
+        return;
+      }
+      // 弱交互场所（会议室 / 影音室 / 游乐园打卡点）：纯客户端演出，
       // 排在陈设与设施之前——坐对了椅子，按 F 就是要开会 / 换台，不该被旁边的咖啡机截走
       const venueSpot = venueSpotAt(x, y, this.localSeat);
       if (venueSpot) {
@@ -1951,8 +2011,7 @@ export class GameSession {
    * 弱交互场所的一次性 F 反馈（**纯客户端**，不发包、不进服务端状态）：
    * - 会议室：职场黑话气泡；
    * - 影音室：本地换台 + 瞬时提示「频道：xxx」；
-   * - 游乐园：头顶相机闪光 + 童年回忆气泡；
-   * - 摸鱼亭：禅意气泡。
+   * - 游乐园：头顶相机闪光 + 童年回忆气泡。
    */
   private activateVenueSpot(spot: VenueSpot, x: number, y: number): void {
     switch (spot.kind) {
@@ -1972,8 +2031,8 @@ export class GameSession {
         this.venueLineCount += 1;
         return;
       default:
-        this.renderer.showBubble(this.localId, pickVenueLine(ZEN_LINES, this.venueLineCount));
-        this.venueLineCount += 1;
+        // 新增本地点还没写专属演出时什么都不做，避免借用别处的台词
+        return;
     }
   }
 
@@ -2039,23 +2098,45 @@ export class GameSession {
   }
 
   /**
-   * 老板血量（ADR-0070）：入场快照、每次发泄结算与跨日重置共用这一条包。
+   * 老板血量（ADR-0070 / ADR-0105）：入场快照、每次发泄结算与跨日重置共用这一条包。
+   *
    * 渲染层自己按 hp 切换倒地状态，这里只负责转发与「是不是自己踹倒的」判定。
-   * 抖动挂在 attackerId 上而不是本地出招瞬间：服务端没判中就不该抖，否则玩家会以为打到了。
+   * 抖动挂在服务端归因上而不是本地出招瞬间：服务端没判中就不该抖，否则玩家会以为打到了；
+   * 反过来，**别人踢中也要抖**——旁观者得看得见有人在打老板，不能只剩血条数字在动。
    */
   private handleBoss(packet: BossPacket): void {
+    const feedback = bossHitFeedback(packet, this.localId, this.lastBossHp);
+    this.lastBossHp = packet.hp;
     this.renderer.setBossHp(packet.hp);
-    const byLocal = packet.attackerId !== 0 && packet.attackerId === this.localId;
-    if (byLocal) {
+
+    if (feedback.hit) {
       this.renderer.flashBossHit();
-      // 钝击音才在结算后补：10000 点血要踢很久，每脚都该听到「砰」而不是破空声
-      this.emitAudio({ kind: 'vent', x: BOSS.x, y: BOSS.y, hit: true, local: true });
+      // 钝击音对所有人都发：`local` 只决定走哪一档 90ms 节流，音量按声源距离衰减
+      this.emitAudio({ kind: 'vent', x: BOSS.x, y: BOSS.y, hit: true, local: feedback.byLocal });
+      // 伤害数字按窗口合并，20Hz 连击不会让每个名额都重建一次 Text
+      this.bossDamage += feedback.damage;
+      this.flushBossDamage();
     }
+
     if (packet.reset) {
+      // 跨日回满：还没飘出的旧伤害一并作废，别把昨天的数字带进新的一天
+      this.bossDamage = 0;
       this.callbacks.onBossReset?.();
       return;
     }
-    if (packet.died) this.callbacks.onBossDown?.(byLocal);
+    if (packet.died) this.callbacks.onBossDown?.(feedback.byLocal);
+  }
+
+  /**
+   * 把攒下的老板伤害交给渲染层：合并窗口没到就继续攒，到期一次飘出。
+   *
+   * 每帧都会调用（伤害为 0 时只是一个布尔判断），保证「最后一脚」不用等下一次命中。
+   */
+  private flushBossDamage(): void {
+    if (this.bossDamage <= 0 || this.elapsed < this.bossDamageReadyAt) return;
+    this.renderer.showBossDamage(this.bossDamage);
+    this.bossDamage = 0;
+    this.bossDamageReadyAt = this.elapsed + BOSS_DAMAGE_MERGE_MS;
   }
 
   /**
@@ -2117,6 +2198,9 @@ export class GameSession {
    */
   private pickRedPacket(index: number): boolean {
     if (index < 0) return false;
+    // 本地隐藏红包之前先过服务端同一道超频闸门：否则会出现「红包没了、钱没到」
+    if (this.elapsed - this.lastEventClaimAt < EVENT_CLAIM_INTERVAL_MS) return false;
+    this.lastEventClaimAt = this.elapsed;
     this.claimedPackets.add(index);
     this.renderer.claimRedPacket(index);
     this.net?.sendEventClaim(index);
@@ -2130,7 +2214,7 @@ export class GameSession {
     if (this.elapsed < this.autoPickAt) return;
     const index = this.nearestRedPacketIndex(Position.x[eid]!, Position.y[eid]!, 34);
     if (index < 0) return;
-    this.autoPickAt = this.elapsed + 400;
+    this.autoPickAt = this.elapsed + EVENT_CLAIM_INTERVAL_MS;
     this.pickRedPacket(index);
   }
 
@@ -2250,13 +2334,14 @@ export class GameSession {
     if (this.ringSlotOf(this.ring) >= 0) {
       if (this.ring?.phase === RING_PHASE.Waiting) {
         this.net?.sendRingLeave();
-        this.showHint('已取消报名，回到场边');
+        // 等服务端快照确认；被拒时 onInteractReject 会给出原因
+        this.showHint('正在取消报名…');
         return;
       }
       if (this.ring?.phase === RING_PHASE.Award) {
         // 名次与奖牌早已随颁奖首包入账，离场只是把人送回出口（ADR-0076）
         this.net?.sendRingLeave();
-        this.showHint('已领奖，回到场边');
+        this.showHint('正在离场…');
         return;
       }
       this.showHint('比赛已经开始，等这局结束就能出去');
@@ -2273,7 +2358,8 @@ export class GameSession {
       }
     }
     this.net?.sendRingEnter();
-    this.showHint(this.ring && this.ring.members.length > 0 ? '已报名，等待第 2 位挑战者' : '已报名，正在传送入场');
+    // 报名费 / 容量 / 阶段都以服务端为准：先显示「报名中」，被拒时再由拒绝包说明原因
+    this.showHint('报名中…');
   }
 
   // ---- 牛马币互动（ADR-0082 / ADR-0083）：只发意图，裁决全在服务端 ----
@@ -2447,8 +2533,15 @@ export class GameSession {
    */
   private handleJail(packet: JailPacket): void {
     if (!packet.self) {
-      // 旁人只看到被拖者头顶的抗议气泡，不锁自己的输入
-      if (packet.phase === JAIL_PHASE.Escort) {
+      // 旁人只看到头顶气泡，不锁自己的输入
+      if (packet.phase === JAIL_PHASE.Dispatch) {
+        // 派单时保安可能还在视野外：挂给当事人，等保安进了视野再换成保安头顶
+        if (packet.guardId !== 0 && this.renderer.hasEntity(packet.guardId)) {
+          this.renderer.showBubble(packet.guardId, '保安来了！');
+        } else {
+          this.renderer.showBubble(packet.entityId, '被保安盯上了');
+        }
+      } else if (packet.phase === JAIL_PHASE.Escort) {
         this.renderer.showBubble(packet.entityId, '不许色色！');
       }
       return;
@@ -2986,6 +3079,8 @@ export class GameSession {
     }
 
     this.renderer.tickBubbles(dtMs);
+    // 老板伤害的合并窗口到期就飘出：不依赖下一次命中，最后一脚也能准时显示
+    this.flushBossDamage();
 
     if (localEid) {
       this.seatHintAt += dtMs;

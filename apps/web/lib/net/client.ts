@@ -48,6 +48,7 @@ import {
   decodeEventClaimResult,
   decodeArenaPool,
   decodeApartmentPeek,
+  decodeInteractReject,
   encodeDiceBet,
   encodeWorkClaim,
   encodeQuestClaim,
@@ -125,6 +126,7 @@ import {
   type ApartmentPeekPacket,
   type BossShockPacket,
   type EventClaimResult,
+  type InteractRejectPacket,
   type QuestStatePacket,
   type WorkResultPacket,
   type WorldEventPacket,
@@ -190,6 +192,8 @@ export interface NetHandlers {
   onArenaPool?(packet: ArenaPoolPacket): void;
   /** 公寓窗口探头全量快照：谁在哪栋哪个窗口 */
   onApartmentPeek?(packet: ApartmentPeekPacket): void;
+  /** 互动被拒：只带动作与原因编号，客户端映射成中文，不再“点了没反应” */
+  onInteractReject?(packet: InteractRejectPacket): void;
   /** 座位占用变化（入场时为全量快照，之后为增量） */
   onSeatState(entries: SeatStateEntry[]): void;
   onPing(rtt: number): void;
@@ -303,6 +307,13 @@ export class NetClient {
    * Worker 里读不到 localStorage，所以由 init 消息带进来；主线程回退时才自己生成。
    */
   private readonly deviceId: string;
+  /**
+   * 单包处理失败次数（按 opcode 累计）。
+   *
+   * 同一 opcode 只在首包打完整堆栈：坏包按 tick 到达时，每包一条日志会把
+   * Worker 主循环写成 IO 热点，排查时反而看不到真正的那一条（ADR-0102）。
+   */
+  private readonly packetErrors = new Map<number, number>();
 
   setEntityId(id: number): void {
     this.selfId = id;
@@ -419,7 +430,28 @@ export class NetClient {
     };
   }
 
+  /**
+   * 收包边界（ADR-0102）：单条报文处理失败只丢弃这一条，不冒泡。
+   *
+   * NetClient 在渲染 Worker 里跑，未捕获异常会被 `game.worker.ts` 的全局
+   * `error` 监听升级成 `fatal`，主线程据此把 Worker 判成渲染崩溃、永久降级
+   * 主线程并弹红条。一条包读不懂（或它的回调抛错）不该有这个连带后果。
+   */
   private handle(data: Uint8Array): void {
+    try {
+      this.dispatch(data);
+    } catch (error) {
+      this.reportPacketError(data[0] ?? 0, error);
+    }
+  }
+
+  private reportPacketError(op: number, error: unknown): void {
+    const seen = this.packetErrors.get(op) ?? 0;
+    this.packetErrors.set(op, seen + 1);
+    if (seen === 0) console.error(`[net] 0x${op.toString(16)} 收包处理失败，已丢弃该包`, error);
+  }
+
+  private dispatch(data: Uint8Array): void {
     switch (data[0]) {
       case OpCode.S2C_WELCOME: {
         const packet = decodeWelcome(data);
@@ -563,6 +595,9 @@ export class NetClient {
         break;
       case OpCode.S2C_APARTMENT_PEEK:
         this.handlers.onApartmentPeek?.(decodeApartmentPeek(data));
+        break;
+      case OpCode.S2C_INTERACT_REJECT:
+        this.handlers.onInteractReject?.(decodeInteractReject(data));
         break;
       case OpCode.S2C_WORK_RESULT:
         this.handlers.onWorkResult?.(decodeWorkResult(data));

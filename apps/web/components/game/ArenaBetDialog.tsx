@@ -16,6 +16,8 @@ interface ArenaBetDialogProps {
   pool: ArenaPoolPacket | null;
   ring: RingPacket | null;
   coins: number;
+  /** 是否仍坐在观战长椅上：离座后按钮必须禁用，服务端也会拒 */
+  seated: boolean;
   onClose: () => void;
   onBet: (side: number, amount: number) => void;
 }
@@ -28,7 +30,7 @@ const PRESETS = [10, 50, 200, 500] as const;
  * 只有坐在观战长椅上的玩家能押（服务端按 `seat.group === 'arena-bench'` 复核）；
  * 彩池是双方注额之和，押中一侧按注额比例分走全池，平台不抽水。
  */
-export function ArenaBetDialog({ pool, ring, coins, onClose, onBet }: ArenaBetDialogProps) {
+export function ArenaBetDialog({ pool, ring, coins, seated, onClose, onBet }: ArenaBetDialogProps) {
   const [side, setSide] = useState<number>(RING_SIDE.Red);
   const [amount, setAmount] = useState(50);
   const [custom, setCustom] = useState('');
@@ -139,15 +141,21 @@ export function ArenaBetDialog({ pool, ring, coins, onClose, onBet }: ArenaBetDi
 
         <button
           type="button"
-          disabled={!running || placed || capped > coins}
+          disabled={!seated || !running || placed || capped > coins}
           onClick={() => onBet(side, capped)}
           className={`mt-2 w-full border-2 py-2 text-[12px] font-semibold ${
-            !running || placed || capped > coins
+            !seated || !running || placed || capped > coins
               ? 'cursor-not-allowed border-ink-700 text-mist-500'
               : 'border-mint-500 bg-mint-500/15 text-mint-300 hover:bg-mint-500/25'
           }`}
         >
-          {!running ? '比赛中途开押，等下一场' : placed ? '本场已押注' : `押 ${capped} 币 · ${RING_SIDE_NAME[side]}`}
+          {!seated
+            ? '先坐上观战长椅'
+            : !running
+              ? '比赛中途开押，等下一场'
+              : placed
+                ? '本场已押注'
+                : `押 ${capped} 币 · ${RING_SIDE_NAME[side]}`}
         </button>
       </div>
     </div>

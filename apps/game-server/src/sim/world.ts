@@ -1,5 +1,6 @@
 import { BossRuntime } from './boss';
 import { RingRuntime } from './ring';
+import { Wallet, createEphemeralWallet } from '../economy/wallet';
 import {
   DEFAULT_APPEARANCE,
   DIRECTION,
@@ -11,6 +12,7 @@ import {
   SYNC_FORMAT_LEGACY,
   ByteWriter,
   buildSpawnBody,
+  clampCoins,
   emptyStats,
   encodeCareerSegment,
   packState,
@@ -27,6 +29,14 @@ import {
 } from '@niuma/shared-types';
 
 export class Player {
+  /**
+   * 本次会话绑定的钱包（ADR-0104）。
+   *
+   * 持久化开启时指向 `WalletBook` 里按设备号共享的那一份；匿名 / 回滚模式
+   * 指向一份临时钱包。`coins / stats / inventory / unlockedCosmetics`
+   * 全部是它的访问器，避免出现「Player 上有一份、账本里又有一份」的双真相。
+   */
+  wallet: Wallet = createEphemeralWallet();
   id = 0;
   wsId = 0;
   /**
@@ -141,15 +151,37 @@ export class Player {
    */
   lastVentAt = 0;
 
-  // ---- 牛马币经济（ADR-0082）：永久层在浏览器 localStorage，这里的值是本次进园的权威 ----
+  // ---- 牛马币经济（ADR-0082 / ADR-0104）：值都在 wallet 上，这里只做访问器 ----
   /** 可用余额（已扣除托管中的赌注） */
-  coins = 0;
-  stats: EconomyStats = emptyStats();
-  inventory: Record<string, number> = {};
+  get coins(): number {
+    return this.wallet.coins;
+  }
+  set coins(value: number) {
+    this.wallet.coins = clampCoins(value);
+  }
+  get stats(): EconomyStats {
+    return this.wallet.stats;
+  }
+  set stats(value: EconomyStats) {
+    this.wallet.stats = value;
+  }
+  get inventory(): Record<string, number> {
+    return this.wallet.inventory;
+  }
+  set inventory(value: Record<string, number>) {
+    this.wallet.inventory = value;
+  }
   /** 已解锁的外观件；历史存档里的 `furn:<id>` 记录原样保留但无人读取 */
-  unlockedCosmetics: string[] = [];
-  /** 已冻结赌注：从 coins 扣出但尚未裁决，退款按这个数原路返还 */
-  escrowedCoins = 0;
+  get unlockedCosmetics(): string[] {
+    return this.wallet.unlockedCosmetics;
+  }
+  set unlockedCosmetics(value: string[]) {
+    this.wallet.unlockedCosmetics = value;
+  }
+  /** 已冻结赌注总额（只读；具体分账在 wallet.escrow 里，按玩法 key 隔离） */
+  get escrowedCoins(): number {
+    return this.wallet.escrowTotal();
+  }
   /**
    * 正在参与的互动 id，0 表示空闲。
    *
@@ -199,17 +231,27 @@ export class Player {
   questProgress: Record<number, number> = {};
   questClaimed = new Set<number>();
 
-  /** 进园落位：HELLO 经济段是不可信输入，必须再过一次 sanitize */
+  /**
+   * 进园落位：把一份本地档案灌进临时钱包。
+   *
+   * 只给「没有设备号 / 关闭持久化」的会话用；有服务端账本的会话走 `bindWallet`，
+   * 绝不能再用 HELLO 经济段覆盖账本。
+   */
   applyEconomy(profile: EconomyProfile | undefined): void {
-    const clean = sanitizeEconomyProfile(profile);
-    this.coins = clean.coins;
-    this.stats = clean.stats;
-    this.inventory = clean.inventory;
-    this.unlockedCosmetics = [...clean.unlockedCosmetics];
-    this.escrowedCoins = 0;
+    this.wallet = createEphemeralWallet(profile);
+    this.resetSessionEconomyState();
+  }
+
+  /** 绑定服务端账本里按设备号共享的钱包（ADR-0104） */
+  bindWallet(wallet: Wallet): void {
+    this.wallet = wallet;
+    this.resetSessionEconomyState();
+  }
+
+  /** 本次进园是全新会话：上一局残留的托管 / Buff / 护盾 / 整蛊保护一律不继承 */
+  private resetSessionEconomyState(): void {
     this.busyMatchId = 0;
     this.pendingInviteId = 0;
-    // 本次进园是全新会话：上一局残留的 Buff / 护盾 / 整蛊保护一律不继承
     this.activeBuffs.clear();
     this.trickGuardUntil = 0;
     this.shieldCharges = 0;
@@ -319,6 +361,9 @@ export class Player {
   }
 
   reset(): void {
+    // 必须先换掉钱包引用：下面的 coins / stats 赋值都是访问器，
+    // 晚一步就会写进上一个玩家（或上一份账本）的钱包。
+    this.wallet = createEphemeralWallet();
     this.id = 0;
     this.wsId = 0;
     this.isNpc = false;
@@ -371,7 +416,6 @@ export class Player {
     this.stats = emptyStats();
     this.inventory = {};
     this.unlockedCosmetics = [];
-    this.escrowedCoins = 0;
     this.busyMatchId = 0;
     this.pendingInviteId = 0;
     // 对象池复用：Buff / 护盾 / 整蛊保护必须逐项归零，否则下一个玩家会继承上一个人的贴纸

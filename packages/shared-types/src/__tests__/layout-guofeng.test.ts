@@ -1,20 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { POSE } from '../constants';
 import { pointInPolygon, rectContains } from '../world/geometry';
 import {
   BAMBOO_ZONES,
-  MOPING_PAVILION,
-  MOPING_PAVILION_SOLIDS,
-  PAVILION_CENTER,
   SHRINE_ALTAR,
   SHRINE_ALTAR_SOLID,
   TAIHU_ROCKS,
   TEA_STATION,
   TEA_STATION_SOLID,
   WORLD_LAYOUT,
-  distanceSqToWater,
   isOnLand,
-  seatPose,
 } from '../world/layout';
 
 /**
@@ -33,62 +27,6 @@ function onAnyPath(x: number, y: number): boolean {
 function propsOfKind(kind: string) {
   return WORLD_LAYOUT.props.filter((prop) => prop.kind === kind);
 }
-
-describe('摸鱼亭（八角飞檐凉亭）', () => {
-  it('亭心在陆地上，且离水面至少 120px', () => {
-    expect(isOnLand(PAVILION_CENTER.x, PAVILION_CENTER.y, 70)).toBe(true);
-    expect(distanceSqToWater(PAVILION_CENTER.x, PAVILION_CENTER.y)).toBeGreaterThan(120 * 120);
-  });
-
-  it('八根亭柱都不压路，且不在亭心', () => {
-    expect(MOPING_PAVILION_SOLIDS).toHaveLength(8);
-    for (const column of MOPING_PAVILION_SOLIDS) {
-      const cx = column.x + column.w / 2;
-      const cy = column.y + column.h / 2;
-      expect(onAnyPath(cx, cy)).toBe(false);
-      expect(Math.hypot(cx - PAVILION_CENTER.x, cy - PAVILION_CENTER.y)).toBeGreaterThan(60);
-    }
-  });
-
-  it('亭柱都落在亭子的包围盒里：飞檐外挑，柱子不该跑到檐外', () => {
-    const box = {
-      x: MOPING_PAVILION.x - MOPING_PAVILION.width / 2,
-      y: MOPING_PAVILION.y - MOPING_PAVILION.height,
-      w: MOPING_PAVILION.width,
-      h: MOPING_PAVILION.height,
-    };
-    for (const column of MOPING_PAVILION_SOLIDS) {
-      expect(rectContains(box, column.x + column.w / 2, column.y + column.h / 2)).toBe(true);
-    }
-  });
-
-  it('亭内四张石鼓凳：在亭子里、坐姿、两两间距 > 40', () => {
-    const drumSeats = WORLD_LAYOUT.seats.filter((seat) => seat.kind === 'drum');
-    expect(drumSeats).toHaveLength(4);
-    for (const seat of drumSeats) {
-      expect(seatPose(seat.kind)).toBe(POSE.Sit);
-      expect(Math.hypot(seat.x - PAVILION_CENTER.x, seat.y - PAVILION_CENTER.y)).toBeLessThan(60);
-      expect(onAnyPath(seat.x, seat.y)).toBe(false);
-    }
-    for (let i = 0; i < drumSeats.length; i += 1) {
-      for (let j = i + 1; j < drumSeats.length; j += 1) {
-        const a = drumSeats[i]!;
-        const b = drumSeats[j]!;
-        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(40);
-      }
-    }
-  });
-
-  it('石鼓凳不会陷进亭柱碰撞盒里', () => {
-    for (const seat of WORLD_LAYOUT.seats.filter((item) => item.kind === 'drum')) {
-      for (const column of MOPING_PAVILION_SOLIDS) {
-        const insideX = seat.x > column.x - 9 && seat.x < column.x + column.w + 9;
-        const insideY = seat.y > column.y - 9 && seat.y < column.y + column.h + 9;
-        expect(insideX && insideY).toBe(false);
-      }
-    }
-  });
-});
 
 describe('翠竹林与太湖石', () => {
   it('两片竹林都长在陆地上，且不压路', () => {

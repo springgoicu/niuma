@@ -98,7 +98,7 @@ describe('resolveSpawn', () => {
   it('snaps back to the exact seat when it is still free', () => {
     const seat = WORLD_LAYOUT.seats[0]!;
     const resolved = resolveSpawn(
-      { x: 0, y: 0, direction: DIRECTION.Down, pose: POSE.Sit, seatId: seat.id },
+      { x: seat.x, y: seat.y, direction: DIRECTION.Down, pose: POSE.Sit, seatId: seat.id },
       () => true,
       300,
     );
@@ -140,6 +140,21 @@ describe('resolveSpawn', () => {
     );
     expect(seatById(65000)).toBeUndefined();
     expect(resolved.seat).toBeNull();
+    expect(isStandable(resolved.x, resolved.y)).toBe(true);
+  });
+
+  it('rejects a still-valid seat id that points to a chair far from the reported spot', () => {
+    // ADR-0105：拆掉摸鱼亭四张石鼓凳后，其后座位 id 整体前移 4，
+    // 老存档的 seatId 会指向另一张椅子；上报坐标仍在原亭址，这里必须不认座
+    const seat = WORLD_LAYOUT.seats[0]!;
+    const resolved = resolveSpawn(
+      { x: 5350, y: 4800, direction: DIRECTION.Down, pose: POSE.Sit, seatId: seat.id },
+      () => true,
+      300,
+    );
+    expect(resolved.seat).toBeNull();
+    expect(resolved.x).toBe(5350);
+    expect(resolved.y).toBe(4800);
     expect(isStandable(resolved.x, resolved.y)).toBe(true);
   });
 });

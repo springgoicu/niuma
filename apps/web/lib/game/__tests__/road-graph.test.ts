@@ -55,9 +55,8 @@ describe('路网节点图（ADR-0099）', () => {
       routed += 1;
       expect(path.length).toBeGreaterThan(0);
     }
-    // 摸鱼亭在开阔草地上、身边没有任何路网节点，允许明确交回 A*；
-    // 其余目标都应该能沿路走
-    expect(routed).toBeGreaterThanOrEqual(NAV_TARGETS.length - 1);
+    // 摸鱼亭拆除后，剩下的目标全都在路网走廊的可达范围内
+    expect(routed).toBe(NAV_TARGETS.length);
   });
 
   it('路线逐段可走，且不会把玩家领进屋里', () => {

@@ -15,7 +15,6 @@ import {
   encodeDiceState,
   hotspotById,
   isWithinHotspot,
-  rollDice,
   seatMatchesHotspot,
   splitPool,
   type DicePhase,
@@ -26,14 +25,24 @@ import type { Transport } from './view';
 
 /** 经济端口：彩池结算需要的四个动作，全部由 `EconomyService` 提供 */
 export interface DiceHallPorts {
-  /** 冻结注额（成功才记注） */
-  freeze: (player: Player, amount: number) => boolean;
-  /** 清账（输掉） */
-  clear: (player: Player) => void;
+  /** 冻结注额（成功才记注），key 按「桌 + 玩家」隔离 */
+  freeze: (player: Player, key: string, amount: number) => boolean;
+  /** 清账（输掉），只清这一桌的 key */
+  clear: (player: Player, key: string) => void;
   /** 派彩 */
-  payout: (player: Player, amount: number, reason: number) => void;
+  payout: (player: Player, key: string, amount: number, reason: number) => void;
   /** 原路退还（无人命中 / 平局） */
-  refund: (player: Player) => void;
+  refund: (player: Player, key: string) => void;
+}
+
+/**
+ * 赌桌的托管 key：两张桌各一本账。
+ *
+ * 同一玩家在另一张桌的注额、擂台报名费与 P2P 赌注都在这本账之外，
+ * 任一桌结算不会顺手清掉别的玩法。
+ */
+export function diceEscrowKey(tableId: number, playerId: number): string {
+  return `dice:${tableId === 1 ? 1 : 0}:${Math.max(0, Math.floor(playerId))}`;
 }
 
 interface DiceBet {
@@ -61,7 +70,16 @@ interface TableState {
 export class DiceHallRuntime {
   private readonly tables: TableState[];
 
-  constructor(private readonly ports: DiceHallPorts, now: number) {
+  /**
+   * `random` 只在服务端调用，返回 [0, 1)。默认 `Math.random`；
+   * 单测注入序列即可复现同一局。**局号不再参与骰面**——它随投注包下发，
+   * 用局号推导等于把答案提前告诉改包客户端（ADR-0104）。
+   */
+  constructor(
+    private readonly ports: DiceHallPorts,
+    now: number,
+    private readonly random: () => number = Math.random,
+  ) {
     this.tables = DICE_TABLES.map((spec) => ({
       id: spec.id,
       phase: DICE_PHASE.Betting,
@@ -93,7 +111,7 @@ export class DiceHallRuntime {
     if (!seatMatchesHotspot(hotspot, player.seat)) return false;
     // 距离门：仍要处在这一桌的热区里，防止坐下后远程伪造包
     if (!isWithinHotspot(hotspot, player.x, player.y, HOTSPOT_SERVER_SLACK)) return false;
-    if (!this.ports.freeze(player, stake)) return false;
+    if (!this.ports.freeze(player, diceEscrowKey(table.id, player.id), stake)) return false;
     table.bets.set(player.id, { side, amount: stake });
     return true;
   }
@@ -105,8 +123,8 @@ export class DiceHallRuntime {
       if (now < table.phaseEndsAt) continue;
       changed = true;
       if (table.phase === DICE_PHASE.Betting) {
-        table.dice = rollDice(table.roundId * 7919 + table.id * 104729);
-        table.raid = diceRollGuard(table.roundId * 31 + table.id * 7);
+        table.dice = rollWith(this.random);
+        table.raid = this.random() < DICE_GUARD_RAID_CHANCE;
         table.phase = DICE_PHASE.Rolling;
         table.phaseEndsAt = now + DICE_ROLL_MS;
       } else if (table.phase === DICE_PHASE.Rolling) {
@@ -146,7 +164,7 @@ export class DiceHallRuntime {
       // 命中档位没人押：全额退款，谁也不算输
       for (const [id] of table.bets) {
         const player = world.get(id);
-        if (player) this.ports.refund(player);
+        if (player) this.ports.refund(player, diceEscrowKey(table.id, id));
       }
       table.bets.clear();
       return;
@@ -158,12 +176,17 @@ export class DiceHallRuntime {
       if (!player) continue;
       // 保安查岗：本局命中的彩池抽走 5%
       const take = table.raid ? Math.floor(entry.amount * DICE_RAID_TAKE) : 0;
-      this.ports.payout(player, entry.amount - take, WALLET_REASON.DiceWin);
+      this.ports.payout(
+        player,
+        diceEscrowKey(table.id, entry.id),
+        entry.amount - take,
+        WALLET_REASON.DiceWin,
+      );
     }
     for (const [id] of table.bets) {
       if (winnerIds.has(id)) continue;
       const player = world.get(id);
-      if (player) this.ports.clear(player);
+      if (player) this.ports.clear(player, diceEscrowKey(table.id, id));
     }
     table.bets.clear();
     void now;
@@ -178,22 +201,26 @@ export class DiceHallRuntime {
         phase: table.phase,
         remainingMs: Math.max(0, table.phaseEndsAt - now),
         roundId: table.roundId,
-        dice: table.phase === DICE_PHASE.Betting ? ([0, 0, 0] as const) : (table.dice as [number, number, number]),
+        // 只有亮牌期才下发点数与查岗：Rolling 阶段发出去等于把 1.5s 悬念提前揭晓
+        dice:
+          table.phase === DICE_PHASE.Reveal
+            ? (table.dice as [number, number, number])
+            : ([0, 0, 0] as const),
         totalPot: sumBets(table.bets),
         mySide: own ? own.side : -1,
         myBet: own ? own.amount : 0,
-        raid: table.raid,
+        raid: table.phase === DICE_PHASE.Reveal ? table.raid : false,
       };
     });
   }
 
-  /** 断线清理：把该玩家未结算的注额原路退回 */
+  /** 断线清理：把该玩家未结算的注额原路退回（只退这一桌的 key） */
   onDisconnect(playerId: number, world: World): void {
     for (const table of this.tables) {
       if (!table.bets.has(playerId)) continue;
       table.bets.delete(playerId);
       const player = world.get(playerId);
-      if (player) this.ports.refund(player);
+      if (player) this.ports.refund(player, diceEscrowKey(table.id, playerId));
     }
   }
 }
@@ -204,10 +231,14 @@ function sumBets(bets: ReadonlyMap<number, DiceBet>): number {
   return total;
 }
 
-/** 查岗掷骰：用整数哈希而不是 Math.random，便于测试复现 */
-function diceRollGuard(seed: number): boolean {
-  const mixed = (Math.imul(seed | 0, 0x85ebca6b) ^ 0x27d4eb2f) >>> 0;
-  return mixed % 10_000 < Math.round(DICE_GUARD_RAID_CHANCE * 10_000);
+/** 三颗 1–6：只读注入的随机源，不从局号推导 */
+function rollWith(random: () => number): [number, number, number] {
+  const next = (): number => {
+    const value = random();
+    const normalized = Number.isFinite(value) ? Math.min(0.999_999, Math.max(0, value)) : 0;
+    return Math.floor(normalized * 6) + 1;
+  };
+  return [next(), next(), next()];
 }
 
 /** 广播给所有在线连接：一包两张桌，按人填自己的注额 */

@@ -49,7 +49,8 @@ export function DiceHallDialog({ table, dice, coins, onClose, onBet }: DiceHallD
   const capped = Math.max(DICE_MIN_BET, Math.min(DICE_MAX_BET, Math.floor(amount)));
   const affordable = capped <= coins;
   const seconds = info ? Math.ceil(info.remainingMs / 1000) : 0;
-  const revealed = info !== null && info.phase !== DICE_PHASE.Betting && info.dice.every((v) => v > 0);
+  // 服务端只在亮牌期下发点数；这里再按阶段收一次口，Rolling 阶段不提前揭晓
+  const revealed = info !== null && info.phase === DICE_PHASE.Reveal && info.dice.every((v) => v > 0);
 
   return (
     <div className="pointer-events-auto fixed inset-0 z-50 flex items-end justify-center bg-black/45 px-4 pb-24 sm:items-center sm:pb-0">

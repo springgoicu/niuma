@@ -23,7 +23,6 @@ export type VenueId =
   | 'plaza'
   /** 迎宾拱门门前的迎宾毯（ADR-0097 的地标，配色沿用拱门奶油 + 薄荷） */
   | 'arch'
-  | 'pavilion'
   | 'shrine'
   | 'tea'
   | 'diceHall'
@@ -63,8 +62,6 @@ export const VENUE_COLORS: Record<VenueId, VenueColors> = {
   plaza: { main: 0xbbb2a0, alt: 0xc6bdaa, seam: 0x8f8574, accent: 0xffe49a, glow: 0xffd08a },
   /** 迎宾拱门迎宾毯：奶油底 + 薄荷边，与 welcome.ts 的招牌同族（不与 plaza 的暖黄撞色） */
   arch: { main: 0xe4d8bd, alt: 0xd6c9ad, seam: 0x8f8574, accent: 0x8fe3c7, glow: 0xffd08a },
-  /** 木构凉亭：原木地面 + 白漆栏杆（ADR-0096） */
-  pavilion: { main: 0xc9a878, alt: 0xbb9a6c, seam: 0x96754e, accent: 0xf3ede1, glow: 0xffc98a },
   /** 石砌神龛：暖灰石地 + 铜件点缀（ADR-0096） */
   shrine: { main: 0xcfc7b6, alt: 0xc0b8a6, seam: 0x9a9284, accent: 0xc9a14a, glow: 0xffc98a },
   tea: { main: 0xd8b184, alt: 0xc79c6c, seam: 0xa87f52, accent: 0x8fbf7a, glow: 0xffc98a },
@@ -85,7 +82,7 @@ export const VENUE_SHADOW = 0x1e2846;
 /**
  * 欧美小镇材料色板（ADR-0096）。
  *
- * 门架、凉亭、神龛、饮品台、院门牌匾共用一份，理由与 `VENUE_COLORS` 相同：
+ * 门牌、凉亭、神龛、饮品台、院门牌匾共用一份，理由与 `VENUE_COLORS` 相同：
  * 同一根木柱会被三处绘制代码取色，各写一份十六进制必然漂。取色纪律照旧：
  * 描边取同色相压暗（`outlineOf`），不写纯黑；铁件用带蓝相的深灰，保持冷调。
  */

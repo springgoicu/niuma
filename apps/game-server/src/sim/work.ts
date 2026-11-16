@@ -27,30 +27,39 @@ export interface WorkClaimOutcome {
   night: boolean;
 }
 
+/** 搬砖被拒的原因：分发层据此发 `S2C_INTERACT_REJECT`，不再静默丢弃 */
+export type WorkClaimFailure = 'busy' | 'cooldown' | 'notSeated' | 'far' | 'unknown';
+
+export type WorkClaimResult =
+  | { ok: true; outcome: WorkClaimOutcome }
+  | { ok: false; reason: WorkClaimFailure };
+
 export function resolveWorkClaim(
   player: Player,
   now: number,
   hour: number,
   roll: number,
-): WorkClaimOutcome | null {
-  if (player.incapacitated || now < player.stunUntil) return null;
-  if (now - player.lastWorkClaimAt < WORK_REWARD.MinGapMs) return null;
+): WorkClaimResult {
+  if (player.incapacitated || now < player.stunUntil) return { ok: false, reason: 'busy' };
+  if (now - player.lastWorkClaimAt < WORK_REWARD.MinGapMs) return { ok: false, reason: 'cooldown' };
   const deskIndex = workDeskIndexOfSeat(player.seat);
-  if (deskIndex < 0) return null;
+  if (deskIndex < 0) return { ok: false, reason: 'notSeated' };
   const hotspot = hotspotById(workDeskHotspotId(deskIndex));
-  if (!hotspot) return null;
+  if (!hotspot) return { ok: false, reason: 'unknown' };
   // 入座门：必须是「坐在这一桌的工位上」，与赌桌 / 观战长椅同一套判定
-  if (!seatMatchesHotspot(hotspot, player.seat)) return null;
+  if (!seatMatchesHotspot(hotspot, player.seat)) return { ok: false, reason: 'notSeated' };
   // 与其它热区包同一把尺子：半径 + 网络延迟余量
-  if (!isWithinHotspot(hotspot, player.x, player.y, HOTSPOT_SERVER_SLACK)) return null;
+  if (!isWithinHotspot(hotspot, player.x, player.y, HOTSPOT_SERVER_SLACK)) {
+    return { ok: false, reason: 'far' };
+  }
 
   const night = isNightShift(hour);
   const level = Math.max(0, Math.min(10, Math.floor(player.stats.workEffLv) || 0));
   const amount = workPayout(roll, level, night);
-  if (amount <= 0) return null;
+  if (amount <= 0) return { ok: false, reason: 'unknown' };
   const effMul = 1 + WORK_REWARD.PerEffLv * level;
   const mult = Math.round(effMul * (night ? WORK_REWARD.NightMul : 1) * 10);
 
   player.lastWorkClaimAt = now;
-  return { amount, mult, night };
+  return { ok: true, outcome: { amount, mult, night } };
 }

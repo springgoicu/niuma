@@ -36,6 +36,9 @@ export function stepFollow(
   const guard = agent.player;
   if (now >= task.until) return 'done';
 
+  // 昏迷送医期间挂着任务不动（ADR-0106）：到期仍按上面的 until 收工
+  if (guard.incapacitated) return null;
+
   // 被创飞：任务保留，躺到硬直结束再继续跟；与巡逻同一个优先级
   if (now < guard.stunUntil) return null;
   if (guard.pose === POSE.Lie) {

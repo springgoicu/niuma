@@ -7,6 +7,15 @@ import {
 import type { Player, World } from './world';
 import type { Transport } from './view';
 
+/** 报名费的托管 key：按玩家实体分账，离场退费不会误伤别人或自己的注额 */
+export function ringFeeKey(playerId: number): string {
+  return `ring:${Math.max(0, Math.floor(playerId))}`;
+}
+/** 观战押注的托管 key：同样按玩家实体分账 */
+export function ringBetKey(playerId: number): string {
+  return `ring:bet:${Math.max(0, Math.floor(playerId))}`;
+}
+
 interface RingMember {
   id: number;
   name: string;
@@ -18,6 +27,18 @@ interface RingMember {
   slot: number;
   /** 红 / 蓝两角：先报名的是红方（擂主） */
   side: number;
+  /** 匿名设备号：离线结算 / 奖牌按它入账，空串表示匿名会话 */
+  deviceId: string;
+  /** 报名费（已冻结在 ring 托管 key 上） */
+  fee: number;
+}
+
+/** 一笔需要原路退回的报名费：断线 / 走空时按设备号退，玩家不在线也能退 */
+export interface RingFeeRefund {
+  /** 报名时的实体 id：托管 key 用它分账，离线后仍然有效 */
+  playerId: number;
+  deviceId: string;
+  amount: number;
 }
 
 /** 观战押注：一人一局一注，注额在进表前已由经济层冻结 */
@@ -41,12 +62,32 @@ export interface RingPoolResult {
   payouts: Array<{ id: number; amount: number }>;
   /** 无人押中时全额退款的人 */
   refunds: number[];
+  /** 押错一侧的人：托管要在结算时清账，不能留到下次重启被 refundAllEscrow 退回 */
+  losers: number[];
 }
 
 export type RingEnterFailure = 'already' | 'full' | 'phase' | 'far';
 export type RingEnterResult = { ok: true; started: boolean } | { ok: false; reason: RingEnterFailure };
 export interface RingHitResult { hp: number; eliminated: boolean }
 export interface RingTickResult { changed: boolean; moved: Player[] }
+
+/** 离场结果：只有开打前的离场才退报名费 */
+export interface RingLeaveResult {
+  ok: boolean;
+  refundFee: boolean;
+}
+
+/**
+ * 断线清理结果。
+ *
+ * `abandonedFees` 只在「比赛中两人都断线、这局再也打不完」时非空：
+ * 服务端拿它把报名费按设备号原路退回，避免钱包永久少一笔。
+ */
+export interface RingRemoveResult {
+  removed: boolean;
+  refundFee: boolean;
+  abandonedFees: RingFeeRefund[];
+}
 
 /** 落盘用的名次摘要：只留名字与名次，重放不了战斗过程，也不需要 */
 export interface RingLastMatchState {
@@ -64,11 +105,16 @@ export interface RingSaveState {
 
 /** 结算回调：服务端据此把名次记进匿名档案，测试不传即可 */
 export interface RingSettleEntry {
-  /** 在线实体 id：经济发币按人定位，设备号只用于跨会话战绩聚合 */
+  /** 实体 id：在线时用于发包与传送；离线后可能已不在 world 里 */
   id: number;
+  /** 报名时的实体 id：离线后也不变，托管 key `ring:<playerId>` 用它 */
+  playerId: number;
+  /** 匿名设备号：离线入账 / 奖牌聚合的唯一键，空串表示匿名会话 */
   deviceId: string;
   name: string;
   rank: number;
+  /** 本人在 ring 托管 key 上的报名费，冠军拿全部、其余人清账 */
+  fee: number;
 }
 
 /**
@@ -91,6 +137,13 @@ export class RingRuntime {
   /** 观战押注：`matchId` 变了就整表作废，不允许跨局带注 */
   private readonly bets = new Map<number, RingBet>();
   private betMatchId = 0;
+  /**
+   * 已离场但本局还没结算的报名费。
+   *
+   * 比赛中断线不退款（他可能是被对手打退的），但如果两人都走了，
+   * 这一局再也打不完，服务端要把这些费用原路退回；冠军结算时它们进冠军彩池。
+   */
+  private readonly droppedFees: RingFeeRefund[] = [];
   /** 上一场的彩池结算结果：服务端回调读它入账，下一次开赛清空 */
   lastPool: RingPoolResult | null = null;
   /** 擂主连胜：同一人连续夺冠的次数；键是设备号（重连也算同一个人） */
@@ -123,13 +176,15 @@ export class RingRuntime {
   }
 
   /** 红蓝各一人：第 1 人等待，第 2 人落地启动 120 秒；满员后报名一律判 full。 */
-  enter(player: Player, now: number): RingEnterResult {
+  enter(player: Player, now: number, fee: number): RingEnterResult {
     const verdict = this.canEnter(player);
     if (verdict !== true) return verdict;
     const slot = this.firstFreeSlot();
     this.members.push({
       id: player.id, name: player.name, hp: RING_MAX_HP, enteredAt: now,
       eliminatedAt: null, rank: 0, dealt: 0, slot,
+      deviceId: player.deviceId,
+      fee: Math.max(0, Math.floor(fee)),
       // 先上台的是红方（擂主），第二个挑战者是蓝方
       side: slot === 0 ? RING_SIDE.Red : RING_SIDE.Blue,
     });
@@ -154,21 +209,30 @@ export class RingRuntime {
     return { ok: true, started };
   }
 
-  /** 等待期可以取消报名，颁奖期可以领奖后提前离场；比赛中按「不得离开」拒绝。 */
-  leave(player: Player, now: number): boolean {
-    if (this.phase !== RING_PHASE.Waiting && this.phase !== RING_PHASE.Award) return false;
+  /**
+   * 等待期可以取消报名，颁奖期可以领奖后提前离场；比赛中按「不得离开」拒绝。
+   *
+   * 只有 Waiting 期离场才退报名费：Award 期的名次与奖金已经结算，
+   * 这时候退费就是凭空造币（ADR-0104 修复的原漏洞）。
+   */
+  leave(player: Player, now: number): RingLeaveResult {
+    if (this.phase !== RING_PHASE.Waiting && this.phase !== RING_PHASE.Award) {
+      return { ok: false, refundFee: false };
+    }
     const index = this.members.findIndex((member) => member.id === player.id);
-    if (index < 0) return false;
+    if (index < 0) return { ok: false, refundFee: false };
+    const refundFee = this.phase === RING_PHASE.Waiting;
     this.members.splice(index, 1);
     this.teleport(player, RING_EXIT);
     // 全员走光就直接回空闲：颁奖窗口已经没有意义，再留着会让报名继续被拒
     if (this.members.length === 0) {
       this.phase = RING_PHASE.Idle;
       this.phaseEndsAt = 0;
+      this.droppedFees.length = 0;
     }
     this.lastBroadcastAt = now;
     this.revisionCounter += 1;
-    return true;
+    return { ok: true, refundFee };
   }
 
   /**
@@ -228,6 +292,7 @@ export class RingRuntime {
     const winners = [...this.bets.entries()]
       .filter(([, bet]) => bet.side === winnerSide)
       .map(([id, bet]) => ({ id, amount: bet.amount }));
+    const winnerIds = new Set(winners.map((entry) => entry.id));
     const result: RingPoolResult =
       winners.length === 0
         ? {
@@ -237,6 +302,7 @@ export class RingRuntime {
             winnerSide,
             payouts: [],
             refunds: [...this.bets.keys()],
+            losers: [],
           }
         : {
             matchId: this.matchId,
@@ -245,20 +311,43 @@ export class RingRuntime {
             winnerSide,
             payouts: splitPool(winners, pool),
             refunds: [],
+            losers: [...this.bets.keys()].filter((id) => !winnerIds.has(id)),
           };
     this.bets.clear();
     return result;
   }
 
-  /** 断线清理：不补位、不奖励；走空回 idle，剩 1 人仍让计时跑完。 */
-  removePlayer(id: number, now: number): boolean {
+  /**
+   * 断线清理：不补位、不奖励；走空回 idle，剩 1 人仍让计时跑完。
+   *
+   * - Waiting 期断线：这一局没开打，报名费原路退回；
+   * - Running 期断线：费用留在本局，冠军结算时一并拿走；
+   * - 两人都断线：这局再也打不完，把两人（以及此前断线者）的费用一起退回。
+   */
+  removePlayer(id: number, now: number): RingRemoveResult {
     const index = this.members.findIndex((member) => member.id === id);
-    if (index < 0) return false;
-    this.members.splice(index, 1);
-    if (this.members.length === 0) this.phase = RING_PHASE.Idle;
+    if (index < 0) return { removed: false, refundFee: false, abandonedFees: [] };
+    const [member] = this.members.splice(index, 1);
+    const phaseWhenLeaving = this.phase;
+    if (this.members.length === 0) {
+      this.phase = RING_PHASE.Idle;
+      this.phaseEndsAt = 0;
+    }
     this.lastBroadcastAt = now;
     this.revisionCounter += 1;
-    return true;
+    const fee = member ? { playerId: member.id, deviceId: member.deviceId, amount: member.fee } : null;
+    if (phaseWhenLeaving === RING_PHASE.Waiting) {
+      return { removed: true, refundFee: true, abandonedFees: [] };
+    }
+    if (phaseWhenLeaving === RING_PHASE.Running && fee) {
+      this.droppedFees.push(fee);
+      if (this.members.length === 0) {
+        const abandonedFees = [...this.droppedFees];
+        this.droppedFees.length = 0;
+        return { removed: true, refundFee: false, abandonedFees };
+      }
+    }
+    return { removed: true, refundFee: false, abandonedFees: [] };
   }
 
   /** 落盘快照：局号 + 上一局名次，不包含进行中的名单（重连的人都已不在） */
@@ -359,7 +448,7 @@ export class RingRuntime {
     const championId = ranked[0]?.id ?? 0;
     const champion = this.members.find((member) => member.id === championId);
     const championPlayer = championId !== 0 ? world.get(championId) : undefined;
-    const championKey = championPlayer?.deviceId || `#${championId}`;
+    const championKey = champion?.deviceId || championPlayer?.deviceId || `#${championId}`;
     if (championId !== 0) {
       if (this.streakKey === championKey) this.streak += 1;
       else {
@@ -376,15 +465,32 @@ export class RingRuntime {
       const player = world.get(entry.id);
       const name = player?.name ?? member?.name ?? '';
       if (member) top.push({ name, rank: entry.rank, hp: member.hp });
+      // 结算条目要覆盖离线者：冠军断线也要拿到奖金与奖牌（ADR-0104）
+      settleEntries.push({
+        id: entry.id,
+        playerId: entry.id,
+        deviceId: member?.deviceId ?? player?.deviceId ?? '',
+        name,
+        rank: entry.rank,
+        fee: member?.fee ?? 0,
+      });
       if (!player) continue;
-      // 名次只在前三名有奖台；战绩入账只对有设备号的玩家，匿名者按会话口径处理
-      if (player.deviceId) {
-        settleEntries.push({ id: player.id, deviceId: player.deviceId, name, rank: entry.rank });
-      }
       const slot = RING_PODIUM_SLOTS[entry.rank - 1];
       if (slot) this.teleport(player, slot);
       this.moved.push(player);
     }
+    // 已断线者的报名费仍属本局彩池：冠军拿走，别把它们留在托管里
+    for (const dropped of this.droppedFees) {
+      settleEntries.push({
+        id: 0,
+        playerId: dropped.playerId,
+        deviceId: dropped.deviceId,
+        name: '',
+        rank: 0,
+        fee: dropped.amount,
+      });
+    }
+    this.droppedFees.length = 0;
     this.lastMatch = { matchId: this.matchId, endedAt: now, top };
     this.revisionCounter += 1;
     if (settleEntries.length > 0) this.onSettled?.(settleEntries);

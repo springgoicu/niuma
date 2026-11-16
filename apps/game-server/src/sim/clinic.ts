@@ -139,6 +139,17 @@ export interface ClinicOptions {
  * 移动复用 `resolveMotionInto`，因此墙体、柜台和床沿对救护车同样有效；
  * 8 秒脱困是最后一道保险，任何几何卡死都不会把伤员永久锁在地上。
  */
+/**
+ * 康复后把 NPC 交还给 npc 层（ADR-0106）。
+ *
+ * clinic 只负责调度与康复，不碰巡逻 / 押送状态机，因此用这个窄端口把
+ * 「写回倒地位置 + 续接任务」交还 `npc/director`；端口未注入时就地站起兜底。
+ */
+export interface NpcRestorePort {
+  /** spot 是倒地瞬间记录的坐标；返回 false 表示这个实体不由 npc 层管理 */
+  restore(playerId: number, spot: { x: number; y: number }, now: number): boolean;
+}
+
 export class AmbulanceManager {
   private readonly world: World;
   private readonly grid: SpatialGrid;
@@ -158,6 +169,14 @@ export class AmbulanceManager {
   private readonly nurseSpots: number[] = [];
   private readonly nurseNextWave = [0, 0];
   private nurseWaveUntil = 0;
+  /**
+   * NPC 伤员倒地瞬间的坐标：治疗结束后从这里继续原来的巡逻 / 押送。
+   *
+   * 护士不进来：她们有固定站位，直接走 `resetNurse`。
+   */
+  private readonly npcReturn = new Map<number, { x: number; y: number }>();
+  /** 康复归位端口；`server` 在 npc 层创建之后注入（clinic 构造更早） */
+  private recovery: NpcRestorePort | null = null;
   private seq = 0;
 
   constructor(options: ClinicOptions) {
@@ -216,15 +235,29 @@ export class AmbulanceManager {
   // 受击计数与触发
   // ---------------------------------------------------------------------------
 
+  /** 注入 NPC 康复归位端口：`server` 在 npc 层创建之后调用一次 */
+  setNpcRecovery(port: NpcRestorePort | null): void {
+    this.recovery = port;
+  }
+
   /**
    * 由 `resolveVents` 的命中观察者调用：只处理擂台外的真实命中。
    *
    * 免疫期内不计数（`resolveVents` 会先把这一下判成空放）；
    * 15 秒没有新命中则从 1 重新起算，避免「三次小磕碰跨半小时还算工伤」。
+   *
+   * NPC 一击即倒（ADR-0106）：园区里任何角色被打倒都要走救护链，
+   * 否则打同事、保安、护士只会看到「躺一下又站起来」。真人仍保留
+   * 15 秒 3 次的累计手感，避免混战时被一拳放倒。
    */
   observeHit(attacker: Player, target: Player, now: number): void {
-    if (target.isNpc || target.incapacitated) return;
+    if (target.incapacitated) return;
     if (now < target.immunityUntilMs) return;
+
+    if (target.isNpc) {
+      this.downPlayer(target, now);
+      return;
+    }
 
     const tick = Math.floor(now / TICK_MS);
     if (tick - target.lastHitTick > HIT_WINDOW_TICKS) target.recentHits = 1;
@@ -236,6 +269,10 @@ export class AmbulanceManager {
 
   private downPlayer(player: Player, now: number): void {
     player.recentHits = 0;
+    // NPC 记下倒地瞬间的位置：治疗结束从这里续接巡逻 / 押送（护士走固定站位）
+    if (player.isNpc && player.role !== ENTITY_ROLE_NURSE) {
+      this.npcReturn.set(player.id, { x: player.x, y: player.y });
+    }
     player.incapacitated = true;
     player.carriedBy = 0;
     player.patientState = PATIENT_STATE.Incapacitated;
@@ -512,6 +549,11 @@ export class AmbulanceManager {
       const changes: SeatStateEntry[] = [];
       this.seats.stand(player, changes);
       this.broadcastSeats(changes);
+      // NPC 不走「站到床尾」：归位点由倒地瞬间记录，护士回固定站位（ADR-0106）
+      if (player.isNpc) {
+        this.restoreNpc(player, now, tick);
+        continue;
+      }
       // 从床心站到床尾外侧：床面与床尾护栏都不挡脚，治疗结束不会站在枕头里
       const bedIndex = CLINIC_BED_SEAT_IDS.indexOf(stay.seatId);
       const bed = bedIndex >= 0 ? CLINIC_BEDS[bedIndex] : undefined;
@@ -533,9 +575,45 @@ export class AmbulanceManager {
     }
     player.incapacitated = false;
     player.carriedBy = 0;
+    if (player.isNpc) {
+      this.restoreNpc(player, now, tick);
+      return;
+    }
     player.applyState(player.direction, POSE.Idle, false);
     player.dirty = true;
     this.grid.update(player.id, player.x, player.y);
+    this.grantImmunity(player, now, tick);
+  }
+
+  /**
+   * NPC 康复归位（ADR-0106）：护士回固定站位，其余 NPC 交还 npc 层。
+   *
+   * 端口缺失或实体已不在名册里时退化为原地站起：回位失败也不能把实体
+   * 永久锁在躺姿或病床上。免疫照常发放，否则刚归位就会被再次打飞。
+   */
+  private restoreNpc(player: Player, now: number, tick: number): void {
+    player.carriedBy = 0;
+    player.incapacitated = false;
+    player.stunUntil = 0;
+
+    let restored = false;
+    if (player.role === ENTITY_ROLE_NURSE) {
+      const index = this.nurses.indexOf(player);
+      if (index >= 0) {
+        this.resetNurse(player, this.nurseSpots[index] ?? 0, now);
+        restored = true;
+      }
+    } else {
+      const spot = this.npcReturn.get(player.id);
+      if (spot && this.recovery?.restore(player.id, spot, now)) restored = true;
+    }
+    this.npcReturn.delete(player.id);
+
+    if (!restored) {
+      player.applyState(player.direction, POSE.Idle, false);
+      player.markDirtyIfChanged();
+      if (this.grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+    }
     this.grantImmunity(player, now, tick);
   }
 
@@ -597,11 +675,14 @@ export class AmbulanceManager {
     // 不在这里补一手，被创飞一次就会一直躺在急救站（ADR-0090）
     for (let i = 0; i < this.nurses.length; i += 1) {
       const nurse = this.nurses[i]!;
+      // 昏迷中的护士由救护车接管（ADR-0106）：这里再回位等于从车尾瞬移走
+      if (nurse.incapacitated) continue;
       if (nurse.pose !== POSE.Lie || now < nurse.stunUntil) continue;
       this.resetNurse(nurse, this.nurseSpots[i] ?? 0, now);
     }
     if (now >= this.nurseWaveUntil) {
       for (const nurse of this.nurses) {
+        if (nurse.incapacitated) continue;
         if (!nurse.wave) continue;
         // state 只在 applyState 里重打包：只改字段不发包，远端永远看不到挥手
         nurse.applyState(nurse.direction, nurse.pose, false);
@@ -611,6 +692,7 @@ export class AmbulanceManager {
     for (let i = 0; i < this.nurses.length; i += 1) {
       if (now < this.nurseNextWave[i]!) continue;
       const nurse = this.nurses[i]!;
+      if (nurse.incapacitated) continue;
       nurse.applyState(nurse.direction, nurse.pose, false, false, false, true);
       nurse.dirty = true;
       // 6~10 秒随机再来一次妖艳挥手

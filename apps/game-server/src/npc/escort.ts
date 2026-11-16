@@ -99,6 +99,10 @@ export function stepEscort(
 ): EscortEvent | null {
   const guard = agent.player;
 
+  // 昏迷送医期间整个押送计时挂起（ADR-0106）：restore 会重置 startedAt，
+  // 所以案子不会因为押送员躺在病床上而白白超时。
+  if (guard.incapacitated) return null;
+
   // 超时只看时间，不看保安当前能不能动（ADR-0080）：被踹倒期间也必须照常计时，
   // 否则每帧都从这里提前 return，永远走不到下面的超时分支，任务会停摆到案子上限
   if (task.stage === 'chase' && now - task.startedAt >= ESCORT.CHASE_TIMEOUT_MS) {

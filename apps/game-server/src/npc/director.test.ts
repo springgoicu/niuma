@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { PLAYER_RADIUS, isBlocked } from '@niuma/shared-types';
+import { DEFAULT_APPEARANCE, PLAYER_RADIUS, POSE, isBlocked } from '@niuma/shared-types';
 import { DEFAULT_NPC_CONFIG } from './config';
 import { createNpcDirector } from './director';
+import { NPC_ROLE_GUARD } from './roster';
 import { runTick } from '../sim/tick';
 import type { Transport } from '../sim/view';
 import { World } from '../sim/world';
@@ -108,5 +109,51 @@ describe('NPC 推进', () => {
     expect(Number.isFinite(first.x)).toBe(true);
     expect(Number.isFinite(first.y)).toBe(true);
     expect(isBlocked(first.x, first.y, PLAYER_RADIUS)).toBe(false);
+  });
+});
+
+describe('昏迷送医与康复归位（ADR-0106）', () => {
+  it('昏迷的保安不接押送 / 盯梢派单，康复后恢复接单', () => {
+    const { world, director } = setup(1, 2);
+    director.spawn();
+    const guards = [...world.players.values()].filter((player) => player.role === NPC_ROLE_GUARD);
+    expect(guards.length).toBeGreaterThan(0);
+
+    const now = Date.now();
+    const target = world.create('目标', DEFAULT_APPEARANCE.cow, 12, guards[0]!.x + 20, guards[0]!.y, '', now)!;
+
+    for (const guard of guards) guard.incapacitated = true;
+    expect(director.dispatchEscort(target.id, now)).toBe(0);
+    expect(director.dispatchFollow(target.id, now + 30_000, now)).toBe(0);
+
+    guards[0]!.incapacitated = false;
+    expect(director.dispatchEscort(target.id, now)).toBe(guards[0]!.id);
+  });
+
+  it('康复归位把保安写回倒地点并清掉昏迷与硬直', () => {
+    const { world, director } = setup(1, 2);
+    director.spawn();
+    const guard = [...world.players.values()].find((player) => player.role === NPC_ROLE_GUARD)!;
+    const now = Date.now();
+    const spot = { x: guard.x + 120, y: guard.y + 60 };
+
+    guard.incapacitated = true;
+    guard.stunUntil = now + 60_000;
+    guard.x = 1;
+    guard.y = 1;
+
+    expect(director.restore(guard.id, spot, now)).toBe(true);
+
+    expect(guard.x).toBe(spot.x);
+    expect(guard.y).toBe(spot.y);
+    expect(guard.incapacitated).toBe(false);
+    expect(guard.stunUntil).toBe(0);
+    expect(guard.pose).toBe(POSE.Idle);
+  });
+
+  it('不在名册里的实体归位返回 false，让 clinic 退化为原地站起', () => {
+    const { director } = setup(1, 2);
+    director.spawn();
+    expect(director.restore(9999, { x: 100, y: 100 }, Date.now())).toBe(false);
   });
 });

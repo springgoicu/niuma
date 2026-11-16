@@ -10,7 +10,7 @@
  * - 中央迎宾广场是市政中心，出生点与迎宾拱门不动；
  * - 企业区在西（企业楼：工作区 / 会议室 / 发泄室），服务区在东（卫生间 / 小黑屋 / 急救站），
  *   游乐区在北（赌场亭 / 八角笼 / 游乐园 / 游乐大街），生活区在南（公寓 / 宿舍 / 影音室 / 小院），
- *   景观区是西侧与东南的水景绿地网络（三湖 + 摸鱼亭 + 竹林）；
+ *   景观区是西侧与东南的水景绿地网络（三湖 + 原亭址草地 + 竹林）；
  * - 分区的唯一真相在 `districts.ts`，本文件只做汇总：路网、铺装、树、道具与 `WORLD_LAYOUT`。
  *
  * ADR-0064：海岸线取消，边界改成同一个包围盒的四条直边（矩形陆地）；
@@ -110,12 +110,6 @@ import {
   CLINIC_RECT,
 } from './clinic';
 import {
-  MOPING_PAVILION,
-  MOPING_PAVILION_SOLIDS,
-  PAVILION_RECT,
-  PAVILION_SEATS,
-} from './pavilion';
-import {
   DISTRICTS,
   NAV_ARRIVALS,
   NAV_TARGETS,
@@ -179,16 +173,6 @@ export {
   CLINIC_DROP,
   CLINIC_VEHICLE_ENTRY,
 } from './clinic';
-
-export {
-  MOPING_PAVILION,
-  PAVILION_CENTER,
-  PAVILION_COLUMN_OFFSETS,
-  MOPING_PAVILION_SOLIDS,
-  PAVILION_RECT,
-  PAVILION_SEATS,
-  PAVILION_TABLE,
-} from './pavilion';
 
 export {
   DISTRICTS,
@@ -442,26 +426,11 @@ export const ARCH_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
   },
 ];
 
-/** 企业楼大门：楼东侧走廊口正前方（ADR-0097） */
-const COMPANY_GATE_X = CAMPUS_RECT.x + CAMPUS_RECT.w + 60;
-
-export const WORKROOM_GATE = {
-  x: COMPANY_GATE_X,
-  y: COMPANY_CORRIDOR.y + COMPANY_CORRIDOR.h,
-  width: 132,
-  height: 66,
-} as const;
-
 /**
  * 各处门柱各一盏，挂在**门柱**上而不是门洞正中：
  * 门洞正中那盏正好垂在玩家脸上，且会挡住从门里走出来的人。
  */
 export const DOOR_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
-  {
-    x: COMPANY_GATE_X + 59,
-    hangTop: WORKROOM_GATE.y - 58,
-    depthY: WORKROOM_GATE.y,
-  },
   { x: MEETING_ROOM.x + 390, hangTop: MEETING_ROOM.y + ROOM_H - 58, depthY: MEETING_ROOM.y + ROOM_H },
   { x: LOUNGE.x + 260, hangTop: LOUNGE.y - 58, depthY: LOUNGE.y },
   // 卫生间门洞收窄到 x+150..x+210，宫灯挂在东侧门柱外沿
@@ -472,19 +441,16 @@ export const DOOR_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
  * 场所门牌（ADR-0061 / ADR-0091）。
  *
  * 仓库的墙体是**平铺 10px 色带**（`props.ts` 的 `fillSolidFlat`），没有立面可以挂牌匾，
- * 所以牌匾要么自带牌坊（`frame: 'gate'`），要么在入口立一块小门牌（`frame: 'board'`）。
- * 匾额文案一律取自导览目标的中文名，不在第二处手写场所名。
+ * 所以在入口立一块小门牌。匾额文案一律取自导览目标的中文名，不在第二处手写场所名。
  */
 export interface DoorPlaque {
   readonly id: Exclude<NavTargetId, 'villa1' | 'villa2'>;
   /** 标准中文名，取自 `NAV_TARGETS` */
   readonly text: string;
-  /** 门头中心 x（牌坊 / 门牌的对称轴） */
+  /** 门头中心 x（门牌的对称轴） */
   readonly x: number;
   /** 进 y 排序层的脚底 y（= 门所在的那条线） */
   readonly depthY: number;
-  /** gate：木构门架；board：入口小门牌（ADR-0096） */
-  readonly frame: 'gate' | 'board';
 }
 
 /** 树干碰撞半径：>3 才挡得住人，<14 才能从树缝里穿过去 */
@@ -737,29 +703,20 @@ const LAKES: LakeShape[] = [MOPING_LAKE_POINTS, CHENSI_POND_POINTS, LIANYI_LAKE_
 }));
 
 /**
- * 15 处导览场所的门牌（ADR-0091 / ADR-0097 / ADR-0099）。
+ * 导览场所的门牌（ADR-0091 / ADR-0097 / ADR-0099）。
  *
- * - `gate`：企业楼沿用自建牌坊，匾额换成标准中文名；
- * - `board`：其余各处在入口立一块 60×30 的小门牌，纯装饰、不登记碰撞；
+ * - 各处在入口立一块 60×30 的小门牌，纯装饰、不登记碰撞；
  * - 两栋小院不在表内：院名直接写在院门牌匾上（`villas-view.ts`）。
  *
  * 所有落点都贴在门的侧前方，不压门洞、不挡导览到达点；坐标只从世界常量派生。
  */
 export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
   {
-    id: 'workroom',
-    text: navName('workroom'),
-    x: COMPANY_GATE_X,
-    depthY: WORKROOM_GATE.y,
-    frame: 'gate',
-  },
-  {
     // 会议室门在 x+330..x+390，牌匾贴在门东侧、离南墙 24px（玩家半径 9 不压墙）
     id: 'meeting',
     text: navName('meeting'),
     x: MEETING_ROOM.x + 414,
     depthY: MEETING_ROOM.y + ROOM_H - 24,
-    frame: 'board',
   },
   {
     // 门洞 4750–4810 的西侧，离开北门柱 20px
@@ -767,14 +724,12 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('restroom'),
     x: RESTROOM.x + 120,
     depthY: RESTROOM.y - 16,
-    frame: 'board',
   },
   {
     id: 'lounge',
     text: navName('lounge'),
     x: LOUNGE.x + 240,
     depthY: LOUNGE.y - 16,
-    frame: 'board',
   },
   {
     // 供案西侧 48px：不压 56 宽的案面，也不挡正前方上香的那一步
@@ -782,7 +737,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('shrine'),
     x: SHRINE_ALTAR.x - 48,
     depthY: SHRINE_ALTAR.y + 24,
-    frame: 'board',
   },
   {
     // 南门外东侧草地：离 120 宽的门前铺装 30px，不压围栏缺口
@@ -790,7 +744,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('park'),
     x: PARK_SOUTH_GATE.x + 90,
     depthY: PARK_SOUTH_GATE.y + 20,
-    frame: 'board',
   },
   {
     // 发泄室门内东侧：离北墙 30px，不挡 60px 宽的门口
@@ -798,7 +751,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('bossArena'),
     x: VENT_ROOM.x + 400,
     depthY: VENT_ROOM.y + 30,
-    frame: 'board',
   },
   {
     // 南门外东侧：离门洞中线 84px，避开围栏与两侧观战长椅
@@ -806,7 +758,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('ring'),
     x: RING_SIGNUP.x + 84,
     depthY: RING_ARENA.y + RING_ARENA.h + 12,
-    frame: 'board',
   },
   {
     // 南侧迎宾铺装东半边：不挡中间进亭动线
@@ -814,7 +765,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('diceHall'),
     x: DICE_HALL.x + DICE_HALL.w - 130,
     depthY: DICE_HALL_APRON.y + 14,
-    frame: 'board',
   },
   {
     // 301 栋门口台阶东侧 110px：避开正门热区与立面招牌
@@ -822,7 +772,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('apartment'),
     x: APARTMENT_SPECS[0]!.door.x + 110,
     depthY: APARTMENT_SPECS[0]!.door.y,
-    frame: 'board',
   },
   {
     // ADR-0099：影音室东门，牌匾贴在门前铺装的东端，离到达点 120px
@@ -830,15 +779,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('theater'),
     x: HOME_THEATER.x + HOME_THEATER.w + 60,
     depthY: HOME_THEATER.y + 160,
-    frame: 'board',
-  },
-  {
-    // 摸鱼亭：亭外西南角的草地上，不压八根廊柱与四张石鼓凳
-    id: 'pavilion',
-    text: navName('pavilion'),
-    x: PAVILION_RECT.x - 20,
-    depthY: PAVILION_RECT.y + PAVILION_RECT.h + 12,
-    frame: 'board',
   },
   {
     // 急救站：西侧人行门洞外的铺装西南角，避开围挡与立牌
@@ -846,7 +786,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     text: navName('clinic'),
     x: CLINIC_ACCESS_PAVING.x + 6,
     depthY: CLINIC_ACCESS_PAVING.y + CLINIC_ACCESS_PAVING.h + 18,
-    frame: 'board',
   },
 ];
 
@@ -994,8 +933,6 @@ function isPlantable(x: number, y: number): boolean {
     if (rectContains(rectExpanded(building.rect, 40), x, y)) return false;
   }
   if (rectContains(rectExpanded(AMUSEMENT_PARK, 40), x, y)) return false;
-  // 摸鱼亭：亭柱、石桌与四张石鼓凳都在亭内，树干不能长进亭心
-  if (rectContains(rectExpanded(PAVILION_RECT, 40), x, y)) return false;
   // 护士急救站：站台 + 进站铺装外扩 60，树冠不能压到救护车出入口
   if (rectContains(rectExpanded(CLINIC_RECT, 60), x, y)) return false;
   if (rectContains(rectExpanded(CLINIC_ACCESS_PAVING, 40), x, y)) return false;
@@ -1251,10 +1188,8 @@ const SEAT_DRAFTS: Array<Omit<SeatInstance, 'id'>> = [
   ...WORKSTATIONS.map((station, index) => ({ ...station.seat, kind: 'chair' as const, desk: index })),
   ...CAMPUS_SEATS.map((seat) => ({ ...seat, desk: -1 })),
   ...LOUNGE_SEATS.map((seat) => ({ ...seat, desk: -1 })),
-  // 摸鱼亭四张石鼓凳（ADR-0061）：`drum` 与 `stool` 一样走坐姿，只是外观换成石鼓
-  ...PAVILION_SEATS.map((seat) => ({ ...seat, desk: -1 })),
   // 新增座位一律追加在末尾：本地 `niuma:session:v1` 里存着 seatId，
-  // 插在中间会让既有工位 / 床 / 石鼓凳的 id 整体后移。
+  // 插在中间会让既有工位 / 床的 id 整体后移。
   { ...LOUNGE_COUCH_SECOND, desk: -1 },
   ...THEATER_SEATS.map((seat) => ({ ...seat, desk: -1 })),
 ];
@@ -1480,8 +1415,7 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...PROP_SOLIDS,
     ...HUB_SOLIDS,
     ...CAMPUS_SOLIDS,
-    // 国风地标（ADR-0061）：亭柱、供案底座、茶台底座
-    ...MOPING_PAVILION_SOLIDS,
+    // 国风地标（ADR-0061）：供案底座、茶台底座
     { kind: 'prop', ...SHRINE_ALTAR_SOLID },
     { kind: 'prop', ...TEA_STATION_SOLID },
     // 游乐园器械底座（滑梯塔楼 / 秋千 / 跷跷板 / 旋转木马）

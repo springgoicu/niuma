@@ -12,6 +12,9 @@ import { pickSpawnPoint, type NpcSpot } from './spots';
 import { updateSocial, type NpcSocialContext } from './social';
 import type { EscortEvent } from '../sim/detention';
 
+/** 康复归位后的停顿：与押送收尾一致，让玩家先看到「人站起来了」再继续走 */
+const RESTORE_PAUSE_MS = 600;
+
 /**
  * NPC 门面：服务器只认识 `spawn / update / count / guardCount / updateMs`。
  *
@@ -42,6 +45,12 @@ export interface NpcDirector {
   dispatchFollow(targetId: number, until: number, now: number): number;
   /** 目标断线 / 离开：取消盯梢 */
   cancelFollow(targetId: number): void;
+  /**
+   * 康复归位（ADR-0106）：把被送医的 NPC 写回倒地点，并续接原任务。
+   *
+   * 由 `sim/clinic` 的 `NpcRestorePort` 转发；返回 false 表示这个实体不由本层管理。
+   */
+  restore(playerId: number, spot: NpcSpot, now: number): boolean;
   /** 押送事件出口：server 用它转给 sim/detention，不让 NPC 层认识 Detention */
   setEscortListener(listener: ((event: EscortEvent) => void) | null): void;
 }
@@ -84,7 +93,8 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
       if (agent.escort) continue;
       if (agent.follow) continue;
       if (agent.player.role !== NPC_ROLE_GUARD) continue;
-      // 被发泄踹倒的保安不接单；站起来再说
+      // 昏迷（送医中）与硬直中的保安都不接单；站起来再说
+      if (agent.player.incapacitated) continue;
       if (now < agent.player.stunUntil) continue;
       const dx = agent.player.x - target.x;
       const dy = agent.player.y - target.y;
@@ -143,6 +153,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     for (const agent of agents.values()) {
       if (agent.escort || agent.follow) continue;
       if (agent.player.role !== NPC_ROLE_GUARD) continue;
+      if (agent.player.incapacitated) continue;
       if (now < agent.player.stunUntil) continue;
       const dx = agent.player.x - target.x;
       const dy = agent.player.y - target.y;
@@ -185,6 +196,58 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
       if (agent.follow?.targetId !== targetId) continue;
       finishFollow(agent, now);
     }
+  }
+
+  /**
+   * 康复归位（ADR-0106）：写回倒地位置、复位行为态、续接押送 / 盯梢。
+   *
+   * 重置 `startedAt` 是关键：住院期间押送计时是挂起的，若沿用旧起点，
+   * 回到岗位的第一帧就会被判超时并放人。
+   */
+  function restore(playerId: number, spot: NpcSpot, now: number): boolean {
+    const agent = agents.get(playerId);
+    if (!agent) return false;
+
+    const player = agent.player;
+    player.x = spot.x;
+    player.y = spot.y;
+    // 「康复」由本方法定义：昏迷与硬直都在这一处清干净，调用方不必记得
+    player.incapacitated = false;
+    player.stunUntil = 0;
+    player.carriedBy = 0;
+    player.applyState(player.direction, POSE.Idle, false);
+    player.markDirtyIfChanged();
+    if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+
+    agent.phase = 'pause';
+    agent.pauseMs = RESTORE_PAUSE_MS;
+    agent.pauseUntil = now + RESTORE_PAUSE_MS;
+    agent.lookAt = now + RESTORE_PAUSE_MS;
+    agent.stuckCount = 0;
+    agent.lastProgressAt = now;
+    agent.lastProgressX = player.x;
+    agent.lastProgressY = player.y;
+
+    if (agent.escort) {
+      // 回到追捕起点重新规划：旧路径与拖行截止都留在病床上
+      agent.escort.stage = 'chase';
+      agent.escort.stageUntil = 0;
+      agent.escort.path = [];
+      agent.escort.index = 0;
+      agent.escort.replanAt = now;
+      agent.escort.lastTargetX = player.x;
+      agent.escort.lastTargetY = player.y;
+      agent.escort.startedAt = now;
+      agent.escort.dragDeadlineAt = 0;
+    }
+    if (agent.follow) {
+      agent.follow.path = [];
+      agent.follow.index = 0;
+      agent.follow.replanAt = now;
+      agent.follow.lastTargetX = player.x;
+      agent.follow.lastTargetY = player.y;
+    }
+    return true;
   }
 
   /**
@@ -293,6 +356,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     cancelEscort,
     dispatchFollow,
     cancelFollow,
+    restore,
     setEscortListener(listener) {
       escortListener = listener;
     },

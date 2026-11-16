@@ -35,6 +35,11 @@ export const P2P_PACKET_INTERVAL_MS = 500;
 /** 处理器忘记结算时的兜底：超过 endsAt 这么久就强制退款，绝不锁死玩家 */
 const MATCH_HARD_TIMEOUT_MS = 5_000;
 
+/** 挑战巴士的托管 key：一局一个，结算 / 退款只碰自己，不影响赌桌与擂台 */
+export function p2pEscrowKey(matchId: number): string {
+  return `p2p:${Math.max(0, Math.floor(matchId))}`;
+}
+
 interface PendingInvite {
   id: number;
   from: Player;
@@ -176,16 +181,19 @@ export class ChallengeBus {
       return;
     }
     const economy = this.options.economy;
+    // 先把局号定下来：托管 key 要用它，保证同一局的冻结 / 退款 / 结算只碰自己的 key
+    const matchId = this.nextMatchId++;
+    const escrowKey = p2pEscrowKey(matchId);
     // 0 赌注是合法的「切磋」：没有托管可冻结，直接开赛
     if (invite.wager > 0) {
       // 先冻结发起方；被邀请方余额不足时原路退回，不能留下半场托管
-      if (!economy.freezeEscrow(initiator, invite.wager)) {
+      if (!economy.freezeEscrow(initiator, escrowKey, invite.wager)) {
         this.dropPending(invite);
         this.sendResult(initiator, invite.id, false, P2P_INVITE_REASON.NotEnoughCoins);
         return;
       }
-      if (!economy.freezeEscrow(responder, invite.wager)) {
-        economy.refundEscrow(initiator);
+      if (!economy.freezeEscrow(responder, escrowKey, invite.wager)) {
+        economy.refundEscrow(initiator, escrowKey);
         this.dropPending(invite);
         this.sendResult(initiator, invite.id, false, P2P_INVITE_REASON.NotEnoughCoins);
         this.sendResult(responder, invite.id, false, P2P_INVITE_REASON.NotEnoughCoins);
@@ -197,7 +205,7 @@ export class ChallengeBus {
 
     const handler = this.handlers.get(invite.gameType);
     const match: ActiveMatch = {
-      id: this.nextMatchId++,
+      id: matchId,
       gameType: invite.gameType,
       wager: invite.wager,
       extra: invite.extra,
@@ -380,13 +388,21 @@ export class ChallengeBus {
     // 空赌注不产生任何钱包变动，避免无意义的快照风暴
     if (match.wager > 0) {
       const pot = match.wager * 2;
+      const key = p2pEscrowKey(match.id);
       if (winnerId === match.a.id) {
-        economy.settleEscrow(match.a, match.b, this.payoutOf(match, pot));
+        // 缺一方托管时不按 pot 凭空发钱，改为各退各的 key
+        if (economy.settleEscrow(match.a, match.b, key, this.payoutOf(match, pot)) === 0) {
+          economy.refundEscrow(match.a, key);
+          economy.refundEscrow(match.b, key);
+        }
       } else if (winnerId === match.b.id) {
-        economy.settleEscrow(match.b, match.a, this.payoutOf(match, pot));
+        if (economy.settleEscrow(match.b, match.a, key, this.payoutOf(match, pot)) === 0) {
+          economy.refundEscrow(match.a, key);
+          economy.refundEscrow(match.b, key);
+        }
       } else {
-        economy.refundEscrow(match.a);
-        economy.refundEscrow(match.b);
+        economy.refundEscrow(match.a, key);
+        economy.refundEscrow(match.b, key);
       }
     }
     const handler = this.handlers.get(match.gameType);

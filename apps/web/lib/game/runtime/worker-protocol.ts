@@ -4,6 +4,7 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  InteractRejectPacket,
   ItemEffectPacket,
   ItemRejectPacket,
   LikePacket,
@@ -192,6 +193,8 @@ export type WorkerToMain =
   | { t: 'loudspeaker'; packet: LoudspeakerPacket }
   | { t: 'shoutReject'; packet: ShoutRejectPacket }
   | { t: 'itemReject'; packet: ItemRejectPacket }
+  /** 互动被拒（ADR-0104）：赌桌 / 擂台 / 别墅 / 搬砖 / 悬赏的统一回执 */
+  | { t: 'interactReject'; packet: InteractRejectPacket }
   /** 茶台按 F：主线程打开商店并切到指定页签（ADR-0085 / ADR-0087 增加装扮页签） */
   | { t: 'shopOpen'; tab: 'stats' | 'items' | 'cosmetics' }
   /** 赌桌 / 八角笼 / 豪宅的「按 F 开面板」意图 */

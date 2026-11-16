@@ -8,9 +8,11 @@ import {
   RING_PHASE,
   RING_PODIUM_SLOTS,
   RING_ROUND_MS,
+  RING_SIDE,
   RING_START_SLOTS,
 } from '@niuma/shared-types';
-import { RingRuntime } from './ring';
+import { RingRuntime, type RingSettleEntry } from './ring';
+import { BossRuntime } from './boss';
 import { World, type Player } from './world';
 
 const T0 = 1_000_000;
@@ -33,8 +35,8 @@ function setup(): { world: World; ring: RingRuntime; players: Player[] } {
   return { world, ring: world.ring, players };
 }
 
-function enter(ring: RingRuntime, player: Player, now: number): { started: boolean } {
-  const result = ring.enter(player, now);
+function enter(ring: RingRuntime, player: Player, now: number, fee = 0): { started: boolean } {
+  const result = ring.enter(player, now, fee);
   if (!result.ok) throw new Error(`enter rejected: ${result.reason}`);
   return result;
 }
@@ -67,7 +69,7 @@ describe('擂台入场与开赛', () => {
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
     expect(ring.canEnter(players[2]!)).toEqual({ ok: false, reason: 'full' });
-    expect(ring.enter(players[2]!, T0 + 30_000)).toEqual({ ok: false, reason: 'full' });
+    expect(ring.enter(players[2]!, T0 + 30_000, 0)).toEqual({ ok: false, reason: 'full' });
     expect(ring.phase).toBe(RING_PHASE.Running);
     expect(ring.count).toBe(2);
     const packet = ring.snapshot(T0 + 30_000, world);
@@ -223,13 +225,13 @@ describe('擂台离场与断线', () => {
   it('等待期可以取消并送回出口，开赛后不能主动离场', () => {
     const { ring, players } = setup();
     enter(ring, players[0]!, T0);
-    expect(ring.leave(players[0]!, T0 + 100)).toBe(true);
+    expect(ring.leave(players[0]!, T0 + 100).ok).toBe(true);
     expect(players[0]!.x).toBe(RING_EXIT.x);
     expect(ring.phase).toBe(RING_PHASE.Idle);
 
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
-    expect(ring.leave(players[0]!, T0 + 200)).toBe(false);
+    expect(ring.leave(players[0]!, T0 + 200).ok).toBe(false);
   });
 
   it('颁奖期可以领奖离场，全员走光立刻回空闲', () => {
@@ -240,7 +242,7 @@ describe('擂台离场与断线', () => {
     expect(ring.phase).toBe(RING_PHASE.Award);
 
     const awardAt = ring.endsAt - RING_AWARD_MS;
-    expect(ring.leave(players[1]!, awardAt + 500)).toBe(true);
+    expect(ring.leave(players[1]!, awardAt + 500).ok).toBe(true);
     expect(players[1]!.x).toBe(RING_EXIT.x);
     expect(players[1]!.y).toBe(RING_EXIT.y);
     // 走一个人，颁奖窗口对剩下的人照旧；离场者不再被冻结也不再占席位
@@ -251,7 +253,7 @@ describe('擂台离场与断线', () => {
       players[0]!.id,
     ]);
 
-    expect(ring.leave(players[0]!, awardAt + 800)).toBe(true);
+    expect(ring.leave(players[0]!, awardAt + 800).ok).toBe(true);
     expect(ring.phase).toBe(RING_PHASE.Idle);
     expect(ring.count).toBe(0);
   });
@@ -260,10 +262,10 @@ describe('擂台离场与断线', () => {
     const { ring, players } = setup();
     enter(ring, players[0]!, T0);
     enter(ring, players[1]!, T0);
-    expect(ring.removePlayer(players[0]!.id, T0 + 1)).toBe(true);
+    expect(ring.removePlayer(players[0]!.id, T0 + 1).removed).toBe(true);
     expect(ring.phase).toBe(RING_PHASE.Running);
     expect(ring.endsAt).toBe(T0 + RING_ROUND_MS);
-    expect(ring.removePlayer(players[1]!.id, T0 + 2)).toBe(true);
+    expect(ring.removePlayer(players[1]!.id, T0 + 2).removed).toBe(true);
     expect(ring.phase).toBe(RING_PHASE.Idle);
     expect(ring.count).toBe(0);
   });
@@ -329,5 +331,102 @@ describe('擂台快照恢复', () => {
     ring.restore({ matchId: -3, nextMatchId: 0, lastMatch: null });
     expect(ring.matchId).toBe(0);
     expect(ring.snapshotForSave().nextMatchId).toBe(1);
+  });
+});
+
+describe('报名费结算（ADR-0104）', () => {
+  const DEVICE_A = '0000000000000001';
+  const DEVICE_B = '0000000000000002';
+  const DEVICE_C = '0000000000000003';
+  const DEVICE_D = '0000000000000004';
+
+  function feeSetup(): {
+    world: World;
+    ring: RingRuntime;
+    players: Player[];
+    settled: Array<readonly RingSettleEntry[]>;
+  } {
+    const settled: Array<readonly RingSettleEntry[]> = [];
+    const ring = new RingRuntime((entries) => settled.push(entries));
+    const withRing = new World(new BossRuntime(), ring);
+    const players: Player[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const player = withRing.create(
+        `参赛者${index}`,
+        DEFAULT_APPEARANCE.cow,
+        200 + index,
+        RING_EXIT.x,
+        RING_EXIT.y,
+      );
+      if (!player) throw new Error('fixture player rejected');
+      player.deviceId = index === 0 ? DEVICE_A : index === 1 ? DEVICE_B : index === 2 ? DEVICE_C : DEVICE_D;
+      players.push(player);
+    }
+    return { world: withRing, ring, players, settled };
+  }
+
+  it('等待期离场退费，颁奖期离场不退费', () => {
+    const { world, ring, players } = feeSetup();
+    enter(ring, players[0]!, T0, 50);
+    const waiting = ring.leave(players[0]!, T0 + 100);
+    expect(waiting).toEqual({ ok: true, refundFee: true });
+
+    enter(ring, players[0]!, T0, 50);
+    enter(ring, players[1]!, T0, 50);
+    ring.tick(ring.endsAt, world);
+    expect(ring.phase).toBe(RING_PHASE.Award);
+    const award = ring.leave(players[1]!, ring.endsAt + 100);
+    expect(award).toEqual({ ok: true, refundFee: false });
+  });
+
+  it('等待期断线退费；比赛中两人都走光时把两笔费用一起退回', () => {
+    const { world, ring, players } = feeSetup();
+    enter(ring, players[0]!, T0, 50);
+    expect(ring.removePlayer(players[0]!.id, T0 + 10)).toEqual({
+      removed: true,
+      refundFee: true,
+      abandonedFees: [],
+    });
+
+    enter(ring, players[0]!, T0, 50);
+    enter(ring, players[1]!, T0, 50);
+    const first = ring.removePlayer(players[0]!.id, T0 + 20);
+    expect(first.refundFee).toBe(false);
+    expect(first.abandonedFees).toEqual([]);
+    const second = ring.removePlayer(players[1]!.id, T0 + 30);
+    expect(second.abandonedFees).toEqual([
+      { playerId: players[0]!.id, deviceId: DEVICE_A, amount: 50 },
+      { playerId: players[1]!.id, deviceId: DEVICE_B, amount: 50 },
+    ]);
+    expect(ring.phase).toBe(RING_PHASE.Idle);
+    void world;
+  });
+
+  it('押错一侧的人进入 losers 列表，服务端据此清账', () => {
+    const { world, ring, players } = feeSetup();
+    enter(ring, players[0]!, T0, 50);
+    enter(ring, players[1]!, T0, 50);
+    // 双方都没掉血时红方（先入场）是冠军；必须有一个人押中，另一个人押错，
+    // 才走「有人赢」的结算分支，押错者才需要清账。
+    expect(ring.placeBet(players[2]!, RING_SIDE.Red, 10, T0 + 100)).toBe(true);
+    expect(ring.placeBet(players[3]!, RING_SIDE.Blue, 10, T0 + 100)).toBe(true);
+    ring.tick(ring.endsAt, world);
+    const pool = ring.lastPool!;
+    expect(pool.winnerSide).toBe(RING_SIDE.Red);
+    expect(pool.losers).toEqual([players[3]!.id]);
+  });
+
+  it('结算条目带设备号与报名费，离线冠军也能按设备号入账', () => {
+    const { world, ring, players, settled } = feeSetup();
+    enter(ring, players[0]!, T0, 50);
+    enter(ring, players[1]!, T0, 50);
+    // 冠军在结算前断线：成员仍在名单里，只是 world 里已查不到
+    world.destroy(players[0]!.id);
+    ring.tick(ring.endsAt, world);
+    const entries = settled.at(-1)!;
+    const champion = entries.find((entry) => entry.rank === 1)!;
+    expect(champion.deviceId).toBe(DEVICE_A);
+    expect(champion.fee).toBe(50);
+    expect(entries.filter((entry) => entry.rank > 0).map((entry) => entry.fee)).toEqual([50, 50]);
   });
 });

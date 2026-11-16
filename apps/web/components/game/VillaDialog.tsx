@@ -8,7 +8,6 @@ import {
   VILLA_SPECS,
   type VillaStatePacket,
 } from '@niuma/shared-types';
-import { useGameUi } from '@/lib/game-ui';
 
 interface VillaDialogProps {
   villa: number;
@@ -25,11 +24,11 @@ interface VillaDialogProps {
  * 冠名权只在本运行周期有效，重启园区重新挂牌；牌匾上的名字由服务端随包下发。
  */
 export function VillaDialog({ villa, villas, coins, onClose, onAction }: VillaDialogProps) {
-  const selfId = useGameUi((state) => state.selfId);
   const spec = VILLA_SPECS.find((item) => item.id === villa) ?? VILLA_SPECS[0]!;
   const info = villas?.villas.find((item) => item.id === villa) ?? null;
-  const owned = (info?.ownerId ?? 0) !== 0;
-  const mine = owned && info?.ownerId === selfId;
+  // 归属由服务端按设备号判定：房主离线时 ownerId 归零，但院子仍算已拥有
+  const owned = info?.owned ?? false;
+  const mine = info?.mine ?? false;
   const affordable = coins >= VILLA_PRICE;
 
   return (

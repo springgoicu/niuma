@@ -110,12 +110,12 @@ describe('门口防卡位（门洞净通行与导览到达点）', () => {
         expect(isBlocked(right.x, right.y), `${gap.name} ${gap.side} 门洞右框不是墙`).toBe(true);
       }
     }
-    // 六处有门房间：会议室 / 发泄区 / 卫生间 / 宿舍区 / 家庭影音室 / 小黑屋
-    expect(checked).toBeGreaterThanOrEqual(6);
+    // ADR-0103 之后只剩两处有门房间：卫生间 / 小黑屋（急救站另有独立围挡用例）
+    expect(checked).toBeGreaterThanOrEqual(2);
   });
 
-  it('六处有门房间各测到一个门洞，不会被「门洞被道具堵住」静默跳过', () => {
-    for (const name of ['会议室', '发泄区', '卫生间', '宿舍区', '家庭影音室', '小黑屋']) {
+  it('两处有门房间各测到一个门洞，不会被「门洞被道具堵住」静默跳过', () => {
+    for (const name of ['卫生间', '小黑屋']) {
       const building = WORLD_LAYOUT.buildings.find((item) => item.name === name);
       expect(building, `${name} 不在 WORLD_LAYOUT.buildings 里`).toBeDefined();
       expect(doorGapsOf(building!.rect, name).length, `${name} 没测到门洞`).toBeGreaterThanOrEqual(1);

@@ -109,9 +109,9 @@ function isDressable(x: number, y: number): boolean {
 }
 
 /**
- * 候选路口：中心线顶点 + 五座区门 + 四片街区广场中心。
+ * 候选路口：中心线顶点 + 五处区门锚点 + 四片街区广场中心。
  *
- * 顶点天然覆盖十字口与拐角；区门补上「街尽头」；街区广场中心补上
+ * 顶点天然覆盖十字口与拐角；区门锚点补上「街尽头」；街区广场中心补上
  * 生活大街、游乐大街、服务广场这类「整条街一次铺到底」的街面。
  */
 function junctionCandidates(): Array<{ x: number; y: number }> {

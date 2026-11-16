@@ -33,7 +33,7 @@ const ROOM_OF: Partial<Record<NavTargetId, { x: number; y: number; w: number; h:
 };
 
 /** 户外设施：到达点必须是陆地、不下水 */
-const OUTDOOR: NavTargetId[] = ['park', 'ring', 'diceHall', 'pavilion'];
+const OUTDOOR: NavTargetId[] = ['park', 'ring', 'diceHall'];
 
 /** 点到矩形的最短距离：用来断言擂台落点在报名半径内 */
 function distanceToRect(
@@ -47,8 +47,8 @@ function distanceToRect(
 }
 
 describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
-  it('15 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
-    // 企业区 4 + 游乐区 3 + 生活区 5 + 服务区 2 + 景观区 1（ADR-0099 补影音室 / 急救站 / 摸鱼亭）
+  it('14 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
+    // 企业区 4 + 游乐区 3 + 生活区 5 + 服务区 2（ADR-0099 补影音室 / 急救站；摸鱼亭已拆除）
     expect(NAV_TARGETS.map((target) => target.id)).toEqual([
       'workroom',
       'meeting',
@@ -64,7 +64,6 @@ describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
       'villa2',
       'restroom',
       'clinic',
-      'pavilion',
     ]);
     expect(new Set(NAV_TARGETS.map((target) => target.id)).size).toBe(NAV_TARGETS.length);
     for (const target of NAV_TARGETS) {

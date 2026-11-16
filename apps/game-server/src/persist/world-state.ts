@@ -1,30 +1,32 @@
 import { BOSS_MAX_HP, isDeviceId } from '@niuma/shared-types';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BossSaveState } from '../sim/boss';
 import type { RingLastMatchState, RingSaveState } from '../sim/ring';
 import type { VillaSaveState } from '../sim/villas';
+import type { WalletSaveState } from '../economy/wallet';
 import { ProfileBook, type ProfileRecord } from './profiles';
 
 /**
- * 园区共享运行态快照（ADR-0081）。
+ * 园区共享运行态快照（ADR-0081 / ADR-0104）。
  *
- * 只有三类东西值得落盘：老板血量与回满点、擂台的局号与上一局名次、匿名档案里的
- * 赞与名次。玩家会话、聊天、考勤一概不进这里——它们要么本来就该断，
- * 要么按 ADR-0004 的边界留在各浏览器里。
+ * 落盘范围：老板血量与回满点、擂台的局号与上一局名次、小院冠名、匿名档案里的
+ * 赞与名次，以及按匿名设备号的钱包账本。玩家会话、聊天、考勤仍不进这里。
  *
  * 写盘纪律：
  * - 变更只打 `markDirty()`，1s 级防抖合并，绝不在 50ms 帧循环里同步写盘；
  * - 临时文件 + rename 保证读者要么看到旧档、要么看到新档，不会看到「写了一半」；
+ * - 每次覆盖前把上一份主档留成 `.bak`，主档读坏时先试备份；
  * - 坏档改名 `.bad-<时刻>` 后空档开服，园区宁可回满血也不许因为存档崩掉；
  * - 写失败只告警并把 dirty 立回来，下个窗口重试。
  */
 
-/** 版本 2：追加豪宅冠名权（`villas`）；版本 1 的档按空豪宅正常接管 */
-export const WORLD_STATE_VERSION = 2;
-/** 兼容读取的旧版本号 */
+/** 版本 3：追加服务端钱包账本（`wallets`，ADR-0104） */
+export const WORLD_STATE_VERSION = 3;
+/** 兼容读取的旧版本号：v1 无豪宅、v2 无钱包 */
 export const WORLD_STATE_VERSION_V1 = 1;
+export const WORLD_STATE_VERSION_V2 = 2;
 
 /**
  * 快照里的各段结构直接复用各 runtime 的落盘类型。
@@ -35,13 +37,16 @@ export const WORLD_STATE_VERSION_V1 = 1;
 export type { BossSaveState } from '../sim/boss';
 export type { RingLastMatchState, RingSaveState } from '../sim/ring';
 export type { VillaSaveState } from '../sim/villas';
+export type { WalletSaveState } from '../economy/wallet';
 
 export interface WorldStateParts {
   boss: BossSaveState;
   ring: RingSaveState;
   villas: VillaSaveState;
+  wallets: WalletSaveState[];
 }
 
+/** 对外仍叫 `WorldStateV1` 是为了少改调用点；结构已经是当前版本 v3 */
 export interface WorldStateV1 extends WorldStateParts {
   version: typeof WORLD_STATE_VERSION;
   savedAt: number;
@@ -108,22 +113,38 @@ export class WorldStateStore {
    * 坏档会被改名成 `.bad-<时刻>` 留证，不会被静默覆盖。
    */
   load(): WorldStateV1 | null {
+    const primary = this.tryRead(this.path);
+    if (primary.state) return primary.state;
+    if (primary.kind === 'bad') this.quarantine();
+    // 主档坏了 / 丢了：先试上一份备份，再决定空档开服
+    const backup = this.tryRead(this.backupPath());
+    if (backup.state) {
+      this.warn(`[state] 主档不可用，已从备份恢复 path=${this.path}.bak`);
+      return backup.state;
+    }
+    return null;
+  }
+
+  private tryRead(path: string): { state: WorldStateV1 | null; kind: 'ok' | 'missing' | 'bad' } {
     let text: string;
     try {
-      text = readFileSync(this.path, 'utf8');
+      text = readFileSync(path, 'utf8');
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'ENOENT') this.warn(`[state] 读档失败 path=${this.path} code=${code ?? '?'}`);
-      return null;
+      if (code !== 'ENOENT') this.warn(`[state] 读档失败 path=${path} code=${code ?? '?'}`);
+      return { state: null, kind: 'missing' };
     }
     try {
       const state = normalizeWorldState(JSON.parse(text) as unknown);
       if (!state) throw new Error('unexpected shape');
-      return state;
+      return { state, kind: 'ok' };
     } catch {
-      this.quarantine();
-      return null;
+      return { state: null, kind: 'bad' };
     }
+  }
+
+  private backupPath(): string {
+    return `${this.path}.bak`;
   }
 
   /** 用读到的档案预置匿名数据（老板 / 擂台由各自的 runtime 自己恢复） */
@@ -164,10 +185,34 @@ export class WorldStateStore {
       const tmp = `${this.path}.tmp`;
       mkdirSync(dirname(this.path), { recursive: true });
       writeFileSync(tmp, serialize(state), 'utf8');
+      this.rotateBackupSync();
       renameSync(tmp, this.path);
     } catch (error) {
       this.dirty = true;
       this.warn(`[state] 同步落盘失败 path=${this.path} reason=${(error as Error).message}`);
+    }
+  }
+
+  /** 覆盖主档前把上一份留成 `.bak`；主档还不存在时静默跳过 */
+  private rotateBackupSync(): void {
+    try {
+      copyFileSync(this.path, this.backupPath());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        this.warn(`[state] 备份失败 path=${this.path}.bak reason=${(error as Error).message}`);
+      }
+    }
+  }
+
+  private async rotateBackup(): Promise<void> {
+    try {
+      await copyFile(this.path, this.backupPath());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        this.warn(`[state] 备份失败 path=${this.path}.bak reason=${(error as Error).message}`);
+      }
     }
   }
 
@@ -192,6 +237,7 @@ export class WorldStateStore {
     try {
       await mkdir(dirname(this.path), { recursive: true });
       await writeFile(tmp, serialize(state), 'utf8');
+      await this.rotateBackup();
       await rename(tmp, this.path);
     } catch (error) {
       this.dirty = true;
@@ -235,8 +281,14 @@ function serialize(state: WorldStateV1): string {
  */
 function normalizeWorldState(raw: unknown): WorldStateV1 | null {
   if (!raw || typeof raw !== 'object') return null;
-  const source = raw as Partial<WorldStateV1>;
-  if (source.version !== WORLD_STATE_VERSION && source.version !== WORLD_STATE_VERSION_V1) return null;
+  const source = raw as Partial<WorldStateV1> & { version?: unknown };
+  if (
+    source.version !== WORLD_STATE_VERSION &&
+    source.version !== WORLD_STATE_VERSION_V2 &&
+    source.version !== WORLD_STATE_VERSION_V1
+  ) {
+    return null;
+  }
   const boss = source.boss;
   const ring = source.ring;
   if (!boss || typeof boss !== 'object' || !ring || typeof ring !== 'object') return null;
@@ -256,8 +308,11 @@ function normalizeWorldState(raw: unknown): WorldStateV1 | null {
       nextMatchId: Math.max(1, Math.floor(ring.nextMatchId)),
       lastMatch: normalizeLastMatch(ring.lastMatch),
     },
-    // v1 没有这一段：按空豪宅接管，老档不会被当成坏档隔离
+    // v1 没有豪宅、v2 没有钱包：都按空段接管，老档不会被当成坏档隔离
     villas: normalizeVillas(source.villas),
+    wallets: Array.isArray(source.wallets)
+      ? (source.wallets.filter((entry) => entry && typeof entry === 'object') as WalletSaveState[])
+      : [],
     profiles: Array.isArray(source.profiles) ? source.profiles.filter(isProfileRecord) : [],
   };
 }

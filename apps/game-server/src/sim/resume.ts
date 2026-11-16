@@ -49,6 +49,21 @@ function isStandable(x: number, y: number): boolean {
 }
 
 /**
+ * 座位错位的容忍半径。
+ *
+ * 正常存档里 `resume.x / y` 就是座位锚点（入座后角色坐标即座位坐标）。
+ * 但座位 id 是「座位表下标 + 1」，布局增删座位会让其后所有 id 前移
+ * （ADR-0105 拆掉摸鱼亭四张石鼓凳后，后面的影厅座椅、长椅、病床、赌桌圆凳全部前移 4）。
+ * 老存档里的 seatId 因此可能指向另一张远处的椅子；距离对不上就不认座。
+ */
+const RESUME_SEAT_SLACK = 64;
+
+function seatMatchesPoint(seat: SeatInstance, x: number, y: number): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  return Math.hypot(seat.x - x, seat.y - y) <= RESUME_SEAT_SLACK;
+}
+
+/**
  * 把客户端上报的 resume 裁决成真正可用的出生点。
  *
  * 客户端缓存一律视为不可信输入：坐标要重新过地形判据，座位要重新查权威占用表。
@@ -65,7 +80,9 @@ export function resolveSpawn(
     return { x: point.x, y: point.y, direction: DIRECTION.Down, pose: POSE.Idle, seat: null };
   }
 
-  const seat = resume.seatId > 0 ? seatById(resume.seatId) : undefined;
+  const reported = resume.seatId > 0 ? seatById(resume.seatId) : undefined;
+  // id 还在、但坐标对不上：说明座位表改过，这张椅子不是玩家当初坐的那张
+  const seat = reported && seatMatchesPoint(reported, resume.x, resume.y) ? reported : undefined;
   if (seat && isSeatFree(seat.id)) {
     return { x: seat.x, y: seat.y, direction: seat.facing, pose: seatPose(seat.kind), seat };
   }

@@ -14,6 +14,9 @@ import type { Player } from './world';
 /** 发包入口：与经济服务同一个 `transport.send`，测试可注入只记录的桩 */
 export type QuestSender = (wsId: number, packet: Uint8Array) => void;
 
+/** 领取结果：`ok` 才发钱，其余三种都由分发层变成互动回执 */
+export type QuestClaimResult = 'ok' | 'invalid' | 'claimed' | 'notReady';
+
 /**
  * 每日悬赏（ADR-0088）。
  *
@@ -82,16 +85,19 @@ export class DailyQuestRuntime {
    *
    * 先落 `claimed` 再发币：`grantCoins` 内部有钳制，但「已领」标记必须先写，
    * 否则重发包在同一毫秒内可能挤进第二次发币。
+   *
+   * 返回原因而不是布尔值：分发层要把「没达标 / 今天领过 / 编号非法」
+   * 变成玩家能看懂的回执，而不是点了没反应。
    */
-  claim(player: Player, questId: number, now: number): boolean {
+  claim(player: Player, questId: number, now: number): QuestClaimResult {
     const def = findQuestDef(questId);
-    if (!def) return false;
+    if (!def) return 'invalid';
     this.syncDay(player, now);
-    if (player.questClaimed.has(def.id)) return false;
-    if ((player.questProgress[def.id] ?? 0) < def.target) return false;
+    if (player.questClaimed.has(def.id)) return 'claimed';
+    if ((player.questProgress[def.id] ?? 0) < def.target) return 'notReady';
     player.questClaimed.add(def.id);
     this.economy.grantCoins(player, def.reward, WALLET_REASON.QuestReward);
     this.push(player, now);
-    return true;
+    return 'ok';
   }
 }

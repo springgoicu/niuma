@@ -6,7 +6,6 @@ import {
   MEETING_SCREEN_RECT,
   MEETING_SPOT,
   PARK_PHOTO_SPOTS,
-  PAVILION_SPOT,
   PHOTO_LINES,
   RETRO_LINES,
   THEATER_CHANNELS,
@@ -15,10 +14,8 @@ import {
   THEATER_SPOT,
   VENUE_IDLE_TIMING,
   VENUE_SEAT_GROUPS,
-  ZEN_LINES,
   isMeetingSeat,
   isParkBenchSeat,
-  isPavilionSeat,
   isTheaterScreenHit,
   isTheaterSeat,
   idleKindOfSeat,
@@ -67,10 +64,9 @@ describe('屏幕矩形', () => {
 });
 
 describe('座位归属', () => {
-  it('会议室 8 把、影厅 15 张、石鼓凳 4 张、园内长椅 3 张', () => {
+  it('会议室 8 把、影厅 15 张、园内长椅 3 张', () => {
     expect(VENUE_SEAT_GROUPS.meeting.size).toBe(8);
     expect(VENUE_SEAT_GROUPS.theater.size).toBe(15);
-    expect(VENUE_SEAT_GROUPS.pavilion.size).toBe(4);
     // 园内三张：游乐园自己的两张 + 游乐大街东口那张（y 3130 仍在园区围栏内）
     expect(VENUE_SEAT_GROUPS.parkBench.size).toBe(3);
   });
@@ -101,14 +97,13 @@ describe('座位归属', () => {
     // 第一把工位椅是 id 1，不在会议室里
     expect(isMeetingSeat(1)).toBe(false);
     expect(isTheaterSeat(1)).toBe(false);
-    expect(isPavilionSeat(1)).toBe(false);
     expect(isParkBenchSeat(1)).toBe(false);
   });
 
-  it('房间归属只认会议室与影厅，亭子与长椅不参与屏幕演出', () => {
+  it('房间归属只认会议室与影厅，长椅不参与屏幕演出', () => {
     expect(venueRoomOfSeat([...VENUE_SEAT_GROUPS.meeting][0]!)).toBe('meeting');
     expect(venueRoomOfSeat([...VENUE_SEAT_GROUPS.theater][0]!)).toBe('theater');
-    expect(venueRoomOfSeat([...VENUE_SEAT_GROUPS.pavilion][0]!)).toBeNull();
+    expect(venueRoomOfSeat([...VENUE_SEAT_GROUPS.parkBench][0]!)).toBeNull();
     expect(venueRoomOfSeat(0)).toBeNull();
   });
 });
@@ -116,18 +111,14 @@ describe('座位归属', () => {
 describe('本地点判定', () => {
   const meetingSeat = [...VENUE_SEAT_GROUPS.meeting][0]!;
   const theaterSeat = [...VENUE_SEAT_GROUPS.theater][0]!;
-  const drumSeat = [...VENUE_SEAT_GROUPS.pavilion][0]!;
 
-  it('坐着才成立：会议椅 / 影厅椅 / 石鼓凳', () => {
+  it('坐着才成立：会议椅 / 影厅椅', () => {
     const seat = seatById(meetingSeat)!;
     expect(venueSpotAt(seat.x, seat.y, meetingSeat)?.kind).toBe('meeting');
     expect(venueSpotAt(seat.x, seat.y, 0)).toBeNull();
 
     const cinema = seatById(theaterSeat)!;
     expect(venueSpotAt(cinema.x, cinema.y, theaterSeat)?.kind).toBe('theater');
-
-    const drum = seatById(drumSeat)!;
-    expect(venueSpotAt(drum.x, drum.y, drumSeat)?.kind).toBe('pavilion');
   });
 
   it('游乐园打卡点按距离命中，走出半径就没有了', () => {
@@ -149,10 +140,9 @@ describe('本地点判定', () => {
     }
   });
 
-  it('会议桌 / 亭心的坐标由房间与亭心派生', () => {
+  it('会议桌 / 影厅的坐标由房间矩形派生', () => {
     expect(MEETING_SPOT.x).toBe(MEETING_ROOM_RECT.x + MEETING_ROOM_RECT.w / 2);
     expect(rectContains(MEETING_ROOM_RECT, MEETING_SPOT.x, MEETING_SPOT.y)).toBe(true);
-    expect(PAVILION_SPOT.seatGated).toBe(true);
     expect(THEATER_SPOT.seatGated).toBe(true);
     expect(THEATER_SPOT.radius).toBe(0);
   });
@@ -164,8 +154,8 @@ describe('本地点判定', () => {
 });
 
 describe('台词与频道', () => {
-  it('四组台词都非空、无重复', () => {
-    for (const lines of [MEETING_LINES, ZEN_LINES, PHOTO_LINES, RETRO_LINES]) {
+  it('三组台词都非空、无重复', () => {
+    for (const lines of [MEETING_LINES, PHOTO_LINES, RETRO_LINES]) {
       expect(lines.length).toBeGreaterThan(0);
       expect(new Set(lines).size).toBe(lines.length);
     }
@@ -200,18 +190,15 @@ describe('静置气泡节流', () => {
     expect(venueBubbleDue('meeting', Number.NaN, intervalMs)).toBe(false);
   });
 
-  it('三处场所的阈值互不相同（亭子最慢，长椅最耐坐）', () => {
-    expect(VENUE_IDLE_TIMING.pavilion.firstMs).toBeGreaterThan(VENUE_IDLE_TIMING.meeting.firstMs);
-    expect(VENUE_IDLE_TIMING.parkBench.firstMs).toBeGreaterThan(VENUE_IDLE_TIMING.pavilion.firstMs);
+  it('两处场所的阈值互不相同（长椅最耐坐）', () => {
+    expect(VENUE_IDLE_TIMING.parkBench.firstMs).toBeGreaterThan(VENUE_IDLE_TIMING.meeting.firstMs);
   });
 
   it('座位 → 静置气泡种类 → 台词表三处对齐', () => {
     expect(idleKindOfSeat([...VENUE_SEAT_GROUPS.meeting][0]!)).toBe('meeting');
-    expect(idleKindOfSeat([...VENUE_SEAT_GROUPS.pavilion][0]!)).toBe('pavilion');
     expect(idleKindOfSeat([...VENUE_SEAT_GROUPS.parkBench][0]!)).toBe('parkBench');
     expect(idleKindOfSeat([...VENUE_SEAT_GROUPS.theater][0]!)).toBeNull();
     expect(linesOfIdleKind('meeting')).toBe(MEETING_LINES);
-    expect(linesOfIdleKind('pavilion')).toBe(ZEN_LINES);
     expect(linesOfIdleKind('parkBench')).toBe(RETRO_LINES);
   });
 });

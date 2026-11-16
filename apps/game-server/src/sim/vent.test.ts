@@ -268,8 +268,8 @@ describe('命中观察者（ADR-0074）', () => {
     const grid = new SpatialGrid();
     const a = world.create('甲', DEFAULT_APPEARANCE.cow, 11, RING_EXIT.x, RING_EXIT.y)!;
     const b = world.create('乙', DEFAULT_APPEARANCE.cow, 12, RING_EXIT.x, RING_EXIT.y)!;
-    expect(world.ring.enter(a, 10_000).ok).toBe(true);
-    expect(world.ring.enter(b, 10_000).ok).toBe(true);
+    expect(world.ring.enter(a, 10_000, 0).ok).toBe(true);
+    expect(world.ring.enter(b, 10_000, 0).ok).toBe(true);
     // 入场会把两人送到起跑位：把甲挪到乙左侧 24px，正对出招
     a.x = b.x - 24;
     a.y = b.y;

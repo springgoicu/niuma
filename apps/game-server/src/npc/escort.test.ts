@@ -153,6 +153,18 @@ describe('执法链兜底（ADR-0080）', () => {
     });
   });
 
+  it('昏迷送医期间押送计时挂起，不会在病床上被判超时（ADR-0106）', () => {
+    warmEscortGrid();
+    const { world, guard, agent, task } = setup();
+    guard.incapacitated = true;
+    task.startedAt = NOW - ESCORT.CHASE_TIMEOUT_MS - 1;
+
+    const event = stepEscort(agent, task, world, NOW);
+
+    expect(event).toBeNull();
+    expect(task.stage).toBe('chase');
+  });
+
   it('拖行落点走碰撞求解，不把被押者写进墙里', () => {
     warmEscortGrid();
     const world = new World();

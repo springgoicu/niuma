@@ -43,8 +43,6 @@ export const BENCH_ART = {
 const OTHER_SEATS: Record<Exclude<SeatKind, 'chair' | 'cinema'>, { w: number; h: number; sink: number }> = {
   toilet: { w: 22, h: 28, sink: 6 },
   stool: { w: 18, h: 22, sink: 4 },
-  // 石鼓凳（ADR-0061）：鼓身比木凳矮胖一圈，座面下沉 5 纹素
-  drum: { w: 20, h: 22, sink: 5 },
   sofa: { w: 58, h: 30, sink: 8 },
   // 双人沙发的一侧：左右两半各 62×40，两半拼成 124px 的长沙发
   couch: { w: 62, h: 40, sink: 8 },

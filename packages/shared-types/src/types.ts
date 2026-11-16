@@ -274,7 +274,67 @@ export const OpCode = {
    * 稳态零流量。收到就整份替换，不需要合并或对账。
    */
   S2C_APARTMENT_PEEK: 0x59,
+  // ---- 互动拒绝回执（ADR-0104），从 0x5a 继续追加 ----
+  /**
+   * 互动被服务端拒绝：`[op][action u8][reason u8]`，3 字节定长。
+   *
+   * 只回给操作者本人，不带玩家可见文案：客户端按 `INTERACT_ACTION` /
+   * `INTERACT_REASON` 映射中文，服务端只负责裁决与编号。
+   */
+  S2C_INTERACT_REJECT: 0x5a,
 } as const;
+
+/**
+ * 互动拒绝包里的动作编号（ADR-0104）。
+ *
+ * 编号只追加不复用：旧客户端不认识新编号时按「未知」静默处理即可。
+ */
+export const INTERACT_ACTION = {
+  RingEnter: 0,
+  RingLeave: 1,
+  DiceBet: 2,
+  ArenaBet: 3,
+  VillaBuy: 4,
+  VillaLock: 5,
+  VillaCollect: 6,
+  WorkClaim: 7,
+  QuestClaim: 8,
+  EventClaim: 9,
+  Apartment: 10,
+  /** 未知 / 未识别的互动动作，客户端给通用兜底文案 */
+  Unknown: 255,
+} as const;
+export type InteractAction = (typeof INTERACT_ACTION)[keyof typeof INTERACT_ACTION];
+
+/**
+ * 互动拒绝原因。文案由客户端映射，服务端永远只发编号。
+ *
+ * `Unknown` 兜住未来值：旧客户端收到不认识的原因时给一句通用提示，不静默。
+ */
+export const INTERACT_REASON = {
+  Unknown: 0,
+  NotSeated: 1,
+  TooFar: 2,
+  Phase: 3,
+  Full: 4,
+  Already: 5,
+  NotEnoughCoins: 6,
+  BadAmount: 7,
+  Busy: 8,
+  Cooldown: 9,
+  NoTarget: 10,
+  NoStock: 11,
+  OwnerOnly: 12,
+  Sold: 13,
+  NoIncome: 14,
+} as const;
+export type InteractReason = (typeof INTERACT_REASON)[keyof typeof INTERACT_REASON];
+
+/** 互动拒绝回执：客户端据此显示「差什么」，不再点了没反应 */
+export interface InteractRejectPacket {
+  action: number;
+  reason: number;
+}
 
 /** 老板血量包：flags bit0 = 本次归零，bit1 = 跨日重置 */
 export const BOSS_FLAG_DIED = 1;
@@ -575,9 +635,14 @@ export const VILLA_ACTION = {
 /** 一栋小院的公开状态 */
 export interface VillaPacket {
   id: number;
+  /** 房主当前在线的实体 id；离线为 0，只用于广播定位，不表示「无主」 */
   ownerId: number;
   ownerName: string;
   locked: boolean;
+  /** 是否已有房主（离线也算）：离线房主的小院不能再买 */
+  owned: boolean;
+  /** 收包人是不是本小院的房主（按设备号判定，离线/重连都稳定） */
+  mine: boolean;
   /** 摇钱树当前可收币数（只有房主看得出准确值，其他人读到 0） */
   pending: number;
 }

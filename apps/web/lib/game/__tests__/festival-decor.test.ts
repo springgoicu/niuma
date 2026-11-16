@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { DISTRICTS, WORLD_LAYOUT, isOnLand, isWaterAt } from '@niuma/shared-types';
+import { WORLD_LAYOUT, isOnLand, isWaterAt } from '@niuma/shared-types';
 import { LANTERN_LIGHT } from '../lighting/lanterns';
 import {
   BUNTING_LAMP_GAP,
-  DISTRICT_BUNTING_HANG_DY,
   FESTIVAL_LIGHT_COUNT,
   festivalDecorPlan,
   festivalLights,
@@ -106,34 +105,13 @@ describe('广场与主路彩旗', () => {
 });
 
 describe('门楣与树梢', () => {
-  it('企业楼门架与卫生间门洞各一条短彩旗，挂在门线上方', () => {
-    // ADR-0097 之后只有企业楼保留木构门架，卫生间按门洞中心补一条，共 2 条
+  it('卫生间门洞一条短彩旗，挂在门线上方', () => {
     const gates = PLAN.filter((anchor) => anchor.kind === 'gate-bunting');
-    expect(gates).toHaveLength(2);
+    expect(gates).toHaveLength(1);
     for (const gate of gates) {
       expect(gate.y).toBeLessThan(gate.depthY);
       expect(isOnLand(gate.x, gate.depthY)).toBe(true);
     }
-  });
-
-  it('五座区门各一条门楣彩旗：与门头同轴、压在横枋上沿、不压匾额', () => {
-    const districts = PLAN.filter((anchor) => anchor.kind === 'district-bunting');
-    expect(districts).toHaveLength(DISTRICTS.length);
-    for (const district of DISTRICTS) {
-      const anchor = districts.find((item) => item.x === district.gate.x && item.depthY === district.gate.y);
-      expect(anchor).toBeDefined();
-      // 深度键与门架同键：靠入层顺序压在横梁之上，不会被门架盖住
-      expect(anchor!.depthY).toBe(district.gate.y);
-      // 挂点必须高于门线，且正好落在横枋顶边（−88）：再高会悬空，再低会压匾额
-      expect(anchor!.depthY - anchor!.y).toBe(DISTRICT_BUNTING_HANG_DY);
-      expect(anchor!.y).toBe(district.gate.y - 88);
-      expect(isOnLand(anchor!.x, anchor!.depthY)).toBe(true);
-    }
-  });
-
-  it('区门彩旗不进光池预算：只画自发光像素，不加真实光源', () => {
-    const lit = PLAN.filter((anchor) => anchor.kind === 'district-bunting' && anchor.lit);
-    expect(lit).toHaveLength(0);
   });
 
   it('树梢灯笼只挂在路边散树上，至少有一处且挂在树冠下', () => {

@@ -683,6 +683,9 @@ export class WorkerGameClient implements GameClient {
       case 'itemReject':
         callbacks.onItemReject?.(message.packet);
         return;
+      case 'interactReject':
+        callbacks.onInteractReject?.(message.packet);
+        return;
       case 'shopOpen':
         callbacks.onShopOpen?.(message.tab);
         return;

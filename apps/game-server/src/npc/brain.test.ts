@@ -148,6 +148,19 @@ describe('受击与挥手', () => {
     expect(agent.phase).toBe('pause');
   });
 
+  it('昏迷期间硬直结束也不起身，等救护车归位（ADR-0106）', () => {
+    const { agent, rng } = makeAgent(5);
+    const { player } = agent;
+    player.applyState(player.direction, POSE.Lie, false);
+    player.stunUntil = NOW + 1_500;
+    player.incapacitated = true;
+
+    updateAgent(agent, rng, DEFAULT_NPC_CONFIG, NOW + 1_600);
+
+    expect(player.pose).toBe(POSE.Lie);
+    expect(player.incapacitated).toBe(true);
+  });
+
   it('挥手位约 1 秒后由服务端清掉，不会吞掉后续动作', () => {
     const { agent, rng } = makeAgent(7);
     startWave(agent, NOW);

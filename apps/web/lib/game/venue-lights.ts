@@ -16,7 +16,6 @@ import {
   DICE_HALL,
   DICE_HALL_CENTER,
   DICE_TABLES,
-  DISTRICTS,
   PLAZA_CENTER,
   PLAZA_RADIUS,
   RING_ARENA,
@@ -26,7 +25,7 @@ import {
   WORLD_LAYOUT,
 } from '@niuma/shared-types';
 import type { LightSpec } from './lighting/light-registry';
-import { VENUE_COLORS, mixColor } from './venue-palette';
+import { VENUE_COLORS } from './venue-palette';
 
 /** 广场地灯盏数：八向均分，光池与灯位共用同一份角度 */
 export const PLAZA_LAMP_COUNT = 8;
@@ -175,23 +174,6 @@ export function venueLights(): LightSpec[] {
     intensity: 0.34,
     flicker: 0.14,
   });
-
-  // 五座区门（ADR-0097）：每座门头一盏低强度暖灯，夜里读得出「这是哪个区的门」。
-  // 门头两枚亮核是烘焙像素（`?light=0` 时仍在），这盏灯只负责脚下那圈区色光池；
-  // 光心抬到横梁下沿，光池正好落在门槛石与门垫上。
-  // 颜色取「区色混六成暖白」而不是纯区色：服务区是冷青、景观区偏绿，
-  // 直接用区色会在夜里把门头照成一片冷绿，读起来不像有人点的灯。
-  // 区色仍留在匾额与门垫上，门灯只负责「温暖的门洞」。
-  for (const district of DISTRICTS) {
-    lights.push({
-      x: district.gate.x,
-      y: district.gate.y - 30,
-      radius: 66,
-      color: mixColor(district.color, 0xffc98a, 0.6),
-      intensity: 0.34,
-      flicker: 0.06,
-    });
-  }
 
   // 企业楼走廊：920px 的走廊此前一盏灯都没有，夜里从大门进来是一条黑缝。
   // 只放一盏在走廊中段，靠光图半径 120 把两端压低，不至于把整条走廊照成白条。

@@ -1,14 +1,14 @@
 /**
  * 弱交互场所的「本地点」唯一真相（纯函数，不 import pixi，可直接 `bun:test`）。
  *
- * 会议室 / 家庭影音室 / 游乐园 / 摸鱼亭四处此前只有建筑没有玩法：
- * 这里把「站在哪儿按 F」「坐在哪张椅子上算开会 / 看电影 / 发呆」以及台词
+ * 会议室 / 家庭影音室 / 游乐园三处此前只有建筑没有玩法：
+ * 这里把「站在哪儿按 F」「坐在哪张椅子上算开会 / 看电影」以及台词
  * 全部收敛成一份可测数据，`interactions.ts` 出提示、`session.ts` 分发按键、
  * `venue-play.ts` 画演出，三处读同一张表，不会再出现「提示说能按、按下去没反应」。
  *
  * 两条纪律：
  * 1) **不写第二份坐标**：屏幕矩形由 `MEETING_ROOM` / `THEATER_SCREEN` 派生，
- *    游乐园打卡点由 `PARK_RIDES` / `PARK_ATTRACTIONS` 派生，亭心读 `PAVILION_CENTER`。
+ *    游乐园打卡点由 `PARK_RIDES` / `PARK_ATTRACTIONS` 派生。
  * 2) **不改共享契约**：本文件只读 `WORLD_LAYOUT`，不新增热区、不碰碰撞与协议；
  *    因此服务端零改动，也不需要双端同步发布。
  */
@@ -17,7 +17,6 @@ import {
   AMUSEMENT_PARK,
   PARK_ATTRACTIONS,
   PARK_RIDES,
-  PAVILION_CENTER,
   THEATER_SCREEN,
   WORLD_LAYOUT,
   rectContains,
@@ -119,11 +118,6 @@ const THEATER_SEAT_IDS = collectSeats(
   (seat) => seat.kind === 'cinema' && inside(THEATER_ROOM_RECT, seat.x, seat.y),
 );
 
-/** 石鼓凳：四张全在摸鱼亭 */
-const PAVILION_SEAT_IDS = collectSeats(
-  (seat) => seat.kind === 'drum' && Math.abs(seat.x - PAVILION_CENTER.x) <= 60 && Math.abs(seat.y - PAVILION_CENTER.y) <= 60,
-);
-
 /** 园内长椅：`bench` 遍布全图，只有落在游乐园里的这几张算「童年回忆」 */
 const PARK_BENCH_SEAT_IDS = collectSeats(
   (seat) => seat.kind === 'bench' && inside(AMUSEMENT_PARK, seat.x, seat.y),
@@ -135,10 +129,6 @@ export function isMeetingSeat(seatId: number): boolean {
 
 export function isTheaterSeat(seatId: number): boolean {
   return Number.isInteger(seatId) && THEATER_SEAT_IDS.has(seatId);
-}
-
-export function isPavilionSeat(seatId: number): boolean {
-  return Number.isInteger(seatId) && PAVILION_SEAT_IDS.has(seatId);
 }
 
 export function isParkBenchSeat(seatId: number): boolean {
@@ -158,7 +148,6 @@ export function venueRoomOfSeat(seatId: number): VenueRoom | null {
 export const VENUE_SEAT_GROUPS = {
   meeting: MEETING_SEAT_IDS,
   theater: THEATER_SEAT_IDS,
-  pavilion: PAVILION_SEAT_IDS,
   parkBench: PARK_BENCH_SEAT_IDS,
 } as const;
 
@@ -166,7 +155,7 @@ export const VENUE_SEAT_GROUPS = {
  * 本地点：坐姿类在前，游乐园打卡点在后
  * ------------------------------------------------------------------ */
 
-export type VenueSpotKind = 'meeting' | 'theater' | 'pavilion' | 'parkPhoto';
+export type VenueSpotKind = 'meeting' | 'theater' | 'parkPhoto';
 
 export interface VenueSpot {
   readonly kind: VenueSpotKind;
@@ -186,14 +175,6 @@ export const MEETING_SPOT: VenueSpot = {
   x: MEETING_ROOM_RECT.x + MEETING_ROOM_RECT.w / 2,
   y: MEETING_ROOM_RECT.y + MEETING_ROOM_RECT.h / 2,
   radius: 130,
-  seatGated: true,
-};
-
-export const PAVILION_SPOT: VenueSpot = {
-  kind: 'pavilion',
-  x: PAVILION_CENTER.x,
-  y: PAVILION_CENTER.y,
-  radius: 90,
   seatGated: true,
 };
 
@@ -226,7 +207,7 @@ export const PARK_PHOTO_SPOTS: ReadonlyArray<VenueSpot> = [
 ];
 
 /** 顺序即优先级：坐姿类先命中，站着时落到打卡点 */
-const SPOTS: ReadonlyArray<VenueSpot> = [MEETING_SPOT, PAVILION_SPOT, THEATER_SPOT, ...PARK_PHOTO_SPOTS];
+const SPOTS: ReadonlyArray<VenueSpot> = [MEETING_SPOT, THEATER_SPOT, ...PARK_PHOTO_SPOTS];
 
 function withinSpot(spot: VenueSpot, x: number, y: number): boolean {
   const dx = spot.x - x;
@@ -246,7 +227,6 @@ export function venueSpotAt(x: number, y: number, seatId: number): VenueSpot | n
     if (!spot.seatGated) continue;
     if (spot.kind === 'meeting' && isMeetingSeat(seatId)) return spot;
     if (spot.kind === 'theater' && isTheaterSeat(seatId)) return spot;
-    if (spot.kind === 'pavilion' && isPavilionSeat(seatId)) return spot;
   }
   for (const spot of SPOTS) {
     if (spot.seatGated) continue;
@@ -269,15 +249,6 @@ export const MEETING_LINES: ReadonlyArray<string> = [
   '🚀 先做个 MVP，下周上线',
   '✍️ 记笔记：点头.gif',
   '🧩 闭环了，散会',
-];
-
-/** 摸鱼亭禅意气泡 */
-export const ZEN_LINES: ReadonlyArray<string> = [
-  '🎣 摸鱼发呆中…',
-  '🌊 看着水面思考牛马生',
-  '🍃 风把 KPI 吹走了',
-  '💭 水面比需求清楚',
-  '☕ 再坐一会儿，反正也没人找',
 ];
 
 /** 游乐园打卡台词：F 拍照用 */
@@ -306,7 +277,7 @@ export function pickVenueLine(lines: ReadonlyArray<string>, counter: number): st
  * 静置气泡节流：与 `snoreDue` 同构（躺床打呼的现成范式）
  * ------------------------------------------------------------------ */
 
-export type VenueIdleKind = 'meeting' | 'pavilion' | 'parkBench';
+export type VenueIdleKind = 'meeting' | 'parkBench';
 
 interface IdleTiming {
   /** 入座后第一条气泡要静置多久 */
@@ -317,7 +288,6 @@ interface IdleTiming {
 
 export const VENUE_IDLE_TIMING: Readonly<Record<VenueIdleKind, IdleTiming>> = {
   meeting: { firstMs: 6000, intervalMs: 11000 },
-  pavilion: { firstMs: 7000, intervalMs: 13000 },
   parkBench: { firstMs: 8000, intervalMs: 15000 },
 };
 
@@ -333,10 +303,9 @@ export function venueBubbleDue(kind: VenueIdleKind, idleMs: number, sinceMs: num
   return sinceMs >= timing.intervalMs;
 }
 
-/** 入座座位 → 静置气泡种类（不是这三处返回 null） */
+/** 入座座位 → 静置气泡种类（这两处之外返回 null） */
 export function idleKindOfSeat(seatId: number): VenueIdleKind | null {
   if (isMeetingSeat(seatId)) return 'meeting';
-  if (isPavilionSeat(seatId)) return 'pavilion';
   if (isParkBenchSeat(seatId)) return 'parkBench';
   return null;
 }
@@ -346,8 +315,6 @@ export function linesOfIdleKind(kind: VenueIdleKind): ReadonlyArray<string> {
   switch (kind) {
     case 'meeting':
       return MEETING_LINES;
-    case 'pavilion':
-      return ZEN_LINES;
     default:
       return RETRO_LINES;
   }

@@ -81,6 +81,8 @@ interface GameUiState {
   seated: boolean;
   /** 当前座位种类：床位只能躺，凳子 / 椅子只能坐 */
   seatKind: SeatKind | null;
+  /** 当前座位组（`dice-a` / `arena-bench` …）：入座类面板据此判断资格 */
+  seatGroup: string | null;
   /** 环境提示或动作被拦下的瞬时提示；null 表示不显示 */
   hint: string | null;
   /** 正在自动前往的导览目标；null 表示没有导航。`'plaza'` 是客户端的「回中央广场」 */
@@ -181,7 +183,12 @@ interface GameUiState {
   clearShoutBanner: (key: number) => void;
   pushCoinPop: (amount: number, id: number) => void;
   clearCoinPop: (key: number) => void;
-  setLocalState: (state: { pose: Pose; seated: boolean; seatKind: SeatKind | null }) => void;
+  setLocalState: (state: {
+    pose: Pose;
+    seated: boolean;
+    seatKind: SeatKind | null;
+    seatGroup: string | null;
+  }) => void;
   setRing: (packet: RingPacket | null, receivedAt: number) => void;
   setHint: (hint: string | null) => void;
   setNavTarget: (nav: { id: NavTargetId | 'plaza'; name: string } | null) => void;
@@ -261,6 +268,7 @@ const INITIAL = {
   localPose: POSE.Idle as Pose,
   seated: false,
   seatKind: null as SeatKind | null,
+  seatGroup: null as string | null,
   hint: null,
   navTarget: null as { id: NavTargetId | 'plaza'; name: string } | null,
   navOpenSeq: 0,
@@ -299,7 +307,8 @@ const MAX_COIN_POPS = 5;
 export const useGameUi = create<GameUiState>((set) => ({
   ...INITIAL,
 
-  setLocalState: ({ pose, seated, seatKind }) => set({ localPose: pose, seated, seatKind }),
+  setLocalState: ({ pose, seated, seatKind, seatGroup }) =>
+    set({ localPose: pose, seated, seatKind, seatGroup }),
 
   setRing: (packet, receivedAt) => set({ ring: packet ? { packet, receivedAt } : null }),
 

@@ -77,10 +77,16 @@ export class RitualFx {
     }
   }
 
-  /** 头顶升起一句金色字：(x, y) 是脚底坐标，字从头顶往上飘 */
-  floatText(x: number, y: number, label: string, now: number): void {
+  /**
+   * 头顶升起一句金色字：(x, y) 是脚底坐标，字从头顶往上飘。
+   *
+   * `size` 只给「字要压在大家伙身上」的场合（老板受击），默认仍是 7 纹素；
+   * 改字号会重建这一槽的纹理，所以只在触发那一帧写一次。
+   */
+  floatText(x: number, y: number, label: string, now: number, size = 7): void {
     const slot = this.floaters[this.cursor] ?? this.floaters[0]!;
     this.cursor = (this.cursor + 1) % this.floaters.length;
+    if (slot.text.style.fontSize !== size) slot.text.style.fontSize = size;
     slot.text.text = label;
     slot.startedAt = now;
     slot.x = x;

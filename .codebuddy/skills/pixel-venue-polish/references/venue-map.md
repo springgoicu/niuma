@@ -13,7 +13,6 @@
 | 家庭影音室 | 同上（`fillFloorCinema`） | 共用 | `HOME_THEATER` `campus.ts:270` | `InteriorArt.lights:873/887` | 无 |
 | 小黑屋 | 同上（`fillFloorConcrete`） | 共用 | `JAIL` `campus.ts:309`、`JAIL_ANCHOR:316` | `InteriorArt.lights:1050` | 无 |
 | 中央广场 | `terrain.ts` `addPlaza()` `:453` + `welcome.ts` + `props.ts` | `TerrainView` / `WelcomeView` | `PLAZA_CENTER` `layout.ts:221`、`PLAZA_RADIUS:220` | `propLights`（路灯/售货机/咖啡机） | `TerrainView.update` `terrain.ts:842` |
-| 摸鱼亭 | `pavilion.ts` | `PavilionView` | `MOPING_PAVILION` `layout.ts:291`、`PAVILION_CENTER:294` | 4×`LANTERN_LIGHT` `pavilion.ts:204` | 无 |
 | 上香祭坛 | `shrine.ts` | `ShrineView` | `SHRINE_ALTAR` `layout.ts:343` | 2 盏 `shrine.ts:70-87` | `update` `:129`（青烟 + 光晕） |
 | 茶台 | `tea-station.ts` | `TeaStationView` | `TEA_STATION` `layout.ts:360` | 无 | `update:81`（蒸汽三缕） |
 | 摸鱼大赌场 | `dice-hall-view.ts` | `DiceHallView` | `DICE_HALL` `dice-hall.ts:16`、`DICE_HALL_CENTER:19` | 无 LightSpec | 无 |

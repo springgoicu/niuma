@@ -31,12 +31,6 @@ import {
 
 const { seats, props, solids, paths, buildings } = WORLD_LAYOUT;
 
-function wallAt(x: number, y: number): boolean {
-  return solids.some(
-    (solid) => solid.kind === 'wall' && x >= solid.x && x < solid.x + solid.w && y >= solid.y && y < solid.y + solid.h,
-  );
-}
-
 function onAnyPath(x: number, y: number): boolean {
   return paths.some((path) => pointInPolygon(x, y, path.polygon));
 }
@@ -96,11 +90,11 @@ describe('家庭影音室', () => {
     expect(regionAt(HOME_THEATER.x + 230, HOME_THEATER.y + 160)).toBe('家庭影音室');
   });
 
-  it('东墙留门，门外铺装接南向主路支路', () => {
+  it('东侧敞开，门前铺装接南向主路支路', () => {
     const doorY = HOME_THEATER.y + 160;
-    // 东墙 x 3830..3840；门洞正中无墙，门洞外仍有墙
-    expect(wallAt(HOME_THEATER.x + HOME_THEATER.w - 5, doorY)).toBe(false);
-    expect(wallAt(HOME_THEATER.x + HOME_THEATER.w - 5, doorY - 60)).toBe(true);
+    // ADR-0103：影厅没有东墙，室内外只靠地面材质分开，东沿整条都能进出
+    expect(isBlocked(HOME_THEATER.x + HOME_THEATER.w - 5, doorY)).toBe(false);
+    expect(isBlocked(HOME_THEATER.x + HOME_THEATER.w - 5, doorY - 60)).toBe(false);
     expect(isBlocked(HOME_THEATER.x + HOME_THEATER.w + 60, doorY)).toBe(false);
     // 支路中心线末端落在门前铺装里（按终点找，不依赖 paths 数组顺序）
     const branch = paths.find((path) => path.centerline.some(([x, y]) => y === doorY && x < 4096))!;

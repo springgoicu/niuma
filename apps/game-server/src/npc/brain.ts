@@ -207,13 +207,17 @@ function enterWalk(agent: NpcAgent, rng: Rng, now: number): void {
  * 推进一个 NPC 一帧。
  *
  * 顺序有讲究：
- * 1) 硬直优先：被 `resolveVents` 创飞后保持躺姿，什么都不做；
- * 2) 硬直结束先站起，再重新选路，避免「躺着平移」；
- * 3) 挥手机制到期清位；
- * 4) 行走与停顿各自推进。
+ * 1) 昏迷优先：等救护车送医，期间连起身都不做（ADR-0106）；
+ * 2) 硬直次之：被 `resolveVents` 创飞后保持躺姿，什么都不做；
+ * 3) 硬直结束先站起，再重新选路，避免「躺着平移」；
+ * 4) 挥手机制到期清位；
+ * 5) 行走与停顿各自推进。
  */
 export function updateAgent(agent: NpcAgent, rng: Rng, config: NpcConfig, now: number): void {
   const player = agent.player;
+
+  // 昏迷：硬直结束后也不能自己爬起来，等护士治疗完由 clinic 归位
+  if (player.incapacitated) return;
 
   if (now < player.stunUntil) return;
 

@@ -71,7 +71,7 @@ interface MiniMapMark {
   readonly line: string;
 }
 
-/** 区门与核心场所都从共享布局派生，不写第二份坐标 */
+/** 核心场所图标从共享布局派生，不写第二份坐标 */
 function markAt(rect: WorldRect, district: DistrictId): MiniMapMark {
   return {
     x: Math.round(rect.x + rect.w / 2),
@@ -98,14 +98,6 @@ export const MINIMAP_VENUE_MARKS: ReadonlyArray<MiniMapMark> = [
   markAt(buildingRect('小黑屋'), 'service'),
   markAt(APARTMENT_SPECS[0]!.rect, 'living'),
 ];
-
-/** 五座区门：比场所图标小一号，只做方位锚点 */
-export const MINIMAP_GATE_MARKS: ReadonlyArray<MiniMapMark> = DISTRICTS.map((district) => ({
-  x: district.gate.x,
-  y: district.gate.y,
-  fill: DISTRICT_FILL.get(district.id)!,
-  line: M.markInk,
-}));
 
 /** 按 DPR 出图，否则 1px 围栏线在 2x 屏上会糊成两像素灰边 */
 export function prepareMiniMap(ctx: MiniMapContext, dpr: number): void {
@@ -285,8 +277,6 @@ export function drawMiniMap(ctx: MiniMapContext, frame: MinimapFrame): void {
   const camY = frame.y;
   drawTerrain(ctx, camX, camY);
 
-  // 区门：比场所小一号的标记，用来读「五条街的尽头是哪一区」
-  for (const gate of MINIMAP_GATE_MARKS) drawMark(ctx, gate, camX, camY, 1);
   // 核心场所：发泄区 / 赌场 / 擂台 / 急救站 / 卫生间 / 小黑屋 / 公寓
   for (const mark of MINIMAP_VENUE_MARKS) drawMark(ctx, mark, camX, camY, 2);
 

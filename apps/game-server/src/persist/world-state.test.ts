@@ -35,6 +35,7 @@ const PARTS: WorldStateParts = {
     lastMatch: { matchId: 40, endedAt: NOW - 1_000, top: [{ name: '牛马', rank: 1, hp: 33 }] },
   },
   villas: { villas: [] },
+  wallets: [],
 };
 
 function storeAt(path: string, overrides: Partial<WorldStateParts> = {}): WorldStateStore {
@@ -109,6 +110,72 @@ describe('WorldStateStore 往返', () => {
     expect(names).toContain('world-state.json');
     expect(names).not.toContain('world-state.json.tmp');
     store.dispose();
+  });
+
+  it('v3 钱包段往返：余额 / 托管 / 装扮都进快照', async () => {
+    const path = tempPath();
+    const wallets = [
+      {
+        id: DEVICE,
+        name: '牛马',
+        coins: 321,
+        stats: { atkSpeedLv: 1, workEffLv: 2, critLv: 3, armorLv: 4 },
+        inventory: { ice_americano: 2 },
+        unlockedCosmetics: ['top'],
+        escrow: [{ key: 'dice:0:1', amount: 10 }],
+        importedAt: NOW,
+        lastSeenAt: NOW,
+      },
+    ];
+    const store = storeAt(path, { wallets });
+    store.markDirty();
+    await store.flush();
+    store.dispose();
+
+    const reopened = storeAt(path);
+    const loaded = reopened.load();
+    expect(loaded?.wallets).toEqual(wallets);
+    reopened.dispose();
+  });
+
+  it('v2 档没有钱包段：按空账本接管，不当坏档', () => {
+    const path = tempPath();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        savedAt: NOW,
+        tzOffsetMin: 480,
+        boss: { hp: 1, resetAt: NOW + 60_000 },
+        ring: { matchId: 1, nextMatchId: 2, lastMatch: null },
+        villas: { villas: [] },
+        profiles: [],
+      }),
+      'utf8',
+    );
+    const store = storeAt(path);
+    const loaded = store.load();
+    expect(loaded?.wallets).toEqual([]);
+    expect(loaded?.version).toBe(WORLD_STATE_VERSION);
+    store.dispose();
+  });
+
+  it('主档写坏时优先从 .bak 恢复', async () => {
+    const path = tempPath();
+    const store = storeAt(path);
+    store.markDirty();
+    await store.flush();
+    // 第二次覆盖前会把上一份主档留成备份
+    store.markDirty();
+    await store.flush();
+    store.dispose();
+    expect(existsSync(`${path}.bak`)).toBe(true);
+
+    writeFileSync(path, '{ broken', 'utf8');
+    const reopened = storeAt(path);
+    const loaded = reopened.load();
+    expect(loaded?.ring.matchId).toBe(41);
+    reopened.dispose();
   });
 });
 

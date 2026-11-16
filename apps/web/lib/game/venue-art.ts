@@ -14,11 +14,7 @@ import {
   COMPANY_FORECOURT,
   DICE_HALL,
   DICE_HALL_CENTER,
-  DISTRICTS,
   LIVING_AVENUE,
-  MEETING_ROOM,
-  MOPING_PAVILION,
-  PAVILION_CENTER,
   PLAZA_CENTER,
   PLAZA_RADIUS,
   RING_ARENA,
@@ -29,7 +25,6 @@ import {
   VENT_ROOM,
   VILLA_SPECS,
   WELCOME_LANDMARKS,
-  WORKROOM_GATE,
   WORLD_LAYOUT,
   type WorldRect,
 } from '@niuma/shared-types';
@@ -99,13 +94,12 @@ export class VenueArt {
     this.paintTeaAndShrine(flat);
     this.paintLakeShore(flat);
     this.paintParkGround(flat);
-    // ADR-0097：五区街面收边、发泄室橡胶地与五座区门
+    // ADR-0097：五区街面收边、发泄室橡胶地
     this.paintDistrictStreets(flat);
-    // 门前过渡（纯渲染）：区门门槛石 + 门垫、拱门迎宾毯、企业楼走廊与大门门垫。
+    // 门前过渡（纯渲染）：拱门迎宾毯、企业楼走廊。
     // 全部画进同一张 flat（永远在角色脚下），不登记碰撞、不新增显示对象。
-    this.paintGateThresholds(flat);
     this.paintArchThreshold(flat);
-    this.paintCompanyGate(flat);
+    this.paintCompanyCorridor(flat);
     this.paintVentRoom(flat);
 
     this.glow = undefined;
@@ -117,10 +111,8 @@ export class VenueArt {
     this.depthApartmentDoors(depth);
     this.depthVillaGardens(depth);
     this.depthRingCorners(depth);
-    this.depthDistrictGates(depth);
     // 建筑外立面：檐口色带 + 用途徽记。扫一眼墙面就知道里头是干什么的
     this.depthFacades(depth);
-    this.depthCompanySign(depth);
   }
 
   /**
@@ -173,48 +165,6 @@ export class VenueArt {
     }
   }
 
-  /**
-   * 企业楼的身份牌：东大门北侧草地上立一块企业色铭牌。
-   *
-   * 企业楼是四间连成的一栋，单看某一间墙面读不出「这是一家公司」；
-   * 把铭牌放在**唯一的楼门**旁边，远看是一块 mint 色竖牌，走近能看清字。
-   */
-  private depthCompanySign(depth: DepthSink): void {
-    const x = WORKROOM_GATE.x + 96;
-    const y = WORKROOM_GATE.y + 6;
-    const accent = VENUE_COLORS.workroom.accent;
-    const root = new Container();
-    root.position.set(x, y);
-    const g = new Graphics();
-    g.ellipse(0, 0, 14, 4).fill({ color: VENUE_SHADOW, alpha: 0.22 });
-    // 两根立柱 + 牌面：与木构门架同族，但换成企业色
-    g.rect(-14, -46, 4, 46).fill(outlineOf(TOWN_MATERIALS.timber));
-    g.rect(10, -46, 4, 46).fill(outlineOf(TOWN_MATERIALS.timber));
-    g.rect(-18, -58, 36, 22).fill(outlineOf(accent));
-    g.rect(-17, -57, 34, 20).fill(darken(accent, 0.55));
-    g.rect(-15, -55, 30, 16).fill(accent);
-    g.rect(-15, -55, 30, 1).fill(lighten(accent, 0.5));
-    // 抽象字块：三行两列的像素字，不写具体文案（文案唯一来源是导览表）
-    for (const [bx, by] of [
-      [-10, -51],
-      [-2, -51],
-      [6, -51],
-      [-10, -45],
-      [-2, -45],
-      [6, -45],
-    ] as const) {
-      g.rect(bx, by, 5, 3).fill(darken(accent, 0.35));
-    }
-    // 门柱顶的两枚暖灯亮核：与区门同一套，`?light=0` 下仍留得住亮点
-    for (const cx of [-12, 12]) {
-      g.rect(cx - 2, -60, 4, 3).fill(TOWN_MATERIALS.lampGlass);
-      g.rect(cx - 1, -60, 2, 2).fill(0xfff6e0);
-    }
-    root.addChild(g);
-    depth.add(y, root);
-    this.roots.push(root);
-  }
-
   /** 南墙上的连续墙段（本地 x 区间）：门洞、楼梯口天然成为缺口 */
   private southWallSegments(rect: WorldRect): Array<{ from: number; to: number }> {
     const southY = rect.y + rect.h;
@@ -255,20 +205,23 @@ export class VenueArt {
     warm.alpha = 0.14 + 0.12 * torchFlicker(this.alertSeed, nowMs);
   }
 
-  /** 房间四沿的一圈微光：上下两条 + 左右两条，进门那侧让开门洞 */
+  /**
+   * 房间四沿的一圈微光：上下两条 + 左右两条，贴在地面外沿。
+   * ADR-0103 之后发泄室没有外墙，这条色带就是它唯一的边界表达。
+   */
   private buildVentAlert(base: Container): void {
     const { x, y, w, h } = VENT_ROOM;
     const band = 4;
     const draw = (color: number): Graphics => {
       const g = new Graphics();
-      g.rect(x, y + 10, w, band).fill({ color, alpha: 0.9 });
+      g.rect(x, y, w, band).fill({ color, alpha: 0.9 });
       g.rect(x, y + h - band, w, band).fill({ color, alpha: 0.8 });
-      g.rect(x, y + 10, band, h - 10).fill({ color, alpha: 0.7 });
-      g.rect(x + w - band, y + 10, band, h - 10).fill({ color, alpha: 0.7 });
+      g.rect(x, y, band, h).fill({ color, alpha: 0.7 });
+      g.rect(x + w - band, y, band, h).fill({ color, alpha: 0.7 });
       // 四角各压一段更亮的角标，房间边界在暗地里也读得出来
       for (const [cx, cy] of [
-        [x, y + 10],
-        [x + w - 10, y + 10],
+        [x, y],
+        [x + w - 10, y],
         [x, y + h - 10],
         [x + w - 10, y + h - 10],
       ] as const) {
@@ -282,63 +235,7 @@ export class VenueArt {
     this.alertDead = draw(0x8a8f96);
   }
 
-  /**
-   * 五座区门：木构门架 + 区色匾额 + 两枚区色门灯亮核。
-   *
-   * 全部几何烘焙进同一个 `Graphics`，因此与门楣彩旗同 `zIndex`（都是 `gate.y`）时
-   * 也不靠插入顺序决胜；灯核是**烘焙像素**而不是独立 Sprite：
-   * `?light=0` 关掉整层柔光后，门头仍留得下两枚亮点，夜里不会变成一块黑木头。
-   * 亮核刻意压在横梁上、左右各一枚，不垂在门洞正中——门洞正中那盏会盖住走门的人。
-   */
-  private depthDistrictGates(depth: DepthSink): void {
-    for (const district of DISTRICTS) {
-      const root = new Container();
-      root.position.set(district.gate.x, district.gate.y);
-      const g = new Graphics();
-      // 门柱：8px 三层木料（外描 / 暗面 / 受光面）+ 石柱础，读得出厚度
-      for (const cx of [-43, 43]) {
-        g.rect(cx - 5, -74, 10, 74).fill(outlineOf(TOWN_MATERIALS.timber));
-        g.rect(cx - 4, -74, 8, 74).fill(TOWN_MATERIALS.timberDark);
-        g.rect(cx - 3, -74, 5, 74).fill(TOWN_MATERIALS.timber);
-        g.rect(cx - 3, -74, 1, 74).fill(TOWN_MATERIALS.timberLight);
-        g.rect(cx - 6, -6, 12, 6).fill(TOWN_MATERIALS.stoneDark);
-        g.rect(cx - 5, -6, 10, 5).fill(TOWN_MATERIALS.stone);
-        g.rect(cx - 5, -6, 10, 1).fill(TOWN_MATERIALS.stoneLight);
-      }
-      // 横枋：112×18，上沿受光、下沿压暗，两枚铜钉
-      g.rect(-56, -90, 112, 18).fill(outlineOf(TOWN_MATERIALS.timber));
-      g.rect(-55, -89, 110, 16).fill(TOWN_MATERIALS.timber);
-      g.rect(-55, -89, 110, 2).fill(TOWN_MATERIALS.timberLight);
-      g.rect(-55, -75, 110, 2).fill(TOWN_MATERIALS.timberDark);
-      for (const x of [-50, 48]) g.rect(x, -85, 2, 2).fill(TOWN_MATERIALS.brass);
-      // 匾额 64×14：区色底 + 深色木边 + 四角铜钉，远看就知道是哪个区的门
-      g.rect(-33, -106, 66, 18).fill(outlineOf(district.color));
-      g.rect(-32, -105, 64, 16).fill(darken(district.color, 0.55));
-      g.rect(-30, -103, 60, 12).fill(district.color);
-      g.rect(-30, -103, 60, 1).fill(lighten(district.color, 0.5));
-      g.rect(-30, -92, 60, 1).fill(darken(district.color, 0.7));
-      for (const [x, y] of [
-        [-28, -101],
-        [24, -101],
-        [-28, -94],
-        [24, -94],
-      ] as const) {
-        g.rect(x, y, 2, 2).fill(TOWN_MATERIALS.brass);
-      }
-      // 门灯亮核：区色外晕 + 玻璃罩 + 暖白芯，压在横梁上、门口左右各一枚
-      for (const cx of [-43, 43]) {
-        g.ellipse(cx, -76, 6, 5).fill({ color: lighten(district.color, 0.6), alpha: 0.2 });
-        g.rect(cx - 2, -80, 4, 6).fill(TOWN_MATERIALS.lampGlass);
-        g.rect(cx - 1, -79, 2, 4).fill(0xfff6e0);
-        g.rect(cx - 3, -82, 6, 2).fill(TOWN_MATERIALS.iron);
-      }
-      root.addChild(g);
-      depth.add(district.gate.y, root);
-      this.roots.push(root);
-    }
-  }
-
-  /** 五区街面：公共铺装的浅色收边 + 区门前一小块区色门垫 */
+  /** 五区街面：公共铺装的浅色收边 */
   private paintDistrictStreets(g: Graphics): void {
     const street = VENUE_COLORS.street;
     for (const rect of [AMUSEMENT_STREET, SERVICE_SQUARE, LIVING_AVENUE, COMPANY_FORECOURT]) {
@@ -346,36 +243,6 @@ export class VenueArt {
       g.rect(rect.x, rect.y + rect.h - 2, rect.w, 2).fill({ color: street.seam, alpha: 0.24 });
       g.rect(rect.x, rect.y, 2, rect.h).fill({ color: street.seam, alpha: 0.18 });
       g.rect(rect.x + rect.w - 2, rect.y, 2, rect.h).fill({ color: street.seam, alpha: 0.18 });
-    }
-    for (const district of DISTRICTS) {
-      this.pool(g, district.gate.x, district.gate.y + 10, 46, 20, district.color);
-    }
-  }
-
-  /**
-   * 五座区门的门槛石与门垫（纯渲染）。
-   *
-   * 三层结构，从下往上：门架落地阴影 → 24px 高区色门垫 → 跨在门线上的门槛石。
-   * 门槛石压在 `gate.y` 这条线上，玩家跨过门时脚底正好擦过它，
-   * 于是「门」第一次有了可感知的界线。全部是几百个纹素的一次性绘制，
-   * 不进 `solids`、不进 `paved`，走起来与普通路面完全一致。
-   */
-  private paintGateThresholds(g: Graphics): void {
-    for (const district of DISTRICTS) {
-      const x = district.gate.x;
-      const y = district.gate.y;
-      // 门架落地阴影：给两根门柱一个接触面，门洞不再是「浮在地上的框」
-      g.ellipse(x, y + 8, 54, 9).fill({ color: VENUE_SHADOW, alpha: 0.16 });
-      // 门垫：外框同色相压暗 → 区色本体 → 内芯向暖白提亮
-      g.rect(x - 36, y - 3, 72, 26).fill(outlineOf(district.color));
-      g.rect(x - 34, y - 1, 68, 23).fill(district.color);
-      g.rect(x - 26, y + 3, 52, 13).fill({ color: lighten(district.color, 0.45), alpha: 0.55 });
-      // 迎宾亮线：门垫朝来客那一沿的一道高光
-      g.rect(x - 26, y + 18, 52, 1).fill(lighten(district.color, 0.7));
-      // 门槛石：76×4 三级石阶，横跨门线
-      g.rect(x - 38, y - 5, 76, 6).fill(TOWN_MATERIALS.stoneDark);
-      g.rect(x - 38, y - 4, 76, 4).fill(TOWN_MATERIALS.stone);
-      g.rect(x - 38, y - 4, 76, 1).fill(TOWN_MATERIALS.stoneLight);
     }
   }
 
@@ -417,24 +284,22 @@ export class VenueArt {
   }
 
   /**
-   * 企业楼东侧大门：走廊地面 + 中线引导 + 大门门垫（纯渲染）。
+   * 企业楼东侧走廊地面 + 中线引导（纯渲染）。
    *
    * 走廊（`COMPANY_CORRIDOR`）既不是 `buildings` 也不是 `paved`，此前露出的是草地：
    * 于是「从大门进来」这一段在视觉上没有地板。这里补一层石青地面与 12px 木色走道，
-   * 再用暖白中线 + 两道箭头说清动线：
-   * - 会议门（南墙门洞 x+330..x+390）正下方向北 → 办公 / 会议；
-   * - 发泄室门（北墙门洞 x+300..x+360）正上方向南 → 发泄室。
-   * 门洞区间的来源是 `campus.ts` 的 `MEETING_DOOR` / `VENT_DOOR`（模块私有），
-   * 这里只按同一组偏移量取中线，不复制整份坐标表。
+   * 再用暖白中线说清动线。
+   *
+   * ADR-0103 之后企业楼是开放平面：西端不再有封头墙，地板铺满整条走廊；
+   * 会议室与发泄室也没有门洞了，原先指向门洞的两枚箭头一并删除。
    */
-  private paintCompanyGate(g: Graphics): void {
+  private paintCompanyCorridor(g: Graphics): void {
     const corridor = COMPANY_CORRIDOR;
     const street = VENUE_COLORS.street;
     const wood = VENUE_COLORS.workroom;
     // 走廊地面：上下两条石青收边，中间 12px 木色走道（与工作区木地板同族）
-    // 西端让开 10px：那里是 `CAMPUS_SOLIDS` 的走廊西端封头墙，地板不能盖住它
-    const x0 = corridor.x + 10;
-    const w = corridor.w - 10;
+    const x0 = corridor.x;
+    const w = corridor.w;
     g.rect(x0, corridor.y, w, corridor.h).fill(street.main);
     g.rect(x0, corridor.y, w, 1).fill({ color: street.seam, alpha: 0.5 });
     g.rect(x0, corridor.y + corridor.h - 1, w, 1).fill({ color: street.seam, alpha: 0.4 });
@@ -448,19 +313,6 @@ export class VenueArt {
     for (let x = x0 + 18; x < x0 + w - 18; x += 40) {
       g.rect(x, midY, 1, 2).fill({ color: 0xfff3d0, alpha: 0.34 });
     }
-    // 两侧门洞的动线箭头：8×6 像素三角 + 一根短尾杆，不写文字
-    gateChevron(g, MEETING_ROOM.x + 360, corridor.y + 7, -1, 0xfff3d0, 0.62);
-    gateChevron(g, VENT_ROOM.x + 330, corridor.y + corridor.h - 7, 1, 0xfff3d0, 0.62);
-    // 大门门垫：横在两根门柱之间，西端接走廊、东端接前庭来路
-    const matTop = WORKROOM_GATE.y - 8;
-    g.rect(WORKROOM_GATE.x - 52, matTop, 104, 26).fill(outlineOf(TOWN_MATERIALS.timber));
-    g.rect(WORKROOM_GATE.x - 50, matTop + 2, 100, 22).fill(wood.main);
-    g.rect(WORKROOM_GATE.x - 44, matTop + 6, 88, 1).fill({ color: TOWN_MATERIALS.paint, alpha: 0.7 });
-    g.rect(WORKROOM_GATE.x - 44, matTop + 19, 88, 1).fill({ color: TOWN_MATERIALS.paint, alpha: 0.5 });
-    // 门槛石：与区门同一套三级石阶，横跨大门门线
-    g.rect(WORKROOM_GATE.x - 50, WORKROOM_GATE.y - 3, 100, 5).fill(TOWN_MATERIALS.stoneDark);
-    g.rect(WORKROOM_GATE.x - 50, WORKROOM_GATE.y - 2, 100, 3).fill(TOWN_MATERIALS.stone);
-    g.rect(WORKROOM_GATE.x - 50, WORKROOM_GATE.y - 2, 100, 1).fill(TOWN_MATERIALS.stoneLight);
   }
 
   /** 发泄室：橡胶地 + 警示黄边 + 沙袋架阴影，进门一眼看出「这里是动手的地方」 */
@@ -480,59 +332,7 @@ export class VenueArt {
       g.rect(VENT_ROOM.x + 40 + i * 34, VENT_ROOM.y + 90, 26, 6).fill({ color: c.seam, alpha: 0.4 });
     }
     this.pool(g, VENT_ROOM.x + 150, VENT_ROOM.y + 130, 60, 28, c.accent);
-    // 门口过渡带：走廊木色 → 橡胶垫之间铺一段黄黑警示条，进门那一步先感到「换场地了」
-    this.paintVentThreshold(g);
-  }
-
-  /**
-   * 发泄室门口的警示条纹。
-   *
-   * 门洞位置**从共享碰撞体反查**（北墙被 `roomWalls` 拆成两段，缺口就是门），
-   * 不复制 `campus.ts` 里私有的 `VENT_DOOR` 常量，也不新增导出面。
-   */
-  private paintVentThreshold(g: Graphics): void {
-    const gap = this.northDoorGap(VENT_ROOM);
-    if (!gap) return;
-    const c = VENUE_COLORS.vent;
-    const wall = 10;
-    // 从墙内侧到垫子北沿之间那一条：12px 高，正好一步宽
-    const top = VENT_ROOM.y + wall;
-    const bottom = BOSS_ARENA.y;
-    const height = Math.max(6, bottom - top);
-    const from = gap.from - 16;
-    const to = gap.to + 16;
-    // 底色压一层深灰：黄条需要暗底才亮得起来
-    g.rect(from, top, to - from, height).fill({ color: TOWN_MATERIALS.iron, alpha: 0.75 });
-    // 黄黑斜纹：每 8px 一列，奇数列下沉 2px，读起来是 45° 的警示带
-    for (let x = from, i = 0; x < to; x += 8, i += 1) {
-      const w = Math.min(4, to - x);
-      if (w <= 0) break;
-      const offset = i % 2 === 0 ? 0 : 2;
-      g.rect(x, top + offset, w, height - 2).fill({ color: c.accent, alpha: 0.86 });
-      g.rect(x, top + offset, w, 1).fill({ color: lighten(c.accent, 0.45) });
-    }
-    // 门槛石：黄条北侧一条冷灰压边，与走廊地面收口
-    g.rect(from, top - 1, to - from, 1).fill({ color: TOWN_MATERIALS.stoneLight, alpha: 0.7 });
-  }
-
-  /** 北墙门洞缺口：把 `y` 落在房间北沿的墙体段按 x 排好，取第一处 >20px 的空档 */
-  private northDoorGap(rect: WorldRect): { from: number; to: number } | null {
-    const segments = WORLD_LAYOUT.solids
-      .filter(
-        (solid) =>
-          solid.kind === 'wall' &&
-          Math.abs(solid.y - rect.y) < 2 &&
-          solid.x >= rect.x - 2 &&
-          solid.x + solid.w <= rect.x + rect.w + 2,
-      )
-      .sort((a, b) => a.x - b.x);
-    for (let i = 1; i < segments.length; i += 1) {
-      const prev = segments[i - 1]!;
-      const next = segments[i]!;
-      const from = prev.x + prev.w;
-      if (next.x - from > 20) return { from, to: next.x };
-    }
-    return null;
+    // ADR-0103：没有北墙之后不再有「门口」，警示条统一交给 `buildVentAlert` 的四沿色带
   }
 
   /** 构造期把挂件塞进 y 排序层：脚底 y 定层级，人走过去会被挡住 */
@@ -757,10 +557,6 @@ export class VenueArt {
     const c = VENUE_COLORS.park;
     // 门口一块迎宾圆垫：奶油色双环，和薄荷地胶拉开一档
     this.pool(g, AMUSEMENT_PARK.x + AMUSEMENT_PARK.w / 2, AMUSEMENT_PARK.y + AMUSEMENT_PARK.h - 24, 62, 26, c.accent);
-    // 亭子地面：木柱脚各一圈暖影，砂地因此有「有人在这儿坐过」的痕迹
-    const pavilion = MOPING_PAVILION;
-    g.ellipse(PAVILION_CENTER.x, PAVILION_CENTER.y + 40, 74, 40).fill({ color: 0x6b4a32, alpha: 0.1 });
-    g.rect(pavilion.x + 6, pavilion.y + 6, pavilion.width - 12, 2).fill({ color: 0x96714f, alpha: 0.3 });
   }
 }
 
@@ -775,14 +571,11 @@ interface FacadeProfile {
 
 /**
  * 谁有外立面徽记：只登记「有南墙、又需要远距离辨识」的房间。
- * 工作区是开放平面（没有墙可依），公寓/赌场/别墅各自有自己的 View，都不在这里。
+ * ADR-0103 之后企业楼与生活区都是开放平面，只有卫生间与小黑屋还留南墙；
+ * 公寓/赌场/别墅各自有自己的 View，不在这里。
  */
 const FACADE_PROFILES: Record<string, FacadeProfile> = {
-  会议室: { eave: VENUE_COLORS.meeting.main, emblem: 'meeting' },
-  发泄区: { eave: VENUE_COLORS.vent.main, emblem: 'vent' },
   卫生间: { eave: VENUE_COLORS.restroom.alt, emblem: 'restroom' },
-  宿舍区: { eave: VENUE_COLORS.lounge.main, emblem: 'lounge' },
-  家庭影音室: { eave: VENUE_COLORS.theater.main, emblem: 'cinema' },
   小黑屋: { eave: VENUE_COLORS.cell.main, emblem: 'cell' },
 };
 
@@ -860,27 +653,6 @@ function paintFacadeEmblem(g: Graphics, profile: FacadeProfile, from: number, to
     default:
       return;
   }
-}
-
-/**
- * 走廊动线箭头：8×6 的像素三角 + 一根 2px 短尾杆。
- *
- * `dir = -1` 朝北、`dir = 1` 朝南；`tipY` 是箭头尖所在的那条线。
- * 顶点全部取整，1:1 烘焙后是硬边三角，不会出现斜边重采样。
- */
-function gateChevron(
-  g: Graphics,
-  cx: number,
-  tipY: number,
-  dir: -1 | 1,
-  color: number,
-  alpha: number,
-): void {
-  const baseY = tipY - dir * 6;
-  g.poly([cx - 4, baseY, cx + 4, baseY, cx, tipY]).fill({ color, alpha });
-  // 尾杆永远长在箭头的「屁股」一侧：朝北时从底边继续向南，朝南时从尖端继续向北
-  const shaftY = dir < 0 ? baseY + 1 : tipY + 1;
-  g.rect(cx - 1, shaftY, 2, 3).fill({ color, alpha: alpha * 0.8 });
 }
 
 /** 岸石：沿多边形顶点内侧两档各丢一小块，读起来像被水磨过的石头 */
@@ -961,24 +733,6 @@ export class VenueFx {
         this.glints.push({ sprite, seed: glintSeed });
         glintSeed += 17;
       }
-    }
-
-    // 摸鱼亭前的湖面：亭子四角各补一枚更靠岸的反光点。
-    // 坐进石鼓凳时，眼前这片水面才「有光」，而不是只在湖心闪。
-    const pavilionGlints: ReadonlyArray<readonly [number, number]> = [
-      [PAVILION_CENTER.x - 46, PAVILION_CENTER.y + 92],
-      [PAVILION_CENTER.x - 14, PAVILION_CENTER.y + 108],
-      [PAVILION_CENTER.x + 20, PAVILION_CENTER.y + 104],
-      [PAVILION_CENTER.x + 52, PAVILION_CENTER.y + 88],
-    ];
-    for (const [gx, gy] of pavilionGlints) {
-      const sprite = new Sprite(glint);
-      sprite.anchor.set(0.5, 0.5);
-      sprite.tint = VENUE_COLORS.lake.accent;
-      sprite.position.set(gx, gy);
-      this.container.addChild(sprite);
-      this.glints.push({ sprite, seed: glintSeed });
-      glintSeed += 23;
     }
 
     this.neon = new Sprite(glow);

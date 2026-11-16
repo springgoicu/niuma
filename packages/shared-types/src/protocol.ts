@@ -55,6 +55,8 @@ import {
   STATUS_EXTENSION_MAGIC,
   AMBULANCE_PACKET_BYTES,
   BOSS_PACKET_BYTES,
+  BOSS_SHOCK_PACKET_BYTES,
+  INTERACT_REJECT_BYTES,
   JAIL_PACKET_BYTES,
   PATIENT_PACKET_BYTES,
   SYNC_CAPABILITY_MAGIC,
@@ -67,6 +69,7 @@ import {
   VENT_PACKET_WITH_FLAGS_BYTES,
   WELCOME_SESSION_BYTES,
   WELCOME_SESSION_MAGIC,
+  WORLD_EVENT_PACKET_BYTES,
   type SyncFormat,
 } from './constants';
 import { bytesToDeviceId, deviceIdToBytes } from './device';
@@ -80,6 +83,8 @@ import {
   clampItemCount,
   clampStatLevel,
   emptyEconomyProfile,
+  findCosmeticSkuByKey,
+  findCosmeticSkuById,
   findItemSku,
   findItemSkuById,
   sanitizeEconomyProfile,
@@ -163,6 +168,7 @@ import type {
   DiceBetRequest,
   DiceStatePacket,
   DiceTablePacket,
+  InteractRejectPacket,
   VillaRequest,
   VillaStatePacket,
 } from './types';
@@ -2013,9 +2019,11 @@ export function decodeQueueRejected(data: Uint8Array): QueueRejectedPacket {
 }
 
 // ---------------------------------------------------------------------------
-// 牛马币钱包（ADR-0082）：`[0x38][coins u32][4×stats u8][reason u8][count u8]`
-// + count × `[itemId u8][count u16]`。完整背包快照而不是增量：幂等，也不需要合并逻辑。
+// 牛马币钱包（ADR-0082 / ADR-0104）：`[0x38][coins u32][4×stats u8][reason u8][count u8]`
+// + count × `[itemId u8][count u16]` + 可选装扮段 `[cosmeticCount u8][cosmeticId u8]×N`。
+// 完整背包快照而不是增量：幂等，也不需要合并逻辑。
 // ADR-0098：房屋等级字节随户型下线一起去掉（此前是 `[houseTier u8][reason u8]`）。
+// ADR-0104：尾段带服务端账本里的已解锁装扮；旧客户端读完背包就停，忽略尾段。
 // ---------------------------------------------------------------------------
 
 export interface WalletSyncPacket {
@@ -2023,6 +2031,13 @@ export interface WalletSyncPacket {
   stats: EconomyStats;
   reason: number;
   inventory: Record<string, number>;
+  /**
+   * 已解锁装扮的 key 清单。
+   *
+   * `undefined` 表示这条包没有装扮段（旧服务端 / 旧测试包），客户端保持本地值；
+   * 空数组表示服务端确认「一件也没有」，客户端应清空本地。
+   */
+  unlockedCosmetics?: string[];
 }
 
 export function encodeWalletSync(packet: WalletSyncPacket): Uint8Array {
@@ -2030,6 +2045,7 @@ export function encodeWalletSync(packet: WalletSyncPacket): Uint8Array {
     coins: packet.coins,
     stats: packet.stats,
     inventory: packet.inventory,
+    unlockedCosmetics: packet.unlockedCosmetics,
   });
   const entries: Array<{ id: number; count: number }> = [];
   for (const [key, count] of Object.entries(clean.inventory)) {
@@ -2037,11 +2053,23 @@ export function encodeWalletSync(packet: WalletSyncPacket): Uint8Array {
     if (sku && count > 0) entries.push({ id: sku.id, count: clampItemCount(count) });
   }
   entries.sort((a, b) => a.id - b.id);
-  const writer = new ByteWriter(11 + entries.length * 3);
+  const cosmetics: number[] = [];
+  if (packet.unlockedCosmetics !== undefined) {
+    for (const key of clean.unlockedCosmetics) {
+      const sku = findCosmeticSkuByKey(key);
+      if (sku) cosmetics.push(sku.id);
+    }
+    cosmetics.sort((a, b) => a - b);
+  }
+  const writer = new ByteWriter(11 + entries.length * 3 + (packet.unlockedCosmetics !== undefined ? 1 + cosmetics.length : 0));
   writer.u8(OpCode.S2C_WALLET_SYNC).u32(clean.coins);
   for (const key of STAT_KEYS) writer.u8(clean.stats[key]);
   writer.u8(packet.reason & 0xff).u8(entries.length);
   for (const entry of entries) writer.u8(entry.id).u16(entry.count);
+  if (packet.unlockedCosmetics !== undefined) {
+    writer.u8(Math.min(0xff, cosmetics.length));
+    for (const id of cosmetics.slice(0, 0xff)) writer.u8(id);
+  }
   return writer.finish();
 }
 
@@ -2065,7 +2093,18 @@ export function decodeWalletSync(data: Uint8Array): WalletSyncPacket {
     const itemCount = clampItemCount(reader.u16());
     if (sku && itemCount > 0) inventory[sku.key] = itemCount;
   }
-  return { coins, stats, reason, inventory };
+  const packet: WalletSyncPacket = { coins, stats, reason, inventory };
+  // 尾段可选：旧服务端不发、旧客户端不读；读到装扮段就整份替换
+  if (reader.remaining >= 1) {
+    const cosmeticCount = reader.u8();
+    const cosmetics: string[] = [];
+    for (let i = 0; i < cosmeticCount && reader.remaining >= 1; i += 1) {
+      const sku = findCosmeticSkuById(reader.u8());
+      if (sku) cosmetics.push(sku.key);
+    }
+    packet.unlockedCosmetics = cosmetics;
+  }
+  return packet;
 }
 
 // ---------------------------------------------------------------------------
@@ -2585,7 +2624,8 @@ export function decodeVillaRequest(data: Uint8Array): VillaRequest {
 export function encodeVillaState(packet: VillaStatePacket): Uint8Array {
   const villas = packet.villas.slice(0, 0xff);
   let size = 2;
-  const names = villas.map((villa) => truncateName(villa.ownerName));
+  // 无主院子的 ownerName 就是空串：不能套昵称兜底，否则牌匾会把「待售」写成「无名牛马」
+  const names = villas.map((villa) => (villa.ownerName.trim() === '' ? '' : truncateName(villa.ownerName)));
   for (const name of names) size += 7 + textEncoder.encode(name).length;
   const writer = new ByteWriter(size);
   writer.u8(OpCode.S2C_VILLA_STATE).u8(villas.length);
@@ -2594,6 +2634,9 @@ export function encodeVillaState(packet: VillaStatePacket): Uint8Array {
     const bytes = textEncoder.encode(name);
     let flags = 0;
     if (villa.locked) flags |= 1;
+    // bit1 = 已有房主（离线也算），bit2 = 收包人就是房主（按设备号）
+    if (villa.owned) flags |= 1 << 1;
+    if (villa.mine) flags |= 1 << 2;
     writer
       .u8(villa.id & 0xff)
       .u16(Math.max(0, villa.ownerId) & 0xffff)
@@ -2618,7 +2661,15 @@ export function decodeVillaState(data: Uint8Array): VillaStatePacket {
     const pending = reader.u16();
     const nameLength = reader.u8();
     const ownerName = nameLength <= reader.remaining ? reader.utf8(nameLength) : '';
-    villas.push({ id, ownerId, ownerName, locked: (flags & 1) !== 0, pending });
+    villas.push({
+      id,
+      ownerId,
+      ownerName,
+      locked: (flags & 1) !== 0,
+      owned: (flags & (1 << 1)) !== 0,
+      mine: (flags & (1 << 2)) !== 0,
+      pending,
+    });
   }
   return { villas };
 }
@@ -2812,9 +2863,9 @@ export function decodeQuestState(data: Uint8Array): QuestStatePacket {
   return { day, entries };
 }
 
-/** 世界事件横幅：`[op][kind u8][phase u8][remainingSec u16][seed u16][amount u16]`，8 字节 */
+/** 世界事件横幅：`[op][kind u8][phase u8][remainingSec u16][seed u16][amount u16]`，9 字节 */
 export function encodeWorldEvent(packet: WorldEventPacket): Uint8Array {
-  const writer = new ByteWriter(8);
+  const writer = new ByteWriter(WORLD_EVENT_PACKET_BYTES);
   writer
     .u8(OpCode.S2C_WORLD_EVENT)
     .u8(packet.kind & 0xff)
@@ -2825,8 +2876,15 @@ export function encodeWorldEvent(packet: WorldEventPacket): Uint8Array {
   return writer.finish();
 }
 
+/**
+ * 读端只保证「前 `WORLD_EVENT_PACKET_BYTES` 字节够读」：新字段一律追加在尾部，
+ * 多出来的字节忽略。曾经的 8 字节硬校验把带 seed 的 9 字节包整包拒收，
+ * 异常又在 Worker 里升级成渲染线程致命错误（ADR-0102）。
+ */
 export function decodeWorldEvent(data: Uint8Array): WorldEventPacket {
-  if (data.byteLength !== 8) throw new Error(`world event must be 8 bytes, got ${data.byteLength}`);
+  if (data.byteLength < WORLD_EVENT_PACKET_BYTES) {
+    throw new Error(`world event must be at least ${WORLD_EVENT_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  }
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_WORLD_EVENT) throw new Error('not a world event packet');
   return {
@@ -2875,9 +2933,9 @@ export function decodeEventClaimResult(data: Uint8Array): EventClaimResult {
   return { index, amount, mine: (flags & EVENT_CLAIM_FLAG_MINE) !== 0 };
 }
 
-/** 画饼冲击波：`[op][phase u8][x u16][y u16][radius u16][remainingMs u16][hits u8]`，10 字节 */
+/** 画饼冲击波：`[op][phase u8][x u16][y u16][radius u16][remainingMs u16][hits u8]`，11 字节 */
 export function encodeBossShock(packet: BossShockPacket): Uint8Array {
-  const writer = new ByteWriter(10);
+  const writer = new ByteWriter(BOSS_SHOCK_PACKET_BYTES);
   writer
     .u8(OpCode.S2C_BOSS_SHOCK)
     .u8(packet.phase & 0xff)
@@ -2890,7 +2948,9 @@ export function encodeBossShock(packet: BossShockPacket): Uint8Array {
 }
 
 export function decodeBossShock(data: Uint8Array): BossShockPacket {
-  if (data.byteLength !== 10) throw new Error(`boss shock must be 10 bytes, got ${data.byteLength}`);
+  if (data.byteLength < BOSS_SHOCK_PACKET_BYTES) {
+    throw new Error(`boss shock must be at least ${BOSS_SHOCK_PACKET_BYTES} bytes, got ${data.byteLength}`);
+  }
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_BOSS_SHOCK) throw new Error('not a boss shock packet');
   return {
@@ -2907,3 +2967,22 @@ export function decodeBossShock(data: Uint8Array): BossShockPacket {
 export const BOSS_SHOCK_RADIUS = BOSS_SHOCK.Radius;
 /** 红包雨的默认持续时间：客户端横幅倒计时兜底 */
 export const WORLD_EVENT_RED_PACKET_MS = WORLD_EVENT.RedPacketDurationMs;
+
+/** 互动拒绝回执（ADR-0104）：`[op][action u8][reason u8]`，只回给操作者本人 */
+export function encodeInteractReject(packet: InteractRejectPacket): Uint8Array {
+  const writer = new ByteWriter(INTERACT_REJECT_BYTES);
+  writer
+    .u8(OpCode.S2C_INTERACT_REJECT)
+    .u8(Math.max(0, Math.min(0xff, Math.floor(packet.action) || 0)))
+    .u8(Math.max(0, Math.min(0xff, Math.floor(packet.reason) || 0)));
+  return writer.finish();
+}
+
+export function decodeInteractReject(data: Uint8Array): InteractRejectPacket {
+  if (data.byteLength < INTERACT_REJECT_BYTES) {
+    throw new Error(`interact reject must be at least ${INTERACT_REJECT_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_INTERACT_REJECT) throw new Error('not an interact reject packet');
+  return { action: reader.u8(), reason: reader.u8() };
+}

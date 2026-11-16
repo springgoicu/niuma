@@ -3,7 +3,7 @@
  *
  * 三条纪律：
  * 1. **不写第二份坐标**：跨路彩旗从 `WORLD_LAYOUT.props` 的路灯两两配对派生，
- *    树梢灯笼从 `WORLD_LAYOUT.looseTrees` 与道路中心线派生，门楣彩旗从 `DOOR_PLAQUES` 派生；
+ *    树梢灯笼从 `WORLD_LAYOUT.looseTrees` 与道路中心线派生，门楣彩旗从门柱挂点派生；
  * 2. **确定性**：不使用 `Math.random()`，需要「稀疏一点」的地方用位置哈希取模，
  *    同一份世界布局在任何设备上算出的锚点完全一致；
  * 3. **纯装饰**：不产生碰撞、不进协议、不写 `localStorage`，玩家可以穿过任何一条彩旗。
@@ -13,9 +13,7 @@
  */
 
 import {
-  DISTRICTS,
   DOOR_LANTERN_POSTS,
-  DOOR_PLAQUES,
   PLAZA_CENTER,
   PLAZA_RADIUS,
   WORLD_LAYOUT,
@@ -30,7 +28,6 @@ export type FestivalAnchorKind =
   | 'plaza-bunting'
   | 'road-bunting'
   | 'gate-bunting'
-  | 'district-bunting'
   | 'tree-lantern';
 
 export interface FestivalAnchor {
@@ -54,18 +51,8 @@ export interface FestivalAnchor {
 export const BUNTING_LAMP_GAP = 232;
 /** 灯头相对灯柱脚底的 y 偏移；与 `scene-lights.ts` 的灯头光心同一约定 */
 export const BUNTING_HANG_DY = 38;
-/** 门楣彩旗挂在门线上方 76px：越过门架横梁，又不会挡住门牌 */
+/** 门楣彩旗挂在门线上方 76px：越过门洞上沿，又不会挡住门牌 */
 export const GATE_BUNTING_HANG_DY = 76;
-/**
- * 五座区门的门楣彩旗：挂在横梁**上沿**。
- *
- * 区门的木构是「门柱 −74..0 / 横枋 −88..−72 / 匾额 −106..−88」（`venue-art.ts`），
- * 所以挂点取 −88：绳子正好压在横枋顶边，旗面垂在横枋正面，
- * 既不悬空（−92 会飘在梁上）也不压匾额（−76 会盖住牌面）。
- */
-export const DISTRICT_BUNTING_HANG_DY = 88;
-/** 区门横枋宽 108：彩旗必须与梁同宽，宽出的部分会左右悬空 */
-export const DISTRICT_BUNTING_W = 108;
 /** 树梢灯笼挂在树冠下三分之一 */
 export const TREE_LANTERN_HANG_DY = 44;
 /** 全园只点亮 6 条彩旗：4 条广场四向 + 南北入口各 1 条 */
@@ -222,30 +209,14 @@ function pairAnchors(): FestivalAnchor[] {
 }
 
 /**
- * 门楣彩旗：企业楼木构门架挂在横梁上；卫生间没有门架，按门洞中心
- * （= 东侧门柱再向左 30px）补一条等宽的短彩旗，视觉上仍是「门楣一串彩」。
+ * 门楣彩旗：卫生间没有门架，按门洞中心（= 东侧门柱再向左 30px）
+ * 补一条等宽的短彩旗，视觉上仍是「门楣一串彩」。
  *
- * ADR-0091 之后 `DOOR_PLAQUES` 还包含 9 处入口小门牌，它们没有横梁可挂，
- * 只取 `frame === 'gate'` 的那一座（企业楼牌坊）。
- *
- * ADR-0097 新增的**五座区门**在这一段单独派生：它们不是 `DOOR_PLAQUES` 的成员，
- * 几何在 `DISTRICTS[].gate` 与 `venue-art.ts` 的 `depthDistrictGates()` 里，
- * 挂点、宽度与横枋逐像素对齐（见 `DISTRICT_BUNTING_HANG_DY` / `DISTRICT_BUNTING_W`）。
+ * 其余场所入口只有小门牌、没有横梁可挂，不挂门楣彩旗。
  */
 function gateAnchors(): FestivalAnchor[] {
   const anchors: FestivalAnchor[] = [];
-  for (const plaque of DOOR_PLAQUES) {
-    if (plaque.frame !== 'gate') continue;
-    anchors.push({
-      kind: 'gate-bunting',
-      x: plaque.x,
-      y: plaque.depthY - GATE_BUNTING_HANG_DY,
-      depthY: plaque.depthY,
-      variant: (hash2(plaque.x, plaque.depthY) >>> 4) % 2 as 0 | 1,
-      lit: false,
-    });
-  }
-  const restroom = DOOR_LANTERN_POSTS[3];
+  const restroom = DOOR_LANTERN_POSTS.at(-1);
   if (restroom) {
     anchors.push({
       kind: 'gate-bunting',
@@ -253,17 +224,6 @@ function gateAnchors(): FestivalAnchor[] {
       y: restroom.depthY - GATE_BUNTING_HANG_DY,
       depthY: restroom.depthY,
       variant: (hash2(restroom.x, restroom.depthY) >>> 4) % 2 as 0 | 1,
-      lit: false,
-    });
-  }
-  // 五座区门：挂点压在横枋上沿，深度键与门架同键（靠入层顺序压在门架之上）
-  for (const district of DISTRICTS) {
-    anchors.push({
-      kind: 'district-bunting',
-      x: district.gate.x,
-      y: district.gate.y - DISTRICT_BUNTING_HANG_DY,
-      depthY: district.gate.y,
-      variant: (hash2(district.gate.x, district.gate.y) >>> 4) % 3 as 0 | 1 | 2,
       lit: false,
     });
   }

@@ -58,6 +58,12 @@ export interface StateConfig {
   saveDelayMs: number;
   /** 匿名档案（设备号）容量上限 */
   maxProfiles: number;
+  /** 钱包账本容量上限（ADR-0104） */
+  maxWallets: number;
+  /** 是否把钱包装进服务端账本；0 = 回到 ADR-0082 的浏览器永久层 */
+  walletPersist: boolean;
+  /** 首次导入的余额上限（防改包一次性填满） */
+  walletImportMax: number;
 }
 
 export interface ServerConfig {
@@ -188,10 +194,13 @@ export function loadConfig(): ServerConfig {
       chatCooldownMs: readIntWithZero(process.env.GAME_CHAT_COOLDOWN_MS, 500),
     },
     state: {
-      // 缺省就写盘：账号化的点赞/战绩要靠它续命。显式设空串才退回零持久化
+      // 缺省就写盘：账号化的点赞/战绩/钱包要靠它续命。显式设空串才退回零持久化
       path: process.env.GAME_STATE_PATH ?? 'data/world-state.json',
       saveDelayMs: readIntWithZero(process.env.GAME_STATE_SAVE_MS, 1000),
       maxProfiles: readInt(process.env.GAME_STATE_MAX_PROFILES, 512),
+      maxWallets: readInt(process.env.GAME_STATE_MAX_WALLETS, 1024),
+      walletPersist: readBool(process.env.GAME_WALLET_PERSIST, true),
+      walletImportMax: readInt(process.env.GAME_WALLET_IMPORT_MAX, 100_000),
     },
     // 显式配置优先；不填就跟宿主机时区（容器跑 UTC 也不会把零点错位）
     tzOffsetMin: resolveTzOffsetMin(process.env.GAME_TZ_OFFSET_MIN),

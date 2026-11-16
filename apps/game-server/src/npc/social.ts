@@ -61,8 +61,8 @@ export function updateSocial(agent: NpcAgent, context: NpcSocialContext, now: nu
   agent.nextSocialAt = now + context.config.socialIntervalMs;
 
   const player = agent.player;
-  // 被创飞躺在地上时不做社交：先爬起来
-  if (now < player.stunUntil) return;
+  // 昏迷（等救护车）与被创飞躺在地上时都不做社交：先保住姿态
+  if (player.incapacitated || now < player.stunUntil) return;
   if (!context.config.interact) return;
 
   const neighbor = nearestKnown(context, player);

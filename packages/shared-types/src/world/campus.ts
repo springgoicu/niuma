@@ -26,7 +26,7 @@ import type { WorldRect } from './geometry';
  *
  * 上下铺不新增种类：每个铺位就是一张 `bed` 座位，两层各一张，见下方的 LOUNGE_SEATS。
  */
-export type SeatKind = 'chair' | 'toilet' | 'stool' | 'sofa' | 'couch' | 'cinema' | 'bench' | 'bed' | 'drum';
+export type SeatKind = 'chair' | 'toilet' | 'stool' | 'sofa' | 'couch' | 'cinema' | 'bench' | 'bed';
 
 /**
  * 长椅坐点相对长椅底座的偏移（像素）：坐点在椅面正前方 12px。
@@ -306,18 +306,12 @@ export const RESTROOM: WorldRect = {
  * 家庭影音室（本轮新增）
  *
  * 落在校园与南侧庭院之间的草地：北缘离 CAMPUS_RECT 南沿 58px（走廊加宽 16px 后由 74 收到 58），
- * 南缘离 SOUTH_YARD 北沿 30px，东墙外 200px 就是南向主路。
- * 门开在东墙，进门后是东侧走道，三排座椅面朝北墙的大屏幕。
+ * 南缘离 SOUTH_YARD 北沿 30px，东沿外 200px 就是南向主路。
+ * ADR-0103 之后影厅是开放平面：东侧直接接门前铺装，三排座椅仍面朝北端的大屏幕。
  * ------------------------------------------------------------------ */
 
 export const HOME_THEATER: WorldRect = { x: 3200, y: 5400, w: 460, h: 320 };
-/** 东墙门洞：与生活大街接出来的支路同一条 y */
-export const HOME_THEATER_DOOR: DoorSpec = {
-  side: 'east',
-  from: HOME_THEATER.y + 130,
-  to: HOME_THEATER.y + 190,
-};
-/** 门前铺装：从墙外接到生活大街 */
+/** 门前铺装：从场地东沿接到生活大街 */
 export const HOME_THEATER_DOOR_PAVING: WorldRect = {
   x: HOME_THEATER.x + HOME_THEATER.w,
   y: HOME_THEATER.y + 130,
@@ -395,27 +389,14 @@ export const JAIL_ANCHORS: ReadonlyArray<{ x: number; y: number }> = [
 
 /** 墙厚：碰撞与视觉共用，玩家半径 9 贴墙时不会穿过 10px 墙体 */
 export const WALL_THICKNESS = 10;
-/** 门洞区间：会议室朝南（面向楼内走廊），发泄室朝北（面向同一条走廊） */
-const MEETING_DOOR: DoorSpec = {
-  side: 'south',
-  from: MEETING_ROOM.x + 330,
-  to: MEETING_ROOM.x + 390,
-};
-const VENT_DOOR: DoorSpec = {
-  side: 'north',
-  from: VENT_ROOM.x + 300,
-  to: VENT_ROOM.x + 360,
-};
-/** 卫生间朝北（面向服务广场），宿舍区朝北（面向生活大街） */
+/**
+ * 门洞区间只剩卫生间一处（ADR-0103 之后其余场所是开放平面）：
+ * 卫生间朝北面向服务广场；小黑屋的门由 `JAIL_DOOR` 描述。
+ */
 const RESTROOM_DOOR: DoorSpec = {
   side: 'north',
   from: RESTROOM.x + 150,
   to: RESTROOM.x + 210,
-};
-const LOUNGE_DOOR: DoorSpec = {
-  side: 'north',
-  from: LOUNGE.x + 200,
-  to: LOUNGE.x + 260,
 };
 
 /** 工位桌尺寸与椅子偏移：椅子锚点离短边 20px，人坐下时头不压桌面 */
@@ -507,19 +488,11 @@ function roomWalls(rect: WorldRect, door: DoorSpec): SolidRect[] {
 }
 
 /**
- * 工作区：楼体北 / 西两面外墙 + 朝走廊的整段敞口（ADR-0097）。
- * 门洞区间覆盖整条南沿，`roomWalls` 自然把南墙拆成零段——开放区仍然没有内墙。
+ * ADR-0103：企业区 / 生活区 / 游乐区改成开放平面，只有「需要关起来」的两间还砌墙——
+ * 卫生间（隐私与坑位隔断）与小黑屋（禁闭）。工作区、会议室、发泄区、宿舍区、影音室
+ * 都只保留地面材质做边界，不再有外墙与门洞。
  */
-const workroomSolids = roomWalls(WORKROOM, {
-  side: 'south',
-  from: WORKROOM.x,
-  to: WORKROOM.x + WORKROOM.w,
-});
-const meetingSolids = roomWalls(MEETING_ROOM, MEETING_DOOR);
-const ventSolids = roomWalls(VENT_ROOM, VENT_DOOR);
 const restroomSolids = roomWalls(RESTROOM, RESTROOM_DOOR);
-const loungeSolids = roomWalls(LOUNGE, LOUNGE_DOOR);
-const theaterSolids = roomWalls(HOME_THEATER, HOME_THEATER_DOOR);
 const jailSolids = roomWalls(JAIL, JAIL_DOOR);
 
 /**
@@ -681,7 +654,7 @@ export const WORKSTATIONS: ReadonlyArray<Workstation> = [
  * 双人沙发由两个 62px 的半座拼成（variant 0 = 左半、1 = 右半），
  * 两半的中缝在 x+341 对齐，合起来是一张 124px 的长沙发。
  * 右半单独放在 `LOUNGE_COUCH_SECOND` 里、追加到座位表末尾，
- * 这样既有的工位 / 会议 / 马桶 / 上下铺 / 石鼓凳 id 不会整体后移
+ * 这样既有的工位 / 会议 / 马桶 / 上下铺 id 不会整体后移
  * （浏览器 localStorage 的 `niuma:session:v1` 里存着 seatId）。
  *
  * 上下两层相距 44px：既读得出「下铺在更近的前景」，
@@ -777,7 +750,11 @@ export const LOUNGE_PROPS: PropInstance[] = [
   { kind: 'bin', x: LOUNGE.x + 404, y: LOUNGE.y + 34 },
 ];
 
-/** 有门房间的门前铺装：把门洞接到草地，贴花不进入 */
+/**
+ * 场所入口的铺装：把门口接到草地，贴花不进入。
+ * ADR-0103 之后只有卫生间与小黑屋还是「门」；会议室 / 宿舍区 / 影音室的三条
+ * 现在读作场地入口垫（坐标不动，仍是玩家从路面走进地面的第一块砖）。
+ */
 export const DOOR_PAVING: WorldRect[] = [
   { x: MEETING_ROOM.x + 326, y: MEETING_ROOM.y + 360, w: 68, h: 36 },
   { x: LOUNGE.x + 196, y: LOUNGE.y - 36, w: 68, h: 36 },
@@ -830,18 +807,12 @@ export const TEA_STATION_SOLID: WorldRect = {
 };
 
 /**
- * 有墙房间的墙体（含家庭影音室），加上卫生间两道内隔墙、
- * 四片坑位隔断与会议桌。工作区按需求不加墙，因此这里没有它的碰撞矩形。
+ * ADR-0103：企业楼与生活区改成开放平面，这里只剩卫生间与小黑屋的墙体，
+ * 加卫生间两道内隔墙、四片坑位隔断与会议桌（桌子仍是家具碰撞，不是墙）。
+ * 走廊不再有西端封口：楼体没有外墙之后，那条走廊就是一块铺装。
  */
 export const CAMPUS_SOLIDS: SolidRect[] = [
-  ...workroomSolids,
-  ...meetingSolids,
-  ...ventSolids,
-  // 走廊西端封口：楼体只留东端一个大门，西侧不能漏出一条缝
-  { kind: 'wall', x: CAMPUS_RECT.x, y: COMPANY_CORRIDOR.y, w: WALL_THICKNESS, h: COMPANY_CORRIDOR.h },
   ...restroomSolids,
-  ...loungeSolids,
-  ...theaterSolids,
   ...jailSolids,
   ...restroomDividers,
   ...stallPartitions,

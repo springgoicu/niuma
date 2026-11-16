@@ -40,7 +40,7 @@ export function signPlateTop(index: number, count: number, height: number): numb
 
 /**
  * 牌面目的地：五座区门，顺序与 `DISTRICTS` 一致，箭头按真实方位现算。
- * `color` 直接取 `DISTRICTS[].color`，牌面书脊因此与区门门灯、小地图区色、
+ * `color` 直接取 `DISTRICTS[].color`，牌面书脊因此与小地图区色、
  * HUD 导览卡组标题是同一种颜色——指路牌不再只有「薄荷绿一种箭头」。
  */
 export function signPlates(x: number, y: number, height: number): SignPlate[] {

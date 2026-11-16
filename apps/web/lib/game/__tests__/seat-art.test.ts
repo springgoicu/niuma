@@ -10,7 +10,7 @@ const FACINGS: Array<{ facing: Direction; name: string }> = [
   { facing: DIRECTION.Right, name: '人坐桌西、面朝东' },
 ];
 
-const NON_CHAIR: SeatKind[] = ['toilet', 'stool', 'drum', 'sofa', 'bed'];
+const NON_CHAIR: SeatKind[] = ['toilet', 'stool', 'sofa', 'bed'];
 
 /** 26×30 帧、sink 6、座面顶在帧内 13 → 世界高度 = 6 - 30 + 13 */
 const CHAIR_SINK_EXPECTED = 6 - 30 + SEAT_TOP;

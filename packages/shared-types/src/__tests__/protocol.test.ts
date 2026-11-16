@@ -6,6 +6,8 @@ import {
   BOSS_FLAG_RESET,
   BOSS_MAX_HP,
   BOSS_PACKET_BYTES,
+  BOSS_SHOCK_PACKET_BYTES,
+  BOSS_SHOCK_PHASE,
   CAREER_EXTENSION_MAGIC,
   CAREER_FIXED_BYTES,
   CAREER_MAX_BYTES,
@@ -35,6 +37,9 @@ import {
   SYNC_FORMAT_LEGACY,
   SYNC_HEADER_BYTES,
   VENT_PACKET_BYTES,
+  WORLD_EVENT_KIND,
+  WORLD_EVENT_PACKET_BYTES,
+  WORLD_EVENT_PHASE,
   RING_CAPACITY,
   RING_PHASE,
   JAIL_PACKET_BYTES,
@@ -46,6 +51,7 @@ import {
   decodeAppearance,
   decodeAppearanceBroadcast,
   decodeBoss,
+  decodeBossShock,
   decodeCareer,
   decodeCareerBroadcast,
   decodeCareerReport,
@@ -70,11 +76,13 @@ import {
   decodeRing,
   decodeVent,
   decodeWelcome,
+  decodeWorldEvent,
   dequantizeCoord,
   directionFromVector,
   encodeAppearance,
   encodeAppearanceBroadcast,
   encodeBoss,
+  encodeBossShock,
   encodeChatBroadcast,
   encodeChatHistory,
   encodeChatHistoryRequest,
@@ -102,6 +110,7 @@ import {
   encodeSystemNotice,
   encodeVent,
   encodeWelcome,
+  encodeWorldEvent,
   buildSpawnBody,
   readSync,
   readSyncTick,
@@ -1666,5 +1675,90 @@ describe('匿名设备段与 PONG 时钟段（ADR-0081）', () => {
     expect(isDeviceId(DEVICE)).toBe(true);
     expect(isDeviceId(DEVICE.toUpperCase())).toBe(false);
     expect(isDeviceId('a1b2c3')).toBe(false);
+  });
+});
+
+describe('世界事件与画饼冲击波包（ADR-0088）', () => {
+  it('世界事件正好 9 字节，编解码往返一致', () => {
+    const packet = {
+      kind: WORLD_EVENT_KIND.RedPacketRain,
+      phase: WORLD_EVENT_PHASE.Active,
+      remainingSec: 45,
+      seed: 0x1234,
+      amount: 25,
+    };
+    const bytes = encodeWorldEvent(packet);
+    expect(bytes.byteLength).toBe(WORLD_EVENT_PACKET_BYTES);
+    expect(bytes[0]).toBe(OpCode.S2C_WORLD_EVENT);
+    expect(decodeWorldEvent(bytes)).toEqual(packet);
+  });
+
+  it('世界事件尾部追加字节时仍读出前 9 字节字段', () => {
+    // 线上事故的形状：服务端按 9 字节发（带 seed），读端却按旧长度校验整包拒绝。
+    // 读端只按常量读固定字段，新字段一律追加在尾部，多出来的字节忽略。
+    const packet = {
+      kind: WORLD_EVENT_KIND.Inspection,
+      phase: WORLD_EVENT_PHASE.Resolve,
+      remainingSec: 0,
+      seed: 0,
+      amount: 7,
+    };
+    const encoded = encodeWorldEvent(packet);
+    const longer = new Uint8Array(encoded.byteLength + 2);
+    longer.set(encoded, 0);
+    longer.set([0xde, 0xad], WORLD_EVENT_PACKET_BYTES);
+    expect(decodeWorldEvent(longer)).toEqual(packet);
+  });
+
+  it('截断的世界事件包立即报错', () => {
+    const packet = {
+      kind: WORLD_EVENT_KIND.RedPacketRain,
+      phase: WORLD_EVENT_PHASE.Announce,
+      remainingSec: 3,
+      seed: 1,
+      amount: 0,
+    };
+    const truncated = encodeWorldEvent(packet).subarray(0, WORLD_EVENT_PACKET_BYTES - 1);
+    expect(() => decodeWorldEvent(truncated)).toThrow(/world event must be/);
+  });
+
+  it('冲击波正好 11 字节，整数坐标量化后精确还原', () => {
+    const packet = {
+      phase: BOSS_SHOCK_PHASE.Warn,
+      x: 300,
+      y: 240,
+      radius: 320,
+      remainingMs: 2000,
+      hits: 0,
+    };
+    const bytes = encodeBossShock(packet);
+    expect(bytes.byteLength).toBe(BOSS_SHOCK_PACKET_BYTES);
+    expect(bytes[0]).toBe(OpCode.S2C_BOSS_SHOCK);
+    expect(decodeBossShock(bytes)).toEqual(packet);
+  });
+
+  it('冲击波结算帧的震趴人数往返', () => {
+    const packet = {
+      phase: BOSS_SHOCK_PHASE.Hit,
+      x: 480,
+      y: 600,
+      radius: 320,
+      remainingMs: 0,
+      hits: 9,
+    };
+    expect(decodeBossShock(encodeBossShock(packet))).toEqual(packet);
+  });
+
+  it('截断的冲击波包立即报错', () => {
+    const packet = {
+      phase: BOSS_SHOCK_PHASE.Warn,
+      x: 300,
+      y: 240,
+      radius: 320,
+      remainingMs: 2000,
+      hits: 0,
+    };
+    const truncated = encodeBossShock(packet).subarray(0, BOSS_SHOCK_PACKET_BYTES - 1);
+    expect(() => decodeBossShock(truncated)).toThrow(/boss shock must be/);
   });
 });

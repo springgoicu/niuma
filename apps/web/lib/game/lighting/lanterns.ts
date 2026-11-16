@@ -11,14 +11,14 @@ import type { DepthSink } from '../sort-layer';
  *
  * 三条纪律：
  * 1. **灯只画一次、光源只出一份数据**：挂灯的像素画 `paintLantern()` 与光池
- *    `LANTERN_LIGHT` 都由本模块提供，摸鱼亭与门柱共用同一套，改口径只改这里；
+ *    `LANTERN_LIGHT` 都由本模块提供，拱门与门柱共用同一套，改口径只改这里；
  * 2. **不自己判昼夜**：白昼熄灭是 `lightmap` 的 `localLightGain(tone)` 干的，
  *    这里只登记 `LightSpec`。白天整层 `visible=false`，黄昏淡入、深夜满亮；
  * 3. **半径 48 是需求口径**：挂灯是「向下投一圈暖光」的漫射光源，不是照明灯，
  *    再大就会把冷色夜景吃光，冷暖撞色反而没了。
  */
 
-/** 铁艺挂灯用色：铁架 + 暖白玻璃，与小镇门架、白漆栏杆同族 */
+/** 铁艺挂灯用色：铁架 + 暖白玻璃，与小门牌、白漆栏杆同族 */
 export const LANTERN_INK = {
   outline: 0x2a3142,
   iron: TOWN_MATERIALS.iron,
@@ -74,7 +74,7 @@ export function lanternLights(anchors: readonly LanternPost[]): LightSpec[] {
   }));
 }
 
-/** 全部固定挂灯（拱门 2 + 门柱 4）；摸鱼亭四角由 `pavilion.ts` 自己收集 */
+/** 全部固定挂灯（拱门 2 + 门柱 3） */
 export const FIXED_LANTERNS: ReadonlyArray<LanternPost> = [...ARCH_LANTERN_POSTS, ...DOOR_LANTERN_POSTS];
 
 /**

@@ -164,10 +164,11 @@ export function classifyDice(a: number, b: number, c: number): DiceSide {
 }
 
 /**
- * 确定性摇骰：给定局号得到三颗 1–6。
+ * 确定性摇骰：给定种子得到三颗 1–6。
  *
- * 不用 Math.random —— 服务端与回放、测试要能复现同一局；
- * 局号由服务端递增，客户端只接收结果，无法预测。
+ * **只给单测与确定性回放用，运行时不再调用**（ADR-0104）：局号会随
+ * `S2C_DICE_STATE` 下发，用局号推导骰面等于把答案提前告诉改包客户端。
+ * 正式开局由 `DiceHallRuntime` 注入服务端随机源。
  */
 export function rollDice(seed: number): [number, number, number] {
   let state = (Math.imul(seed | 0, 0x9e3779b1) ^ 0x51ed270b) >>> 0;

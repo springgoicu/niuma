@@ -136,6 +136,7 @@ export function runWorkerHost(scope: WorkerScope): void {
         onLoudspeaker: (packet) => post({ t: 'loudspeaker', packet }),
         onShoutReject: (packet) => post({ t: 'shoutReject', packet }),
         onItemReject: (packet) => post({ t: 'itemReject', packet }),
+        onInteractReject: (packet) => post({ t: 'interactReject', packet }),
         // 茶台 F：把「开面板」这个 React 侧的意图交回主线程
         onShopOpen: (tab) => post({ t: 'shopOpen', tab }),
         // 热区建筑（ADR-0087）：开面板意图与下行快照都要透传，漏一条 Worker 模式就丢包

@@ -110,7 +110,15 @@ export class VillaRuntime {
     const villas: VillaPacket[] = VILLA_SPECS.map((spec) => {
       const record = this.records.get(spec.id);
       if (!record) {
-        return { id: spec.id, ownerId: 0, ownerName: '', locked: false, pending: 0 };
+        return {
+          id: spec.id,
+          ownerId: 0,
+          ownerName: '',
+          locked: false,
+          owned: false,
+          mine: false,
+          pending: 0,
+        };
       }
       const mine = record.ownerDeviceId === viewer.deviceId;
       return {
@@ -118,6 +126,9 @@ export class VillaRuntime {
         ownerId: record.ownerId,
         ownerName: record.ownerName,
         locked: record.locked,
+        // 离线房主也算已拥有：ownerId 归零只表示他不在线，不表示院子重新挂牌
+        owned: true,
+        mine,
         pending: mine ? Math.min(0xffff, villaPendingIncome(record.lastCollectAt, now)) : 0,
       };
     });

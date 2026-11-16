@@ -6,7 +6,10 @@ import { LogOut, Maximize, Minimize, Shuffle, Target } from 'lucide-react';
 import {
   BOARD_METRIC,
   CAREER_REPORT_INTERVAL_MS,
+  INTERACT_ACTION,
+  INTERACT_REASON,
   ITEM_REJECT_LABEL,
+  RING_BENCH_SEAT_GROUP,
   RING_PHASE,
   SHOUT_REJECT_LABEL,
   type BoardMetric,
@@ -109,6 +112,47 @@ export interface GameViewportProps {
   /** 深链参数：/play?name=夜班实习生&species=horse */
   initialName?: string;
   initialSpecies?: string;
+}
+
+/** 互动动作 → 玩家能看懂的动词 */
+const INTERACT_VERB: Record<number, string> = {
+  [INTERACT_ACTION.RingEnter]: '报名',
+  [INTERACT_ACTION.RingLeave]: '离场',
+  [INTERACT_ACTION.DiceBet]: '下注',
+  [INTERACT_ACTION.ArenaBet]: '押注',
+  [INTERACT_ACTION.VillaBuy]: '买院',
+  [INTERACT_ACTION.VillaLock]: '锁门',
+  [INTERACT_ACTION.VillaCollect]: '收币',
+  [INTERACT_ACTION.WorkClaim]: '搬砖结算',
+  [INTERACT_ACTION.QuestClaim]: '领悬赏',
+  [INTERACT_ACTION.EventClaim]: '抢红包',
+  [INTERACT_ACTION.Apartment]: '公寓探头',
+  [INTERACT_ACTION.Unknown]: '操作',
+};
+
+/** 拒绝原因 → 差什么。服务端只发编号，文案只活在这一处 */
+const INTERACT_REASON_TEXT: Record<number, string> = {
+  [INTERACT_REASON.NotSeated]: '先坐到对应座位上',
+  [INTERACT_REASON.TooFar]: '离得太远了',
+  [INTERACT_REASON.Phase]: '当前阶段不行',
+  [INTERACT_REASON.Full]: '名额已满',
+  [INTERACT_REASON.Already]: '已经参与过了',
+  [INTERACT_REASON.NotEnoughCoins]: '牛马币不够',
+  [INTERACT_REASON.BadAmount]: '注额不合法',
+  [INTERACT_REASON.Busy]: '现在忙不过来',
+  [INTERACT_REASON.Cooldown]: '点得太快了，缓一下',
+  [INTERACT_REASON.NoTarget]: '目标不存在',
+  [INTERACT_REASON.NoStock]: '没有可用道具',
+  [INTERACT_REASON.OwnerOnly]: '只有房主能做',
+  [INTERACT_REASON.Sold]: '已经被买走了',
+  [INTERACT_REASON.NoIncome]: '暂时没有可收的币',
+  [INTERACT_REASON.Unknown]: '没成功',
+};
+
+function interactRejectText(action: number, reason: number): string {
+  const verb = INTERACT_VERB[action] ?? '操作';
+  const detail = INTERACT_REASON_TEXT[reason] ?? INTERACT_REASON_TEXT[INTERACT_REASON.Unknown]!;
+  return `${verb}失败：${detail}`;
 }
 
 export function GameViewport({
@@ -504,6 +548,10 @@ export function GameViewport({
               useGameUi.getState().setDiceOpen(nextTable);
             }
           }
+          // 观战押注只对观战长椅开放：离座立刻收起，避免面板留着但提交必被拒
+          if (state.seatGroup !== RING_BENCH_SEAT_GROUP) {
+            useGameUi.getState().setArenaBetOpen(false);
+          }
           // 如厕计时跟座位类型走：坐在马桶座上攒今日如厕，起身即结算。
           // setToilet 内部按 active 变化短路，重复上报同一状态不会重复计时。
           attendanceClockRef.current?.setToilet(
@@ -542,15 +590,18 @@ export function GameViewport({
         onWallet: (packet) => {
           const ui = useGameUi.getState();
           const before = ui.wallet.coins;
-          // 外观 / 每日任务不在这条包里，必须用本地档案补齐而不是覆盖成空
+          // 每日任务不在这条包里，必须用本地档案补齐而不是覆盖成空；
+          // 装扮在 ADR-0104 之后随包下发，旧服务端没这段时保持本地值
           const local = loadEconomy();
           const next = {
             ...local,
             coins: packet.coins,
             stats: packet.stats,
             inventory: packet.inventory,
+            unlockedCosmetics: packet.unlockedCosmetics ?? local.unlockedCosmetics,
           };
-          // 赌注冻结不落盘：刷新页面导致的断线会退款，落盘反而会把冻结额永久吃掉
+          // 赌注冻结不落盘：回滚模式（GAME_WALLET_PERSIST=0）下刷新页面导致的断线会退款，
+          // 落盘反而会把冻结额永久吃掉；服务端账本模式下本地只是镜像，下次进园会被账本盖回
           if (packet.reason !== WALLET_REASON.EscrowFreeze) saveEconomy(next);
           ui.setWallet(next);
           if (packet.coins !== before) ui.pushCoinPop(packet.coins - before, packet.reason);
@@ -593,6 +644,10 @@ export function GameViewport({
         },
         onItemReject: (packet) => {
           useGameUi.getState().setHint(ITEM_REJECT_LABEL[packet.reason] ?? '道具没生效');
+        },
+        onInteractReject: (packet) => {
+          // 服务端只发动作 + 原因编号，中文文案集中在 interactRejectText
+          useGameUi.getState().setHint(interactRejectText(packet.action, packet.reason));
         },
         onShopOpen: (tab) => {
           // 茶台 F：直接落到属性页（ADR-0085），不再走「喝枸杞茶」的本地反馈

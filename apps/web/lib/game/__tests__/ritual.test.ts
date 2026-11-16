@@ -71,10 +71,10 @@ describe('当日首香', () => {
 });
 
 describe('铁艺挂灯光源表', () => {
-  it('拱门 2 盏 + 门柱 4 盏，每盏半径 48 的暖白', () => {
-    expect(FIXED_LANTERNS).toHaveLength(6);
+  it('拱门 2 盏 + 门柱 3 盏，每盏半径 48 的暖白', () => {
+    expect(FIXED_LANTERNS).toHaveLength(5);
     const lights = lanternLights(FIXED_LANTERNS);
-    expect(lights).toHaveLength(6);
+    expect(lights).toHaveLength(5);
     for (const light of lights) {
       expect(light.radius).toBe(48);
       expect(light.color).toBe(LANTERN_LIGHT.color);
@@ -88,12 +88,12 @@ describe('铁艺挂灯光源表', () => {
     expect(LANTERN_HEIGHT).toBeGreaterThanOrEqual(20);
   });
 
-  it('外景光源 + 摸鱼亭四角 + 固定挂灯 + 祈福龛两盏 + 节日彩旗仍在 64 盏预算内', () => {
+  it('外景光源 + 固定挂灯 + 祈福龛两盏 + 节日彩旗仍在 64 盏预算内', () => {
     // 超限时 `LightRegistry.add` 会静默返回 -1，灯就凭空消失了，必须在这里钉死
     const outdoor = propLights(WORLD_LAYOUT.props).length;
     const festival = festivalLights(festivalDecorPlan()).length;
     expect(festival).toBe(FESTIVAL_LIGHT_COUNT);
-    const fixed = outdoor + FIXED_LANTERNS.length + 4 + 2 + festival;
+    const fixed = outdoor + FIXED_LANTERNS.length + 2 + festival;
     // 再留 8 盏给室内（interior-art 现场收集，数量随房间陈设变化）
     expect(fixed + 8).toBeLessThanOrEqual(MAX_LIGHTS);
   });

@@ -60,15 +60,13 @@ export const HINT = {
   workNeedSeat: '按 Z 坐到自己工位上再搬砖',
   /** 红包雨：站在红包上按 F 抢 */
   redPacket: '[F] 抢红包',
-  // ---- 弱交互场所（会议室 / 影音室 / 游乐园 / 摸鱼亭）----
+  // ---- 弱交互场所（会议室 / 影音室 / 游乐园）----
   /** 坐在会议椅上按 F 发言（纯客户端气泡，不发包） */
   meeting: '[F] 开会发言',
   /** 坐在影厅座椅上按 F 换频道（纯客户端切画面） */
   theater: '[F] 换个频道',
   /** 站在游乐园器械旁按 F 打卡拍照 */
   parkPhoto: '[F] 打卡拍照',
-  /** 坐在摸鱼亭石鼓凳上按 F 发会儿呆 */
-  pavilion: '[F] 对着湖发呆',
 } as const;
 
 export type HintCopy = (typeof HINT)[keyof typeof HINT];
@@ -123,11 +121,10 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   // 没坐下时不可执行：只提醒，不给按钮
   [HINT.workNeedSeat]: null,
   [HINT.redPacket]: { action: 'interact', label: '抢红包', key: 'F' },
-  // 弱交互场所：四条都是纯客户端反馈，按键仍是 F
+  // 弱交互场所：三条都是纯客户端反馈，按键仍是 F
   [HINT.meeting]: { action: 'interact', label: '开会发言', key: 'F' },
   [HINT.theater]: { action: 'interact', label: '换频道', key: 'F' },
   [HINT.parkPhoto]: { action: 'interact', label: '打卡拍照', key: 'F' },
-  [HINT.pavilion]: { action: 'interact', label: '发会儿呆', key: 'F' },
 };
 
 /** 可互动提示返回按钮描述；劝阻、状态与未知文案返回 null */
@@ -177,7 +174,6 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.meeting]: '点「互动」开会发言',
   [HINT.theater]: '点「互动」换频道',
   [HINT.parkPhoto]: '点「互动」打卡拍照',
-  [HINT.pavilion]: '点「互动」发会儿呆',
 };
 
 /** 无按键的提示（已到达某地、附近没有设施等）原样透传，不做通用替换 */

@@ -32,7 +32,10 @@ export const PARK_BUILDING: BuildingSpec = {
   floor: 'rubber',
 };
 
-/** 南门与东门：`y` 是门的落地线，`gap` 是围栏缺口半宽 */
+/**
+ * 南门与东门：`y` 是门的落地线，`gap` 是入口铺装的半宽。
+ * ADR-0103 之后游乐园不再围矮栅栏，这两个缺口只用于铺装与导览，不再派生装饰立柱。
+ */
 export const PARK_SOUTH_GATE = { x: 4096, y: 3160, gap: 44 } as const;
 export const PARK_EAST_GATE = { x: 4636, y: 2640, gap: 40 } as const;
 
@@ -157,25 +160,3 @@ export const PARK_ATTRACTION_SOLIDS: ReadonlyArray<SolidRect> = [
   // 喷泉：水池外缘南侧
   { kind: 'prop', x: 4248, y: 2826, w: 96, h: 8 },
 ];
-
-/** 围栏缺口之外仍然围一圈矮栅栏：纯装饰，不参与碰撞 */
-export function parkFencePosts(): Array<{ x: number; y: number }> {
-  const posts: Array<{ x: number; y: number }> = [];
-  const { x, y, w, h } = AMUSEMENT_PARK;
-  const step = 48;
-  for (let px = x + 24; px <= x + w - 24; px += step) {
-    // 南门：底边留缺口；北边保持完整围合
-    if (Math.abs(px - PARK_SOUTH_GATE.x) >= PARK_SOUTH_GATE.gap) {
-      posts.push({ x: px, y: y + h - 6 });
-    }
-    posts.push({ x: px, y: y + 6 });
-  }
-  for (let py = y + 24; py <= y + h - 24; py += step) {
-    // 东门：东边留缺口
-    if (Math.abs(py - PARK_EAST_GATE.y) >= PARK_EAST_GATE.gap) {
-      posts.push({ x: x + w - 6, y: py });
-    }
-    posts.push({ x: x + 6, y: py });
-  }
-  return posts;
-}

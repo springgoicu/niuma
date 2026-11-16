@@ -8,6 +8,7 @@ import {
   type Texture,
 } from 'pixi.js';
 import {
+  BOSS,
   BOSS_MAX_HP,
   ENTITY_ROLE_GUARD,
   ISLAND,
@@ -39,7 +40,6 @@ import { LanternView } from './lighting/lanterns';
 import { FestivalArt } from './festival-art';
 import { readFestivalEnabled } from './festival-decor';
 import { ParkView } from './park';
-import { PavilionView } from './pavilion';
 import { PlaqueView } from './plaques';
 import { RingView } from './ring';
 import { DiceHallView } from './dice-hall-view';
@@ -113,6 +113,14 @@ const GOLDEN_HELMET_ID = 'golden_helmet';
 
 /** 涉水扩散环的节流间隔（ms）：与脚步小节拍分开，避免每一步都叠一圈半透明 */
 const WADING_WAKE_MS = 380;
+
+/**
+ * 老板受击飘字的落脚高度：从脚底往上抬 84，`RitualFx` 再 -46 摆位，
+ * 数字正好落在胸腹；避开头顶的血条（-266）与纸板名牌。
+ */
+const BOSS_DAMAGE_LIFT_PX = 84;
+/** 老板 256 纹素高，默认 7 纹素的金色飘字在他身上只有零头，单独放大一档 */
+const BOSS_DAMAGE_FONT_SIZE = 12;
 
 /**
  * 世界倍率：1 纹素画 1.5 个 CSS 像素，角色站立 48 纹素 ≈ 72 CSS 像素（DPR 2）。
@@ -803,8 +811,6 @@ export class GameRenderer {
   private welcome?: WelcomeView;
   /** 放假告示板的动态文本：红色横幅与常驻跑马灯（ADR-0059） */
   private bulletin?: BulletinView;
-  /** 摸鱼亭：木构双坡顶凉亭，后景/前景双深度键（ADR-0096） */
-  private pavilion?: PavilionView;
   /** 迎宾拱门与四角院落门柱上的铁艺挂灯（ADR-0096） */
   private lanterns?: LanternView;
   /** 石砌祈福龛：石座、拱形龛、白蜡烛与三缕白雾（ADR-0096） */
@@ -823,7 +829,7 @@ export class GameRenderer {
   private readonly p2pFx = new P2PFx();
   /** 擂台覆盖层：领奖台与彩带必须压在排序层之后，才不会被角色吃掉 */
   private readonly ringOverlay = new Container();
-  /** 场所门牌：四角房木构门架 + 7 处入口小门牌（ADR-0091 / ADR-0096） */
+  /** 场所门牌：各入口一块小门牌（ADR-0091 / ADR-0096） */
   private plaques?: PlaqueView;
   /** 摸鱼大赌场：亭台、两张绿绒赌桌与亮牌骰子（ADR-0087） */
   private dice?: DiceHallView;
@@ -995,8 +1001,7 @@ export class GameRenderer {
       });
       this.lightmap.register(propLights(WORLD_LAYOUT.props));
       this.lightmap.register(this.interior?.lights ?? []);
-      // 从 `buildLayers` 里构造的视图现场收集的光位（摸鱼亭四角 + 拱门/门柱挂灯 + 节日彩旗）
-      this.lightmap.register(this.pavilion?.lights ?? []);
+      // 从 `buildLayers` 里构造的视图现场收集的光位（拱门/门柱挂灯 + 节日彩旗）
       this.lightmap.register(this.lanterns?.lights ?? []);
       this.lightmap.register(this.festival?.lights ?? []);
       this.lightmap.register(this.shrine?.lights ?? []);
@@ -1120,10 +1125,6 @@ export class GameRenderer {
     this.bulletin = new BulletinView(this.metrics.devicePxPerTexel);
     this.bulletin.build(this.sortLayer);
 
-    // 摸鱼亭（ADR-0096）：台基走地面层，亭身拆后景/前景两条深度键，人能走进去坐下
-    this.pavilion = new PavilionView(this.season.winter);
-    this.pavilion.build(this.sortLayer, this.props.base);
-
     // 固定挂灯（ADR-0096）：拱门横梁两端 + 四角院落门柱，入夜由光图层统一点亮
     this.lanterns = new LanternView();
     this.lanterns.build(this.sortLayer);
@@ -1150,7 +1151,7 @@ export class GameRenderer {
     this.ring = new RingView(this.app.renderer, this.metrics.devicePxPerTexel);
     this.ring.build(this.sortLayer, this.props.base, this.ringOverlay);
 
-    // 场所门牌（ADR-0091 / ADR-0096）：墙体是平铺色带没有立面，四角房立木构门架、其余入口立小门牌
+    // 场所门牌（ADR-0091 / ADR-0096）：墙体是平铺色带没有立面，各入口立一块小门牌
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
 
@@ -1174,7 +1175,7 @@ export class GameRenderer {
     this.park.build(this.sortLayer, this.props.base);
 
     // 节日装饰（ADR-0063 / ADR-0096）：跨路彩旗、门楣挂饰与树梢灯串；纯装饰、不参与碰撞。
-    // 必须排在门牌之后入层：门楣彩旗与门架同一条深度键，后入者压在横梁之上；
+    // 必须排在门牌之后入层：门楣彩旗与门牌同一条深度键，后入者压在上面；
     // `?festival=0` 时连纹理都不烘，运行时零开销
     if (readFestivalEnabled(search)) {
       this.festival = new FestivalArt({ winter: this.season.winter });
@@ -1651,9 +1652,35 @@ export class GameRenderer {
     return isNightShift(hour);
   }
 
-  /** 本地踢中反馈：先抖一下，不等服务端回包 */
+  /**
+   * 老板受击反馈：**任何玩家**踢中都走这里（ADR-0105）。
+   *
+   * 抖动由服务端归因驱动——本地不做乐观预测，旁观者也不会看到「没判中也抖」。
+   */
   flashBossHit(): void {
     this.boss?.flashHit();
+  }
+
+  /**
+   * 老板受击飘字：位置取胸腹，避开头顶的血条与名牌。
+   *
+   * `floatText` 会把字放在 (x, y - 46) 再上浮，所以这里把 y 抬到肚子高度，
+   * 让数字落在老板身上而不是脚边。合并窗口由会话层负责，这里只画。
+   */
+  showBossDamage(damage: number): void {
+    if (damage <= 0) return;
+    this.ritual?.floatText(
+      BOSS.x,
+      BOSS.y - BOSS_DAMAGE_LIFT_PX,
+      `-${damage}`,
+      performance.now(),
+      BOSS_DAMAGE_FONT_SIZE,
+    );
+  }
+
+  /** 视野内是否已有该实体的视图：押送气泡据此决定挂保安还是当事人 */
+  hasEntity(id: number): boolean {
+    return this.views.has(id);
   }
 
   /** 救护车四态同步（ADR-0084）；停泊时服务端不发冗余包，入场靠 snapshot 补一次 */
@@ -2052,7 +2079,6 @@ export class GameRenderer {
     this.props?.destroy();
     this.welcome?.destroy();
     this.bulletin?.destroy();
-    this.pavilion?.destroy();
     this.lanterns?.destroy();
     this.festival?.destroy();
     this.shrine?.destroy();

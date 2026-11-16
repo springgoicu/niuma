@@ -3,7 +3,7 @@
  *
  * 两条纪律：
  * 1) **不写第二份坐标**。每个场所的矩形一律从各场所模块（campus / park / dice-hall /
- *    ring / villas / apartment / clinic / pavilion）的常量取；本文件只描述「归属 + 边界」。
+ *    ring / villas / apartment / clinic）的常量取；本文件只描述「归属 + 边界」。
  * 2) **依赖只有一个方向**：districts 只依赖各场所模块，`layout.ts` 再依赖 districts。
  *    因此场所常量不能反过来引用本文件，也不能有任何一处把坐标系住在 layout 里。
  *
@@ -28,7 +28,6 @@ import { CLINIC_RECT } from './clinic';
 import { DICE_HALL } from './dice-hall';
 import { rectContains, rectExpanded, type WorldRect } from './geometry';
 import { AMUSEMENT_PARK } from './park';
-import { PAVILION_RECT } from './pavilion';
 import { RING_ARENA } from './ring';
 import { VILLA_SPECS } from './villas';
 
@@ -48,7 +47,7 @@ export interface DistrictSpec {
   readonly scene: SceneKind;
   /** 区界：可以有多个地块（景观区是网络状） */
   readonly rects: ReadonlyArray<WorldRect>;
-  /** 区门：导览到达点、门头牌匾与指路牌共用 */
+  /** 区门坐标：导览到达点、指路牌与路网节点共用（不立门架） */
   readonly gate: { readonly x: number; readonly y: number };
   /** 小地图区色与铺装收边色（0xRRGGBB） */
   readonly color: number;
@@ -63,12 +62,14 @@ const RING_LAKE_RECT: WorldRect = {
 const MOPING_LAKE_RECT: WorldRect = { x: 4900, y: 5000, w: 660, h: 690 };
 const CHENSI_POND_RECT: WorldRect = { x: 4830, y: 2700, w: 510, h: 420 };
 
-/** 三湖 + 摸鱼亭 + 竹林：景观区的网络地块（不搬湖，只认领） */
+/** 三湖 + 原亭址草地 + 竹林：景观区的网络地块（不搬湖，只认领） */
 const SCENERY_RECTS: ReadonlyArray<WorldRect> = [
   rectExpanded(RING_LAKE_RECT, 60),
   rectExpanded(MOPING_LAKE_RECT, 30),
   rectExpanded(CHENSI_POND_RECT, 30),
-  rectExpanded(PAVILION_RECT, 30),
+  // 摸鱼亭拆除后的原址（ADR-0105）：200×180 的草地仍归景观区，
+  // 免得玩家从湖岸走进来横幅闪一下「野地」，小地图出现一块空洞。
+  { x: 5250, y: 4710, w: 200, h: 180 },
   // 西主路尽头的区门前庭
   { x: 2680, y: 4010, w: 360, h: 300 },
   // 竹林：西主路以南、涟漪湖以北的绿带
@@ -82,7 +83,7 @@ export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
     scene: 'indoor',
     // 企业楼 2620–3540 × 3200–3976（走廊加宽后南沿下移 16px）+ 楼前庭 3540–3740
     rects: [{ x: 2600, y: 3170, w: 1130, h: 830 }],
-    // 区门立在前庭接广场的那条支路上，避开企业楼自己的木构牌坊
+    // 区门坐标在前庭接广场的那条支路上，避开企业楼东门
     gate: { x: 3760, y: 3780 },
     color: 0xc9b38a,
   },
@@ -172,9 +173,8 @@ export type NavTargetId =
   | 'villa1'
   | 'villa2'
   | 'apartment'
-  // ADR-0099：影音室 / 摸鱼亭 / 急救站补进导览（广场不进本表，见 `PLAZA_HOME`）
+  // ADR-0099：影音室 / 急救站补进导览（广场不进本表，见 `PLAZA_HOME`）
   | 'theater'
-  | 'pavilion'
   | 'clinic';
 
 /**
@@ -216,7 +216,6 @@ export const VENUES: ReadonlyArray<VenueSpec> = [
   venue('restroom', '卫生间', 'service', 'indoor', RESTROOM, 'restroom'),
   venue('jail', '小黑屋', 'service', 'indoor', JAIL),
   // ---- 景观区 ----
-  venue('pavilion', '摸鱼亭', 'scenery', 'outdoor', PAVILION_RECT, 'pavilion'),
   venue('mopingLake', '摸鱼湖', 'scenery', 'outdoor', MOPING_LAKE_RECT),
   venue('chensiPond', '沉思浅塘', 'scenery', 'outdoor', CHENSI_POND_RECT),
   venue('ringLake', '涟漪湖', 'scenery', 'outdoor', RING_LAKE_RECT),
@@ -314,8 +313,6 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   apartment: { x: APARTMENT_SPECS[0]!.outside.x, y: APARTMENT_SPECS[0]!.outside.y },
   // 影音室：东门内侧的走道（三排座椅东侧），进门两步就能坐下
   theater: { x: HOME_THEATER.x + HOME_THEATER.w - 60, y: HOME_THEATER.y + 160 },
-  // 摸鱼亭：亭南沿两根廊柱之间，站过去就能上台阶入亭
-  pavilion: { x: PAVILION_RECT.x + PAVILION_RECT.w / 2, y: PAVILION_RECT.y + PAVILION_RECT.h - 4 },
   // 急救站：西侧人行门洞内侧，进门就是导医柜台
   clinic: { x: CLINIC_RECT.x + 20, y: CLINIC_RECT.y + 90 },
 };
@@ -342,7 +339,6 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'villa2', name: VILLA_SPECS[1]!.name, district: 'living', scene: 'indoor', ...rectCenter(VILLA_SPECS[1]!.rect) },
   { id: 'restroom', name: '卫生间', district: 'service', scene: 'indoor', ...rectCenter(RESTROOM) },
   { id: 'clinic', name: '护士急救站', district: 'service', scene: 'indoor', ...rectCenter(CLINIC_RECT) },
-  { id: 'pavilion', name: '摸鱼亭', district: 'scenery', scene: 'outdoor', ...rectCenter(PAVILION_RECT) },
 ];
 
 export const NAV_TARGETS: readonly NavTarget[] = NAV_SOURCES.map(

@@ -182,8 +182,8 @@ function drawSignpost(g: Graphics, w: number, h: number, plates: readonly SignPl
   g.poly([plateX + 12, 3, plateX + 16, 7, plateX + 12, 11, plateX + 8, 7]).fill(COLOR.mintDark);
 
   // 目的地牌：自上而下按 signPlates() 顺序，行位置由 signPlateTop() 统一给出。
-  // 左缘一道 4px 区色「书脊」：牌面因此与区门门灯、小地图、导览卡组标题同色，
-  // 远处一眼就能把这块牌和园区里那座门对上（ADR-0097 的区色标）。
+  // 左缘一道 4px 区色「书脊」：牌面因此与小地图、导览卡组标题同色，
+  // 远处一眼就能把这块牌和园区里那片区域对上（ADR-0097 的区色标）。
   for (let i = 0; i < plates.length; i += 1) {
     const top = plates[i]!.top;
     box(g, 6, top, w - 12, 13, COLOR.paper, COLOR.paperEdge);

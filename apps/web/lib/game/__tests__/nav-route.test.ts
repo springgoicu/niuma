@@ -21,7 +21,7 @@ function walkable(x0: number, y0: number, x1: number, y1: number): boolean {
 }
 
 describe('自动导览路线规划（ADR-0099）', () => {
-  it('出生点到 15 个目标都能规划出路线，且末点落在到达点', () => {
+  it('出生点到 14 个目标都能规划出路线，且末点落在到达点', () => {
     for (const target of NAV_TARGETS) {
       const gate = districtById(target.district).gate;
       const path = planRoute(SPAWN_CENTER.x, SPAWN_CENTER.y, target.arrive.x, target.arrive.y, gate);

@@ -4,19 +4,21 @@ import { DOOR_PLAQUES, NAV_ARRIVALS, NAV_TARGETS, isOnLand, type NavTargetId } f
 import { VILLA_SPECS } from '../world/villas';
 
 /**
- * 场所门牌（ADR-0091 / ADR-0099）：15 处导览目标各有一块中文门牌。
+ * 场所门牌（ADR-0091 / ADR-0099）：除企业楼外的导览目标各有一块中文门牌。
  *
- * 企业楼沿用木构门架（`gate`），其余 12 处入口立小门牌（`board`）；
+ * 企业楼东门不再立牌坊与门牌；其余 11 处入口立小门牌；
  * 两栋小院的院名写在院门牌匾上，不占 `DOOR_PLAQUES`。
  */
 const PLAQUE_IDS = DOOR_PLAQUES.map((plaque) => plaque.id);
 const ALL_IDS: NavTargetId[] = [...PLAQUE_IDS, 'villa1', 'villa2'];
 
 describe('场所门牌（ADR-0091）', () => {
-  it('15 处导览场所全部有门牌，id 不重复也不缺项', () => {
-    expect(ALL_IDS).toHaveLength(15);
-    expect(new Set(ALL_IDS).size).toBe(15);
-    expect(new Set(ALL_IDS)).toEqual(new Set(NAV_TARGETS.map((target) => target.id)));
+  it('除企业楼外的 13 处导览场所都有门牌，id 不重复也不缺项', () => {
+    expect(ALL_IDS).toHaveLength(13);
+    expect(new Set(ALL_IDS).size).toBe(13);
+    const withoutWorkroom = NAV_TARGETS.filter((target) => target.id !== 'workroom').map((target) => target.id);
+    expect(new Set(ALL_IDS)).toEqual(new Set(withoutWorkroom));
+    expect(DOOR_PLAQUES).toHaveLength(11);
   });
 
   it('匾额文案等于导览目标的中文名，不手写第二份场所名', () => {
@@ -30,14 +32,6 @@ describe('场所门牌（ADR-0091）', () => {
     for (const villa of VILLA_SPECS) {
       expect(villa.name.length).toBeGreaterThan(0);
     }
-  });
-
-  it('只有企业楼保留大门架，其余都是入口小门牌', () => {
-    // ADR-0097：企业楼大门是唯一一座木构牌坊，楼内房间与其它场所都用小门牌
-    expect(DOOR_PLAQUES.filter((plaque) => plaque.frame === 'gate').map((plaque) => plaque.id)).toEqual([
-      'workroom',
-    ]);
-    expect(DOOR_PLAQUES.filter((plaque) => plaque.frame === 'board')).toHaveLength(12);
   });
 
   it('每个门牌落点都能站人，且不压在导览到达点上', () => {

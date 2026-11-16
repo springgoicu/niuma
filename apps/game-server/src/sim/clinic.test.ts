@@ -8,6 +8,7 @@ import {
   DIRECTION,
   ENTITY_ROLE_NURSE,
   OpCode,
+  PATIENT_STATE,
   POSE,
   TICK_MS,
   VENT_STUN_MS,
@@ -161,5 +162,88 @@ describe('护士站围挡后的救护车进站（ADR-0092）', () => {
     // 先到通道口再进站：没走到通道口就摸到人，说明靠的是 8 秒脱困瞬移
     expect(nearestToEntry).toBeLessThan(24);
     expect(victim.carriedBy).not.toBe(0);
+  });
+});
+
+describe('NPC 进入救护链（ADR-0106）', () => {
+  /** 急救站柜台背后的开阔点：与 ADR-0092 用例同址，救护车会走南侧通道口进站 */
+  const SPOT = { x: CLINIC_RECT.x + 40, y: CLINIC_RECT.y + 150 };
+
+  it('普通 NPC 被真实命中一次就昏迷，不再自己躺一下爬起来', () => {
+    const h = setup();
+    const npc = h.world.createNpc('同事', DEFAULT_APPEARANCE.cow, SPOT.x, SPOT.y, '', 0)!;
+    h.grid.insert(npc.id, npc.x, npc.y);
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 12, SPOT.x + 24, SPOT.y)!;
+
+    h.manager.observeHit(attacker, npc, 1_000);
+
+    expect(npc.incapacitated).toBe(true);
+    expect(npc.pose).toBe(POSE.Lie);
+    expect(npc.patientState).toBe(PATIENT_STATE.Incapacitated);
+  });
+
+  it('倒地 NPC 走完整救护链，康复后经端口写回倒地点', () => {
+    const h = setup();
+    const npc = h.world.createNpc('同事', DEFAULT_APPEARANCE.cow, SPOT.x, SPOT.y, '', 0)!;
+    h.grid.insert(npc.id, npc.x, npc.y);
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 12, SPOT.x + 24, SPOT.y)!;
+
+    const restored: Array<{ id: number; spot: { x: number; y: number } }> = [];
+    h.manager.setNpcRecovery({
+      restore(playerId, spot) {
+        restored.push({ id: playerId, spot });
+        return true;
+      },
+    });
+
+    const downAt = 1_000;
+    h.manager.observeHit(attacker, npc, downAt);
+    expect(npc.incapacitated).toBe(true);
+
+    for (let elapsed = 0; elapsed <= 30_000 && restored.length === 0; elapsed += TICK_MS) {
+      h.manager.update(downAt + elapsed, tick(downAt + elapsed));
+    }
+
+    expect(restored).toHaveLength(1);
+    expect(restored[0]!.id).toBe(npc.id);
+    expect(restored[0]!.spot).toEqual(SPOT);
+    expect(npc.incapacitated).toBe(false);
+    expect(npc.patientState).toBe(PATIENT_STATE.Shielded);
+  });
+
+  it('护士被打倒后先送医，硬直结束不会被自动回位偷走', () => {
+    const h = setup();
+    const nurse = h.nurses[0]!;
+    const spot = CLINIC_NURSE_SPOTS[0]!;
+    // 模拟 vent 的击退：先离开站位 32px 再倒地
+    nurse.x += 32;
+    h.grid.update(nurse.id, nurse.x, nurse.y);
+    const restX = nurse.x;
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 12, restX + 24, nurse.y)!;
+
+    h.manager.observeHit(attacker, nurse, 1_000);
+    expect(nurse.incapacitated).toBe(true);
+
+    const afterStun = 1_000 + VENT_STUN_MS + 100;
+    h.manager.update(afterStun, tick(afterStun));
+
+    expect(nurse.incapacitated).toBe(true);
+    expect(nurse.pose).toBe(POSE.Lie);
+    expect(nurse.x).toBe(restX);
+    expect(nurse.x).not.toBe(spot.x);
+  });
+
+  it('真人仍是 15 秒内 3 次才昏迷：一击即倒只对 NPC 生效', () => {
+    const h = setup();
+    const victim = h.world.create('乙', DEFAULT_APPEARANCE.cow, 12, SPOT.x, SPOT.y)!;
+    h.grid.insert(victim.id, victim.x, victim.y);
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 13, SPOT.x + 24, SPOT.y)!;
+
+    h.manager.observeHit(attacker, victim, 1_000);
+    h.manager.observeHit(attacker, victim, 1_500);
+    expect(victim.incapacitated).toBe(false);
+
+    h.manager.observeHit(attacker, victim, 2_000);
+    expect(victim.incapacitated).toBe(true);
   });
 });

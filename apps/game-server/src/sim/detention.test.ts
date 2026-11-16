@@ -435,7 +435,7 @@ describe('擂台赛期间保安不执法（ADR-0075）', () => {
   function enterRing(h: Harness, at: number): void {
     h.player.x = RING_EXIT.x;
     h.player.y = RING_EXIT.y;
-    expect(h.world.ring.enter(h.player, at).ok).toBe(true);
+    expect(h.world.ring.enter(h.player, at, 0).ok).toBe(true);
   }
 
   it('名单内的玩家不累计坐站循环，也不派单', () => {

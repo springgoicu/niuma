@@ -196,6 +196,12 @@ export const PATIENT_PACKET_BYTES = 6;
 export const QUEUE_REJECT_BYTES = 2;
 /** 聊天拒绝：op(1) + reason(1)，与排队拒绝同构 */
 export const CHAT_REJECT_BYTES = 2;
+/** 世界事件：op(1) + kind(1) + phase(1) + remainingSec(2) + seed(2) + amount(2) */
+export const WORLD_EVENT_PACKET_BYTES = 9;
+/** 画饼冲击波：op(1) + phase(1) + x(2) + y(2) + radius(2) + remainingMs(2) + hits(1) */
+export const BOSS_SHOCK_PACKET_BYTES = 11;
+/** 互动拒绝回执（ADR-0104）：op(1) + action(1) + reason(1) */
+export const INTERACT_REJECT_BYTES = 3;
 
 /**
  * 聊天历史（ADR-0039）：服务端进程内环形缓冲，不落盘、不接库。

@@ -3,6 +3,7 @@ import {
   DICE_BET_MS,
   DICE_HALL_SEAT_IDS,
   DICE_MIN_BET,
+  DICE_ROLL_MS,
   DICE_SIDE,
   DICE_TABLES,
   seatById,
@@ -21,7 +22,7 @@ function setup() {
   const frozen: number[] = [];
   const dice = new DiceHallRuntime(
     {
-      freeze: (_player, amount) => {
+      freeze: (_player, _key, amount) => {
         frozen.push(amount);
         return true;
       },
@@ -86,5 +87,43 @@ describe('DiceHallRuntime 入座门（ADR-0093）', () => {
     const player = putPlayer(world, table.id, stoolOf(table.group));
     expect(dice.placeBet(player, table.id, DICE_SIDE.Leopard, DICE_MIN_BET, DICE_BET_MS)).toBe(false);
     expect(frozen).toHaveLength(0);
+  });
+});
+
+describe('赌桌随机与亮牌门禁（ADR-0104）', () => {
+  it('骰面来自注入的随机源，投注期与摇骰期都不下发点数', () => {
+    const calls: Array<{ key: string; amount: number }> = [];
+    const sequence = [0, 0, 0, 0.9];
+    let cursor = 0;
+    const dice = new DiceHallRuntime(
+      {
+        freeze: (_player, key, amount) => {
+          calls.push({ key, amount });
+          return true;
+        },
+        clear: () => {},
+        payout: () => {},
+        refund: () => {},
+      },
+      0,
+      () => sequence[cursor++] ?? 0,
+    );
+    const world = new World();
+    const table = DICE_TABLES[0]!;
+    const player = putPlayer(world, table.id, stoolOf(table.group));
+    expect(dice.placeBet(player, table.id, DICE_SIDE.Leopard, DICE_MIN_BET, 0)).toBe(true);
+    expect(calls[0]).toEqual({ key: `dice:0:${player.id}`, amount: DICE_MIN_BET });
+
+    // 投注期：快照不带点数
+    expect(dice.snapshot(player, 0)[0]!.dice).toEqual([0, 0, 0]);
+    // 进入 Rolling：骰面已经摇出，但仍不下发
+    dice.tick(DICE_BET_MS, world);
+    expect(dice.table(table.id)?.phase).toBe(2);
+    expect(dice.snapshot(player, DICE_BET_MS)[0]!.dice).toEqual([0, 0, 0]);
+    expect(dice.snapshot(player, DICE_BET_MS)[0]!.raid).toBe(false);
+
+    // 进入 Reveal：三点豹子亮牌
+    dice.tick(DICE_BET_MS + DICE_ROLL_MS, world);
+    expect(dice.snapshot(player, DICE_BET_MS + DICE_ROLL_MS)[0]!.dice).toEqual([1, 1, 1]);
   });
 });
