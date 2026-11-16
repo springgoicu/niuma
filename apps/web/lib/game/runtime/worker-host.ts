@@ -145,6 +145,8 @@ export function runWorkerHost(scope: WorkerScope): void {
         onArenaBetOpen: () => post({ t: 'arenaBetOpen' }),
         onVillaOpen: (villa) => post({ t: 'villaOpen', villa }),
         onDiceState: (packet) => post({ t: 'dice', packet }),
+        onDiceResult: (packet) => post({ t: 'diceResult', packet }),
+        onDiceBoard: (packet) => post({ t: 'diceBoard', packet }),
         onVillaState: (packet) => post({ t: 'villa', packet }),
         onArenaPool: (packet) => post({ t: 'arenaPool', packet }),
         // 打工产出与随机事件（ADR-0088）
@@ -271,6 +273,9 @@ export function runWorkerHost(scope: WorkerScope): void {
         return;
       case 'diceBet':
         session?.placeDiceBet(message.request.table, message.request.side, message.request.amount);
+        return;
+      case 'diceBoard':
+        session?.requestDiceBoard(message.request.scope, message.request.metric);
         return;
       case 'villa':
         session?.villaAction(message.request.villa, message.request.action);

@@ -1428,7 +1428,7 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...CLINIC_SOLIDS,
     // 护士站围挡（ADR-0092）：三面栏杆 + 西门人行门洞，南侧留救护车通道
     ...CLINIC_FENCE_SOLIDS,
-    // 摸鱼大赌场：亭柱、吧台、两张赌桌
+    // 摸鱼骰子馆：亭柱、吧台、两张骰桌
     ...DICE_HALL_SOLIDS,
     ...DICE_TABLE_SOLIDS,
     // 豪宅小院：四面院墙（南墙留门洞，锁门时另加动态门栅）
@@ -1443,7 +1443,7 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...CAMPUS_BUILDINGS,
     PARK_BUILDING,
     // 墨绿绒地面：和办公楼与住宅拉开色相，进门就知道换地方了
-    { name: '摸鱼大赌场', rect: DICE_HALL, floor: 'felt' },
+    { name: '摸鱼骰子馆', rect: DICE_HALL, floor: 'felt' },
     ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: spec.house, floor: 'walnut' as const })),
     // 唯一一栋单户公寓楼（ADR-0095 / ADR-0101）：区域名与树带都按 rect 展开
     ...APARTMENT_SPECS.map((spec) => ({ name: '牛马公寓', rect: spec.rect, floor: 'plaster' as const })),

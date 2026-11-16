@@ -82,6 +82,7 @@ import {
   hudButtonClassName,
 } from './Hud';
 import { InstallAppButton } from './InstallAppButton';
+import { ActivityFeed } from './ActivityFeed';
 import { DistrictBanner } from './DistrictBanner';
 import { InteractionHint } from './InteractionHint';
 import { JoinGate } from './JoinGate';
@@ -118,8 +119,8 @@ export interface GameViewportProps {
 const INTERACT_VERB: Record<number, string> = {
   [INTERACT_ACTION.RingEnter]: '报名',
   [INTERACT_ACTION.RingLeave]: '离场',
-  [INTERACT_ACTION.DiceBet]: '下注',
-  [INTERACT_ACTION.ArenaBet]: '押注',
+  [INTERACT_ACTION.DiceBet]: '投入',
+  [INTERACT_ACTION.ArenaBet]: '投选',
   [INTERACT_ACTION.VillaBuy]: '买院',
   [INTERACT_ACTION.VillaLock]: '锁门',
   [INTERACT_ACTION.VillaCollect]: '收币',
@@ -127,6 +128,7 @@ const INTERACT_VERB: Record<number, string> = {
   [INTERACT_ACTION.QuestClaim]: '领悬赏',
   [INTERACT_ACTION.EventClaim]: '抢红包',
   [INTERACT_ACTION.Apartment]: '公寓探头',
+  [INTERACT_ACTION.DiceBoard]: '看榜',
   [INTERACT_ACTION.Unknown]: '操作',
 };
 
@@ -138,7 +140,7 @@ const INTERACT_REASON_TEXT: Record<number, string> = {
   [INTERACT_REASON.Full]: '名额已满',
   [INTERACT_REASON.Already]: '已经参与过了',
   [INTERACT_REASON.NotEnoughCoins]: '牛马币不够',
-  [INTERACT_REASON.BadAmount]: '注额不合法',
+  [INTERACT_REASON.BadAmount]: '投入额不合法',
   [INTERACT_REASON.Busy]: '现在忙不过来',
   [INTERACT_REASON.Cooldown]: '点得太快了，缓一下',
   [INTERACT_REASON.NoTarget]: '目标不存在',
@@ -211,7 +213,7 @@ export function GameViewport({
   const arrivalSeededRef = useRef(false);
   /** 上一次入座状态：只在「未坐 → 坐」的边沿记一次摸鱼 */
   const lastSeatedRef = useRef(false);
-  /** 上一次的座位组：赌桌面板只在坐进 / 离开凳子那一次打开或收起（ADR-0093） */
+  /** 上一次的座位组：骰桌面板只在坐进 / 离开凳子那一次打开或收起（ADR-0093） */
   const seatedGroupRef = useRef<string | null>(null);
   /**
    * 已经入账过的擂台 matchId。
@@ -253,6 +255,7 @@ export function GameViewport({
   const setNavTarget = useGameUi((state) => state.setNavTarget);
   const requestNavCardOpen = useGameUi((state) => state.requestNavCardOpen);
   const pushAreaBanner = useGameUi((state) => state.pushAreaBanner);
+  const pushActivity = useGameUi((state) => state.pushActivity);
   const setRing = useGameUi((state) => state.setRing);
   const hint = useGameUi((state) => state.hint);
   const status = useGameUi((state) => state.status);
@@ -353,6 +356,8 @@ export function GameViewport({
     useGameUi.getState().setWallet(loadEconomy());
     // reset 会清空 chatOpen：必须排在其后恢复上次的常驻状态（只开面板，不抢焦点）
     useGameUi.getState().restoreChatOpen();
+    // 播报条开关同样落盘：reset 回默认开，这里补上玩家上次的选择
+    useGameUi.getState().restoreActivityFeedOpen();
     setInspectId(null);
     setBoardOpen(false);
     setBulletinOpen(false);
@@ -534,11 +539,13 @@ export function GameViewport({
           }
         },
         onChat: (entry) => pushMessage(entry),
+        // 全园区播报（ADR-0112）：服务端已套好文案，这里只入队，呈现交给播报条
+        onActivity: (event) => pushActivity(event),
         onChatHistory: (entries, meta) => applyHistory(entries, meta),
         onHint: (next) => setHint(next),
         onLocalState: (state) => {
           setLocalState(state);
-          // 赌桌：坐上本桌圆凳即自动入局，离座 / 换桌自动收起（ADR-0093）。
+          // 骰桌：坐上本桌圆凳即自动入局，离座 / 换桌自动收起（ADR-0093）。
           // 只在座位组变化的那一次动面板：手动关掉后不会被同一张凳子反复弹回来。
           if (state.seatGroup !== seatedGroupRef.current) {
             seatedGroupRef.current = state.seatGroup;
@@ -548,7 +555,7 @@ export function GameViewport({
               useGameUi.getState().setDiceOpen(nextTable);
             }
           }
-          // 观战押注只对观战长椅开放：离座立刻收起，避免面板留着但提交必被拒
+          // 观战投选只对观战长椅开放：离座立刻收起，避免面板留着但提交必被拒
           if (state.seatGroup !== RING_BENCH_SEAT_GROUP) {
             useGameUi.getState().setArenaBetOpen(false);
           }
@@ -600,7 +607,7 @@ export function GameViewport({
             inventory: packet.inventory,
             unlockedCosmetics: packet.unlockedCosmetics ?? local.unlockedCosmetics,
           };
-          // 赌注冻结不落盘：回滚模式（GAME_WALLET_PERSIST=0）下刷新页面导致的断线会退款，
+          // 投入冻结不落盘：回滚模式（GAME_WALLET_PERSIST=0）下刷新页面导致的断线会退款，
           // 落盘反而会把冻结额永久吃掉；服务端账本模式下本地只是镜像，下次进园会被账本盖回
           if (packet.reason !== WALLET_REASON.EscrowFreeze) saveEconomy(next);
           ui.setWallet(next);
@@ -648,6 +655,10 @@ export function GameViewport({
         onInteractReject: (packet) => {
           // 服务端只发动作 + 原因编号，中文文案集中在 interactRejectText
           useGameUi.getState().setHint(interactRejectText(packet.action, packet.reason));
+          // 榜单被冷却挡下：把「正在算榜」收掉，别让面板一直转圈
+          if (packet.action === INTERACT_ACTION.DiceBoard) {
+            useGameUi.getState().setDiceBoardPending(false);
+          }
         },
         onShopOpen: (tab) => {
           // 茶台 F：直接落到属性页（ADR-0085），不再走「喝枸杞茶」的本地反馈
@@ -658,6 +669,8 @@ export function GameViewport({
         onArenaBetOpen: () => useGameUi.getState().setArenaBetOpen(true),
         onVillaOpen: (villa) => useGameUi.getState().setVillaOpen(villa),
         onDiceState: (packet) => useGameUi.getState().setDice(packet),
+        onDiceResult: (packet) => useGameUi.getState().setDiceResult(packet),
+        onDiceBoard: (packet) => useGameUi.getState().setDiceBoard(packet),
         onVillaState: (packet) => useGameUi.getState().setVillas(packet),
         onArenaPool: (packet) => useGameUi.getState().setArenaPool(packet),
         // ---- 打工产出与随机事件（ADR-0088）----
@@ -1114,6 +1127,7 @@ export function GameViewport({
             onP2PAction={(matchId, action) => clientRef.current?.p2pAction(matchId, action)}
             onShout={(text) => clientRef.current?.shout(text)}
             onDiceBet={(table, side, amount) => clientRef.current?.diceBet(table, side, amount)}
+            onDiceBoard={(scope, metric) => clientRef.current?.diceBoard(scope, metric)}
             onArenaBet={(side, amount) => clientRef.current?.arenaBet(side, amount)}
             onVilla={(villa, action) => clientRef.current?.villaAction(villa, action)}
           />
@@ -1152,6 +1166,8 @@ export function GameViewport({
           <WelcomeBanner compact={isTouch} portrait={portrait} />
           {/* 过门横幅：跨区门 / 进馆时在顶部弹一次，2Hz 驱动、纯客户端表现 */}
           <DistrictBanner compact={isTouch} />
+          {/* 全园区播报条：只报远处看不到的事，不切镜头、不阻断输入 */}
+          <ActivityFeed portrait={portrait} />
 
           <QueueGate onRetry={handleRetry} />
           {hint && (

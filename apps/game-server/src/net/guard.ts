@@ -26,10 +26,10 @@ export const PACKET_MALFORMED = 1;
 export const PACKET_UNKNOWN = 2;
 
 /**
- * 闸门表覆盖到当前最大上行 opcode（`C2S_EVENT_CLAIM = 0x56`）之后两档。
+ * 闸门表覆盖到当前最大上行 opcode（`C2S_ACTIVITY = 0x5f`）之后一档。
  * 表长必须严格大于最大 opcode，否则 `op >= TABLE_SIZE` 会把新包判成 UNKNOWN。
  */
-const TABLE_SIZE = 0x58;
+const TABLE_SIZE = 0x60;
 
 /** 1 = 该 opcode 是定长包 */
 const known = new Uint8Array(TABLE_SIZE);
@@ -95,6 +95,9 @@ defineExact(OpCode.C2S_APARTMENT, 3); // [op][action u8][arg u8]
 defineExact(OpCode.C2S_WORK_CLAIM, 2); // [op][combo u8]
 defineExact(OpCode.C2S_QUEST_CLAIM, 2); // [op][questId u8]
 defineExact(OpCode.C2S_EVENT_CLAIM, 2); // [op][index u8]
+
+// ---- 全园区播报（ADR-0112）：纯观感事件上报，定长 3 字节 ----
+defineExact(OpCode.C2S_ACTIVITY, 3); // [op][kind u8][sub u8]
 
 // ---- 变长包：头部 + 声明长度 ----
 // HELLO 没有长度字段：昵称长度 + 固定外观段是下限，尾部各扩展段按魔数自解析。

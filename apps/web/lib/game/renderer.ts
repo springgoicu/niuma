@@ -863,7 +863,7 @@ export class GameRenderer {
   private readonly ringOverlay = new Container();
   /** 场所门牌：各入口一块小门牌（ADR-0091 / ADR-0096） */
   private plaques?: PlaqueView;
-  /** 摸鱼大赌场：亭台、两张绿绒赌桌与亮牌骰子（ADR-0087） */
+  /** 摸鱼骰子馆：亭台、两张绿绒骰桌与亮牌骰子（ADR-0087） */
   private dice?: DiceHallView;
   /** 豪宅小院：院墙、牌匾与摇钱树 */
   private villas?: VillasView;

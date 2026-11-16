@@ -282,6 +282,39 @@ export const OpCode = {
    * `INTERACT_REASON` 映射中文，服务端只负责裁决与编号。
    */
   S2C_INTERACT_REJECT: 0x5a,
+  // ---- 赌桌结算单与战绩榜（ADR-0110），从 0x5b 继续追加 ----
+  /**
+   * 一桌一局的结算单（ADR-0110）：`[op][table u8][round u16][d0 u8][d1 u8][d2 u8]
+   * [hit u8][flags u8][count u8]` + count × `[nameLen u8][utf8][side u8][bet u32]
+   * [payout u32][net i32][flags u8]`。
+   *
+   * 逐人下发而不是全桌同包：`flags bit1` 标出「这一行是我」，昵称可重名，
+   * 客户端不能靠名字推断身份。
+   */
+  S2C_DICE_RESULT: 0x5b,
+  /** 拉取赌桌排行榜：`[op][scope u8][metric u8]`，3 字节定长 */
+  C2S_DICE_BOARD: 0x5c,
+  /**
+   * 排行榜快照：`[op][scope u8][metric u8][total u16][count u8]` + count ×
+   * `[rank u8][nameLen u8][utf8][net i32][winPct u8][rounds u16][flags u8]`。
+   *
+   * `winPct=255` 表示还没有分出胜负；本人不在前 N 名时由服务端补在末尾。
+   */
+  S2C_DICE_BOARD: 0x5d,
+  /**
+   * 全园区交互播报（ADR-0112）：`[op][kind u8][actorId u16][x u16][y u16][len u8][utf8]`。
+   *
+   * 只发给「看不见主角」的在线玩家：身边人已经看到完整动画，不需要第二条
+   * 文字播报。坐标用于小地图事件标记，量化口径与实体同步一致。
+   */
+  S2C_ACTIVITY: 0x5e,
+  /**
+   * 客户端上报本机私有互动：`[op][kind u8][sub u8]`，3 字节定长。
+   *
+   * 上香、设施气泡、场所台词这类演出只活在本地，服务端无从派生；坐标一律
+   * 取服务端权威位置，`sub` 只作展示细分，不影响判定。
+   */
+  C2S_ACTIVITY: 0x5f,
 } as const;
 
 /**
@@ -301,6 +334,8 @@ export const INTERACT_ACTION = {
   QuestClaim: 8,
   EventClaim: 9,
   Apartment: 10,
+  /** 拉赌桌排行榜被限频（ADR-0110） */
+  DiceBoard: 11,
   /** 未知 / 未识别的互动动作，客户端给通用兜底文案 */
   Unknown: 255,
 } as const;
@@ -620,6 +655,97 @@ export interface DiceStatePacket {
   tables: DiceTablePacket[];
 }
 
+/** 结算单里的一位下注者；顺序即服务端牌桌座位顺序，`self` 由服务端逐人标出 */
+export interface DiceResultEntry {
+  name: string;
+  side: number;
+  bet: number;
+  payout: number;
+  /** 实际入账减本金：赢为正、输为负、退款为 0 */
+  net: number;
+  refunded: boolean;
+  self: boolean;
+}
+
+/** 一桌一局的结算单（ADR-0110）：亮牌时逐人下发，落败者也能看到谁赢了多少 */
+export interface DiceResultPacket {
+  table: number;
+  roundId: number;
+  dice: readonly [number, number, number];
+  /** 命中档位；`-1` 表示这一档没人押、全员退款 */
+  hit: number;
+  raid: boolean;
+  entries: DiceResultEntry[];
+}
+
+/** 赌桌排行榜查询：`scope` 见 DICE_BOARD_SCOPE，`metric` 见 DICE_BOARD_METRIC */
+export interface DiceBoardRequest {
+  scope: number;
+  metric: number;
+}
+
+export interface DiceBoardEntry {
+  rank: number;
+  name: string;
+  net: number;
+  /** 0–1；`-1` 表示还没有分出胜负的局（胜率显示为「—」） */
+  winRate: number;
+  rounds: number;
+  self: boolean;
+}
+
+export interface DiceBoardPacket {
+  scope: number;
+  metric: number;
+  /** 该口径下有战绩的总人数，用于显示「共 N 人」 */
+  total: number;
+  entries: DiceBoardEntry[];
+  /**
+   * 本人战绩（累计 + 最近若干局）。
+   *
+   * 与榜单同一趟下发：面板的「我的战绩」页签和「排行榜」页签一起读这份快照，
+   * 不用为逐局历史再开一个包和一个冷却。没有参与过任何一局时是 `null`。
+   */
+  self: DiceSelfSnapshot | null;
+}
+
+/**
+ * 一份累计口径（总榜 / 翡翠桌 / 鎏金桌各一份）。
+ *
+ * 金额全部是整数币；`net` 可以为负，`bestWin` 只记单局最大盈利（永远 ≥0）。
+ */
+export interface DiceAggregatePacket {
+  rounds: number;
+  wins: number;
+  losses: number;
+  /** 退款 / 平局局数：进局数但不进胜率分母 */
+  refunds: number;
+  totalBet: number;
+  totalPayout: number;
+  net: number;
+  bestWin: number;
+}
+
+/** 本人最近一局的回放行：只带自己那一注，不带同局其他人的明细 */
+export interface DiceHistoryEntry {
+  table: number;
+  roundId: number;
+  dice: readonly [number, number, number];
+  hit: number;
+  bet: number;
+  payout: number;
+  net: number;
+  refunded: boolean;
+}
+
+/** 本人战绩快照：三份累计口径 + 最近若干局（最新在前） */
+export interface DiceSelfSnapshot {
+  all: DiceAggregatePacket;
+  table0: DiceAggregatePacket;
+  table1: DiceAggregatePacket;
+  history: DiceHistoryEntry[];
+}
+
 /** 豪宅操作 */
 export interface VillaRequest {
   villa: number;
@@ -700,6 +826,27 @@ export interface SystemNoticePacket {
   kind: number;
   entityId: number;
   text: string;
+}
+
+/**
+ * 全园区交互播报包（ADR-0112）：文案已由服务端套好模板。
+ *
+ * `kind` 见 `ACTIVITY_KIND`；`x / y` 是已经反量化回来的世界坐标，
+ * 客户端用小地图标记定位，不再从实体表反查（远处主角根本没有实体）。
+ */
+export interface ActivityPacket {
+  kind: number;
+  /** 事件主角的实体 id；已离场的播报仍然带原 id，仅作展示 */
+  actorId: number;
+  x: number;
+  y: number;
+  text: string;
+}
+
+/** 客户端上报本机私有互动：`sub` 只作展示细分，服务端不采信坐标 */
+export interface ActivityReportPacket {
+  kind: number;
+  sub: number;
 }
 
 /**

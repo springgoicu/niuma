@@ -56,7 +56,7 @@ export function InviteToast({ onRespond }: InviteToastProps) {
         </span>
       </div>
       <p className="mt-1 text-[11px] text-mist-400">
-        {P2P_GAME_NAME[invite.packet.gameType] ?? '互动'} · 押注{' '}
+        {P2P_GAME_NAME[invite.packet.gameType] ?? '互动'} · 投入{' '}
         <span className="font-mono text-[#F2C879]">{invite.packet.wager}</span> 币
       </p>
       <p className="mt-0.5 font-mono text-[9px] text-mist-500">

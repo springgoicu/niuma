@@ -749,6 +749,32 @@
   }
 }
 
+/* 全园区播报条（ADR-0112）：入场从上方 8px 滑落，强演出只呼吸一次边框 */
+@keyframes activity-in {
+  from {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes activity-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgb(224 106 90 / 0);
+    transform: translateY(0);
+    opacity: 1;
+  }
+  45% {
+    box-shadow: 0 0 0 1px rgb(224 106 90 / 0.9);
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

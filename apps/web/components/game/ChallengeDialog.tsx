@@ -21,7 +21,7 @@ const GAME_CARDS = [
   {
     type: P2P_GAME_TYPE.Dice,
     icon: Dices,
-    rule: '3 颗骰子比大小 · 豹子 > 顺子 > 点数 · 赢家拿 95%',
+    rule: '3 颗骰子比大小 · 同点 > 顺子 > 点数 · 赢家拿 95%',
   },
   {
     type: P2P_GAME_TYPE.Rps,
@@ -35,7 +35,7 @@ const GAME_CARDS = [
   },
 ] as const;
 
-/** 发起挑战：先选玩法，再选押注；金额与余额由服务端再复核一次 */
+/** 发起挑战：先选玩法，再选投入额；金额与余额由服务端再复核一次 */
 export function ChallengeDialog({
   target,
   coins,
@@ -103,7 +103,7 @@ export function ChallengeDialog({
         </div>
 
         <p className="mt-2 px-1 text-[10px] text-mist-400">
-          押注 <span className="font-mono text-[#F2C879]">{effective}</span> 币 · 余额{' '}
+          投入 <span className="font-mono text-[#F2C879]">{effective}</span> 币 · 余额{' '}
           <span className="font-mono">{coins}</span>
         </p>
         <div className="mt-1 grid grid-cols-4 gap-1">
@@ -131,7 +131,7 @@ export function ChallengeDialog({
               setWager(raw.length > 0 ? Number(raw) : 0);
             }}
             inputMode="numeric"
-            placeholder="自定义押注"
+            placeholder="自定义投入额"
             className="min-w-0 flex-1 border-2 border-ink-700 bg-ink-950 px-2 py-1 font-mono text-[11px] text-mist-200 outline-none placeholder:text-mist-600 focus:border-mint-500"
           />
           <button
@@ -142,7 +142,7 @@ export function ChallengeDialog({
             }}
             className="border-2 border-ink-700 px-2 py-1 text-[10px] text-mist-300 hover:bg-ink-800"
           >
-            全押
+            全部
           </button>
         </div>
 
@@ -159,7 +159,7 @@ export function ChallengeDialog({
               : 'cursor-not-allowed border-ink-700 text-mist-500'
           }`}
         >
-          {affordable ? '发出挑战' : '余额不够付这笔押注'}
+          {affordable ? '发出挑战' : '余额不够付这笔投入'}
         </button>
       </div>
     </div>

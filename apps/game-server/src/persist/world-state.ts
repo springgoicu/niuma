@@ -6,6 +6,7 @@ import type { BossSaveState } from '../sim/boss';
 import type { RingLastMatchState, RingSaveState } from '../sim/ring';
 import type { VillaSaveState } from '../sim/villas';
 import type { WalletSaveState } from '../economy/wallet';
+import { normalizeDiceLedgerState, type DiceLedgerSaveState } from '../sim/dice-ledger';
 import { ProfileBook, type ProfileRecord } from './profiles';
 
 /**
@@ -23,7 +24,9 @@ import { ProfileBook, type ProfileRecord } from './profiles';
  */
 
 /** 版本 3：追加服务端钱包账本（`wallets`，ADR-0104） */
-export const WORLD_STATE_VERSION = 3;
+export const WORLD_STATE_VERSION_V3 = 3;
+/** 版本 4：追加赌桌战绩账本（`dice`，ADR-0110） */
+export const WORLD_STATE_VERSION = 4;
 /** 兼容读取的旧版本号：v1 无豪宅、v2 无钱包 */
 export const WORLD_STATE_VERSION_V1 = 1;
 export const WORLD_STATE_VERSION_V2 = 2;
@@ -38,15 +41,17 @@ export type { BossSaveState } from '../sim/boss';
 export type { RingLastMatchState, RingSaveState } from '../sim/ring';
 export type { VillaSaveState } from '../sim/villas';
 export type { WalletSaveState } from '../economy/wallet';
+export type { DiceLedgerSaveState } from '../sim/dice-ledger';
 
 export interface WorldStateParts {
   boss: BossSaveState;
   ring: RingSaveState;
   villas: VillaSaveState;
   wallets: WalletSaveState[];
+  dice: DiceLedgerSaveState;
 }
 
-/** 对外仍叫 `WorldStateV1` 是为了少改调用点；结构已经是当前版本 v3 */
+/** 对外仍叫 `WorldStateV1` 是为了少改调用点；结构已经是当前版本 v4 */
 export interface WorldStateV1 extends WorldStateParts {
   version: typeof WORLD_STATE_VERSION;
   savedAt: number;
@@ -284,6 +289,7 @@ function normalizeWorldState(raw: unknown): WorldStateV1 | null {
   const source = raw as Partial<WorldStateV1> & { version?: unknown };
   if (
     source.version !== WORLD_STATE_VERSION &&
+    source.version !== WORLD_STATE_VERSION_V3 &&
     source.version !== WORLD_STATE_VERSION_V2 &&
     source.version !== WORLD_STATE_VERSION_V1
   ) {
@@ -308,11 +314,12 @@ function normalizeWorldState(raw: unknown): WorldStateV1 | null {
       nextMatchId: Math.max(1, Math.floor(ring.nextMatchId)),
       lastMatch: normalizeLastMatch(ring.lastMatch),
     },
-    // v1 没有豪宅、v2 没有钱包：都按空段接管，老档不会被当成坏档隔离
+    // v1 没有豪宅、v2 没有钱包、v3 没有赌桌战绩：都按空段接管，老档不会被当成坏档隔离
     villas: normalizeVillas(source.villas),
     wallets: Array.isArray(source.wallets)
       ? (source.wallets.filter((entry) => entry && typeof entry === 'object') as WalletSaveState[])
       : [],
+    dice: normalizeDiceLedgerState(source.dice),
     profiles: Array.isArray(source.profiles) ? source.profiles.filter(isProfileRecord) : [],
   };
 }

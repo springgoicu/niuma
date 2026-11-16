@@ -46,10 +46,11 @@ export interface NpcDirector {
   /** 目标断线 / 离开：取消盯梢 */
   cancelFollow(targetId: number): void;
   /**
-   * 康复续接（ADR-0109）：NPC 在急救站就地站起来，从当前位置继续巡逻 / 押送。
+   * 康复续接（ADR-0109）：NPC 在急救站就地站起来，从当前位置继续巡逻 / 盯梢。
    *
    * 坐标由 `sim/clinic` 先写好在床尾或地面，本层不再写位置：
    * 写回倒地位置会让康复的 NPC 从病床瞬移回半个园区外（ADR-0106 的老口径）。
+   * 押送任务不再续接：保安倒下的当帧案子就撤了（ADR-0113）。
    * 返回 false 表示这个实体不由本层管理。
    */
   restore(playerId: number, now: number): boolean;
@@ -81,8 +82,11 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     agent.pauseMs = pauseMs;
     agent.pauseUntil = now + pauseMs;
     agent.lookAt = now + 600;
-    agent.player.applyState(agent.player.direction, POSE.Idle, false);
-    agent.player.markDirtyIfChanged();
+    // 押送员已被创倒：躺姿归急救链，这里写 Idle 会把人「扶起来站着」
+    if (!agent.player.incapacitated) {
+      agent.player.applyState(agent.player.direction, POSE.Idle, false);
+      agent.player.markDirtyIfChanged();
+    }
   }
 
   function dispatchEscort(targetId: number, now: number): number {
@@ -201,10 +205,10 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
   }
 
   /**
-   * 康复续接（ADR-0109）：复位行为态、续接押送 / 盯梢，坐标沿用 clinic 写好的床尾。
+   * 康复续接（ADR-0109）：复位行为态、续接盯梢，坐标沿用 clinic 写好的床尾。
    *
-   * 重置 `startedAt` 是关键：住院期间押送计时是挂起的，若沿用旧起点，
-   * 回到岗位的第一帧就会被判超时并放人。
+   * 押送不再续接（ADR-0113）：保安倒下的当帧 `stepEscort` 就回报 `guard_down`，
+   * 案子当场撤销，`agent.escort` 已被 `finishEscort` 清空，康复后直接回巡逻。
    */
   function restore(playerId: number, now: number): boolean {
     const agent = agents.get(playerId);
@@ -228,18 +232,6 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     agent.lastProgressX = player.x;
     agent.lastProgressY = player.y;
 
-    if (agent.escort) {
-      // 回到追捕起点重新规划：旧路径与拖行截止都留在病床上
-      agent.escort.stage = 'chase';
-      agent.escort.stageUntil = 0;
-      agent.escort.path = [];
-      agent.escort.index = 0;
-      agent.escort.replanAt = now;
-      agent.escort.lastTargetX = player.x;
-      agent.escort.lastTargetY = player.y;
-      agent.escort.startedAt = now;
-      agent.escort.dragDeadlineAt = 0;
-    }
     if (agent.follow) {
       agent.follow.path = [];
       agent.follow.index = 0;

@@ -217,6 +217,8 @@ export class Player {
   lastShoutAt = 0;
   /** 互动包限频时间戳：邀请 / 打赏 / 道具 / 购买共用同一个闸门 */
   lastP2PAt = 0;
+  /** 赌桌排行榜拉取的独立冷却：排序要扫全量账本，不能跟着互动包一起放行 */
+  lastDiceBoardAt = 0;
   /** 上一次搬砖结算时刻：工位搬砖的最小间隔靠它，重发包刷不出双份工资（ADR-0088） */
   lastWorkClaimAt = 0;
 
@@ -259,6 +261,7 @@ export class Player {
     this.ventCdMul = 1;
     this.lastShoutAt = 0;
     this.lastP2PAt = 0;
+    this.lastDiceBoardAt = 0;
   }
 
   /** 发钱包同步包时读的快照：只带服务端权威字段，每日任务留在本地 */
@@ -426,6 +429,7 @@ export class Player {
     this.ventCdMul = 1;
     this.lastShoutAt = 0;
     this.lastP2PAt = 0;
+    this.lastDiceBoardAt = 0;
     this.lastWorkClaimAt = 0;
     this.questDay = '';
     this.questProgress = {};

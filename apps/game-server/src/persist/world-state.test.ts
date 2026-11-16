@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BOSS_MAX_HP } from '@niuma/shared-types';
 import { ProfileBook, PROFILE_TTL_MS } from './profiles';
+import type { DiceLedgerSaveState } from '../sim/dice-ledger';
 import {
   openWorldStateStore,
   WORLD_STATE_VERSION,
@@ -36,6 +37,7 @@ const PARTS: WorldStateParts = {
   },
   villas: { villas: [] },
   wallets: [],
+  dice: { players: [], lastRounds: [] },
 };
 
 function storeAt(path: string, overrides: Partial<WorldStateParts> = {}): WorldStateStore {
@@ -136,6 +138,111 @@ describe('WorldStateStore 往返', () => {
     const loaded = reopened.load();
     expect(loaded?.wallets).toEqual(wallets);
     reopened.dispose();
+  });
+
+  it('v4 赌桌战绩段往返：累计口径与最近一局的名单都进快照', async () => {
+    const path = tempPath();
+    const dice: DiceLedgerSaveState = {
+      players: [
+        {
+          id: DEVICE,
+          name: '摸鱼王',
+          lastSeenAt: NOW,
+          tables: [
+            { rounds: 3, wins: 2, losses: 1, refunds: 0, totalBet: 300, totalPayout: 520, net: 220, bestWin: 200 },
+            { rounds: 1, wins: 0, losses: 1, refunds: 0, totalBet: 50, totalPayout: 0, net: -50, bestWin: 0 },
+          ],
+          history: [
+            {
+              table: 0,
+              round: 3,
+              dice: [4, 5, 6] as [number, number, number],
+              hit: 0,
+              bet: 100,
+              payout: 300,
+              net: 200,
+              refunded: false,
+            },
+          ],
+        },
+      ],
+      lastRounds: [
+        {
+          tableId: 0,
+          roundId: 3,
+          dice: [4, 5, 6] as [number, number, number],
+          hit: 0,
+          raid: false,
+          endedAt: NOW,
+          entries: [
+            { deviceId: DEVICE, name: '摸鱼王', side: 0, bet: 100, payout: 300, net: 200, refunded: false },
+          ],
+        },
+      ],
+    };
+    const store = storeAt(path, { dice });
+    store.markDirty();
+    await store.flush();
+    store.dispose();
+
+    const reopened = storeAt(path);
+    expect(reopened.load()?.dice).toEqual(dice);
+    reopened.dispose();
+  });
+
+  it('v3 档没有赌桌战绩段：按空账本接管，不当坏档', () => {
+    const path = tempPath();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 3,
+        savedAt: NOW,
+        tzOffsetMin: 480,
+        boss: { hp: 1, resetAt: NOW + 60_000 },
+        ring: { matchId: 1, nextMatchId: 2, lastMatch: null },
+        villas: { villas: [] },
+        wallets: [],
+        profiles: [],
+      }),
+      'utf8',
+    );
+    const store = storeAt(path);
+    const loaded = store.load();
+    expect(loaded?.dice).toEqual({ players: [], lastRounds: [] });
+    expect(loaded?.version).toBe(WORLD_STATE_VERSION);
+    store.dispose();
+  });
+
+  it('赌桌战绩里的坏行只丢自己，合法行照常读回', () => {
+    const path = tempPath();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 4,
+        savedAt: NOW,
+        tzOffsetMin: 480,
+        boss: { hp: 1, resetAt: NOW + 60_000 },
+        ring: { matchId: 1, nextMatchId: 2, lastMatch: null },
+        villas: { villas: [] },
+        wallets: [],
+        dice: {
+          players: [
+            { id: DEVICE, name: '牛马', tables: [], history: [{ round: 1, dice: [1, 2] }] },
+            { id: 'not-a-device', name: '幽灵' },
+          ],
+          lastRounds: [{ tableId: 7, roundId: 1, dice: [1, 1, 1], entries: [] }],
+        },
+        profiles: [],
+      }),
+      'utf8',
+    );
+    const store = storeAt(path);
+    const loaded = store.load();
+    expect(loaded?.dice.players).toHaveLength(1);
+    expect(loaded?.dice.players[0]!.id).toBe(DEVICE);
+    expect(loaded?.dice.players[0]!.history).toHaveLength(0);
+    expect(loaded?.dice.lastRounds).toHaveLength(0);
+    store.dispose();
   });
 
   it('v2 档没有钱包段：按空账本接管，不当坏档', () => {

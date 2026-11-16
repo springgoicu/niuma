@@ -34,6 +34,9 @@ import type {
   ArenaBetRequest,
   ArenaPoolPacket,
   DiceBetRequest,
+  DiceBoardPacket,
+  DiceBoardRequest,
+  DiceResultPacket,
   DiceStatePacket,
   VillaRequest,
   VillaStatePacket,
@@ -110,6 +113,8 @@ export type MainToWorker =
   | { t: 'shout'; text: string }
   /** 热区建筑（ADR-0087）：上行只带意图 */
   | { t: 'diceBet'; request: DiceBetRequest }
+  /** 赌桌排行榜：只读快照，服务端 2 秒冷却内会回执拒绝 */
+  | { t: 'diceBoard'; request: DiceBoardRequest }
   | { t: 'villa'; request: VillaRequest }
   | { t: 'arenaBet'; request: ArenaBetRequest }
   | { t: 'apartment'; request: ApartmentRequest }
@@ -203,6 +208,9 @@ export type WorkerToMain =
   | { t: 'villaOpen'; villa: number }
   /** 热区建筑的下行快照 */
   | { t: 'dice'; packet: DiceStatePacket }
+  /** 一桌一局结算单（ADR-0110）：亮牌时逐人到达，`self` 已由服务端标好 */
+  | { t: 'diceResult'; packet: DiceResultPacket }
+  | { t: 'diceBoard'; packet: DiceBoardPacket }
   | { t: 'villa'; packet: VillaStatePacket }
   | { t: 'arenaPool'; packet: ArenaPoolPacket }
   /** 打工产出与随机事件（ADR-0088） */

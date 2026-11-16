@@ -10,7 +10,7 @@ import {
   type MotionTarget,
 } from '@niuma/shared-types';
 import type { Player, World } from '../sim/world';
-import { DETENTION, type EscortEvent } from '../sim/detention';
+import { DETENTION, type EscortAbortReason, type EscortEvent } from '../sim/detention';
 import { directionOf, type NpcAgent, type EscortTask } from './brain';
 import { findEscortPath } from './escort-path';
 
@@ -100,9 +100,9 @@ export function stepEscort(
 ): EscortEvent | null {
   const guard = agent.player;
 
-  // 昏迷送医期间整个押送计时挂起（ADR-0106）：restore 会重置 startedAt，
-  // 所以案子不会因为押送员躺在病床上而白白超时。
-  if (guard.incapacitated) return null;
+  // 押送员昏迷送医：当帧作废这一单（ADR-0113）。旧口径是「挂起等康复再续追」，
+  // 被押者会原地躺到保安治好，玩家只能干等——这正是要消掉的体验。
+  if (guard.incapacitated) return abort(guard, task, now, 'guard_down');
 
   // 超时只看时间，不看保安当前能不能动（ADR-0080）：被踹倒期间也必须照常计时，
   // 否则每帧都从这里提前 return，永远走不到下面的超时分支，任务会停摆到案子上限
@@ -125,6 +125,9 @@ export function stepEscort(
 
   const target = world.get(task.targetId);
   if (!target || target.isNpc || target.wsId === 0) return abort(guard, task, now, 'missing');
+  // 被押者自己被打倒送医：坐标从此归救护链，押送当帧让位（ADR-0113），
+  // 否则拖行写「保安身后 22px」与挂车尾写「车尾 26px」会互相拉扯。
+  if (target.incapacitated) return abort(guard, task, now, 'target_down');
 
   if (task.stage === 'hold') {
     faceToward(agent, target);
@@ -185,7 +188,7 @@ function abort(
   guard: Player,
   task: EscortTask,
   now: number,
-  reason: 'timeout' | 'missing' | 'stuck',
+  reason: EscortAbortReason,
 ): EscortEvent {
   return { kind: 'abort', guardId: guard.id, targetId: task.targetId, now, reason };
 }

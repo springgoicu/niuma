@@ -3,6 +3,7 @@ import { DEFAULT_APPEARANCE, PLAYER_RADIUS, POSE, isBlocked } from '@niuma/share
 import { DEFAULT_NPC_CONFIG } from './config';
 import { createNpcDirector } from './director';
 import { NPC_ROLE_GUARD } from './roster';
+import type { EscortEvent } from '../sim/detention';
 import { runTick } from '../sim/tick';
 import type { Transport } from '../sim/view';
 import { World } from '../sim/world';
@@ -155,5 +156,44 @@ describe('昏迷送医与康复续接（ADR-0106 / ADR-0109）', () => {
     const { director } = setup(1, 2);
     director.spawn();
     expect(director.restore(9999, Date.now())).toBe(false);
+  });
+
+  it('押送途中被创倒：当帧回报 guard_down，收尾不扶站，康复后不再续追（ADR-0113）', () => {
+    const { world, director } = setup(1, 2);
+    director.spawn();
+    const events: EscortEvent[] = [];
+    director.setEscortListener((event) => events.push(event));
+
+    const guards = [...world.players.values()].filter((player) => player.role === NPC_ROLE_GUARD);
+    const guard = guards[0]!;
+    // 其余保安先按在病床上：保证这一单只能派给他，后续断言也不受「谁更近」影响
+    for (const other of guards.slice(1)) other.incapacitated = true;
+
+    const now = Date.now();
+    const target = world.create('目标', DEFAULT_APPEARANCE.cow, 12, guard.x + 20, guard.y, '', now)!;
+    expect(director.dispatchEscort(target.id, now)).toBe(guard.id);
+
+    guard.incapacitated = true;
+    // 倒地姿态由急救链写：押送收尾不能再把它改回站姿
+    guard.applyState(guard.direction, POSE.Lie, false);
+
+    director.update(now + 50);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: 'abort',
+      reason: 'guard_down',
+      guardId: guard.id,
+      targetId: target.id,
+    });
+    expect(guard.pose).toBe(POSE.Lie);
+
+    // 康复后回巡逻：没有在途押送任务，还能正常接新单
+    expect(director.restore(guard.id, now + 60)).toBe(true);
+    expect(guard.incapacitated).toBe(false);
+    expect(guard.pose).toBe(POSE.Idle);
+
+    const another = world.create('另一个目标', DEFAULT_APPEARANCE.cow, 13, guard.x + 20, guard.y, '', now)!;
+    expect(director.dispatchEscort(another.id, now + 100)).toBe(guard.id);
   });
 });

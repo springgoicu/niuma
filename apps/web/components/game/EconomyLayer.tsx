@@ -17,7 +17,7 @@ import { PlayerActionDialog } from './PlayerActionDialog';
 import { VillaDialog } from './VillaDialog';
 
 export interface EconomyLayerProps {
-  /** 发起挑战：玩法与押注由 ChallengeDialog 选择，总线再复核距离 / 余额 */
+  /** 发起挑战：玩法与投入额由 ChallengeDialog 选择，总线再复核距离 / 余额 */
   onChallenge: (id: number, gameType: number, wager: number) => void;
   /** 快捷菜单里的直接打赏 */
   onQuickTip: (targetId: number) => void;
@@ -33,11 +33,13 @@ export interface EconomyLayerProps {
   onShout: (text: string) => void;
   // ---- 热区建筑（ADR-0087）：上行只带意图，金额与资格由服务端复核 ----
   onDiceBet: (table: number, side: number, amount: number) => void;
+  /** 骰桌排行榜：范围与排序口径由面板选出，服务端按 2 秒冷却限频 */
+  onDiceBoard: (scope: number, metric: number) => void;
   onArenaBet: (side: number, amount: number) => void;
   onVilla: (villa: number, action: number) => void;
 }
 
-/** 默认押注：新玩家先看到 50，仍可在浮层里改成 0 / 10 / 200 或自定义 */
+/** 默认投入额：新玩家先看到 50，仍可在浮层里改成 0 / 10 / 200 或自定义 */
 const DEFAULT_WAGER = 50;
 
 /**
@@ -56,6 +58,7 @@ export function EconomyLayer({
   onP2PAction,
   onShout,
   onDiceBet,
+  onDiceBoard,
   onArenaBet,
   onVilla,
 }: EconomyLayerProps) {
@@ -66,6 +69,10 @@ export function EconomyLayer({
   // 热区建筑的面板开关与快照都放在 store 里：Worker 里算出来的意图只带一个 id
   const diceOpen = useGameUi((state) => state.diceOpen);
   const dice = useGameUi((state) => state.dice);
+  const diceResults = useGameUi((state) => state.diceResults);
+  const diceBoard = useGameUi((state) => state.diceBoard);
+  const diceBoardPending = useGameUi((state) => state.diceBoardPending);
+  const setDiceBoardPending = useGameUi((state) => state.setDiceBoardPending);
   const setDiceOpen = useGameUi((state) => state.setDiceOpen);
   const arenaBetOpen = useGameUi((state) => state.arenaBetOpen);
   const setArenaBetOpen = useGameUi((state) => state.setArenaBetOpen);
@@ -112,9 +119,17 @@ export function EconomyLayer({
         <DiceHallDialog
           table={diceOpen}
           dice={dice}
+          results={diceResults}
+          board={diceBoard}
+          boardPending={diceBoardPending}
           coins={wallet.coins}
           onClose={() => setDiceOpen(null)}
           onBet={onDiceBet}
+          onRequestBoard={(scope, metric) => {
+            // 同一份快照 2 秒内不重复要：服端也会挡，但先在这里把手按住
+            setDiceBoardPending(true);
+            onDiceBoard(scope, metric);
+          }}
         />
       )}
       {arenaBetOpen && (

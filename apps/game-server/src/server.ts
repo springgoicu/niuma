@@ -57,13 +57,17 @@ import {
   encodeArenaPool,
   encodeDiceState,
   encodeApartmentPeek,
+  encodeDiceBoard,
   encodeLoudspeaker,
   encodeSystemNotice,
+  ACTIVITY_KIND,
+  decodeActivityReport,
   formatSystemNotice,
   SYSTEM_NOTICE_KIND,
   decodeApartmentRequest,
   decodeArenaBet,
   decodeDiceBet,
+  decodeDiceBoardRequest,
   decodeVillaRequest,
   quantizeCoord,
   SHOP_KIND,
@@ -126,6 +130,7 @@ import { ChatHistory, type ChatPage } from './sim/history';
 import { loadModerationFilter } from './sim/moderation';
 import { resolveRename } from './sim/name';
 import { createNpcDirector, warmEscortGrid } from './npc';
+import { ActivityHub } from './sim/activity';
 import { AmbulanceManager } from './sim/clinic';
 import { Detention } from './sim/detention';
 import { announceEnter, announceLeave } from './sim/notice';
@@ -138,7 +143,13 @@ import {
   type RingEnterFailure,
   type RingSettleEntry,
 } from './sim/ring';
-import { broadcastDice, DiceHallRuntime } from './sim/dice-hall';
+import {
+  broadcastDice,
+  broadcastDiceResults,
+  DiceHallRuntime,
+  sendDiceResultsTo,
+} from './sim/dice-hall';
+import { DiceLedger } from './sim/dice-ledger';
 import { VillaRuntime } from './sim/villas';
 import { ApartmentRuntime } from './sim/apartment';
 import { resolveSpawn } from './sim/resume';
@@ -171,12 +182,25 @@ const STATUS_THROTTLE_MS = 200;
  * 又不会误伤「照着新想的名字反复改两次」的正常操作。
  */
 const RENAME_THROTTLE_MS = 1000;
+/**
+ * 赌桌排行榜的独立冷却（ADR-0110）。
+ *
+ * 榜单要扫全量账本并排序，比一次下注贵得多；不吃互动包的 500ms 闸门，
+ * 也不进 Tick，只在玩家真的打开榜单时按 2 秒一次放行。
+ */
+const DICE_BOARD_COOLDOWN_MS = 2000;
 
 export function startGameServer(config: ServerConfig) {
   // 园区唯一时钟（ADR-0081）：时区在启动时定死，运行中途不再读宿主机时区
   const clock = createGameClock(config.tzOffsetMin);
   // 打点先于世界：快照的 collect 拿到的是「落盘那一刻」的老板与擂台，而不是 boot 时的
   let world: World;
+  /**
+   * 赌桌战绩账本（ADR-0110）：和钱包一样按设备号归户，活得比会话长。
+   *
+   * 先于存档创建，`collect` 才能在每个落盘窗口把累计与最近一局一起交出去。
+   */
+  const diceLedger = new DiceLedger();
   const state = openWorldStateStore({
     path: config.state.path,
     saveDelayMs: config.state.saveDelayMs,
@@ -188,9 +212,12 @@ export function startGameServer(config: ServerConfig) {
       ring: world.ring.snapshotForSave(),
       villas: villas.snapshotForSave(),
       wallets: wallets.toJSON(),
+      dice: diceLedger.toJSON(),
     }),
   });
   const saved = state?.load() ?? null;
+  // 战绩段在 v4 才有：老档读出来是空账本，不阻断开服
+  if (saved) diceLedger.restore(saved.dice);
   /**
    * 钱包账本（ADR-0104）：按匿名设备号保存余额、四维、背包、装扮与分 key 托管。
    *
@@ -369,6 +396,8 @@ export function startGameServer(config: ServerConfig) {
       socket.send(data);
     },
   };
+  // 全园区交互播报（ADR-0112）：所有触发点只认识这一个入口，分级与去重在 Hub 里
+  const activity = new ActivityHub(world, transport, clock.now());
 
   /**
    * 牛马币统一入口（ADR-0082）：所有发币 / 扣币 / 升级 / 背包变动都从这里走，
@@ -495,14 +524,16 @@ export function startGameServer(config: ServerConfig) {
     {
       freeze: (player, key, amount) => economy.freezeEscrow(player, key, amount),
       clear: (player, key) => economy.clearEscrow(player, key),
-      payout: (player, key, amount, reason) => {
-        economy.payoutFromPool(player, key, amount, reason);
-      },
+      // 结算单的净盈亏以真实入账为准：托管已被清掉时这里会返回 0（经济层退本金）
+      payout: (player, key, amount, reason) =>
+        economy.payoutFromPool(player, key, amount, reason),
       refund: (player, key) => {
         economy.refundEscrow(player, key);
       },
     },
     clock.now(),
+    Math.random,
+    diceLedger,
   );
 
   /** 豪宅小院：本运行周期冠名权、锁门与摇钱树 */
@@ -573,6 +604,7 @@ export function startGameServer(config: ServerConfig) {
           transport,
           escort: { dispatch: npcs.dispatchEscort, cancel: npcs.cancelEscort },
           releaseSeat: (player) => broadcastSeats(seats.release(player)),
+          activity,
         })
       : null;
   npcs.setEscortListener((event) => detention?.handleEscort(event));
@@ -590,16 +622,23 @@ export function startGameServer(config: ServerConfig) {
     seats,
     broadcastSeats,
     now: clock.now(),
+    activity,
   });
   // 急救链只认识实体（ADR-0106）：NPC 的康复续接通过窄端口交还 npc 层；
   // 位置已由 clinic 写在床尾，npc 层不再需要倒地点（ADR-0109）
   clinic.setNpcRecovery({ restore: (playerId, now) => npcs.restore(playerId, now) });
+  // 开服清场（ADR-0114）：站内只留护士与正在治疗的伤员，其余实体一次性移到西门外。
+  // 与 npc 层创建顺序绑定：先注入续接端口，清出去的 NPC 才能就地重新锚定行为态。
+  const evicted = clinic.evictIntruders(clock.now());
+  if (evicted > 0) console.log(`[clinic] startup sweep evicted=${evicted}`);
   const ventObserver = {
     onVentHit(attacker: Parameters<typeof clinic.observeHit>[0], target: Parameters<typeof clinic.observeHit>[1], now: number): void {
       detention?.onVentHit(attacker, target, now);
       clinic.observeHit(attacker, target, now);
     },
     onKnockdown(attacker: Parameters<typeof clinic.observeHit>[0], target: Parameters<typeof clinic.observeHit>[1]): void {
+      // 全园区通报先发：被创飞的人可能倒在角落，远处只能靠这条消息知道
+      activity.emit(ACTIVITY_KIND.VentKnockdown, target.id, clock.now());
       // 只奖励真人：NPC 互殴不该往任何人的钱包里记钱
       if (attacker.wsId === 0 || target.id === attacker.id) return;
       economy.grantCoins(attacker, ECONOMY_REWARD.Knockdown, WALLET_REASON.KnockdownReward);
@@ -610,6 +649,8 @@ export function startGameServer(config: ServerConfig) {
       info: { crit: boolean; hp: number; justDied: boolean; shock: boolean },
     ): void {
       if (attacker.wsId === 0) return;
+      // 只播报有分量的命中：普通命中一秒能踢好几脚，全园区会被刷屏
+      if (info.crit || info.justDied || info.shock) activity.emit(ACTIVITY_KIND.BossHit, attacker.id, now);
       // 每次真实命中都掉钱：2~5 币，暴击翻倍（ADR-0088）
       const coins = bossHitCoins(Math.random(), info.crit);
       economy.grantCoins(attacker, coins, WALLET_REASON.BossHit);
@@ -622,6 +663,7 @@ export function startGameServer(config: ServerConfig) {
       if (attacker.wsId === 0) return;
       // boss.hit 只有 justDied 那一次会回调到这里，一局最多一笔
       economy.grantCoins(attacker, BOSS_REWARD.Blade, WALLET_REASON.BossReward);
+      activity.emit(ACTIVITY_KIND.BossDown, attacker.id, now);
       // 全服高光弹幕：与道具大喇叭同一个下行包，官方播报 fromId = 0
       broadcastLoud(`尾刀！${attacker.name} 一脚把老板踢进了年度总结计划书，+${BOSS_REWARD.Blade} 币`);
       quests.note(attacker, QUEST_ID.BossHits, 1, now);
@@ -753,6 +795,8 @@ export function startGameServer(config: ServerConfig) {
     worldEvents.sendTo(player, now);
     // 热区建筑的入场补发：赌桌公共局、豪宅牌匾、锁门动态碰撞、八角笼彩池
     transport.send(player.wsId, encodeDiceState({ tables: dice.snapshot(player, now) }));
+    // 亮牌结束后才进场的人也要能看到上一局账目，不用干等下一局
+    sendDiceResultsTo(dice, player, transport);
     transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, now)));
     applyVillaLocks();
     transport.send(
@@ -1113,6 +1157,14 @@ export function startGameServer(config: ServerConfig) {
       return;
     }
 
+    if (op === OpCode.C2S_ACTIVITY) {
+      // 客户端上报只能报纯观感事件：3 字节定长，坐标服务端自己取
+      if (data.byteLength !== 3) return;
+      const report = decodeActivityReport(data);
+      activity.report(player, report.kind, now);
+      return;
+    }
+
     if (op === OpCode.C2S_LIKE) {
       // 点赞裁决收在 sim/like：可见性、自赞、重复与限频都不进 Tick
       const targetId = decodeLikeRequest(data);
@@ -1125,6 +1177,9 @@ export function startGameServer(config: ServerConfig) {
         const counted = state.profiles.addLike(target.deviceId, now);
         if (counted > 0) target.likes = Math.min(MAX_LIKES, counted);
         state.markDirty();
+      }, (target) => {
+        // 点赞成功才通报，重复点赞与自赞不会响第二次
+        activity.emit(ACTIVITY_KIND.Like, target.id, now);
       });
       return;
     }
@@ -1333,6 +1388,17 @@ export function startGameServer(config: ServerConfig) {
       return;
     }
 
+    if (op === OpCode.C2S_DICE_BOARD) {
+      // 只读快照，但排序比下注贵：独立冷却，被挡时也回执，别让面板一直转圈
+      if (now - player.lastDiceBoardAt < DICE_BOARD_COOLDOWN_MS) {
+        sendInteractReject(player, INTERACT_ACTION.DiceBoard, INTERACT_REASON.Cooldown);
+        return;
+      }
+      player.lastDiceBoardAt = now;
+      transport.send(player.wsId, encodeDiceBoard(dice.board(player, decodeDiceBoardRequest(data))));
+      return;
+    }
+
     if (op === OpCode.C2S_ARENA_BET) {
       player.lastP2PAt = now;
       const request = decodeArenaBet(data);
@@ -1499,6 +1565,8 @@ export function startGameServer(config: ServerConfig) {
     challenge.onDisconnect(player, clock.now());
     // 急救清理必须早于座位释放：在途救护车要立刻放空返航，队列 / 护盾也要移除
     clinic.onDisconnect(player.id, clock.now());
+    // 清掉这个 id 的去重记录：实体 id 会被复用，留着会吞掉新玩家的第一条播报
+    activity.forget(player.id);
     // 盯梢中的保安立刻收工，别对着一个已经消失的目标原地打转
     npcs.cancelFollow(player.id);
     broadcastSeats(seats.release(player));
@@ -1730,10 +1798,15 @@ export function startGameServer(config: ServerConfig) {
     }
 
     // 赌桌公共局：状态机每 Tick 推进；亮牌期的倒计时靠 1Hz 心跳刷新 HUD
-    const diceChanged = dice.tick(now, world);
-    if (diceChanged || now - lastDiceBroadcastAt >= 1000) {
+    const diceTick = dice.tick(now, world);
+    if (diceTick.changed || now - lastDiceBroadcastAt >= 1000) {
       lastDiceBroadcastAt = now;
       broadcastDice(dice, world, transport, now);
+    }
+    if (diceTick.settled.length > 0) {
+      // 先发状态（亮牌）再发结算单，客户端顺序才是「看到点数 → 看到账目」
+      broadcastDiceResults(dice, world, transport, diceTick.settled);
+      state?.markDirty();
     }
 
     // 豪宅：房主改名 / 上线要让牌匾跟着换字；每秒对齐一次可收币数

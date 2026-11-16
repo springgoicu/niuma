@@ -25,10 +25,10 @@ interface ArenaBetDialogProps {
 const PRESETS = [10, 50, 200, 500] as const;
 
 /**
- * 绩效八角笼观战押注（ADR-0087）。
+ * 绩效八角笼观战投选（ADR-0087）。
  *
- * 只有坐在观战长椅上的玩家能押（服务端按 `seat.group === 'arena-bench'` 复核）；
- * 彩池是双方注额之和，押中一侧按注额比例分走全池，平台不抽水。
+ * 只有坐在观战长椅上的玩家能投选（服务端按 `seat.group === 'arena-bench'` 复核）；
+ * 奖池是双方投入额之和，投选中一侧按投入额比例分走全池，平台不收服务费。
  */
 export function ArenaBetDialog({ pool, ring, coins, seated, onClose, onBet }: ArenaBetDialogProps) {
   const [side, setSide] = useState<number>(RING_SIDE.Red);
@@ -51,7 +51,7 @@ export function ArenaBetDialog({ pool, ring, coins, seated, onClose, onBet }: Ar
       <div className="w-full max-w-[380px] border-2 border-ink-600 bg-ink-900/95 p-3 shadow-[4px_4px_0_rgba(0,0,0,0.4)]">
         <div className="flex items-center justify-between">
           <p className="text-[13px] font-semibold text-mist-100">
-            绩效八角笼 · <span className="text-mint-400">观战押注</span>
+            绩效八角笼 · <span className="text-mint-400">观战投选</span>
           </p>
           <button
             type="button"
@@ -99,14 +99,14 @@ export function ArenaBetDialog({ pool, ring, coins, seated, onClose, onBet }: Ar
           <span className="h-full flex-1 bg-[#3B7BD4]/70" />
         </div>
         <p className="mt-1 flex justify-between font-mono text-[9px] text-mist-400">
-          <span>红池 {red}</span>
-          <span>蓝池 {blue}</span>
+          <span>红方池 {red}</span>
+          <span>蓝方池 {blue}</span>
         </p>
 
         <p className="mt-2 px-1 text-[10px] text-mist-400">
-          押注 <span className="font-mono text-[#F2C879]">{capped}</span> 币 · 余额{' '}
+          投入 <span className="font-mono text-[#F2C879]">{capped}</span> 币 · 余额{' '}
           <span className="font-mono">{coins}</span>
-          {placed && <span className="ml-2 text-mint-400">本场已押 {pool!.myBet}</span>}
+          {placed && <span className="ml-2 text-mint-400">本场已投入 {pool!.myBet}</span>}
         </p>
         <div className="mt-1 grid grid-cols-4 gap-1">
           {PRESETS.map((value) => (
@@ -130,7 +130,7 @@ export function ArenaBetDialog({ pool, ring, coins, seated, onClose, onBet }: Ar
         <input
           value={custom}
           inputMode="numeric"
-          placeholder="自定义注额"
+          placeholder="自定义投入额"
           onChange={(event) => {
             const next = event.target.value.replace(/[^\d]/g, '');
             setCustom(next);
@@ -152,10 +152,10 @@ export function ArenaBetDialog({ pool, ring, coins, seated, onClose, onBet }: Ar
           {!seated
             ? '先坐上观战长椅'
             : !running
-              ? '比赛中途开押，等下一场'
+              ? '比赛中途不可投入，等下一场'
               : placed
-                ? '本场已押注'
-                : `押 ${capped} 币 · ${RING_SIDE_NAME[side]}`}
+                ? '本场已投入'
+                : `投入 ${capped} 币 · ${RING_SIDE_NAME[side]}`}
         </button>
       </div>
     </div>

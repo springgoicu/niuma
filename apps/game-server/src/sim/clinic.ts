@@ -1,8 +1,10 @@
 import {
+  ACTIVITY_KIND,
   AMBULANCE_FLAG_CARRYING,
   AMBULANCE_FLAG_SIREN,
   AMBULANCE_STATE,
   CLINIC_AMBULANCE_SPOTS,
+  CLINIC_ACCESS_PAVING,
   CLINIC_BED_SEAT_IDS,
   CLINIC_BEDS,
   CLINIC_DROP,
@@ -16,6 +18,7 @@ import {
   ENTITY_ROLE_NURSE,
   MOVE_SPEED,
   PATIENT_STATE,
+  PLAYER_RADIUS,
   PLAZA_CENTER,
   POSE,
   SERVICE_SQUARE,
@@ -25,6 +28,8 @@ import {
   clinicBedSide,
   encodeAmbulance,
   encodePatientStatus,
+  findFreePoint,
+  isInClinicInterior,
   quantizeCoord,
   rectContains,
   resolveMotionInto,
@@ -37,6 +42,7 @@ import {
   type SeatStateEntry,
 } from '@niuma/shared-types';
 import type { SpatialGrid } from '../spatial/grid';
+import type { ActivityHub } from './activity';
 import type { SeatRegistry } from './seats';
 import type { Player, World } from './world';
 import type { Transport } from './view';
@@ -55,8 +61,16 @@ const UNSTUCK_MS = 8000;
  */
 const AMBULANCE_EAST_GATE = { x: CLINIC_RECT.x + CLINIC_RECT.w / 2, y: SERVICE_SQUARE.y + SERVICE_SQUARE.h - 40 } as const;
 const AMBULANCE_ROAD_GATE = { x: PLAZA_CENTER.x + 320, y: PLAZA_CENTER.y } as const;
-/** 两辆都在任务时，新伤员最多在内存队列里等 6 秒 */
-const QUEUE_TIMEOUT_MS = 6000;
+/** 两辆都在任务时，真人伤员最多在内存队列里等 6 秒就地包扎 */
+const HUMAN_QUEUE_TIMEOUT_MS = 6000;
+/**
+ * NPC 排队上限（ADR-0114）。
+ *
+ * 救护车往返要走两段固定绕行（ADR-0097），一轮出警 + 治疗通常 20~28 秒；
+ * 6 秒兜底会让排队的 NPC 在倒地原地站起来并发 15 秒免疫，玩家看到的就是
+ * 「打倒了却没有任何车出发」。给足两轮往返，只有真卡死时才就地包扎。
+ */
+const NPC_QUEUE_TIMEOUT_MS = 45000;
 /** 病床治疗时长 */
 const TREATMENT_MS = 3000;
 /** 治愈后的工伤保护 */
@@ -79,6 +93,17 @@ const LIFT_MS = 360;
 /** 站位驻足时长 */
 const POST_MS = 2400;
 const POST_JITTER_MS = 2800;
+/**
+ * 开服清场的落点（ADR-0114）：西门外 60px，区域矩形以西、仍在服务广场铺装上。
+ *
+ * 站点几何只认识 `CLINIC_ACCESS_PAVING`，所以落点也由它派生，挪站只改一个矩形；
+ * 取 60px 是为了让落点同时落在 `CLINIC_REGION_RECT` 之外——只清出站体、
+ * 还堵在门口铺装上的话，护士接人的走廊照样会被占。
+ */
+const CLINIC_SPILL_POINT = {
+  x: CLINIC_REGION_RECT.x - 60,
+  y: CLINIC_ACCESS_PAVING.y + CLINIC_ACCESS_PAVING.h / 2,
+} as const;
 
 const MOTION: MotionTarget = { x: 0, y: 0 };
 
@@ -189,6 +214,11 @@ export interface ClinicOptions {
   broadcastSeats: (changes: readonly SeatStateEntry[]) => void;
   /** 构造时刻（服务端时钟）：护士 NPC 的创建时间与挥手排期都以它为准 */
   now: number;
+  /**
+   * 全园区播报端口（ADR-0112）：可选注入，测试与无播报部署零改动。
+   * clinic 只报「倒下 / 装车 / 上床 / 康复」四个跃迁，不重复已有状态包。
+   */
+  activity?: ActivityHub;
 }
 
 /**
@@ -220,6 +250,7 @@ export class AmbulanceManager {
   private readonly transport: Transport;
   private readonly seats: SeatRegistry;
   private readonly broadcastSeats: ClinicOptions['broadcastSeats'];
+  private readonly activity: ActivityHub | undefined;
   private readonly cars: Ambulance[] = [
     this.makeCar(1, 0),
     this.makeCar(2, 1),
@@ -247,6 +278,7 @@ export class AmbulanceManager {
     this.transport = options.transport;
     this.seats = options.seats;
     this.broadcastSeats = options.broadcastSeats;
+    this.activity = options.activity;
     this.spawnNurses(options.now);
   }
 
@@ -379,6 +411,7 @@ export class AmbulanceManager {
     }
     this.grid.update(player.id, player.x, player.y);
     this.broadcastPatient(player, PATIENT_STATE.Incapacitated, 0);
+    this.activity?.emit(ACTIVITY_KIND.VentKnockdown, player.id, now);
 
     const waiting: Waiting = { playerId: player.id, since: now };
     if (!this.tryDispatch(player, now)) this.waiting.push(waiting);
@@ -417,13 +450,54 @@ export class AmbulanceManager {
   // ---------------------------------------------------------------------------
 
   private tryDispatch(player: Player, now: number): boolean {
+    // 同一名伤员只能被一辆车接管：重复派车会让两台车一起追同一个人、
+    // 一起在落点等交接，两辆车被一个伤员占死，后来的人只能排队到就地包扎。
+    if (this.cars.some((car) => car.targetId === player.id)) return true;
     const car = this.cars.find((candidate) => candidate.state === AMBULANCE_STATE.Idle);
     if (!car) return false;
     car.state = AMBULANCE_STATE.Dispatched;
     car.targetId = player.id;
     car.leg = 0;
     car.phaseAt = now;
+    this.activity?.emit(ACTIVITY_KIND.AmbulanceDispatched, player.id, now);
     return true;
+  }
+
+  /**
+   * 开服清场（ADR-0114）：站内只留护士与正在治疗的伤员。
+   *
+   * 只在 `server` 启动时调一次，不做持续规则：治疗中的床位伤员、挂车途中的伤员
+   * 与护士都在站内，天然属于「站内有人」，持续清扫会和急救链抢人。
+   * 被清出去的实体落到西门外 60px（`CLINIC_REGION_RECT` 之外、仍在服务广场铺装），
+   * 不会一开门就把人踢到看不见的地方。
+   * 只改内存坐标（ADR-0084），不落盘。
+   */
+  evictIntruders(now: number): number {
+    let moved = 0;
+    for (const player of this.world.players.values()) {
+      if (player.role === ENTITY_ROLE_NURSE) continue;
+      if (!isInClinicInterior(player.x, player.y)) continue;
+      // 急救链正在管的人不抢：躺床、挂车尾、挪床过渡、排队昏迷都继续走原流程
+      if (player.incapacitated || player.carriedBy !== 0) continue;
+      if (this.beds.has(player.id) || this.tweens.has(player.id)) continue;
+
+      const point = findFreePoint(CLINIC_SPILL_POINT.x, CLINIC_SPILL_POINT.y, PLAYER_RADIUS, true);
+      if (player.seat !== 0) {
+        const changes: SeatStateEntry[] = [];
+        this.seats.release(player, changes);
+        this.broadcastSeats(changes);
+      }
+      player.x = point.x;
+      player.y = point.y;
+      player.stunUntil = 0;
+      player.applyState(DIRECTION.Down, POSE.Idle, false);
+      player.dirty = true;
+      if (this.grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+      // NPC 还要把行为态重新锚到新位置，否则下一拍会拿着旧路径往回走
+      if (player.isNpc) this.recovery?.restore(player.id, now);
+      moved += 1;
+    }
+    return moved;
   }
 
   /** 新连接入场时补发两辆车的当前位置与所有在途伤员状态 */
@@ -495,9 +569,10 @@ export class AmbulanceManager {
   private advanceQueue(now: number, tick: number): void {
     // 从队首推进：先昏迷的伤员先上车，不能因为倒序遍历让后来者插队
     for (let i = 0; i < this.waiting.length; ) {
-      const entry = this.waiting[i]!;
+      const       entry = this.waiting[i]!;
       const player = this.world.get(entry.playerId);
-      if (!player || !player.incapacitated) {
+      // 已经挂上车 / 已经躺上床的人不需要再排队：留着只会派第二辆车扑空
+      if (!player || !player.incapacitated || player.carriedBy !== 0 || this.beds.has(player.id)) {
         this.waiting.splice(i, 1);
         continue;
       }
@@ -505,8 +580,10 @@ export class AmbulanceManager {
         this.waiting.splice(i, 1);
         continue;
       }
-      // 两辆车都忙满 6 秒：就地包扎，绝不让玩家卡在无限等待里
-      if (now - entry.since >= QUEUE_TIMEOUT_MS) {
+      // 两辆车都忙满兜底时长：就地包扎。
+      // 真人 6 秒（绝不让玩家卡在无限等待里）；NPC 45 秒（ADR-0114），
+      // 否则「排队等车」会变成「原地站起来」，玩家看到的就是没车出警。
+      if (now - entry.since >= (player.isNpc ? NPC_QUEUE_TIMEOUT_MS : HUMAN_QUEUE_TIMEOUT_MS)) {
         this.waiting.splice(i, 1);
         this.healInPlace(player, now, tick);
         continue;
@@ -575,6 +652,7 @@ export class AmbulanceManager {
         car.targetId = patient.id;
         patient.carriedBy = car.id;
         this.broadcastPatient(patient, PATIENT_STATE.Incapacitated, 0);
+        this.activity?.emit(ACTIVITY_KIND.AmbulanceLoaded, patient.id, now);
         return;
       }
 
@@ -589,6 +667,7 @@ export class AmbulanceManager {
         car.leg = 0;
         patient.carriedBy = car.id;
         this.broadcastPatient(patient, PATIENT_STATE.Incapacitated, 0);
+        this.activity?.emit(ACTIVITY_KIND.AmbulanceLoaded, patient.id, now);
       }
       return;
     }
@@ -763,6 +842,7 @@ export class AmbulanceManager {
     player.dirty = true;
     this.grid.update(player.id, player.x, player.y);
     this.broadcastPatient(player, PATIENT_STATE.Treating, Math.ceil((delay + TREATMENT_MS) / 1000));
+    this.activity?.emit(ACTIVITY_KIND.ClinicTreating, player.id, now);
   }
 
   /**
@@ -1149,6 +1229,8 @@ export class AmbulanceManager {
     player.dirty = true;
     this.shieldUntil.set(player.id, player.immunityUntilMs);
     this.broadcastPatient(player, PATIENT_STATE.Shielded, IMMUNITY_MS / 1000);
+    // 康复只有这两条收尾路径（床尾 tween 结束 / 地面就地包扎），都在这里汇合
+    this.activity?.emit(ACTIVITY_KIND.ClinicRecovered, player.id, now);
   }
 
   private advanceShields(now: number): void {

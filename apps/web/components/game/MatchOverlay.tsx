@@ -119,7 +119,7 @@ export function MatchOverlay({ onAction }: MatchOverlayProps) {
             {match.winnerId === 0 ? '平局退款' : won ? '你赢了' : '你输了'}
           </p>
           <p className="mt-1 text-[11px] text-mist-400">
-            {name} · 对手 {match.opponentName} · 押注 {match.wager} 币 ·{' '}
+            {name} · 对手 {match.opponentName} · 投入 {match.wager} 币 ·{' '}
             {END_LABEL[match.endReason] ?? '已结算'}
           </p>
           <p className="mt-1 font-mono text-[12px] text-[#F2C879]">余额 {wallet.coins}</p>

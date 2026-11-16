@@ -1,5 +1,5 @@
 /**
- * 摸鱼大赌场（DICE_HALL）：游乐区西端的开放式豪华亭子 + 两张 6 人绿绒赌桌。
+ * 摸鱼骰子馆（DICE_HALL）：游乐区西端的开放式豪华亭子 + 两张 6 人绿绒骰桌。
  *
  * 与 layout.ts 同一条纪律：坐标全部手写，不依赖 Math.random / Math.sin / Math.cos，
  * 服务端裁决、客户端渲染与布局测试共用这一份真相。
@@ -118,10 +118,10 @@ export function diceTableByGroup(group: string): DiceTableSpec | undefined {
 /* ------------------------------------------------------------------ *
  * 公共局规则（服务端权威）
  *
- * 每局三段：10 秒下注 → 1.5 秒摇骰演出 → 4 秒亮牌结算。
- * 结算用彩池：命中档位按注额比例分走全池，0% 抽水，货币不增发；
- * 命中档位无人下注时全额退款（不算赢也不算输）。
- * 每局 5% 概率触发保安查岗彩蛋：命中者分到的彩池再被抽走 5%。
+ * 每局三段：10 秒投选 → 1.5 秒摇骰演出 → 4 秒亮牌结算。
+ * 结算用奖池：猜中档位按投入额比例分走全池，0% 服务费，货币不增发；
+ * 猜中档位无人投入时全额退款（不算赢也不算输）。
+ * 每局 5% 概率触发保安查岗彩蛋：猜中者分到的奖池再被抽走 5%。
  * ------------------------------------------------------------------ */
 
 export const DICE_BET_MS = 10_000;
@@ -131,10 +131,10 @@ export const DICE_MIN_BET = 10;
 export const DICE_MAX_BET = 500;
 /** 保安查岗概率（每局独立掷一次） */
 export const DICE_GUARD_RAID_CHANCE = 0.05;
-/** 查岗抽水比例 */
+/** 查岗服务费比例 */
 export const DICE_RAID_TAKE = 0.05;
 
-/** 押注档位：线协议 u8 */
+/** 投入档位：线协议 u8 */
 export const DICE_SIDE = {
   Big: 0,
   Small: 1,
@@ -145,10 +145,10 @@ export type DiceSide = (typeof DICE_SIDE)[keyof typeof DICE_SIDE];
 export const DICE_SIDE_NAME: Record<number, string> = {
   [DICE_SIDE.Big]: '大',
   [DICE_SIDE.Small]: '小',
-  [DICE_SIDE.Leopard]: '豹子',
+  [DICE_SIDE.Leopard]: '同点',
 };
 
-/** 局内阶段：0 等待开局 / 1 下注 / 2 摇骰 / 3 亮牌 */
+/** 局内阶段：0 等待开局 / 1 投选 / 2 摇骰 / 3 亮牌 */
 export const DICE_PHASE = {
   Idle: 0,
   Betting: 1,
@@ -181,6 +181,56 @@ export function rollDice(seed: number): [number, number, number] {
     return (state % 6) + 1;
   };
   return [next(), next(), next()];
+}
+
+/* ------------------------------------------------------------------ *
+ * 结算台账与排行榜（ADR-0110）
+ *
+ * 账本按匿名设备号归户，只在服务端与 world-state.json 里流转：
+ * 结算单与榜单只带昵称，永不下发设备号。
+ * ------------------------------------------------------------------ */
+
+/** 账本容量：最多保留多少位有战绩的设备（超出按最后参与时间淘汰） */
+export const DICE_LEDGER_MAX_PLAYERS = 200;
+/** 每位玩家保留最近多少局明细（面板展示最近 20 局，序号与累计统计分开放） */
+export const DICE_PLAYER_HISTORY = 20;
+/** 排行榜一次最多返回多少行；本人不在前列时会额外占一行 */
+export const DICE_BOARD_LIMIT = 20;
+/** 一局结算单最多带多少行（6 凳上限为 6，留一倍余量给同设备双开） */
+export const DICE_RESULT_MAX_ENTRIES = 12;
+
+/** 榜单范围：全赌场合算 / 单桌 */
+export const DICE_BOARD_SCOPE = {
+  All: 0,
+  Table0: 1,
+  Table1: 2,
+} as const;
+export type DiceBoardScope = (typeof DICE_BOARD_SCOPE)[keyof typeof DICE_BOARD_SCOPE];
+
+/** 榜单排序口径 */
+export const DICE_BOARD_METRIC = {
+  Net: 0,
+  WinRate: 1,
+} as const;
+export type DiceBoardMetric = (typeof DICE_BOARD_METRIC)[keyof typeof DICE_BOARD_METRIC];
+
+/**
+ * 胜率口径：分母只算「已分出胜负」的局。
+ *
+ * 退款局（命中档没人押 / 注额没冻上）既不算赢也不算输，计进局数但不进分母；
+ * 没有有效局时返回 `-1`，排序置底、界面显示「—」，不用 0% 假装输光。
+ */
+export function diceWinRate(wins: number, rounds: number, refunds: number): number {
+  const decided = Math.max(0, Math.floor(rounds)) - Math.max(0, Math.floor(refunds));
+  if (decided <= 0) return -1;
+  const safeWins = Math.max(0, Math.floor(wins));
+  return Math.min(1, safeWins / decided);
+}
+
+/** 命中档位文案：`-1`（无人命中）单独一档，避免被误读成「大」 */
+export function diceHitLabel(hit: number): string {
+  if (hit < 0) return '无人命中';
+  return DICE_SIDE_NAME[hit] ?? '未知';
 }
 
 /** 把「命中档位 + 总池」拆成每人应得：整数余数按注额降序、id 升序兜底，保证确定性 */

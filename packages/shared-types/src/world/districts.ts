@@ -245,7 +245,7 @@ export const VENUES: ReadonlyArray<VenueSpec> = [
   venue('workroom', '工作区', 'corporate', 'indoor', WORKROOM, 'workroom'),
   // ---- 游乐区 ----
   venue('park', '游乐园', 'amusement', 'outdoor', AMUSEMENT_PARK, 'park'),
-  venue('diceHall', '摸鱼大赌场', 'amusement', 'semi', DICE_HALL, 'diceHall'),
+  venue('diceHall', '摸鱼骰子馆', 'amusement', 'semi', DICE_HALL, 'diceHall'),
   venue('ring', '绩效八角笼', 'amusement', 'outdoor', RING_ARENA, 'ring'),
   // ---- 生活区 ----
   venue('lounge', '宿舍区', 'living', 'indoor', LOUNGE, 'lounge'),
@@ -331,7 +331,7 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'shrine', name: '财神供案', district: 'corporate', scene: 'indoor', x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y },
   { id: 'bossArena', name: '发泄区', district: 'corporate', scene: 'indoor', ...rectCenter(BOSS_ARENA) },
   { id: 'park', name: '游乐园', district: 'amusement', scene: 'outdoor', ...rectCenter(AMUSEMENT_PARK) },
-  { id: 'diceHall', name: '摸鱼大赌场', district: 'amusement', scene: 'semi', ...rectCenter(DICE_HALL) },
+  { id: 'diceHall', name: '摸鱼骰子馆', district: 'amusement', scene: 'semi', ...rectCenter(DICE_HALL) },
   { id: 'ring', name: '绩效八角笼', district: 'amusement', scene: 'outdoor', ...rectCenter(RING_ARENA) },
   { id: 'apartment', name: '牛马公寓', district: 'living', scene: 'indoor', ...rectCenter(APARTMENT_SPECS[0]!.rect) },
   { id: 'lounge', name: '宿舍区', district: 'living', scene: 'indoor', ...rectCenter(LOUNGE) },

@@ -1,5 +1,7 @@
 import {
   ACTION,
+  ACTIVITY_KIND,
+  activityTierCodeOf,
   BOARD_METRIC_ALL,
   BOSS,
   CHAT_HISTORY_FLAG,
@@ -50,6 +52,7 @@ import {
   seatById,
   seatPose,
   unpackState,
+  type ActivityPacket,
   type BoardMetric,
   type BoardPacket,
   type BossPacket,
@@ -92,6 +95,8 @@ import {
   type ArenaPoolPacket,
   type ApartmentPeekPacket,
   type DiceStatePacket,
+  type DiceResultPacket,
+  type DiceBoardPacket,
   type VillaStatePacket,
   type BossShockPacket,
   type EventClaimResult,
@@ -122,6 +127,7 @@ import { type BoardEntry, type PlayerBadge } from './badge';
 import { bossHitFeedback } from './boss-feedback';
 import { ventOutcome } from './vent-outcome';
 import { toSnapshotPatch } from './snapshot';
+import { ACTIVITY_TTL_MS } from './activity-feed';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { HINT, resolveVisibleHint } from './hint-copy';
 import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
@@ -236,6 +242,26 @@ export interface WorldSnapshot {
   y: number;
   region: string;
   points: Array<{ x: number; y: number; self: boolean }>;
+  /**
+   * 全园区播报的小地图事件（ADR-0112）：4Hz 快照里只带仍在有效期内的条目，
+   * `age` 是收到之后过了多少毫秒，绘制端用它算脉冲相位，不另起定时器。
+   */
+  events?: Array<{ x: number; y: number; tier: number; age: number }>;
+}
+
+/**
+ * 一条全园区播报（ADR-0112）。
+ *
+ * `text` 是服务端套好的成品句，客户端不做二次拼装；`tier` 决定播报条配色与
+ * 是否进读屏队列（0 强演出 / 1 生活 / 2 常规）。`at` 由宿主补，会话层用的是
+ * 自己的会话时钟，不能跨层混用。
+ */
+export interface ActivityEvent {
+  kind: number;
+  text: string;
+  tier: number;
+  x: number;
+  y: number;
 }
 
 /**
@@ -295,6 +321,11 @@ export interface SessionCallbacks {
   /** 工牌点赞变化：目标、计数与「是不是你点的」，宿主据此刷新档案弹窗 */
   onLike?(packet: LikePacket): void;
   /**
+   * 全园区交互播报（ADR-0112）：文案已由服务端套好，宿主只做排队与呈现。
+   * 可选挂载：没有播报条的会话静默丢弃，不影响同步。
+   */
+  onActivity?(event: ActivityEvent): void;
+  /**
    * 擂台快照：`receivedAt` 是收到包的**服务器时刻**（ADR-0081），HUD 用它把
    * `remainingMs` 递减——玩家的本机时钟不准也不会把倒计时带偏。
    * `null` 表示离开擂台世界（重连 / 换园区），宿主应清空 HUD。
@@ -342,6 +373,10 @@ export interface SessionCallbacks {
   onVillaOpen?(villaId: number): void;
   /** 赌桌公共局快照：两张桌一包 */
   onDiceState?(packet: DiceStatePacket): void;
+  /** 一桌一局结算单（ADR-0110）：亮牌时逐人到达 */
+  onDiceResult?(packet: DiceResultPacket): void;
+  /** 赌桌排行榜快照：只在玩家打开榜单页签时按需拉取 */
+  onDiceBoard?(packet: DiceBoardPacket): void;
   /** 豪宅牌匾与锁状态 */
   onVillaState?(packet: VillaStatePacket): void;
   /** 八角笼彩池 */
@@ -583,6 +618,11 @@ export class GameSession {
   private localId = 0;
   /** 系统消息的负序号：与聊天 msgId 分开，列表 key 不会撞 */
   private systemSeq = 0;
+  /**
+   * 最近的全园区事件（ADR-0112）：小地图 4Hz 快照从这里取点。
+   * 只存 8 条并按会话时钟过期，服务端限流后不会堆出长数组。
+   */
+  private readonly recentActivity: Array<{ x: number; y: number; tier: number; at: number }> = [];
   /** 园区公告只播一次：断线重连重建世界时不再重复刷屏 */
   private renovationNoticed = false;
   /**
@@ -720,6 +760,7 @@ export class GameSession {
       onChat: (packet) => this.handleChat(packet),
       onChatHistory: (packet) => this.handleChatHistory(packet),
       onSystemNotice: (packet) => this.handleSystemNotice(packet),
+      onActivity: (packet) => this.handleActivity(packet),
       onChatRejected: (reason) => {
         // 服务端权威拦截的回执：正常路径被本地预检挡住了，走到这里基本是词库不同步或伪造包
         this.showHint(
@@ -758,6 +799,8 @@ export class GameSession {
       onBoss: (packet) => this.handleBoss(packet),
       onRing: (packet) => this.handleRing(packet),
       onDiceState: (packet) => this.handleDiceState(packet),
+      onDiceResult: (packet) => this.callbacks.onDiceResult?.(packet),
+      onDiceBoard: (packet) => this.callbacks.onDiceBoard?.(packet),
       onVillaState: (packet) => this.handleVillaState(packet),
       onArenaPool: (packet) => this.handleArenaPool(packet),
       onApartmentPeek: (packet) => this.handleApartmentPeek(packet),
@@ -1318,6 +1361,7 @@ export class GameSession {
       Motion.moving[eid] = 0;
     }
     this.net?.sendAction(this.localId, ACTION.Stand);
+    this.reportActivity(ACTIVITY_KIND.Stand);
   }
 
   /** 就近找一类空座：`bed` 为 true 只找床，false 只找坐位 */
@@ -1520,6 +1564,25 @@ export class GameSession {
   private handleSystemNotice(packet: SystemNoticePacket): void {
     if (packet.text.length === 0) return;
     this.pushSystemNotice(packet.kind, packet.text);
+  }
+
+  /**
+   * 全园区交互播报（ADR-0112）：服务端已经把「谁、在哪、做了什么」套成一句话。
+   *
+   * 空文案直接丢——解码越界或未知 kind 都走这条；不进聊天频道，另走播报条，
+   * 否则 200 人同屏时频道列表会被「谁坐下了」淹掉。
+   */
+  private handleActivity(packet: ActivityPacket): void {
+    if (packet.text.length === 0) return;
+    const tier = activityTierCodeOf(packet.kind);
+    this.recentActivity.push({ x: packet.x, y: packet.y, tier, at: this.elapsed });
+    if (this.recentActivity.length > 8) this.recentActivity.shift();
+    this.callbacks.onActivity?.({ kind: packet.kind, text: packet.text, tier, x: packet.x, y: packet.y });
+  }
+
+  /** 本机私有互动上报：上香 / 设施气泡 / 场所台词 / 常规动作，坐标由服务端自己取 */
+  private reportActivity(kind: number): void {
+    this.net?.sendActivity(kind);
   }
 
   /**
@@ -1794,6 +1857,15 @@ export class GameSession {
         this.seatIntent = true;
         this.sitAt(seat);
         this.net?.sendAction(this.localId, ACTION.Sit);
+        // 赌桌圆凳与擂台观战席各说各的，远端才能分清「坐下」和「入局观战」
+        const group = seat.group ?? null;
+        this.reportActivity(
+          group !== null && diceTableByGroup(group) !== undefined
+            ? ACTIVITY_KIND.TableSeat
+            : group === RING_BENCH_SEAT_GROUP
+              ? ACTIVITY_KIND.RingSeat
+              : ACTIVITY_KIND.Sit,
+        );
         return;
       }
       case 'lie-bed': {
@@ -1805,6 +1877,7 @@ export class GameSession {
         this.seatIntent = true;
         this.sitAt(bed);
         this.net?.sendAction(this.localId, ACTION.Lie);
+        this.reportActivity(ACTIVITY_KIND.Lie);
         return;
       }
       case 'sit-ground':
@@ -1824,6 +1897,7 @@ export class GameSession {
           this.setLocalPose(eid, POSE.Idle);
         }
         this.startOverlay(eid, 'jump');
+        this.reportActivity(ACTIVITY_KIND.Jump);
         return;
       case 'vent': {
         // 与服务端同一把尺子：本地先挡一道，连点不会白发包（ADR-0051）。
@@ -1860,6 +1934,7 @@ export class GameSession {
         if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) return;
         this.startOverlay(eid, 'wave');
         Motion.moving[eid] = 0;
+        this.reportActivity(ACTIVITY_KIND.Wave);
         return;
       case 'interact':
         this.interact(eid);
@@ -1876,6 +1951,7 @@ export class GameSession {
     this.clearOverlays(eid);
     Motion.moving[eid] = 0;
     this.net?.sendAction(this.localId, ACTION.Sit);
+    this.reportActivity(ACTIVITY_KIND.Sit);
   }
 
   private lieGround(eid: number): void {
@@ -1883,6 +1959,7 @@ export class GameSession {
     this.clearOverlays(eid);
     Motion.moving[eid] = 0;
     this.net?.sendAction(this.localId, ACTION.Lie);
+    this.reportActivity(ACTIVITY_KIND.Lie);
   }
 
   /**
@@ -1980,6 +2057,14 @@ export class GameSession {
       this.emitAudio({ kind: 'interact', target: target.kind, x: target.x, y: target.y });
       this.renderer.showBubble(this.localId, pickLine(target.kind, this.interactCount));
       this.interactCount += 1;
+      // 三台机器各报各的；`InteractiveKind` 只有这三个，末项兜底就是咖啡机
+      this.reportActivity(
+        target.kind === 'vending'
+          ? ACTIVITY_KIND.Vending
+          : target.kind === 'cooler'
+            ? ACTIVITY_KIND.Water
+            : ACTIVITY_KIND.Coffee,
+      );
       return;
     }
     this.interactAt = this.elapsed + INTERACT_COOLDOWN_MS;
@@ -1996,6 +2081,7 @@ export class GameSession {
       case 'tea':
         // 茶台 F 打开属性强化面板（ADR-0085 → ADR-0087 增加装扮页签）
         this.showHint('赛博茶水强化站：属性与装扮都在这里');
+        this.reportActivity(ACTIVITY_KIND.Tea);
         this.callbacks.onShopOpen?.('stats');
         return;
       case 'workDesk':
@@ -2046,6 +2132,7 @@ export class GameSession {
       case 'theater': {
         const name = this.renderer.cycleTheaterChannel();
         if (name) this.showHint(`频道：${name}`);
+        this.reportActivity(ACTIVITY_KIND.Cinema);
         return;
       }
       case 'parkPhoto':
@@ -2053,10 +2140,12 @@ export class GameSession {
         this.renderer.flashPhotoAt(x, y - 34);
         this.renderer.showBubble(this.localId, pickVenueLine(PHOTO_LINES, this.venueLineCount));
         this.venueLineCount += 1;
+        this.reportActivity(ACTIVITY_KIND.Arcade);
         return;
       case 'meeting':
         this.renderer.showBubble(this.localId, pickVenueLine(MEETING_LINES, this.venueLineCount));
         this.venueLineCount += 1;
+        this.reportActivity(ACTIVITY_KIND.Meeting);
         return;
       default:
         // 新增本地点还没写专属演出时什么都不做，避免借用别处的台词
@@ -2103,6 +2192,7 @@ export class GameSession {
     const x = Position.x[eid]!;
     const y = Position.y[eid]!;
     this.renderer.flashShrine();
+    this.reportActivity(ACTIVITY_KIND.Incense);
     this.emitAudio({ kind: 'incense', x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y });
     this.renderer.showFloatText(x, y, INCENSE_FLOAT_TEXT);
 
@@ -2436,6 +2526,11 @@ export class GameSession {
     this.net?.sendDiceBet({ table: tableId, side, amount });
   }
 
+  /** 赌桌排行榜：按范围与排序口径拉一次快照，服务端 2 秒冷却内会拒绝 */
+  requestDiceBoard(scope: number, metric: number): void {
+    this.net?.sendDiceBoard({ scope, metric });
+  }
+
   /** 八角笼观战押注：必须坐在观战长椅上（服务端复核座位组） */
   placeArenaBet(side: number, amount: number): void {
     this.net?.sendArenaBet({ side, amount });
@@ -2748,18 +2843,25 @@ export class GameSession {
     this.showHint('被保安按住了，正押往小黑屋…');
   }
 
-  /** 松手：解除锁、回到站姿，地点已经由 Tick 对齐，下一秒就能自己走 */
+  /**
+   * 松手：解除锁、回到站姿，地点已经由 Tick 对齐，下一秒就能自己走。
+   *
+   * 本人已被创晕时（ADR-0113：押送途中被打倒，救护链接管）位置与姿态都归急救链：
+   * 只清移动缓存，不吸附反省点、不把躺姿改回站姿，提示也留给随后的急救包。
+   */
   private endEscort(): void {
     if (!this.escortLocked) return;
     this.escortLocked = false;
     const eid = this.ecs.get(this.localId);
     if (eid) {
-      this.snapToJailAnchor(eid);
-      this.setLocalPose(eid, POSE.Idle);
+      if (!this.patientLocked) {
+        this.snapToJailAnchor(eid);
+        this.setLocalPose(eid, POSE.Idle);
+      }
       this.clearOverlays(eid);
       Motion.moving[eid] = 0;
     }
-    this.showHint('保安松手了，可以自由活动');
+    if (!this.patientLocked) this.showHint('保安松手了，可以自由活动');
   }
 
   /**
@@ -3185,7 +3287,18 @@ export class GameSession {
       });
       if (points.length >= limit) break;
     }
-    return { x, y, region: regionAt(x, y), points };
+    // 事件点顺手做过期清理：快照 4Hz 已经在跑，不需要再挂一个清理定时器
+    const events: WorldSnapshot['events'] = [];
+    for (let i = this.recentActivity.length - 1; i >= 0; i -= 1) {
+      const event = this.recentActivity[i]!;
+      const age = this.elapsed - event.at;
+      if (age > ACTIVITY_TTL_MS) {
+        this.recentActivity.splice(i, 1);
+        continue;
+      }
+      events.push({ x: event.x, y: event.y, tier: event.tier, age: Math.max(0, age) });
+    }
+    return { x, y, region: regionAt(x, y), points, events };
   }
 
   /**

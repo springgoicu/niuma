@@ -153,16 +153,42 @@ describe('执法链兜底（ADR-0080）', () => {
     });
   });
 
-  it('昏迷送医期间押送计时挂起，不会在病床上被判超时（ADR-0106）', () => {
+  it('押送员昏迷送医：当帧中止并撤销这一单，不再挂起等康复（ADR-0113）', () => {
     warmEscortGrid();
     const { world, guard, agent, task } = setup();
     guard.incapacitated = true;
+    // 即使已经越过追击时限，也先报「押送员倒下」——用户能看懂的原因是保安被抬走
     task.startedAt = NOW - ESCORT.CHASE_TIMEOUT_MS - 1;
 
-    const event = stepEscort(agent, task, world, NOW);
+    const event = stepEscort(agent, task, world, NOW + TICK_MS);
 
-    expect(event).toBeNull();
-    expect(task.stage).toBe('chase');
+    expect(event).toEqual({
+      kind: 'abort',
+      guardId: guard.id,
+      targetId: task.targetId,
+      now: NOW + TICK_MS,
+      reason: 'guard_down',
+    });
+  });
+
+  it('被押者自己昏迷送医：押送让位给急救链（ADR-0113）', () => {
+    warmEscortGrid();
+    const { world, guard, target, agent, task } = setup();
+    target.incapacitated = true;
+
+    const event = stepEscort(agent, task, world, NOW + TICK_MS);
+
+    expect(event).toEqual({
+      kind: 'abort',
+      guardId: guard.id,
+      targetId: target.id,
+      now: NOW + TICK_MS,
+      reason: 'target_down',
+    });
+    // 押送不再写坐标：救人由 `sim/clinic` 接管，保安留在原地
+    expect(guard.x).toBe(GUARD_START.x);
+    expect(guard.y).toBe(GUARD_START.y);
+    expect(target.x).toBe(GUARD_START.x + 20);
   });
 
   it('拖行落点走碰撞求解，不把被押者写进墙里', () => {

@@ -228,6 +228,78 @@ describe('小黑屋判定（不设禁足时长）', () => {
     expect(phasesOf(h, 11)).toContain(JAIL_PHASE.Released);
   });
 
+  it('押送员被创倒送医：半路放人、撤案，只给本人一条押送中断提示（ADR-0113）', () => {
+    const h = setup();
+    let at = 1000;
+    for (let index = 0; index < 6; index += 1) at = cycle(h, at);
+    const grabbedAt = at + 100;
+    h.detention.handleEscort({ kind: 'grab', guardId: 42, targetId: h.player.id, now: grabbedAt });
+
+    h.detention.handleEscort({
+      kind: 'abort',
+      guardId: 42,
+      targetId: h.player.id,
+      now: grabbedAt + 300,
+      reason: 'guard_down',
+    });
+
+    expect(h.player.stunUntil).toBe(0);
+    expect(h.player.pose).toBe(POSE.Idle);
+    expect(h.cancelled).toEqual([h.player.id]);
+    const released = () => h.sent.filter((entry) => entry.packet.phase === JAIL_PHASE.Released);
+    // 本人 + 旁人各一份：本人靠它解锁，旁人靠它消掉头顶气泡
+    expect(released()).toHaveLength(2);
+
+    // 提示只发本人：旁人不该收到「这次先放你一马」
+    const broken = h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.EscortBroken);
+    expect(broken.map((entry) => entry.wsId)).toEqual([11]);
+    expect(broken[0]!.packet.text).toContain('先放你一马');
+
+    // 案子已撤销：下一 Tick 不会换保安重新接单，也不会再发第二次 Released
+    h.detention.update(grabbedAt + 400);
+    expect(h.dispatched).toHaveLength(1);
+    expect(h.cancelled).toEqual([h.player.id]);
+    expect(released()).toHaveLength(2);
+  });
+
+  it('被押者自己昏迷送医：撤案但不扶站、不吸附反省点，提示交给急救链（ADR-0113）', () => {
+    const h = setup();
+    let at = 1000;
+    for (let index = 0; index < 6; index += 1) at = cycle(h, at);
+    const grabbedAt = at + 100;
+    h.detention.handleEscort({ kind: 'grab', guardId: 42, targetId: h.player.id, now: grabbedAt });
+
+    // 被第三方创倒：硬直 + 昏迷由 vent / clinic 那边写，姿态应保持躺姿
+    h.player.incapacitated = true;
+    h.player.applyState(DIRECTION.Down, POSE.Lie, false);
+
+    h.detention.handleEscort({
+      kind: 'abort',
+      guardId: 42,
+      targetId: h.player.id,
+      now: grabbedAt + 300,
+      reason: 'target_down',
+    });
+
+    expect(h.player.stunUntil).toBe(0);
+    expect(h.player.pose).toBe(POSE.Lie);
+    expect(h.player.x).toBe(4096);
+    expect(h.player.y).toBe(4096);
+    expect(h.cancelled).toEqual([h.player.id]);
+    expect(h.notices.filter((entry) => entry.packet.kind === SYSTEM_NOTICE_KIND.EscortBroken)).toHaveLength(0);
+
+    // 同一 Tick 里 clinic 的昏迷包还没发出去：释放包延后，别让客户端把躺姿扶正
+    expect(phasesOf(h, 11)).not.toContain(JAIL_PHASE.Released);
+    expect(phasesOf(h, 12)).not.toContain(JAIL_PHASE.Released);
+
+    // 下一 Tick 的 observe 补发：本人解锁 + 旁人消气泡，各一份
+    h.detention.observe(grabbedAt + 400);
+    expect(phasesOf(h, 11)).toContain(JAIL_PHASE.Released);
+    expect(phasesOf(h, 12)).toContain(JAIL_PHASE.Released);
+    // 补发不改姿态：昏迷者仍躺着
+    expect(h.player.pose).toBe(POSE.Lie);
+  });
+
   it('保安全忙时排队，空出来再派单', () => {
     const h = setup();
     h.dispatchGuard.id = 0;

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 import {
   AMBULANCE_PACKET_BYTES,
+  CLINIC_ACCESS_PAVING,
   CLINIC_BED_SEAT_IDS,
   CLINIC_BEDS,
   CLINIC_DROP,
   CLINIC_NURSE_SPOTS,
   CLINIC_RECT,
+  CLINIC_REGION_RECT,
   CLINIC_VEHICLE_ENTRY,
   DEFAULT_APPEARANCE,
   DIRECTION,
@@ -474,5 +476,133 @@ describe('护士值守与护送交接（ADR-0109）', () => {
     // 伤员不会被一个趴下的护士拖到天涯海角：要么重新派车，要么排队超时就地包扎
     expect(healedAt).toBeGreaterThan(0);
     expect(victim.patientState).toBe(PATIENT_STATE.Shielded);
+  });
+});
+
+describe('排队出警与开服清场（ADR-0114）', () => {
+  /** 急救站柜台背后的开阔点：与 ADR-0092 用例同址，救护车会走南侧通道口进站 */
+  const SPOT = { x: CLINIC_RECT.x + 40, y: CLINIC_RECT.y + 150 };
+
+  /** 站内一起打倒三名 NPC：前两名各占一辆车，第三名只能排队 */
+  function downThree(h: Harness, attacker: Player, at: number): Player[] {
+    const victims = [0, 1, 2].map((index) => {
+      const npc = h.world.createNpc(`同事${index}`, DEFAULT_APPEARANCE.cow, SPOT.x + index * 6, SPOT.y, '', 0)!;
+      h.grid.insert(npc.id, npc.x, npc.y);
+      return npc;
+    });
+    for (const victim of victims) h.manager.observeHit(attacker, victim, at);
+    return victims;
+  }
+
+  it('两辆车都忙时，排队的 NPC 不会在 6 秒兜底里自己站起来', () => {
+    const h = setup();
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 12, SPOT.x + 24, SPOT.y)!;
+    const restored: number[] = [];
+    h.manager.setNpcRecovery({
+      restore(playerId) {
+        restored.push(playerId);
+        return true;
+      },
+    });
+
+    const downAt = 1_000;
+    const victims = downThree(h, attacker, downAt);
+    expect(victims[2]!.incapacitated).toBe(true);
+
+    // 6.5 秒：真人兜底的 6 秒口径已经过了，NPC 必须还在队列里等车
+    for (let now = downAt; now <= downAt + 6_500; now += TICK_MS) {
+      h.manager.update(now, tick(now));
+    }
+    expect(victims[2]!.incapacitated).toBe(true);
+    expect(victims[2]!.pose).toBe(POSE.Lie);
+    expect(restored).toHaveLength(0);
+
+    // 空车一回来就接走：第三名照样走完救护链，不会烂在地上
+    for (let elapsed = 6_500; elapsed <= 70_000 && restored.length < 3; elapsed += TICK_MS) {
+      const now = downAt + elapsed;
+      h.manager.update(now, tick(now));
+    }
+    expect(restored).toHaveLength(3);
+    expect(restored).toContain(victims[2]!.id);
+  });
+
+  it('真人两辆车都忙时仍然 6 秒就地包扎，不卡在无限等待里', () => {
+    const h = setup();
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 12, SPOT.x + 24, SPOT.y)!;
+    downThree(h, attacker, 1_000);
+
+    const human = h.world.create('路人', DEFAULT_APPEARANCE.cow, 13, SPOT.x + 6, SPOT.y + 40)!;
+    h.grid.insert(human.id, human.x, human.y);
+    const downAt = 3_000;
+    for (let index = 0; index < 3; index += 1) h.manager.observeHit(attacker, human, downAt + index * 400);
+    expect(human.incapacitated).toBe(true);
+
+    for (let now = downAt + 800; now <= downAt + 8_000; now += TICK_MS) {
+      h.manager.update(now, tick(now));
+    }
+    expect(human.incapacitated).toBe(false);
+    expect(human.patientState).toBe(PATIENT_STATE.Shielded);
+  });
+
+  it('开服清场把站内除护士外的实体移到西门外的站外', () => {
+    const h = setup();
+    const inside = { x: CLINIC_RECT.x + 40, y: CLINIC_RECT.y + 150 };
+    const npc = h.world.createNpc('同事', DEFAULT_APPEARANCE.cow, inside.x, inside.y, '', 0)!;
+    h.grid.insert(npc.id, npc.x, npc.y);
+    const human = h.world.create('路人', DEFAULT_APPEARANCE.cow, 12, inside.x + 60, inside.y)!;
+    h.grid.insert(human.id, human.x, human.y);
+    const nurse = h.nurses[0]!;
+    const nurseX = nurse.x;
+    const nurseY = nurse.y;
+    const restored: number[] = [];
+    h.manager.setNpcRecovery({
+      restore(playerId) {
+        restored.push(playerId);
+        return true;
+      },
+    });
+
+    expect(h.manager.evictIntruders(1_000)).toBe(2);
+
+    expect(isInClinicInterior(npc.x, npc.y)).toBe(false);
+    expect(isInClinicInterior(human.x, human.y)).toBe(false);
+    // 落点在西门外铺装再往西 60px：出站了，但还在服务广场视野里
+    expect(npc.x).toBeLessThan(CLINIC_ACCESS_PAVING.x - 20);
+    expect(human.x).toBeLessThan(CLINIC_ACCESS_PAVING.x - 20);
+    expect(npc.pose).toBe(POSE.Idle);
+    expect(human.pose).toBe(POSE.Idle);
+    // NPC 的行为态跟着新坐标重新锚定
+    expect(restored).toEqual([npc.id]);
+    // 站内唯一的常驻者护士原地不动
+    expect(nurse.x).toBe(nurseX);
+    expect(nurse.y).toBe(nurseY);
+  });
+
+  it('正在治疗的床位伤员留在站内，清场不跟急救链抢人', () => {
+    const h = setup();
+    // 打人的站在站外，站内只剩护士、医生与急救链正在管的人
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 12, CLINIC_REGION_RECT.x - 80, SPOT.y)!;
+    const npc = h.world.createNpc('同事', DEFAULT_APPEARANCE.cow, SPOT.x, SPOT.y, '', 0)!;
+    h.grid.insert(npc.id, npc.x, npc.y);
+    h.manager.setNpcRecovery({ restore: () => true });
+    h.manager.observeHit(attacker, npc, 1_000);
+
+    let treatingAt = 0;
+    for (let elapsed = 0; elapsed <= 45_000; elapsed += TICK_MS) {
+      const now = 1_000 + elapsed;
+      h.manager.update(now, tick(now));
+      if (npc.patientState === PATIENT_STATE.Treating) {
+        treatingAt = now;
+        break;
+      }
+    }
+    expect(treatingAt).toBeGreaterThan(0);
+    const bedX = npc.x;
+    const bedY = npc.y;
+
+    expect(h.manager.evictIntruders(treatingAt)).toBe(0);
+    expect(npc.x).toBe(bedX);
+    expect(npc.y).toBe(bedY);
+    expect(npc.incapacitated).toBe(true);
   });
 });

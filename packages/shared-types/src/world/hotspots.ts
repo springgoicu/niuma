@@ -149,7 +149,7 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
       seatGroupId: RING_BENCH_SEAT_GROUP,
     }),
   ),
-  // ---- 摸鱼大赌场：两张桌各一条 ----
+  // ---- 摸鱼骰子馆：两张桌各一条 ----
   ...DICE_TABLES.map(
     (table): HotspotDef => ({
       id: `dice-table-${table.id}`,

@@ -28,6 +28,11 @@ export function handleLike(
    * 不传就退化为纯内存计数，测试与无持久化部署零改动。
    */
   onCounted?: (target: Player) => void,
+  /**
+   * 点赞成功钩子（ADR-0112）：只在真正涨数时回调一次，重复点赞与自赞不触发。
+   * 全园区播报挂在在这里，`like.ts` 本身不认识播报中枢。
+   */
+  onLiked?: (target: Player) => void,
 ): void {
   if (now - player.lastLikeAt < LIKE_COOLDOWN_MS) return;
   const target = world.get(targetId);
@@ -47,6 +52,7 @@ export function handleLike(
   // 钩子可以把展示数改成匿名档案的累计值（跨重启延续），广播读的是改完之后的值
   onCounted?.(target);
   target.likes = Math.min(MAX_LIKES, Math.max(0, Math.floor(target.likes)));
+  onLiked?.(target);
 
   const broadcast = encodeLike(target.id, target.likes, 0);
   transport.send(target.wsId, broadcast);

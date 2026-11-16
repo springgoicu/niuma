@@ -84,6 +84,12 @@ describe('入站包长度闸门', () => {
     expect(checkPacket(OpCode.C2S_SET_NAME, packet(OpCode.C2S_SET_NAME, 2))).toBe(PACKET_MALFORMED);
   });
 
+  it('播报上报只接受 3 字节，多一字节即判伪造', () => {
+    expect(checkPacket(OpCode.C2S_ACTIVITY, packet(OpCode.C2S_ACTIVITY, 3))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_ACTIVITY, packet(OpCode.C2S_ACTIVITY, 4))).toBe(PACKET_MALFORMED);
+    expect(checkPacket(OpCode.C2S_ACTIVITY, packet(OpCode.C2S_ACTIVITY, 2))).toBe(PACKET_MALFORMED);
+  });
+
   it('不认识的 opcode 只丢弃不断线', () => {
     // 服务端下发的 opcode 被反弹回来、或未来版本新增的包，都不该断线
     expect(checkPacket(OpCode.S2C_WELCOME, packet(OpCode.S2C_WELCOME, 12))).toBe(PACKET_UNKNOWN);

@@ -197,8 +197,8 @@ describe('地形布局', () => {
     // 企业楼里的工作区 / 楼前庭的企业区（避开茶台与神龛的具名小区域）
     expect(regionAt(2900, 3400)).toBe('工作区');
     expect(regionAt(3566, 3656)).toBe('企业区');
-    // 游乐区：赌场亭具名，街面兜底到区名
-    expect(regionAt(2810, 2810)).toBe('摸鱼大赌场');
+    // 游乐区：骰子馆亭具名，街面兜底到区名
+    expect(regionAt(2810, 2810)).toBe('摸鱼骰子馆');
     expect(regionAt(3500, 3060)).toBe('游乐区');
     // 服务区与野地
     expect(regionAt(4700, 4450)).toBe('服务区');

@@ -15,10 +15,10 @@ import { WINTER_COLORS } from './terrain-palette';
 import type { DepthSink } from './sort-layer';
 
 /**
- * 摸鱼大赌场的美术层（ADR-0087 / ADR-0096）。
+ * 摸鱼骰子馆的美术层（ADR-0087 / ADR-0096）。
  *
  * 亭台地面走 `WORLD_LAYOUT.paved`（地形层已经铺好），这里只画「站在地上能看见」
- * 的部分：吧台、六根深木柱、两张绿绒赌桌、檐下灯串与冬季积雪。
+ * 的部分：吧台、六根深木柱、两张绿绒骰桌、檐下灯串与冬季积雪。
  * 每件都以**底边中心**为锚点进 y 排序层，人走到桌后会被桌子挡住，和树、长椅同一套规则。
  */
 
@@ -233,7 +233,7 @@ export class DiceHallView {
     g.rect(-56, -148, 112, 2).fill(C.neon);
     root.addChild(g);
     const label = new Text({
-      text: '摸鱼大赌场',
+      text: '摸鱼骰子馆',
       resolution: this.devicePxPerTexel,
       style: { fontFamily: CJK_FONT, fontSize: 11, fontWeight: '700', fill: C.gold, letterSpacing: 2 },
     });

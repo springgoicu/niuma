@@ -265,6 +265,10 @@ export class MainThreadGameClient implements GameClient {
     this.session?.placeDiceBet(table, side, amount);
   }
 
+  diceBoard(scope: number, metric: number): void {
+    this.session?.requestDiceBoard(scope, metric);
+  }
+
   villaAction(villa: number, action: number): void {
     this.session?.villaAction(villa, action);
   }

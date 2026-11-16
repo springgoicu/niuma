@@ -1,4 +1,5 @@
 import {
+  ACTIVITY_KIND,
   DIRECTION,
   ENTITY_ROLE_GUARD,
   ENTITY_ROLE_NURSE,
@@ -11,6 +12,7 @@ import {
   formatSystemNotice,
 } from '@niuma/shared-types';
 import type { SpatialGrid } from '../spatial/grid';
+import type { ActivityHub } from './activity';
 import { broadcastSystemNotice } from './notice';
 import type { VentHitObserver } from './vent';
 import type { Transport } from './view';
@@ -60,6 +62,7 @@ export const DETENTION = {
   /**
    * 拖行期间给目标的硬直；`npc/escort` 逐帧续期，到达 / 中止时清零。
    * 短于案子上限，所以任何停摆都会先让被押者恢复行动，而不是躺到案子超时。
+   * 押送员住院不再挂起等康复：保安一倒下，案子当帧撤销（ADR-0113）。
    */
   DRAG_LOCK_MS: 5_000,
 } as const;
@@ -91,6 +94,18 @@ export interface EscortPort {
   cancel(targetId: number): void;
 }
 
+/**
+ * 押送中止原因。`guard_down` / `target_down` 是「当场作废」而不是「稍后续上」
+ * （ADR-0113）：押送员或被押者失去行动能力时，这一单没有继续的意义。
+ */
+export type EscortAbortReason =
+  | 'timeout'
+  | 'missing'
+  | 'stuck'
+  | 'cancelled'
+  | 'guard_down'
+  | 'target_down';
+
 /** 保安任务回报：追击中抓到、送到反省点、或异常中止 */
 export type EscortEvent =
   | { kind: 'grab'; guardId: number; targetId: number; now: number }
@@ -100,7 +115,7 @@ export type EscortEvent =
       guardId: number;
       targetId: number;
       now: number;
-      reason: 'timeout' | 'missing' | 'stuck' | 'cancelled';
+      reason: EscortAbortReason;
     };
 
 export interface DetentionOptions {
@@ -110,6 +125,8 @@ export interface DetentionOptions {
   escort: EscortPort;
   /** 释放座位并广播：由 server 注入，detention 不认识 SeatRegistry */
   releaseSeat(player: Player): void;
+  /** 全园区播报端口（ADR-0112）：可选注入，测试与无播报部署零改动 */
+  activity?: ActivityHub;
 }
 
 type CasePhase = 'pending' | 'chasing' | 'dragging';
@@ -150,12 +167,19 @@ export class Detention implements VentHitObserver {
   private readonly transport: Transport;
   private readonly escort: EscortPort;
   private readonly releaseSeat: (player: Player) => void;
+  private readonly activity: ActivityHub | undefined;
   private readonly watches = new Map<number, CycleWatch>();
   private readonly cases = new Map<number, DetentionCase>();
   /** 打人账本：攻击者 id → 受害者 id → 窗口内的命中时刻 */
   private readonly attacks = new Map<number, Map<number, number[]>>();
   /** 上一次清理账本的时刻：按 `PRUNE_MS` 节流 */
   private assaultPruneAt = 0;
+  /**
+   * 延后一 Tick 的释放包（ADR-0113）：被押者昏迷时，先让 `sim/clinic` 把
+   * `PATIENT Incapacitated` 发出去，客户端才能保持躺姿、不吃本地吸附。
+   * 上一 Tick 的 clinic 已经跑完，本 Tick 的 `observe` 开头补发。
+   */
+  private readonly pendingReleases: Array<{ playerId: number; guardId: number }> = [];
 
   constructor(options: DetentionOptions) {
     this.world = options.world;
@@ -163,6 +187,7 @@ export class Detention implements VentHitObserver {
     this.transport = options.transport;
     this.escort = options.escort;
     this.releaseSeat = options.releaseSeat;
+    this.activity = options.activity;
   }
 
   /**
@@ -212,6 +237,7 @@ export class Detention implements VentHitObserver {
 
   /** 每个 Tick 在 NPC 推进之前调用：检测坐/站边沿，达阈值就派单 */
   observe(now: number): void {
+    this.flushPendingReleases();
     for (const player of this.world.players.values()) {
       if (player.isNpc || player.wsId === 0) continue;
       // 擂台赛期间保安不执法（ADR-0075）：不判定，并丢掉已有的循环计数，
@@ -325,12 +351,14 @@ export class Detention implements VentHitObserver {
       player.applyState(player.direction, POSE.Lie, false);
       player.markDirtyIfChanged();
       this.broadcast(player, JAIL_PHASE.Escort, 0, entry.guardId);
+      this.activity?.emit(ACTIVITY_KIND.GuardEscort, player.id, event.now);
       return;
     }
 
     if (event.kind === 'arrive') {
       this.placeInJail(player, entry, event.now);
       this.broadcast(player, JAIL_PHASE.Released, 0, event.guardId);
+      this.activity?.emit(ACTIVITY_KIND.GuardJailed, player.id, event.now);
       this.cases.delete(event.targetId);
       return;
     }
@@ -454,23 +482,30 @@ export class Detention implements VentHitObserver {
     entry.guardId = guardId;
     entry.phase = 'chasing';
     this.broadcast(player, JAIL_PHASE.Dispatch, 0, guardId);
+    this.activity?.emit(ACTIVITY_KIND.GuardDispatched, player.id, now);
     return true;
   }
 
   private abort(
     player: Player,
     entry: DetentionCase,
-    reason: 'timeout' | 'missing' | 'stuck' | 'cancelled' = 'timeout',
+    reason: EscortAbortReason = 'timeout',
   ): void {
     this.escort.cancel(player.id);
     if (entry.phase === 'dragging') {
-      // 半路放人：清硬直、恢复站姿。位置不传送，保安原地松手
+      // 半路放人：清硬直、恢复站姿。位置不传送，保安原地松手。
+      // 人已经昏迷送医时姿态归急救链：这里再写 Idle 会把人「扶起来站着」，
+      // 所以只清硬直，站姿留给 clinic 的 downPlayer / restore（ADR-0113）。
       player.stunUntil = 0;
-      player.applyState(player.direction, POSE.Idle, false);
-      player.markDirtyIfChanged();
+      if (!player.incapacitated) {
+        player.applyState(player.direction, POSE.Idle, false);
+        player.markDirtyIfChanged();
+      }
     }
     this.cases.delete(player.id);
-    this.broadcast(player, JAIL_PHASE.Released, 0, entry.guardId);
+    // 保安被创倒时告诉本人「这次先放你一马」；被押者自己昏迷由急救提示接管
+    if (reason === 'guard_down') this.sendEscortBroken(player);
+    this.release(player, entry.guardId);
     console.log(
       `[jail] abort player=${player.id} phase=${entry.phase} reason=${reason} guard=${entry.guardId}`,
     );
@@ -527,6 +562,49 @@ export class Detention implements VentHitObserver {
     this.transport.send(
       player.wsId,
       encodeSystemNotice({ kind: SYSTEM_NOTICE_KIND.AssaultWarn, entityId: player.id, text }),
+    );
+  }
+
+  /**
+   * 解除押送锁定（ADR-0113）。
+   *
+   * 被放走的人已经昏迷时晚一 Tick 再发：同一 Tick 里 `clinic.update` 排在
+   * `npcs.update` 之后，`PATIENT Incapacitated` 会比释放包晚到；客户端拿到释放包时
+   * 还以为自己清醒，就会吸附反省点、把人从躺姿扶起来站一帧。延后一 Tick 让昏迷包先到，
+   * 客户端便能把位置与姿态继续交给急救链。
+   */
+  private release(player: Player, guardId: number): void {
+    if (player.incapacitated) {
+      this.pendingReleases.push({ playerId: player.id, guardId });
+      return;
+    }
+    this.broadcast(player, JAIL_PHASE.Released, 0, guardId);
+  }
+
+  /** 补发上一 Tick 因昏迷而延后的释放包；人已断线就作废 */
+  private flushPendingReleases(): void {
+    if (this.pendingReleases.length === 0) return;
+    const pending = this.pendingReleases.splice(0, this.pendingReleases.length);
+    for (const item of pending) {
+      const player = this.world.get(item.playerId);
+      if (!player || player.wsId === 0) continue;
+      this.broadcast(player, JAIL_PHASE.Released, 0, item.guardId);
+    }
+  }
+
+  /**
+   * 押送中断提示（ADR-0113）：只发被放走的本人。
+   *
+   * 旁人不该收到——他们看到的只是「保安倒了、人被松开」，没必要再刷一条
+   * 只有当事人关心的解释；被押者自己昏迷时也跳过，急救提示已经在播。
+   */
+  private sendEscortBroken(player: Player): void {
+    if (player.wsId === 0 || player.incapacitated) return;
+    const text = formatSystemNotice(SYSTEM_NOTICE_KIND.EscortBroken);
+    if (!text) return;
+    this.transport.send(
+      player.wsId,
+      encodeSystemNotice({ kind: SYSTEM_NOTICE_KIND.EscortBroken, entityId: player.id, text }),
     );
   }
 

@@ -37,14 +37,14 @@ export const HINT = {
   sitOnBed: '床上只能躺，按 X 起身',
   bedOnly: '床上只能躺，按 X 上床',
   // ---- 热区建筑（ADR-0087 → ADR-0093） ----
-  /** 摸鱼大赌场：坐上本桌圆凳即自动入局，F 只是重新打开面板 */
-  dice: '[F] 押一把（大 / 小 / 豹子）',
-  /** 站在赌桌旁但没坐上本桌凳子：只提示，不给可点的「押一把」 */
-  diceNeedSeat: '按 Z 坐进本桌凳子再押注',
+  /** 摸鱼骰子馆：坐上本桌圆凳即自动入局，F 只是重新打开面板 */
+  dice: '[F] 试一把（大 / 小 / 同点）',
+  /** 站在骰桌旁但没坐上本桌凳子：只提示，不给可点的「试一把」 */
+  diceNeedSeat: '按 Z 坐进本桌凳子再投入',
   /** 绩效八角笼观战长椅 */
-  arenaBet: '[F] 押红方 / 蓝方',
+  arenaBet: '[F] 投选红方 / 蓝方',
   /** 站在长椅旁但没坐上去 */
-  arenaNeedSeat: '按 Z 坐到观战长椅上再押注',
+  arenaNeedSeat: '按 Z 坐到观战长椅上再投选',
   /** 豪宅小院门口 */
   villa: '[F] 查看小院牌匾',
   /** 院内摇钱树 */
@@ -109,10 +109,10 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.lieOnSeat]: null,
   [HINT.sitOnBed]: null,
   [HINT.bedOnly]: null,
-  [HINT.dice]: { action: 'interact', label: '押一把', key: 'F' },
+  [HINT.dice]: { action: 'interact', label: '试一把', key: 'F' },
   // 没坐下时不可执行：只提醒，不给按钮（ADR-0093）
   [HINT.diceNeedSeat]: null,
-  [HINT.arenaBet]: { action: 'interact', label: '押注', key: 'F' },
+  [HINT.arenaBet]: { action: 'interact', label: '投选', key: 'F' },
   [HINT.arenaNeedSeat]: null,
   [HINT.villa]: { action: 'interact', label: '查看牌匾', key: 'F' },
   [HINT.villaTree]: { action: 'interact', label: '收摇钱树', key: 'F' },
@@ -164,10 +164,10 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.lieOnSeat]: '座位上不能躺，先点「起身」',
   [HINT.sitOnBed]: '床上只能躺，点「起身」',
   [HINT.bedOnly]: '床上只能躺，点「躺平」',
-  [HINT.dice]: '点「互动」押一把',
-  [HINT.diceNeedSeat]: '点「坐下」坐进本桌凳子再押注',
-  [HINT.arenaBet]: '点「互动」押注',
-  [HINT.arenaNeedSeat]: '点「坐下」坐到观战长椅上再押注',
+  [HINT.dice]: '点「互动」试一把',
+  [HINT.diceNeedSeat]: '点「坐下」坐进本桌凳子再投入',
+  [HINT.arenaBet]: '点「互动」投选',
+  [HINT.arenaNeedSeat]: '点「坐下」坐到观战长椅上再投选',
   [HINT.villa]: '点「互动」查看牌匾',
   [HINT.villaTree]: '点「互动」收摇钱树',
   [HINT.apartment]: '点「互动」进公寓',

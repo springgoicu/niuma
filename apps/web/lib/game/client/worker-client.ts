@@ -470,6 +470,11 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'diceBet', request: { table, side, amount } });
   }
 
+  diceBoard(scope: number, metric: number): void {
+    if (this.delegate) return this.delegate.diceBoard(scope, metric);
+    this.post({ t: 'diceBoard', request: { scope, metric } });
+  }
+
   villaAction(villa: number, action: number): void {
     if (this.delegate) return this.delegate.villaAction(villa, action);
     this.post({ t: 'villa', request: { villa, action } });
@@ -694,6 +699,12 @@ export class WorkerGameClient implements GameClient {
         return;
       case 'dice':
         callbacks.onDiceState?.(message.packet);
+        return;
+      case 'diceResult':
+        callbacks.onDiceResult?.(message.packet);
+        return;
+      case 'diceBoard':
+        callbacks.onDiceBoard?.(message.packet);
         return;
       case 'villa':
         callbacks.onVillaState?.(message.packet);

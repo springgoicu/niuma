@@ -29,6 +29,8 @@ export const SYSTEM_NOTICE_KIND = {
   DetainedFight: 7,
   /** 公寓窗口住满了：只发给站在门口按 F 的本人（ADR-0098） */
   ApartmentFull: 8,
+  /** 押送员被创倒送医：押送当场作废，只发给被放走的本人（ADR-0113） */
+  EscortBroken: 9,
 } as const;
 
 export type SystemNoticeKind = (typeof SYSTEM_NOTICE_KIND)[keyof typeof SYSTEM_NOTICE_KIND];
@@ -64,6 +66,8 @@ const TEMPLATES: Readonly<Record<number, NoticeTemplate>> = {
   [SYSTEM_NOTICE_KIND.DetainedFight]: ({ name }) =>
     name ? `${name} 被保安请进了小黑屋：园区内不许动手。` : null,
   [SYSTEM_NOTICE_KIND.ApartmentFull]: () => '这栋楼的窗口都住满了，换一栋试试。',
+  [SYSTEM_NOTICE_KIND.EscortBroken]: () =>
+    '押送中断：保安被送去急救了，这次先放你一马。',
 };
 
 /**

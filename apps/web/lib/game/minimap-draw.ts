@@ -13,6 +13,7 @@ import {
   type TreeInstance,
   type WorldRect,
 } from '@niuma/shared-types';
+import { ACTIVITY_TTL_MS } from './activity-feed';
 import { MINIMAP_COLORS as M } from './terrain-palette';
 
 /**
@@ -38,11 +39,21 @@ const SCALE = MINIMAP_SIZE / (VIEW_RADIUS * 2);
 /** 2D 上下文：主线程是 CanvasRenderingContext2D，渲染线程是 Offscreen 版本 */
 export type MiniMapContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
+/** 小地图事件标记：`tier` 0 强演出 / 1 生活 / 2 常规，`age` 为收到后毫秒数 */
+export interface MinimapEvent {
+  x: number;
+  y: number;
+  tier: number;
+  age: number;
+}
+
 export interface MinimapFrame {
   x: number;
   y: number;
   region: string;
   points: ReadonlyArray<{ x: number; y: number; self: boolean }>;
+  /** 全园区播报事件（ADR-0112）：视野内脉冲、视野外贴边箭头 */
+  events?: ReadonlyArray<MinimapEvent>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -268,6 +279,91 @@ function drawMark(ctx: MiniMapContext, mark: MiniMapMark, camX: number, camY: nu
   ctx.fillRect(x - size + 1, y - size + 1, size * 2 - 1, size * 2 - 1);
 }
 
+/** 事件标记寿命：与客户端队列的保留时长一致，过期直接不再画 */
+const EVENT_LIFETIME_MS = ACTIVITY_TTL_MS;
+/** 分级配色：0 强演出（朱红）/ 1 生活（暖金）/ 2 常规（薄荷） */
+const EVENT_COLORS = ['#D64545', '#FFD08A', '#7EE3B4'] as const;
+
+/** 视野外事件贴边内缩：箭头本身就 5px 长，不能顶到画布边缘 */
+const EVENT_EDGE_INSET = 6;
+
+export interface EventMarker {
+  /** 画布坐标；视野外时为贴边后的位置 */
+  px: number;
+  py: number;
+  /** 是否落在本人视野内：决定画菱形还是贴边箭头 */
+  inside: boolean;
+  /** 视野外的真实方位角（弧度），视野内为 0 */
+  angle: number;
+}
+
+/**
+ * 把事件的世界坐标投影到小地图：视野内原样，视野外沿中心到事件的射线
+ * 钳到画布内缩边缘。抽成纯函数是为了让「贴边不越界 / 角度不反」可测。
+ */
+export function projectEventMarker(px: number, py: number, size: number = MINIMAP_SIZE): EventMarker {
+  if (px >= 0 && px <= size && py >= 0 && py <= size) {
+    return { px, py, inside: true, angle: 0 };
+  }
+  const center = size / 2;
+  const dx = px - center;
+  const dy = py - center;
+  const angle = Math.atan2(dy, dx);
+  const scale = (center - EVENT_EDGE_INSET) / Math.max(Math.abs(dx), Math.abs(dy));
+  return { px: center + dx * scale, py: center + dy * scale, inside: false, angle };
+}
+
+/**
+ * 全园区播报的事件层（ADR-0112）。
+ *
+ * 视野内画菱形 + 每 500ms 一圈脉冲；视野外把点钳到画布边缘内缩 6px，
+ * 改成朝真实方位旋转的楔形箭头——远处的人看到「大概在哪个方向」，
+ * 不需要把 168px 的画布硬改成全图缩略。
+ */
+function drawEvents(
+  ctx: MiniMapContext,
+  events: ReadonlyArray<MinimapEvent>,
+  camX: number,
+  camY: number,
+): void {
+  for (const event of events) {
+    if (event.age > EVENT_LIFETIME_MS) continue;
+    const color = EVENT_COLORS[event.tier] ?? EVENT_COLORS[2];
+    const marker = projectEventMarker(screenX(event.x, camX), screenY(event.y, camY));
+    const fade = 1 - event.age / EVENT_LIFETIME_MS;
+    ctx.globalAlpha = Math.min(1, Math.max(0.25, fade * 1.4));
+
+    if (marker.inside) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(marker.px, marker.py - 3);
+      ctx.lineTo(marker.px + 3, marker.py);
+      ctx.lineTo(marker.px, marker.py + 3);
+      ctx.lineTo(marker.px - 3, marker.py);
+      ctx.closePath();
+      ctx.fill();
+
+      // 相位按 age 直接算：4Hz 重绘下环会自己扩散，不需要额外状态
+      const phase = (event.age % 500) / 500;
+      ctx.globalAlpha *= 0.45;
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.arc(marker.px, marker.py, 3 + phase * 5, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      const { px: ex, py: ey, angle } = marker;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(ex + Math.cos(angle) * 5, ey + Math.sin(angle) * 5);
+      ctx.lineTo(ex + Math.cos(angle + 2.5) * 4, ey + Math.sin(angle + 2.5) * 4);
+      ctx.lineTo(ex + Math.cos(angle - 2.5) * 4, ey + Math.sin(angle - 2.5) * 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
 /**
  * 画一帧小地图。调用方负责 `prepareMiniMap()` 与画布已挂载；
  * 这里只做「一帧」的事，不持有任何状态。
@@ -279,6 +375,9 @@ export function drawMiniMap(ctx: MiniMapContext, frame: MinimapFrame): void {
 
   // 核心场所：发泄区 / 赌场 / 擂台 / 急救站 / 卫生间 / 小黑屋 / 公寓
   for (const mark of MINIMAP_VENUE_MARKS) drawMark(ctx, mark, camX, camY, 2);
+
+  // 事件层压在场所图标之上、玩家点之下：玩家永远是最上层
+  if (frame.events && frame.events.length > 0) drawEvents(ctx, frame.events, camX, camY);
 
   const points = frame.points;
   ctx.fillStyle = M.other;

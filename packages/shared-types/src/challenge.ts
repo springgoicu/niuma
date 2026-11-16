@@ -48,12 +48,12 @@ export const P2P_GAME_TYPE = {
 export type P2PGameType = (typeof P2P_GAME_TYPE)[keyof typeof P2P_GAME_TYPE];
 
 export const P2P_GAME_NAME: Record<number, string> = {
-  [P2P_GAME_TYPE.Dice]: '街头摇骰子',
+  [P2P_GAME_TYPE.Dice]: '摇骰子比大小',
   [P2P_GAME_TYPE.Rps]: '灵魂猜拳',
   [P2P_GAME_TYPE.Duel]: '野外切磋',
 };
 
-/** 骰子押注预设；自定义输入由总线按 P2P_MAX_WAGER 与余额复核 */
+/** 骰子投入预设；自定义输入由总线按 P2P_MAX_WAGER 与余额复核 */
 export const P2P_BET_PRESETS = [0, 10, 50, 200] as const;
 
 /** 猜拳出拳：只追加不复用 */

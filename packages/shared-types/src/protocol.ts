@@ -165,13 +165,22 @@ import type {
   ApartmentRequest,
   ArenaBetRequest,
   ArenaPoolPacket,
+  DiceAggregatePacket,
   DiceBetRequest,
+  DiceBoardPacket,
+  DiceBoardRequest,
+  DiceHistoryEntry,
+  DiceResultPacket,
+  DiceSelfSnapshot,
   DiceStatePacket,
   DiceTablePacket,
   InteractRejectPacket,
+  ActivityPacket,
+  ActivityReportPacket,
   VillaRequest,
   VillaStatePacket,
 } from './types';
+import { ACTIVITY_PACKET_BYTES, ACTIVITY_REPORT_BYTES, ACTIVITY_TEXT_MAX_BYTES } from './activity';
 import {
   AMBULANCE_FLAG_CARRYING,
   AMBULANCE_FLAG_SIREN,
@@ -187,6 +196,7 @@ import {
   RING_VENT_FLAG_HIT,
 } from './types';
 import { BOSS_MAX_HP } from './world/boss';
+import { DICE_PLAYER_HISTORY, DICE_RESULT_MAX_ENTRIES } from './world/dice-hall';
 import { RING_CAPACITY, RING_MAX_HP, RING_PHASE } from './world/ring';
 
 const textEncoder = new TextEncoder();
@@ -1846,6 +1856,76 @@ export function decodeSystemNotice(data: Uint8Array): SystemNoticePacket {
   return { kind, entityId, text: length <= reader.remaining ? reader.utf8(length) : '' };
 }
 
+/**
+ * 全园区交互播报（ADR-0112）：`[op][kind u8][actorId u16][x u16][y u16][len u8][utf8]`。
+ *
+ * 文案在服务端已套好模板，客户端不做二次拼装；`len` 只是单字节，
+ * 超出部分由 `ACTIVITY_TEXT_MAX` 截断，绝不把包撑大。
+ */
+export function encodeActivity(packet: ActivityPacket): Uint8Array {
+  const bytes = textEncoder.encode(truncateActivityText(packet.text));
+  const writer = new ByteWriter(ACTIVITY_PACKET_BYTES + bytes.length);
+  writer
+    .u8(OpCode.S2C_ACTIVITY)
+    .u8(packet.kind)
+    .u16(packet.actorId)
+    .u16(quantizeCoord(packet.x))
+    .u16(quantizeCoord(packet.y))
+    .u8(bytes.length)
+    .raw(bytes);
+  return writer.finish();
+}
+
+export function decodeActivity(data: Uint8Array): ActivityPacket {
+  if (data.byteLength < ACTIVITY_PACKET_BYTES) {
+    throw new Error(`activity packet must be at least ${ACTIVITY_PACKET_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_ACTIVITY) throw new Error('not an activity packet');
+  const kind = reader.u8();
+  const actorId = reader.u16();
+  const x = dequantizeCoord(reader.u16());
+  const y = dequantizeCoord(reader.u16());
+  const length = reader.u8();
+  // 长度字段超出剩余字节说明包被截断：按空文案处理，调用方直接跳过这一条
+  return { kind, actorId, x, y, text: length <= reader.remaining ? reader.utf8(length) : '' };
+}
+
+/** 客户端上报本机私有互动：`[op][kind u8][sub u8]`，3 字节定长 */
+export function encodeActivityReport(packet: ActivityReportPacket): Uint8Array {
+  const writer = new ByteWriter(ACTIVITY_REPORT_BYTES);
+  writer.u8(OpCode.C2S_ACTIVITY).u8(packet.kind).u8(packet.sub);
+  return writer.finish();
+}
+
+export function decodeActivityReport(data: Uint8Array): ActivityReportPacket {
+  if (data.byteLength !== ACTIVITY_REPORT_BYTES) {
+    throw new Error(`activity report must be ${ACTIVITY_REPORT_BYTES} bytes, got ${data.byteLength}`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_ACTIVITY) throw new Error('not an activity report');
+  return { kind: reader.u8(), sub: reader.u8() };
+}
+
+/**
+ * 播报文案的收口：`len` 是 u8，卡的是 UTF-8 字节而不是字数。
+ *
+ * 中文一字三字节，按字截断会在 85 字后才溢出，但 1 字节长度字段在 256 字节
+ * 就翻车；这里逐字累加编码长度，超预算即停，绝不写出发不出去的长度。
+ */
+function truncateActivityText(text: string): string {
+  const trimmed = text.trim();
+  let budget = 0;
+  let out = '';
+  for (const char of Array.from(trimmed)) {
+    const size = textEncoder.encode(char).length;
+    if (budget + size > ACTIVITY_TEXT_MAX_BYTES) break;
+    budget += size;
+    out += char;
+  }
+  return out;
+}
+
 export function encodeAppearanceBroadcast(entityId: number, appearance: CharacterAppearance): Uint8Array {
   const writer = new ByteWriter(3 + APPEARANCE_BYTES);
   writer.u8(OpCode.S2C_APPEARANCE).u16(entityId).raw(encodeAppearance(appearance));
@@ -2607,6 +2687,268 @@ export function decodeDiceState(data: Uint8Array): DiceStatePacket {
     });
   }
   return { tables };
+}
+
+/* ------------------------------------------------------------------ *
+ * 赌桌结算单与战绩榜（ADR-0110）
+ *
+ * 只追加新包：0x47 的 17 字节定长快照承担 1Hz 心跳，结构一字不动；
+ * 结算单是亮牌时的一次性逐人包，榜单是按需拉取的快照包。
+ * ------------------------------------------------------------------ */
+
+const I32_MIN = -2147483648;
+const I32_MAX = 2147483647;
+
+/** 有符号 32 位：先按 i32 夹紧，再交给 u32 写二补码 */
+function writeI32(writer: ByteWriter, value: number): void {
+  writer.u32(Math.max(I32_MIN, Math.min(I32_MAX, Math.floor(value))) >>> 0);
+}
+
+function readI32(reader: ByteReader): number {
+  const raw = reader.u32();
+  return raw >= 0x80000000 ? raw - 0x100000000 : raw;
+}
+
+function clampAmount(value: number): number {
+  return Math.min(MAX_COINS, Math.max(0, Math.floor(value)));
+}
+
+/** 结算单行内的定长部分：nameLen(1) + side(1) + bet(4) + payout(4) + net(4) + flags(1) */
+const DICE_RESULT_ENTRY_BYTES = 15;
+/** 榜单行的定长部分：rank(1) + nameLen(1) + net(4) + winPct(1) + rounds(2) + flags(1) */
+const DICE_BOARD_ENTRY_BYTES = 10;
+/** 本人累计口径的定长部分：rounds/wins/losses/refunds(2×4) + bet/payout/net/bestWin(4×4) */
+const DICE_AGG_BYTES = 24;
+/** 本人历史行的定长部分：table(1) + round(2) + d0-d2(3) + hit(1) + bet/payout/net(4×3) + flags(1) */
+const DICE_HISTORY_ENTRY_BYTES = 20;
+
+export function encodeDiceResult(packet: DiceResultPacket): Uint8Array {
+  const entries = packet.entries.slice(0, Math.min(0xff, DICE_RESULT_MAX_ENTRIES));
+  const names = entries.map((entry) => truncateName(entry.name));
+  let size = 9;
+  for (const name of names) size += DICE_RESULT_ENTRY_BYTES + textEncoder.encode(name).length;
+  const writer = new ByteWriter(size);
+  writer
+    .u8(OpCode.S2C_DICE_RESULT)
+    .u8(packet.table & 0xff)
+    .u16(packet.roundId & 0xffff)
+    .u8((packet.dice[0] ?? 0) & 0x0f)
+    .u8((packet.dice[1] ?? 0) & 0x0f)
+    .u8((packet.dice[2] ?? 0) & 0x0f)
+    .u8(packet.hit < 0 ? 0xff : packet.hit & 0xff)
+    .u8(packet.raid ? 1 : 0)
+    .u8(names.length);
+  entries.forEach((entry, index) => {
+    const name = names[index]!;
+    const bytes = textEncoder.encode(name);
+    let flags = 0;
+    if (entry.refunded) flags |= 1;
+    if (entry.self) flags |= 1 << 1;
+    writer
+      .u8(bytes.length)
+      .raw(bytes)
+      .u8(Math.max(0, Math.min(0xff, entry.side)))
+      .u32(clampAmount(entry.bet))
+      .u32(clampAmount(entry.payout));
+    writeI32(writer, entry.net);
+    writer.u8(flags);
+  });
+  return writer.finish();
+}
+
+export function decodeDiceResult(data: Uint8Array): DiceResultPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_DICE_RESULT) throw new Error('not a dice result packet');
+  const table = reader.u8();
+  const roundId = reader.u16();
+  const dice: [number, number, number] = [reader.u8(), reader.u8(), reader.u8()];
+  const hitRaw = reader.u8();
+  const flags = reader.u8();
+  const count = reader.u8();
+  const entries = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < 1) break;
+    const nameLen = reader.u8();
+    // 这里已经吃掉 nameLen 这一个字节，定长尾部只剩 14 字节
+    if (reader.remaining < nameLen + DICE_RESULT_ENTRY_BYTES - 1) break;
+    const name = reader.utf8(nameLen);
+    const side = reader.u8();
+    const bet = reader.u32();
+    const payout = reader.u32();
+    const net = readI32(reader);
+    const entryFlags = reader.u8();
+    entries.push({
+      name,
+      side,
+      bet,
+      payout,
+      net,
+      refunded: (entryFlags & 1) !== 0,
+      self: (entryFlags & (1 << 1)) !== 0,
+    });
+  }
+  return {
+    table,
+    roundId,
+    dice,
+    hit: hitRaw === 0xff ? -1 : hitRaw,
+    raid: (flags & 1) !== 0,
+    entries,
+  };
+}
+
+export function encodeDiceBoardRequest(request: DiceBoardRequest): Uint8Array {
+  const writer = new ByteWriter(3);
+  writer.u8(OpCode.C2S_DICE_BOARD).u8(request.scope & 0xff).u8(request.metric & 0xff);
+  return writer.finish();
+}
+
+export function decodeDiceBoardRequest(data: Uint8Array): DiceBoardRequest {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_DICE_BOARD) throw new Error('not a dice board request');
+  return { scope: reader.u8(), metric: reader.u8() };
+}
+
+function writeDiceAgg(writer: ByteWriter, agg: DiceAggregatePacket): void {
+  writer
+    .u16(Math.min(0xffff, Math.max(0, Math.floor(agg.rounds))))
+    .u16(Math.min(0xffff, Math.max(0, Math.floor(agg.wins))))
+    .u16(Math.min(0xffff, Math.max(0, Math.floor(agg.losses))))
+    .u16(Math.min(0xffff, Math.max(0, Math.floor(agg.refunds))))
+    .u32(clampAmount(agg.totalBet))
+    .u32(clampAmount(agg.totalPayout));
+  writeI32(writer, agg.net);
+  writer.u32(clampAmount(agg.bestWin));
+}
+
+function readDiceAgg(reader: ByteReader): DiceAggregatePacket {
+  return {
+    rounds: reader.u16(),
+    wins: reader.u16(),
+    losses: reader.u16(),
+    refunds: reader.u16(),
+    totalBet: reader.u32(),
+    totalPayout: reader.u32(),
+    net: readI32(reader),
+    bestWin: reader.u32(),
+  };
+}
+
+export function encodeDiceBoard(packet: DiceBoardPacket): Uint8Array {
+  const entries = packet.entries.slice(0, 0xff);
+  const names = entries.map((entry) => truncateName(entry.name));
+  const self = packet.self;
+  const history = self ? self.history.slice(0, Math.min(0xff, DICE_PLAYER_HISTORY)) : [];
+  let size = 7;
+  for (const name of names) size += DICE_BOARD_ENTRY_BYTES + textEncoder.encode(name).length;
+  if (self) size += 1 + DICE_AGG_BYTES * 3 + 1 + DICE_HISTORY_ENTRY_BYTES * history.length;
+  const writer = new ByteWriter(size);
+  writer
+    .u8(OpCode.S2C_DICE_BOARD)
+    .u8(packet.scope & 0xff)
+    .u8(packet.metric & 0xff)
+    .u16(Math.min(0xffff, Math.max(0, Math.floor(packet.total))))
+    .u8(names.length);
+  entries.forEach((entry, index) => {
+    const name = names[index]!;
+    const bytes = textEncoder.encode(name);
+    writer
+      .u8(Math.max(0, Math.min(0xff, Math.floor(entry.rank))))
+      .u8(bytes.length)
+      .raw(bytes);
+    writeI32(writer, entry.net);
+    // 255 是「还没有分出胜负」的哨兵：0% 会被读成一场没赢过
+    writer
+      .u8(entry.winRate < 0 ? 0xff : Math.round(Math.min(1, entry.winRate) * 100))
+      .u16(Math.min(0xffff, Math.max(0, Math.floor(entry.rounds))))
+      .u8(entry.self ? 1 : 0);
+  });
+  // 本人战绩段：只在有战绩时写，没参与过的人省下这 80+ 字节
+  writer.u8(self ? 1 : 0);
+  if (self) {
+    writeDiceAgg(writer, self.all);
+    writeDiceAgg(writer, self.table0);
+    writeDiceAgg(writer, self.table1);
+    writer.u8(history.length);
+    for (const row of history) {
+      writer
+        .u8(row.table === 1 ? 1 : 0)
+        .u16(Math.min(0xffff, Math.max(0, Math.floor(row.roundId))))
+        .u8((row.dice[0] ?? 0) & 0x0f)
+        .u8((row.dice[1] ?? 0) & 0x0f)
+        .u8((row.dice[2] ?? 0) & 0x0f)
+        .u8(row.hit < 0 ? 0xff : row.hit & 0xff)
+        .u32(clampAmount(row.bet))
+        .u32(clampAmount(row.payout));
+      writeI32(writer, row.net);
+      writer.u8(row.refunded ? 1 : 0);
+    }
+  }
+  return writer.finish();
+}
+
+export function decodeDiceBoard(data: Uint8Array): DiceBoardPacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_DICE_BOARD) throw new Error('not a dice board packet');
+  const scope = reader.u8();
+  const metric = reader.u8();
+  const total = reader.u16();
+  const count = reader.u8();
+  const entries = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < 1) break;
+    const rank = reader.u8();
+    const nameLen = reader.u8();
+    // rank 与 nameLen 已各吃掉 1 字节，定长尾部只剩 8 字节
+    if (reader.remaining < nameLen + DICE_BOARD_ENTRY_BYTES - 2) break;
+    const name = reader.utf8(nameLen);
+    const net = readI32(reader);
+    const winPct = reader.u8();
+    const rounds = reader.u16();
+    const flags = reader.u8();
+    entries.push({
+      rank,
+      name,
+      net,
+      winRate: winPct === 0xff ? -1 : winPct / 100,
+      rounds,
+      self: (flags & 1) !== 0,
+    });
+  }
+  // 本人战绩段可选：截断包直接当作「没有战绩」，不让面板整包解码失败
+  let self: DiceSelfSnapshot | null = null;
+  if (reader.remaining >= 1 && reader.u8() === 1) {
+    if (reader.remaining >= DICE_AGG_BYTES * 3 + 1) {
+      const all = readDiceAgg(reader);
+      const table0 = readDiceAgg(reader);
+      const table1 = readDiceAgg(reader);
+      const historyCount = reader.u8();
+      const history: DiceHistoryEntry[] = [];
+      for (let i = 0; i < historyCount; i += 1) {
+        if (reader.remaining < DICE_HISTORY_ENTRY_BYTES) break;
+        const table = reader.u8() === 1 ? 1 : 0;
+        const roundId = reader.u16();
+        const dice: [number, number, number] = [reader.u8(), reader.u8(), reader.u8()];
+        const hitRaw = reader.u8();
+        const bet = reader.u32();
+        const payout = reader.u32();
+        const net = readI32(reader);
+        const flags = reader.u8();
+        history.push({
+          table,
+          roundId,
+          dice,
+          hit: hitRaw === 0xff ? -1 : hitRaw,
+          bet,
+          payout,
+          net,
+          refunded: (flags & 1) !== 0,
+        });
+      }
+      self = { all, table0, table1, history };
+    }
+  }
+  return { scope, metric, total, entries, self };
 }
 
 export function encodeVillaRequest(request: VillaRequest): Uint8Array {

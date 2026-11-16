@@ -5,6 +5,8 @@ import {
   emptyEconomyProfile,
   type ArenaPoolPacket,
   type DiceStatePacket,
+  type DiceResultPacket,
+  type DiceBoardPacket,
   type EconomyProfile,
   type NavTargetId,
   type P2PDuelStatePacket,
@@ -23,6 +25,8 @@ import {
 } from '@niuma/shared-types';
 import { create } from 'zustand';
 import { loadChatOpen, saveChatOpen } from './chat-prefs';
+import { loadActivityFeedOpen, saveActivityFeedOpen } from './activity-prefs';
+import type { ActivityItem } from './game/activity-feed';
 import type { BoardEntry, PlayerBadge } from './game/badge';
 import type { ChatEntry, SessionStats } from './game/session';
 import type { RenderMode } from './game/runtime/render-mode';
@@ -140,6 +144,16 @@ interface GameUiState {
   diceOpen: number | null;
   /** 赌桌公共局快照：面板与桌心骰子都读它 */
   dice: DiceStatePacket | null;
+  /**
+   * 最近一局结算单：按桌号存两份（0 / 1），亮牌到达即替换。
+   *
+   * 保留上一局而不是清空：玩家在亮牌结束后才打开面板，也要能看到刚才谁赢了多少。
+   */
+  diceResults: Array<DiceResultPacket | null>;
+  /** 赌桌排行榜快照：只在打开榜单页签时按需拉取 */
+  diceBoard: DiceBoardPacket | null;
+  /** 榜单请求在途：面板据此显示「正在算榜」，拒绝回执会把它清掉 */
+  diceBoardPending: boolean;
   /** 八角笼观战押注面板 */
   arenaBetOpen: boolean;
   /** 八角笼彩池快照 */
@@ -160,6 +174,17 @@ interface GameUiState {
   worldEvent: { packet: WorldEventPacket; receivedAt: number } | null;
   /** 画饼冲击波：预警圈与命中震屏共用，到期由组件清除 */
   bossShock: { packet: BossShockPacket; receivedAt: number } | null;
+  /**
+   * 全园区播报（ADR-0112）：最近 8 条，播报条与小地图页脚计数共用。
+   * `at` 是本机单调时钟，只用于判断「还在不在 6 秒有效期内」。
+   */
+  activities: Array<ActivityItem & { at: number }>;
+  /** 播报条开关（localStorage 记忆）：关掉后小地图标记照旧，两者互不牵连 */
+  activityFeedOpen: boolean;
+  pushActivity: (event: Omit<ActivityItem, 'key'>) => void;
+  setActivityFeedOpen: (open: boolean) => void;
+  /** 从 localStorage 恢复开关偏好；只在会话启动时调一次 */
+  restoreActivityFeedOpen: () => void;
   setWorkOpen: (open: boolean) => void;
   setQuests: (packet: QuestStatePacket | null) => void;
   setQuestOpen: (open: boolean) => void;
@@ -167,6 +192,9 @@ interface GameUiState {
   setBossShock: (packet: BossShockPacket | null, receivedAt?: number) => void;
   setDiceOpen: (table: number | null) => void;
   setDice: (packet: DiceStatePacket | null) => void;
+  setDiceResult: (packet: DiceResultPacket) => void;
+  setDiceBoard: (packet: DiceBoardPacket | null) => void;
+  setDiceBoardPending: (pending: boolean) => void;
   setArenaBetOpen: (open: boolean) => void;
   setArenaPool: (packet: ArenaPoolPacket | null) => void;
   setVillaOpen: (villa: number | null) => void;
@@ -294,6 +322,9 @@ const INITIAL = {
   coinPops: [] as Array<{ key: number; amount: number; id: number }>,
   diceOpen: null as number | null,
   dice: null as DiceStatePacket | null,
+  diceResults: [null, null] as Array<DiceResultPacket | null>,
+  diceBoard: null as DiceBoardPacket | null,
+  diceBoardPending: false,
   arenaBetOpen: false,
   arenaPool: null as ArenaPoolPacket | null,
   villaOpen: null as number | null,
@@ -303,8 +334,13 @@ const INITIAL = {
   questOpen: false,
   worldEvent: null as { packet: WorldEventPacket; receivedAt: number } | null,
   bossShock: null as { packet: BossShockPacket; receivedAt: number } | null,
+  activities: [] as Array<ActivityItem & { at: number }>,
+  activityFeedOpen: true,
 };
 let coinPopSeq = 0;
+let activitySeq = 0;
+/** 播报只留最近 8 条：够播报条排队，也够页脚计数，不让数组无限长 */
+const MAX_ACTIVITIES = 8;
 let shoutSeq = 0;
 let areaSeq = 0;
 const MAX_COIN_POPS = 5;
@@ -359,6 +395,20 @@ export const useGameUi = create<GameUiState>((set) => ({
   // ---- 热区建筑（ADR-0087）----
   setDiceOpen: (diceOpen) => set({ diceOpen }),
   setDice: (dice) => set({ dice }),
+  setDiceResult: (packet) =>
+    set((state) => {
+      const index = packet.table === 1 ? 1 : 0;
+      const previous = state.diceResults[index];
+      // 同一局会被补发一次（进场 / 重连）：直接丢弃，避免面板闪一下重播
+      if (previous && previous.roundId === packet.roundId && previous.entries.length === packet.entries.length) {
+        return state;
+      }
+      const next = [...state.diceResults];
+      next[index] = packet;
+      return { diceResults: next };
+    }),
+  setDiceBoard: (diceBoard) => set({ diceBoard, diceBoardPending: false }),
+  setDiceBoardPending: (diceBoardPending) => set({ diceBoardPending }),
   setArenaBetOpen: (arenaBetOpen) => set({ arenaBetOpen }),
   setArenaPool: (arenaPool) => set({ arenaPool }),
   setVillaOpen: (villaOpen) => set({ villaOpen }),
@@ -373,6 +423,19 @@ export const useGameUi = create<GameUiState>((set) => ({
     set({ worldEvent: packet ? { packet, receivedAt: performance.now() } : null }),
   setBossShock: (packet, receivedAt) =>
     set({ bossShock: packet ? { packet, receivedAt: receivedAt ?? performance.now() } : null }),
+
+  // ---- 全园区播报（ADR-0112）----
+  pushActivity: (event) =>
+    set((state) => ({
+      activities: [...state.activities, { ...event, key: ++activitySeq, at: performance.now() }].slice(
+        -MAX_ACTIVITIES,
+      ),
+    })),
+  setActivityFeedOpen: (open) => {
+    saveActivityFeedOpen(open);
+    set({ activityFeedOpen: open });
+  },
+  restoreActivityFeedOpen: () => set({ activityFeedOpen: loadActivityFeedOpen() }),
 
   setHint: (hint) => set({ hint }),
 

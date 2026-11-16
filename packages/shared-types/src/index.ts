@@ -16,6 +16,7 @@ export * from './work';
 export * from './challenge';
 export * from './board';
 export * from './notice';
+export * from './activity';
 export * from './moderation/index';
 export * from './world/geometry';
 export * from './world/ribbon';

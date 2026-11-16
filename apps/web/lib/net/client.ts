@@ -3,6 +3,7 @@
 import {
   BOARD_METRIC_ALL,
   OpCode,
+  decodeActivity,
   decodeAmbulance,
   decodeAppearanceBroadcast,
   decodeBoard,
@@ -41,6 +42,8 @@ import {
   decodeWalletSync,
   decodeWelcome,
   decodeDiceState,
+  decodeDiceResult,
+  decodeDiceBoard,
   decodeVillaState,
   decodeQuestState,
   decodeWorkResult,
@@ -50,6 +53,7 @@ import {
   decodeApartmentPeek,
   decodeInteractReject,
   encodeDiceBet,
+  encodeDiceBoardRequest,
   encodeWorkClaim,
   encodeQuestClaim,
   encodeEventClaim,
@@ -62,6 +66,7 @@ import {
   encodeChatSend,
   encodeHello,
   encodeLikeRequest,
+  encodeActivityReport,
   encodeMoveInto,
   encodeP2PAction,
   encodeP2PInvite,
@@ -79,6 +84,7 @@ import {
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
+  type ActivityPacket,
   type AmbulancePacket,
   type BoardMetric,
   type BoardPacket,
@@ -121,6 +127,9 @@ import {
   type VentEventPacket,
   type WelcomePacket,
   type DiceStatePacket,
+  type DiceResultPacket,
+  type DiceBoardPacket,
+  type DiceBoardRequest,
   type VillaStatePacket,
   type ArenaPoolPacket,
   type ApartmentPeekPacket,
@@ -174,6 +183,11 @@ export interface NetHandlers {
    * 受害者的新坐标与躺姿走 Tick，这条包只负责「归因」与硬直的起点。
    */
   onVent(packet: VentEventPacket): void;
+  /**
+   * 全园区交互播报（ADR-0112）：服务端已套好文案，客户端只做排队与呈现。
+   * 可选挂载：老版本会话没有播报条时静默丢弃，不影响同步。
+   */
+  onActivity?(packet: ActivityPacket): void;
   /** 老板血量：入场快照、每次发泄结算与跨日重置都走这一条（ADR-0070） */
   onBoss(packet: BossPacket): void;
   /** 小黑屋处置：警告 / 保安出动 / 押送 / 入狱 / 释放（ADR-0072） */
@@ -186,6 +200,10 @@ export interface NetHandlers {
   onRing(packet: RingPacket): void;
   /** 赌桌公共局快照（ADR-0087）：两张桌一包，亮牌期 1Hz 心跳 */
   onDiceState?(packet: DiceStatePacket): void;
+  /** 一桌一局的结算单（ADR-0110）：亮牌时逐人下发，`self` 由服务端标出 */
+  onDiceResult?(packet: DiceResultPacket): void;
+  /** 赌桌排行榜快照：按需拉取，不跟着心跳推送 */
+  onDiceBoard?(packet: DiceBoardPacket): void;
   /** 豪宅牌匾 / 锁状态，1Hz 心跳对齐可收币数 */
   onVillaState?(packet: VillaStatePacket): void;
   /** 八角笼彩池快照：押注、开赛与结算各一条 */
@@ -526,6 +544,9 @@ export class NetClient {
       case OpCode.S2C_JAIL:
         this.handlers.onJail(decodeJail(data));
         break;
+      case OpCode.S2C_ACTIVITY:
+        this.handlers.onActivity?.(decodeActivity(data));
+        break;
       case OpCode.S2C_AMBULANCE:
         this.handlers.onAmbulance?.(decodeAmbulance(data));
         break;
@@ -586,6 +607,12 @@ export class NetClient {
         break;
       case OpCode.S2C_DICE_STATE:
         this.handlers.onDiceState?.(decodeDiceState(data));
+        break;
+      case OpCode.S2C_DICE_RESULT:
+        this.handlers.onDiceResult?.(decodeDiceResult(data));
+        break;
+      case OpCode.S2C_DICE_BOARD:
+        this.handlers.onDiceBoard?.(decodeDiceBoard(data));
         break;
       case OpCode.S2C_VILLA_STATE:
         this.handlers.onVillaState?.(decodeVillaState(data));
@@ -728,6 +755,15 @@ export class NetClient {
     this.socket.send(encodeLikeRequest(targetId));
   }
 
+  /**
+   * 本机私有互动上报（ADR-0112）：上香、设施气泡、场所台词与常规动作。
+   * 服务端只做白名单与限流，坐标自己取；离线时直接丢，不攒队列。
+   */
+  sendActivity(kind: number, sub = 0): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeActivityReport({ kind, sub }));
+  }
+
   /** 擂台报名：服务端按容量 / 阶段 / 距离二次裁决 */
   sendRingEnter(): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
@@ -812,6 +848,12 @@ export class NetClient {
   sendDiceBet(request: { table: number; side: number; amount: number }): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeDiceBet(request));
+  }
+
+  /** 赌桌排行榜：只读快照，服务端按 2 秒冷却限频 */
+  sendDiceBoard(request: DiceBoardRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeDiceBoardRequest(request));
   }
 
   sendVilla(request: { villa: number; action: number }): void {
