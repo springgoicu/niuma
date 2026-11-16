@@ -8,7 +8,8 @@ import {
   VENT_ROOM,
   WORKROOM,
 } from '../world/campus';
-import { CLINIC_RECT } from '../world/clinic';
+import { CLINIC_ACCESS_PAVING, CLINIC_REGION_RECT, CLINIC_RECT } from '../world/clinic';
+import { isInClinicInterior } from '../world/clinic-gate';
 import { BOSS_ARENA } from '../world/boss';
 import { RING_ARENA, RING_EXIT, RING_NEAR_PX } from '../world/ring';
 import { isBlocked, PLAYER_RADIUS } from '../world/collision';
@@ -29,7 +30,6 @@ const ROOM_OF: Partial<Record<NavTargetId, { x: number; y: number; w: number; h:
   lounge: LOUNGE,
   workroom: WORKROOM,
   theater: HOME_THEATER,
-  clinic: CLINIC_RECT,
 };
 
 /** 户外设施：到达点必须是陆地、不下水 */
@@ -85,6 +85,17 @@ describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
       expect(rectContains(room, target.arrive.x, target.arrive.y)).toBe(true);
       expect(target.arrive.x === target.x && target.arrive.y === target.y).toBe(false);
     }
+  });
+
+  it('护士急救站：到达点落在西门外的铺装上，不越过门禁（ADR-0107）', () => {
+    const clinic = NAV_TARGETS.find((item) => item.id === 'clinic');
+    if (!clinic) throw new Error('缺少护士急救站导览目标');
+    // 站内只收救护车送来的伤员：导览把人送到门外，玩家不会被顶在门线上
+    expect(rectContains(CLINIC_RECT, clinic.arrive.x, clinic.arrive.y)).toBe(false);
+    expect(isInClinicInterior(clinic.arrive.x, clinic.arrive.y)).toBe(false);
+    // 仍在急救站区域矩形里：区域名照旧显示「护士急救站」
+    expect(rectContains(CLINIC_ACCESS_PAVING, clinic.arrive.x, clinic.arrive.y)).toBe(true);
+    expect(rectContains(CLINIC_REGION_RECT, clinic.arrive.x, clinic.arrive.y)).toBe(true);
   });
 
   it('户外地标：到达点在陆地，不落进水面', () => {

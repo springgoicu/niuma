@@ -28,6 +28,27 @@ export function normalizeDpr(dpr: number): number {
   return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
 }
 
+/**
+ * 可选的高 DPI 上限：`?dpr=1|2|3` 显式封顶，缺省 / 非法 / `0` 一律不封顶。
+ *
+ * 封顶会让 backing store 与设备像素不再 1:1（`renderer.ts` 初始化处要求保持 1:1），
+ * 浏览器合成阶段会重采样，像素块边界可能出现 4/5 设备像素交替。所以它只能当
+ * 低端机的显式自救开关，不参与自动降档，默认一个字都不改。
+ */
+export function resolveDprCap(search: string): number {
+  const raw = new URLSearchParams(search).get('dpr');
+  if (raw === null) return 0;
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return 0;
+  const value = Number(text);
+  return value === 1 || value === 2 || value === 3 ? value : 0;
+}
+
+/** 压到上限；上限 `0` 表示不封顶，原样返回，与 `normalizeDpr` 串联使用 */
+export function capDpr(dpr: number, cap: number): number {
+  return cap > 0 && dpr > cap ? cap : dpr;
+}
+
 export function readDpr(): number {
   // 同 build-version 的坑：`typeof window === 'undefined'` 会被 SWC 在 client bundle 里
   // 折叠掉，Worker 调用时直接 ReferenceError。按能力判断才靠得住。

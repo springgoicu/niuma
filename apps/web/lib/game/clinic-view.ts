@@ -10,7 +10,6 @@ import {
   CLINIC_COUNTER,
   CLINIC_DROP,
   CLINIC_FENCE_SOLIDS,
-  CLINIC_NURSE_SPOTS,
   CLINIC_RECT,
   CLINIC_REGION_RECT,
   CLINIC_SIGN,
@@ -113,12 +112,36 @@ function paintAmbulance(): CarView {
 export class ClinicView {
   readonly overlay = new Container();
   private readonly cars = new Map<number, CarView>();
+  /** 护士帽红十字：按实体 id 登记，每帧跟着护士本体走（ADR-0109） */
+  private readonly crosses = new Map<number, Container>();
   private readonly hearts: Container[] = [];
   private readonly treating = new Set<number>();
 
   /** 冬季：栏板顶与站台边沿积雪。纯表现层，`?season=off` 时不画 */
   constructor(private readonly winter = false) {
-    this.overlay.addChild(this.paintNurseCrosses());
+    this.overlay.addChild(this.paintHearts());
+  }
+
+  /**
+   * 护士巡游后不再站在固定站位（ADR-0109）：红十字必须挂在实体上，
+   * 否则她走到床侧时帽顶还留在一百多像素外的柜台后面。
+   */
+  addNurse(id: number): void {
+    if (this.crosses.has(id)) return;
+    const cap = new Graphics();
+    // 护士帽顶的红十字（白色帽体由图集画，红十字只能独立一层保持高饱和）
+    cap.rect(-4, -3, 8, 2).fill(C.red);
+    cap.rect(-1, -6, 2, 8).fill(C.red);
+    cap.visible = false;
+    this.overlay.addChild(cap);
+    this.crosses.set(id, cap);
+  }
+
+  removeNurse(id: number): void {
+    const cap = this.crosses.get(id);
+    if (!cap) return;
+    cap.destroy();
+    this.crosses.delete(id);
   }
 
   build(depth: DepthSink, base: Container): void {
@@ -303,25 +326,19 @@ export class ClinicView {
     this.cars.set(id, car);
   }
 
-  private paintNurseCrosses(): Container {
+  /** 两枚爱心：治疗期间挂在伤员头顶，伤员在床上 / 正在被扶上床时都跟着他 */
+  private paintHearts(): Container {
     const container = new Container();
-    CLINIC_NURSE_SPOTS.forEach((spot, index) => {
-      const cap = new Graphics();
-      // 护士帽顶的红十字（白色帽体由图集画，红十字只能独立一层保持高饱和）
-      cap.rect(-4, -3, 8, 2).fill(C.red);
-      cap.rect(-1, -6, 2, 8).fill(C.red);
-      cap.position.set(spot.x, spot.y - 60);
-      container.addChild(cap);
+    for (let index = 0; index < CLINIC_BEDS.length; index += 1) {
       const heart = new Graphics();
       heart.circle(-3, 0, 3).fill(C.heart);
       heart.circle(3, 0, 3).fill(C.heart);
       heart.poly([-6, 1, 6, 1, 0, 8]).fill(C.heart);
       heart.circle(-2, -1, 1).fill(C.heartLight);
-      heart.position.set(spot.x, spot.y - 70);
       heart.visible = false;
       container.addChild(heart);
       this.hearts[index] = heart;
-    });
+    }
     return container;
   }
 
@@ -345,7 +362,7 @@ export class ClinicView {
     else this.treating.delete(packet.entityId);
   }
 
-  update(now: number): void {
+  update(now: number, anchorAt: (id: number) => { x: number; y: number } | null): void {
     const phase = beaconPhase(now);
     for (const car of this.cars.values()) {
       const active = car.state !== AMBULANCE_STATE.Idle;
@@ -354,16 +371,32 @@ export class ClinicView {
       // 警灯亮起的车顶给整车上一点高光，远看能分清「出警」与「停泊」
       car.root.alpha = active && (car.flags & AMBULANCE_FLAG_SIREN) !== 0 ? 1 : 0.94;
     }
-    const busy = this.treating.size > 0;
-    for (let i = 0; i < this.hearts.length; i += 1) {
-      const heart = this.hearts[i];
-      if (!heart) continue;
-      heart.visible = busy;
-      heart.position.set(CLINIC_NURSE_SPOTS[i]!.x, CLINIC_NURSE_SPOTS[i]!.y - 70 + Math.sin(now / 260));
+
+    // 红十字挂在护士实体上（ADR-0109）：她巡游、接人、守床时帽顶都跟着人走。
+    // 走 keys() 而不是 entries()：后者每条都拆一个 [id, cap] 数组，帧循环里白白分配。
+    for (const id of this.crosses.keys()) {
+      const cap = this.crosses.get(id);
+      if (!cap) continue;
+      const anchor = anchorAt(id);
+      cap.visible = anchor !== null;
+      if (anchor) cap.position.set(Math.round(anchor.x), Math.round(anchor.y - 60));
     }
+
+    // 爱心挂到正在被治疗的伤员头顶：上床 / 下床 tween 期间也跟着他，不留在空床位
+    let slot = 0;
+    for (const id of this.treating) {
+      if (slot >= this.hearts.length) break;
+      const heart = this.hearts[slot]!;
+      const anchor = anchorAt(id);
+      heart.visible = anchor !== null;
+      if (anchor) heart.position.set(Math.round(anchor.x), Math.round(anchor.y - 66 + Math.sin(now / 260)));
+      slot += 1;
+    }
+    for (; slot < this.hearts.length; slot += 1) this.hearts[slot]!.visible = false;
   }
 
   destroy(): void {
+    this.crosses.clear();
     this.overlay.destroy({ children: true });
   }
 }

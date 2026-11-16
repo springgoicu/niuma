@@ -1,5 +1,5 @@
 /**
- * 护士急救站（ADR-0084 / ADR-0092 / ADR-0097）：服务区广场东北角的独立小楼。
+ * 护士急救站（ADR-0084 / ADR-0092 / ADR-0097 / ADR-0109）：服务区广场东北角的独立小楼。
  *
  * 从 `layout.ts` 单独拆出来，是为了让 `districts.ts` 能读到它的矩形而不与
  * 布局总装互相引用：区 / 场所注册表只依赖各场所模块，`layout.ts` 只做汇总。
@@ -29,9 +29,17 @@ export const CLINIC_COUNTER: WorldRect = {
 /** 立牌：脚底贴在北侧围挡外沿，不插进栏杆 */
 export const CLINIC_SIGN = { x: CLINIC_RECT.x + 6, y: CLINIC_RECT.y - 44 } as const;
 
+/**
+ * 护士站位：柜台正后方。
+ *
+ * 栏杆底沿 `y+0` 与柜台上沿 `y+18` 之间只有 18px，正好等于护士碰撞直径
+ * （`PLAYER_RADIUS = 9`），所以站位的 y 只能取 `y+9`：再往下压柜台、再往上贴栏杆。
+ * 旧址位取 `y+12` 时碰撞圆已经压进柜台 3px，原地站立看不出来，一旦开始走动
+ * 就会被碰撞求解当成卡在实心体里。
+ */
 export const CLINIC_NURSE_SPOTS = [
-  { x: CLINIC_RECT.x + 44, y: CLINIC_RECT.y + 12 },
-  { x: CLINIC_RECT.x + 92, y: CLINIC_RECT.y + 12 },
+  { x: CLINIC_RECT.x + 44, y: CLINIC_RECT.y + 9 },
+  { x: CLINIC_RECT.x + 92, y: CLINIC_RECT.y + 9 },
 ] as const;
 
 export const CLINIC_BEDS = [
@@ -47,6 +55,25 @@ export const CLINIC_AMBULANCE_SPOTS = [
 
 /** 救护车抵达后把伤员放下的站内落点 */
 export const CLINIC_DROP = { x: CLINIC_RECT.x + 30, y: CLINIC_RECT.y + 120 } as const;
+
+/**
+ * 护士巡检走廊的东沿（ADR-0109）。
+ *
+ * 柜台东沿 `x+124` 与 1 号床头端实心 `x+140` 之间净宽 22px，是柜台后方南下
+ * 到床区的唯一通道（西侧只剩 12px、两床之间只剩 12px，都小于碰撞直径）。
+ * 半径 9 的护士圆心只能落在 5193–5197，取通道正中 `x+135`。
+ */
+export const CLINIC_NURSE_LANE_X = CLINIC_RECT.x + 135;
+
+/** 巡检走廊东段：与落点同高，床底以南 14px 的东西向带（床底 `y+106`） */
+export const CLINIC_NURSE_LANE_Y = CLINIC_DROP.y;
+
+/** 床侧站位：床底以南 20px，护士在这里把伤员扶上床、守床治疗 */
+export function clinicBedSide(index: number): { x: number; y: number } {
+  const bed = CLINIC_BEDS[index];
+  if (!bed) return CLINIC_NURSE_SPOTS[0];
+  return { x: bed.x + bed.w / 2, y: bed.y + bed.h + 20 };
+}
 
 /** 南侧救护车通道口东沿：车位线最东到 x+164、车体最东到 x+160，再留 10px */
 const CLINIC_VEHICLE_GAP_RIGHT = CLINIC_RECT.x + 170;
@@ -70,7 +97,7 @@ export const CLINIC_FENCE_SOLIDS: ReadonlyArray<SolidRect> = (() => {
   const gateTop = CLINIC_ACCESS_PAVING.y;
   const gateBottom = gateTop + CLINIC_ACCESS_PAVING.h;
   return [
-    // 北面：整段封闭，护士站位与栏杆之间还留 12px
+    // 北面：整段封闭；护士站位落在栏杆与柜台之间的 18px 窄带正中（ADR-0107）
     { kind: 'wall' as const, x: x - thickness, y: y - thickness, w: w + thickness * 2, h: thickness },
     // 东面：整段封闭
     { kind: 'wall' as const, x: right, y, w: thickness, h },

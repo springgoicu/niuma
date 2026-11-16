@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
 import { useGameUi } from '@/lib/game-ui';
+import { clearRenderFallback, retryRenderUrl } from '@/lib/game/runtime/render-mode';
 import { sfx } from '@/lib/game/sfx';
 
 const SFX_STORAGE_KEY = 'niuma:sfx:muted';
@@ -64,14 +65,28 @@ export function HudDivider() {
 }
 
 /**
- * 工具栏最左端的状态段：在线灯 + 视野人数，单行、不可点。
+ * 主线程角标的一键重试：清掉回退标记，并把地址上的 `render` 参数摘掉。
+ *
+ * 只重试一次：环境本身起不来渲染线程时，下一次启动会再回退一次并重新记上标记，
+ * 角标回来告诉玩家「这台机器就是没有渲染线程」，而不是让他反复刷新。
+ */
+function retryRenderThread(): void {
+  clearRenderFallback();
+  if (typeof location === 'undefined') return;
+  location.replace(retryRenderUrl(location.href));
+}
+
+/**
+ * 工具栏最左端的状态段：在线灯 + 视野人数，单行。
  *
  * 只保留玩家真正会看的两件事；`aoi 900px`、连接状态明细这类调试信息
- * 留在断线横幅里，不占常驻 HUD。
+ * 留在断线横幅里，不占常驻 HUD。渲染线程崩过、已经掉到主线程时，末尾多一枚
+ * 琥珀色角标——它是这一段里唯一的可点元素，也是那条「为什么就我卡」的自救入口。
  */
 export function HudStatus({ compact = false }: { compact?: boolean }) {
   const nearby = useGameUi((state) => state.nearby);
   const status = useGameUi((state) => state.status);
+  const renderMode = useGameUi((state) => state.renderMode);
   const online = status === 'online';
 
   // 刻意不用 role="status"：人数每 2 秒变一次，做成 live region 会让读屏
@@ -91,6 +106,19 @@ export function HudStatus({ compact = false }: { compact?: boolean }) {
       />
       <span className="shrink-0 text-mist-500">视野</span>
       <span className="shrink-0 tabular-nums text-mist-300">{nearby}</span>
+      {renderMode === 'main' && (
+        <button
+          type="button"
+          onClick={retryRenderThread}
+          aria-label="当前为主线程渲染，点击重试渲染线程"
+          title="渲染线程不可用，当前在主线程上跑，性能受限；点击重试渲染线程"
+          className={`pointer-events-auto ml-0.5 shrink-0 cursor-pointer whitespace-nowrap border border-amber-400/60 leading-none text-amber-400 transition-colors hover:bg-amber-400/15 focus-visible:bg-amber-400/20 focus-visible:outline-none ${
+            compact ? 'px-1 py-0.5 text-[8px]' : 'px-1.5 py-1 text-[9px]'
+          }`}
+        >
+          主线程
+        </button>
+      )}
     </div>
   );
 }

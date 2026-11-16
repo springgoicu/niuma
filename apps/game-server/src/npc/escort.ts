@@ -6,6 +6,7 @@ import {
   POSE,
   TICK_MS,
   resolveMotionInto,
+  resolveWalkInto,
   type MotionTarget,
 } from '@niuma/shared-types';
 import type { Player, World } from '../sim/world';
@@ -263,8 +264,8 @@ function needReplan(task: EscortTask, target: Player, now: number): boolean {
 /**
  * 沿路线推进一帧，返回本帧实际位移。
  *
- * 用法与真人移动同一个 `resolveMotionInto`：4px 子步、单轴滑动，不会穿墙；
- * 被挤住时最多原地等下一次重算，不会在墙里抖。
+ * 用法与真人移动同一个 `resolveWalkInto`（地形求解 + 护士站门禁）：
+ * 4px 子步、单轴滑动，不会穿墙；被挤住时最多原地等下一次重算，不会在墙里抖。
  */
 function walkPath(agent: NpcAgent, task: EscortTask, speed: number): { x: number; y: number } {
   const guard = agent.player;
@@ -285,7 +286,7 @@ function walkPath(agent: NpcAgent, task: EscortTask, speed: number): { x: number
     const step = Math.min(remaining, segment);
     const targetX = guard.x + (dx / segment) * step;
     const targetY = guard.y + (dy / segment) * step;
-    resolveMotionInto(MOTION, guard.x, guard.y, targetX, targetY);
+    resolveWalkInto(MOTION, guard.x, guard.y, targetX, targetY);
     const realX = MOTION.x - guard.x;
     const realY = MOTION.y - guard.y;
     const realLength = Math.hypot(realX, realY);

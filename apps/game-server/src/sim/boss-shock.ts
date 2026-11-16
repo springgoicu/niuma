@@ -4,7 +4,7 @@ import {
   BOSS_SHOCK_PHASE,
   POSE,
   encodeBossShock,
-  resolveMotionInto,
+  resolveWalkInto,
   type MotionTarget,
 } from '@niuma/shared-types';
 import type { SpatialGrid } from '../spatial/grid';
@@ -73,7 +73,7 @@ export class BossShockRuntime {
       // 站在圆心时给一个默认方向，避免除零把人钉在原地
       const nx = length > 1 ? dx / length : 0;
       const ny = length > 1 ? dy / length : 1;
-      resolveMotionInto(
+      resolveWalkInto(
         MOTION,
         player.x,
         player.y,

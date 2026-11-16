@@ -12,7 +12,7 @@ import { pickSpawnPoint, type NpcSpot } from './spots';
 import { updateSocial, type NpcSocialContext } from './social';
 import type { EscortEvent } from '../sim/detention';
 
-/** 康复归位后的停顿：与押送收尾一致，让玩家先看到「人站起来了」再继续走 */
+/** 康复续接后的停顿：与押送收尾一致，让玩家先看到「人站起来了」再继续走 */
 const RESTORE_PAUSE_MS = 600;
 
 /**
@@ -46,11 +46,13 @@ export interface NpcDirector {
   /** 目标断线 / 离开：取消盯梢 */
   cancelFollow(targetId: number): void;
   /**
-   * 康复归位（ADR-0106）：把被送医的 NPC 写回倒地点，并续接原任务。
+   * 康复续接（ADR-0109）：NPC 在急救站就地站起来，从当前位置继续巡逻 / 押送。
    *
-   * 由 `sim/clinic` 的 `NpcRestorePort` 转发；返回 false 表示这个实体不由本层管理。
+   * 坐标由 `sim/clinic` 先写好在床尾或地面，本层不再写位置：
+   * 写回倒地位置会让康复的 NPC 从病床瞬移回半个园区外（ADR-0106 的老口径）。
+   * 返回 false 表示这个实体不由本层管理。
    */
-  restore(playerId: number, spot: NpcSpot, now: number): boolean;
+  restore(playerId: number, now: number): boolean;
   /** 押送事件出口：server 用它转给 sim/detention，不让 NPC 层认识 Detention */
   setEscortListener(listener: ((event: EscortEvent) => void) | null): void;
 }
@@ -199,18 +201,16 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
   }
 
   /**
-   * 康复归位（ADR-0106）：写回倒地位置、复位行为态、续接押送 / 盯梢。
+   * 康复续接（ADR-0109）：复位行为态、续接押送 / 盯梢，坐标沿用 clinic 写好的床尾。
    *
    * 重置 `startedAt` 是关键：住院期间押送计时是挂起的，若沿用旧起点，
    * 回到岗位的第一帧就会被判超时并放人。
    */
-  function restore(playerId: number, spot: NpcSpot, now: number): boolean {
+  function restore(playerId: number, now: number): boolean {
     const agent = agents.get(playerId);
     if (!agent) return false;
 
     const player = agent.player;
-    player.x = spot.x;
-    player.y = spot.y;
     // 「康复」由本方法定义：昏迷与硬直都在这一处清干净，调用方不必记得
     player.incapacitated = false;
     player.stunUntil = 0;

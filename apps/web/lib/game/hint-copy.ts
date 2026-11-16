@@ -53,6 +53,8 @@ export const HINT = {
   apartment: '[F] 进入牛马公寓',
   /** 人在窗口里：任意时刻按 F 都回门口 */
   apartmentExit: '[F] 出门',
+  /** 护士急救站门禁（ADR-0107）：门洞看得见却走不进去，被挡时解释一句 */
+  clinicGate: '护士站只收救护车送来的伤员',
   // ---- 打工产出与随机事件（ADR-0088） ----
   /** 工位：坐好之后按 F 开工 */
   work: '[F] 开始加班搬砖',
@@ -116,6 +118,8 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.villaTree]: { action: 'interact', label: '收摇钱树', key: 'F' },
   [HINT.apartment]: { action: 'interact', label: '进公寓', key: 'F' },
   [HINT.apartmentExit]: { action: 'interact', label: '出门', key: 'F' },
+  // 门禁是纯劝阻：门洞没有可执行动作
+  [HINT.clinicGate]: null,
   // 公寓窗口里没有别的可做，这一条就是唯一的按键
   [HINT.work]: { action: 'interact', label: '搬砖', key: 'F' },
   // 没坐下时不可执行：只提醒，不给按钮
@@ -168,6 +172,7 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.villaTree]: '点「互动」收摇钱树',
   [HINT.apartment]: '点「互动」进公寓',
   [HINT.apartmentExit]: '点「互动」出门',
+  [HINT.clinicGate]: '护士站只收救护车送来的伤员',
   [HINT.work]: '点「互动」搬砖',
   [HINT.workNeedSeat]: '点「坐下」坐到自己工位上再搬砖',
   [HINT.redPacket]: '点「互动」抢红包',

@@ -79,6 +79,7 @@ export class MainThreadGameClient implements GameClient {
 
     const env: EngineEnv = {
       search: this.options.search,
+      renderMode: 'main',
       canvas,
       control: block,
       readViewport: (out) => block.readViewport(out),

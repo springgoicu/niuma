@@ -55,6 +55,10 @@ export function WorkGrindOverlay({
   const claimedRef = useRef(0);
   const rafRef = useRef(0);
   const intermissionUntil = useRef(0);
+  // 倒计时与进度条是逐帧变化的瞬时值：走 ref 直写 DOM，不进 React 状态。
+  // 进状态的代价是每 33ms 让整块面板（含磨砂背景）重渲染一次，把 canvas 的帧预算吃光。
+  const clockRef = useRef<HTMLSpanElement | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
 
   const estimate = useMemo(
     () => workPayout(0.5, workEffLv, night),
@@ -81,10 +85,24 @@ export function WorkGrindOverlay({
     };
   }, [open, restart]);
 
-  // 帧推进：只负责「超时结束」与重绘，按键结算走 keydown，不必每个键都等一帧
+  // 帧推进：只负责「超时结束」与时钟直写，按键结算走 keydown，不必每个键都等一帧。
+  // 倒计时与进度条直写 DOM，React 只在轮次切换与按键时重渲染（rerender-use-ref-transient-values）。
   useEffect(() => {
     if (!open) return;
     let last = 0;
+    const paintClock = (round: WorkGrindRound, now: number) => {
+      const text = clockRef.current;
+      if (text) {
+        const label = `${(workRoundRemainingMs(round, now) / 1000).toFixed(1)}s`;
+        if (text.textContent !== label) text.textContent = label;
+      }
+      const bar = barRef.current;
+      if (bar) {
+        const ratio = Math.max(0, Math.min(1, 1 - workRoundRemainingMs(round, now) / WORK_REWARD.RoundMs));
+        const width = `${Math.round(ratio * 100)}%`;
+        if (bar.style.width !== width) bar.style.width = width;
+      }
+    };
     const loop = (now: number) => {
       rafRef.current = requestAnimationFrame(loop);
       if (now - last < 33) return;
@@ -99,10 +117,7 @@ export function WorkGrindOverlay({
           restart();
           return;
         }
-        setTick((value) => value + 1);
-        return;
-      }
-      if (isWorkRoundDone(round, now)) {
+      } else if (isWorkRoundDone(round, now)) {
         finishWorkRound(round, now);
         // 只有敲完全部字母才算「完成一轮」，超时中断不发领取请求
         if (round.index >= round.sequence.length && claimedRef.current !== round.startedAt) {
@@ -111,10 +126,8 @@ export function WorkGrindOverlay({
           setStreak({ key: round.startedAt, amount: -1 });
         }
         intermissionUntil.current = now + INTERMISSION_MS;
-        setTick((value) => value + 1);
-        return;
       }
-      setTick((value) => value + 1);
+      paintClock(round, now);
     };
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
@@ -186,10 +199,11 @@ export function WorkGrindOverlay({
             连击 ×{round?.combo ?? 0}
             {tier >= 2 ? ' · 手感不错' : ''}
           </span>
-          <span>{(remaining / 1000).toFixed(1)}s</span>
+          <span ref={clockRef}>{(remaining / 1000).toFixed(1)}s</span>
         </div>
         <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div
+            ref={barRef}
             className="h-full rounded-full bg-gradient-to-r from-[#7cf5b0] to-[#f5c451] transition-[width] duration-100"
             style={{ width: `${Math.round(progress * 100)}%` }}
           />

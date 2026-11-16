@@ -3,7 +3,7 @@ import {
   MOVE_SPEED,
   POSE,
   TICK_MS,
-  resolveMotionInto,
+  resolveWalkInto,
   type Direction,
   type MotionTarget,
 } from '@niuma/shared-types';
@@ -259,7 +259,8 @@ export function updateAgent(agent: NpcAgent, rng: Rng, config: NpcConfig, now: n
     const unitX = dx / distance;
     const unitY = dy / distance;
     // 与服务端移动包同一个求解器：4px 子步 + 单轴滑动，不穿墙也不卡死
-    resolveMotionInto(MOTION, player.x, player.y, player.x + unitX * step, player.y + unitY * step);
+    // 护士站门禁同样生效：采样点已排除站内，走到门口只会被夹住，不会钻进去
+    resolveWalkInto(MOTION, player.x, player.y, player.x + unitX * step, player.y + unitY * step);
     player.x = MOTION.x;
     player.y = MOTION.y;
 

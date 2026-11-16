@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  CLINIC_RECT,
   DIRECTION,
   POSE,
+  isInClinicInterior,
   packState,
   quantizeCoord,
   unpackState,
@@ -87,6 +89,48 @@ describe('空闲去脏', () => {
     applyMove(player, packet(packState(DIRECTION.Down, POSE.Idle, false, false), 4096, 4096), 1500);
     expect(player.dirty).toBe(true);
     expect(unpackState(player.state).vent).toBe(false);
+  });
+});
+
+describe('护士站门禁（ADR-0107）', () => {
+  const GATE_Y = CLINIC_RECT.y + 90;
+
+  it('站外贴着西门往里走会被夹回门线，不会跨进站内', () => {
+    const player = playerAt(CLINIC_RECT.x - 5, GATE_Y);
+    applyMove(
+      player,
+      packet(packState(DIRECTION.Right, POSE.Walk, true), CLINIC_RECT.x + 40, GATE_Y),
+      1000,
+    );
+
+    expect(player.x).toBeLessThan(CLINIC_RECT.x);
+    expect(player.x).toBeGreaterThan(CLINIC_RECT.x - 5);
+    expect(isInClinicInterior(player.x, player.y)).toBe(false);
+  });
+
+  it('已经在站里的伤员一路向西能自己走出西门', () => {
+    const player = playerAt(CLINIC_RECT.x + 30, GATE_Y);
+    const state = packState(DIRECTION.Left, POSE.Walk, true);
+    let now = 1000;
+    for (let i = 0; i < 20 && player.x > CLINIC_RECT.x - 20; i += 1) {
+      now += 100;
+      applyMove(player, packet(state, CLINIC_RECT.x - 60, GATE_Y), now);
+    }
+
+    expect(player.x).toBeLessThan(CLINIC_RECT.x);
+    expect(isInClinicInterior(player.x, player.y)).toBe(false);
+  });
+
+  it('站内仍然可以自由走动：门禁只挡进不挡出，治好的伤员不会被锁住', () => {
+    const player = playerAt(CLINIC_RECT.x + 30, CLINIC_RECT.y + 120);
+    applyMove(
+      player,
+      packet(packState(DIRECTION.Right, POSE.Walk, true), CLINIC_RECT.x + 60, CLINIC_RECT.y + 130),
+      1100,
+    );
+
+    expect(player.x).toBeGreaterThan(CLINIC_RECT.x + 30);
+    expect(isInClinicInterior(player.x, player.y)).toBe(true);
   });
 });
 

@@ -1,4 +1,10 @@
-import { PLAYER_RADIUS, WORLD_BOUNDS, findFreePoint, isBlocked } from '@niuma/shared-types';
+import {
+  PLAYER_RADIUS,
+  WORLD_BOUNDS,
+  findFreePoint,
+  isBlocked,
+  isInClinicInterior,
+} from '@niuma/shared-types';
 import type { Rng } from './rng';
 
 /**
@@ -35,6 +41,8 @@ export function pickWaypoint(rng: Rng, from?: NpcSpot, minWalkPx = MIN_WALK_PX):
   for (let attempt = 0; attempt < RETRY_COUNT; attempt += 1) {
     const point = sampleIslandPoint(rng);
     if (isBlocked(point.x, point.y, PLAYER_RADIUS)) continue;
+    // 护士站只收救护车送来的伤员（ADR-0107）：采样点也要排掉站内，免得 NPC 反复撞门
+    if (isInClinicInterior(point.x, point.y)) continue;
     if (from && attempt < RETRY_COUNT - 4) {
       const dx = point.x - from.x;
       const dy = point.y - from.y;
@@ -56,6 +64,7 @@ export function pickSpawnPoint(rng: Rng, occupied: readonly NpcSpot[] = []): Npc
   for (let attempt = 0; attempt < RETRY_COUNT; attempt += 1) {
     const point = sampleIslandPoint(rng);
     if (isBlocked(point.x, point.y, PLAYER_RADIUS)) continue;
+    if (isInClinicInterior(point.x, point.y)) continue;
     const tooClose = occupied.some((other) => {
       const dx = other.x - point.x;
       const dy = other.y - point.y;

@@ -112,7 +112,7 @@ describe('NPC 推进', () => {
   });
 });
 
-describe('昏迷送医与康复归位（ADR-0106）', () => {
+describe('昏迷送医与康复续接（ADR-0106 / ADR-0109）', () => {
   it('昏迷的保安不接押送 / 盯梢派单，康复后恢复接单', () => {
     const { world, director } = setup(1, 2);
     director.spawn();
@@ -130,22 +130,22 @@ describe('昏迷送医与康复归位（ADR-0106）', () => {
     expect(director.dispatchEscort(target.id, now)).toBe(guards[0]!.id);
   });
 
-  it('康复归位把保安写回倒地点并清掉昏迷与硬直', () => {
+  it('康复续接只清状态，不把保安写回倒地点', () => {
     const { world, director } = setup(1, 2);
     director.spawn();
     const guard = [...world.players.values()].find((player) => player.role === NPC_ROLE_GUARD)!;
     const now = Date.now();
-    const spot = { x: guard.x + 120, y: guard.y + 60 };
 
     guard.incapacitated = true;
     guard.stunUntil = now + 60_000;
+    // 床尾坐标由 clinic 先写好：这里就是「人在急救站」，归位不该动它
     guard.x = 1;
     guard.y = 1;
 
-    expect(director.restore(guard.id, spot, now)).toBe(true);
+    expect(director.restore(guard.id, now)).toBe(true);
 
-    expect(guard.x).toBe(spot.x);
-    expect(guard.y).toBe(spot.y);
+    expect(guard.x).toBe(1);
+    expect(guard.y).toBe(1);
     expect(guard.incapacitated).toBe(false);
     expect(guard.stunUntil).toBe(0);
     expect(guard.pose).toBe(POSE.Idle);
@@ -154,6 +154,6 @@ describe('昏迷送医与康复归位（ADR-0106）', () => {
   it('不在名册里的实体归位返回 false，让 clinic 退化为原地站起', () => {
     const { director } = setup(1, 2);
     director.spawn();
-    expect(director.restore(9999, { x: 100, y: 100 }, Date.now())).toBe(false);
+    expect(director.restore(9999, Date.now())).toBe(false);
   });
 });

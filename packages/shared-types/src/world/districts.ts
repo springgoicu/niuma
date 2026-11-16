@@ -24,7 +24,7 @@ import {
   VENT_ROOM,
   WORKROOM,
 } from './campus';
-import { CLINIC_RECT } from './clinic';
+import { CLINIC_ACCESS_PAVING, CLINIC_RECT } from './clinic';
 import { DICE_HALL } from './dice-hall';
 import { rectContains, rectExpanded, type WorldRect } from './geometry';
 import { AMUSEMENT_PARK } from './park';
@@ -313,8 +313,9 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   apartment: { x: APARTMENT_SPECS[0]!.outside.x, y: APARTMENT_SPECS[0]!.outside.y },
   // 影音室：东门内侧的走道（三排座椅东侧），进门两步就能坐下
   theater: { x: HOME_THEATER.x + HOME_THEATER.w - 60, y: HOME_THEATER.y + 160 },
-  // 急救站：西侧人行门洞内侧，进门就是导医柜台
-  clinic: { x: CLINIC_RECT.x + 20, y: CLINIC_RECT.y + 90 },
+  // 急救站：西门外的无障碍铺装上（ADR-0107 门禁：站内只收救护车送来的伤员，
+  // 导览不能把人送过门线）；仍落在 CLINIC_REGION_RECT 里，区域名还是「护士急救站」
+  clinic: { x: CLINIC_ACCESS_PAVING.x + 46, y: CLINIC_ACCESS_PAVING.y + 28 },
 };
 
 const NAV_SOURCES: ReadonlyArray<{

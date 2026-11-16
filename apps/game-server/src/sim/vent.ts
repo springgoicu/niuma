@@ -13,7 +13,7 @@ import {
   effectiveVentCooldownMs,
   encodeVent,
   quantizeCoord,
-  resolveMotionInto,
+  resolveWalkInto,
   withinVentCone,
   type MotionTarget,
 } from '@niuma/shared-types';
@@ -145,7 +145,7 @@ export function resolveVents(
           broadcastVent(world, attacker, 0, 0, 0, transport);
           continue;
         }
-        resolveMotionInto(
+        resolveWalkInto(
           MOTION,
           target.x,
           target.y,
@@ -186,7 +186,7 @@ export function resolveVents(
       });
     } else {
       // 击退走与移动完全相同的碰撞求解器：撞墙时自然衰减，绝不会把人推进墙里
-      resolveMotionInto(
+      resolveWalkInto(
         MOTION,
         target.x,
         target.y,

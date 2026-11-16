@@ -46,7 +46,7 @@ import {
   readSyncTick,
   districtById,
   regionAt,
-  resolveMotionInto,
+  resolveWalkInto,
   seatById,
   seatPose,
   unpackState,
@@ -133,6 +133,9 @@ import { JitterBuffer } from './jitter';
 import { ACTION_BY_CODE, directionFromMask, type ActionKey } from './input';
 import type { ViewportInfo } from './runtime/control-channel';
 import type { AudioEvent, EngineEnv, SessionProfile } from './runtime/engine-env';
+import { resolveTargetFps } from './runtime/frame-pacing';
+import { createQualitySignal, stepQualitySignal } from './runtime/quality-tiers';
+import type { RenderMode } from './runtime/render-mode';
 import {
   facesBulletin,
   isBulletinHit,
@@ -213,6 +216,11 @@ export interface SessionStats {
   y: number;
   nearby: number;
   backend: string;
+  /**
+   * 这一份统计来自哪个宿主：`main` 表示渲染线程崩过、已回退主线程。
+   * HUD 只在 `main` 时显示角标并提供一键重试，`worker` 不产生任何额外 UI。
+   */
+  renderMode: RenderMode;
   /** 本地角色所在园区区域名；未入场为空串 */
   region: string;
   /** 本地玩家收到的工牌点赞数：本人档案用，随 2Hz 推送 */
@@ -378,6 +386,8 @@ function hotspotIndex(id: string): number {
 }
 /** 瞬时提示的保留时长：房间里的环境提示晚一步再抢回这一行 */
 const HINT_HOLD_MS = 1600;
+/** 护士站门禁提示的节流间隔：贴着门线连续走时不刷屏（ADR-0107） */
+const CLINIC_GATE_HINT_MS = 3000;
 /**
  * 上香飘字（ADR-0061）：三句一起升起。
  * 写成多行而不是轮播，是因为「祈求暴富 / 无 Bug / 功德 +1」是一整套念词，拆开就散了。
@@ -490,6 +500,8 @@ export class GameSession {
   /** 环境提示：按位置 / 朝向持续算出；瞬时文案只让它暂时让位，不阻断判定 */
   private contextHint: string | null = null;
   private seatHintAt = 0;
+  /** 护士站门禁提示的节流时刻（ADR-0107）：连续顶门时每 3 秒只说一次 */
+  private clinicGateHintAt = 0;
   /** 瞬时提示（被拦下 / 附近没东西）：到期后自动让回环境提示 */
   private transientHint: string | null = null;
   /** 瞬时提示的展示截止时刻：用真实时间，掉帧时 1.6s 不会被拉长 */
@@ -537,6 +549,13 @@ export class GameSession {
    * 松手那一刻就能自由移动（ADR-0072）。
    */
   private escortLocked = false;
+  /**
+   * 伤员锁定（ADR-0109）：昏迷 / 治疗期间本地坐标一律吃服务端。
+   *
+   * 护士拖行、扶上床、下床都是逐 Tick 的连续位移；若还按「偏差超过 128px 才对齐」
+   * 的老规则，画面会停在原地，最后一帧直接跳到床上——正是要消灭的那处瞬移。
+   */
+  private patientLocked = false;
   /** 躺床计时：lieAt 是躺下时刻，snoreAt 是上一次「Zzz…」 */
   private lieAt = 0;
   private snoreAt = 0;
@@ -624,6 +643,8 @@ export class GameSession {
   private statsAt = 0;
   private frames = 0;
   private fps = 60;
+  /** 低帧自适应画质档的判定状态：与 fps 同一个 2Hz 窗口推进 */
+  private readonly quality = createQualitySignal();
   private ping = 0;
   private disposed = false;
   /** 自适应回放延迟：RTT p95 + 传输抖动，替代固定的 INTERP_DELAY_MS */
@@ -662,6 +683,8 @@ export class GameSession {
       danmaku: this.danmakuPrefs,
     });
     if (this.disposed) return;
+    // 节拍上限：默认 60。高刷屏上把回调与填充各砍一半，时间语义不变（见 frame-pacing.ts）
+    this.renderer.app.ticker.maxFPS = resolveTargetFps(this.env.search);
     this.renderer.app.ticker.add(this.tick);
     this.statsAt = performance.now();
 
@@ -1157,9 +1180,9 @@ export class GameSession {
     const y = dequantizeCoord(qy);
 
     if (id === this.localId) {
-      // 被保安拖着走时不跑本地预测：位置完全由服务端一帧一帧写，
-      // 否则客户端会照着「自己没动」的预测把画面留在原地。
-      if (this.escortLocked) {
+      // 被保安拖着走 / 被护士护送时不跑本地预测：位置完全由服务端一帧一帧写，
+      // 否则客户端会照着「自己没动」的预测把画面留在原地，末尾再跳一下。
+      if (this.escortLocked || this.patientLocked) {
         Position.x[eid] = x;
         Position.y[eid] = y;
         return;
@@ -1211,8 +1234,9 @@ export class GameSession {
 
       if (entry.occupant === this.localId) {
         // 入场恢复入座时 seatIntent 还是 false，本地镜像也必须跟上；
-        // 否则按方向键不会触发起身，服务端会一直替你占着这张椅子
-        if (this.localSeat !== entry.seatId) this.sitAt(seat);
+        // 否则按方向键不会触发起身，服务端会一直替你占着这张椅子。
+        // 急救床上床不吸附：坐标由服务端 tween 逐拍推过来（ADR-0109）
+        if (this.localSeat !== entry.seatId) this.sitAt(seat, !(this.patientLocked && seat.kind === 'bed'));
       } else if (entry.seatId === this.localSeat) {
         // 预测的座位被别人先占走：本地退回地面坐，随后服务端若分到新座位会再吸附过去
         this.localSeat = 0;
@@ -1244,14 +1268,17 @@ export class GameSession {
    * 吸附到座位：位置与朝向都按座位锚点，姿态由座位种类决定（床落躺、其余落坐）。
    * 叠加动作一并清掉；上床时重置打呼计时，躺下 5s 后才第一次冒「Zzz…」。
    */
-  private sitAt(seat: SeatInstance): void {
+  private sitAt(seat: SeatInstance, snap = true): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
     this.localSeat = seat.id;
     this.entitySeat.set(this.localId, seat.id);
-    Position.x[eid] = seat.x;
-    Position.y[eid] = seat.y;
-    Motion.direction[eid] = seat.facing;
+    // snap=false 只认座位与姿态：位置交给服务端的逐拍过渡（急救上床 / 下床）
+    if (snap) {
+      Position.x[eid] = seat.x;
+      Position.y[eid] = seat.y;
+      Motion.direction[eid] = seat.facing;
+    }
     this.setLocalPose(eid, seatPose(seat.kind));
     this.clearOverlays(eid);
     Motion.moving[eid] = 0;
@@ -1582,6 +1609,7 @@ export class GameSession {
     this.localPosterUntil = 0;
     this.renderer.clearBuffVisuals();
     this.escortLocked = false;
+    this.patientLocked = false;
     this.ventLockUntil = 0;
     this.ventAt = 0;
     this.ring = null;
@@ -2587,6 +2615,8 @@ export class GameSession {
     switch (packet.state) {
       case PATIENT_STATE.Incapacitated:
         this.stunUntil = this.elapsed + 60000;
+        // 从这一刻起位置全交服务端：上车、拖行、上床都不能靠本地预测
+        this.patientLocked = true;
         this.ventLockUntil = 0;
         this.localSeat = 0;
         this.entitySeat.delete(this.localId);
@@ -2596,11 +2626,13 @@ export class GameSession {
         return;
       case PATIENT_STATE.Treating:
         this.stunUntil = this.elapsed + 60000;
+        this.patientLocked = true;
         this.ventLockUntil = 0;
         this.showHint('护士正在处理工伤，3 秒后原地复活');
         return;
       case PATIENT_STATE.Shielded: {
         this.stunUntil = 0;
+        this.patientLocked = false;
         this.ventLockUntil = 0;
         const eid = this.ecs.get(this.localId);
         if (eid) {
@@ -2612,6 +2644,7 @@ export class GameSession {
       }
       default:
         this.stunUntil = 0;
+        this.patientLocked = false;
     }
   }
 
@@ -2774,6 +2807,14 @@ export class GameSession {
     this.publishHint();
   }
 
+  /** 护士站门禁：连续往门里挤时每 3 秒只解释一次，不刷屏（ADR-0107） */
+  private hintClinicGate(): void {
+    const now = performance.now();
+    if (now - this.clinicGateHintAt < CLINIC_GATE_HINT_MS) return;
+    this.clinicGateHintAt = now;
+    this.showHint(HINT.clinicGate);
+  }
+
   /** 三个叠加动作互斥：后按的打断先按的，连按从第 0 帧重播 */
   private startOverlay(eid: number, kind: 'vent' | 'jump' | 'wave'): void {
     Motion.vent[eid] = kind === 'vent' ? 1 : 0;
@@ -2863,7 +2904,8 @@ export class GameSession {
       const nextX = clamp(prevX + vx * speed * dt, 0, WORLD_WIDTH - 1);
       const nextY = clamp(prevY + vy * speed * dt, 0, WORLD_HEIGHT - 1);
       // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
-      resolveMotionInto(this.motion, prevX, prevY, nextX, nextY);
+      // 护士站门禁也在里面（ADR-0107），返回 true 表示这一帧被门线夹住
+      const gated = resolveWalkInto(this.motion, prevX, prevY, nextX, nextY);
       // 擂台边界与服务端逐字一致：参赛者向内夹取，非参赛者不靠移动跨进围绳
       if (this.ringSlotOf(this.ring) >= 0) {
         const inside = clampToRing(this.motion.x, this.motion.y);
@@ -2873,6 +2915,8 @@ export class GameSession {
         this.motion.x = prevX;
         this.motion.y = prevY;
       }
+      // 顶在护士站门线上时解释一句，否则「门洞看得见却走不进去」会被当成 bug
+      if (gated) this.hintClinicGate();
       const advanced = Math.abs(this.motion.x - prevX) + Math.abs(this.motion.y - prevY) > 0.01;
       Position.x[eid] = this.motion.x;
       Position.y[eid] = this.motion.y;
@@ -3101,6 +3145,8 @@ export class GameSession {
       this.fps = Math.round((this.frames * 1000) / windowMs);
       this.frames = 0;
       this.statsAt = now;
+      // 低帧自适应：与 fps 同一个窗口推进，不另起计时器；档位没变时 setQualityTier 直接返回
+      this.renderer.setQualityTier(stepQualitySignal(this.quality, this.fps, windowMs));
       this.ensureBoard(now);
       this.callbacks.onStats({
         selfId: this.localId,
@@ -3110,6 +3156,7 @@ export class GameSession {
         y: localEid ? Math.round(Position.y[localEid]!) : 0,
         nearby: this.names.size,
         backend: this.renderer.backend,
+        renderMode: this.env.renderMode,
         region: localEid ? regionAt(Position.x[localEid]!, Position.y[localEid]!) : '',
         likes: this.localLikes,
         board: this.careerBoard,

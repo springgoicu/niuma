@@ -22,6 +22,7 @@ export * from './world/ribbon';
 export * from './world/layout';
 export * from './world/districts';
 export * from './world/clinic';
+export * from './world/clinic-gate';
 export * from './world/park';
 export * from './world/collision';
 export * from './world/vent';

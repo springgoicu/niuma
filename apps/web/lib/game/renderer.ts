@@ -11,6 +11,7 @@ import {
   BOSS,
   BOSS_MAX_HP,
   ENTITY_ROLE_GUARD,
+  ENTITY_ROLE_NURSE,
   ISLAND,
   PATIENT_STATE,
   WORLD_LAYOUT,
@@ -88,14 +89,17 @@ import {
 } from './police-beacon';
 import { PropsView } from './props';
 import {
+  capDpr,
   normalizeDpr,
   pixelMetrics,
+  resolveDprCap,
   sameMetrics,
   snapCss,
   snapTexel,
   worldCssPerTexel,
   type PixelMetrics,
 } from './pixel-scale';
+import type { QualityTier } from './runtime/quality-tiers';
 import {
   resolveGpuPreference,
   type GpuPreference,
@@ -168,6 +172,15 @@ const FRAME_H = SPRITE_LAYOUT.frame.h;
 const CULL_PAD_X = SPRITE_LAYOUT.frame.w;
 const CULL_PAD_Y = FRAME_H;
 
+/**
+ * 低档名牌预算的进出阈值（到玩家的平方距离，省掉每帧开方）。
+ *
+ * 两段阈值是滞回：已经显示的昵称要到 420 纹素外才收起，收起后回到 260 以内才重新显示。
+ * 玩家在阈值附近来回走时，名字不会一闪一闪。
+ */
+const NAMEPLATE_KEEP_R2 = 260 * 260;
+const NAMEPLATE_DROP_R2 = 420 * 420;
+
 const NAME_STYLE = {
   fontFamily: 'JetBrains Mono, monospace',
   fontSize: 9,
@@ -227,6 +240,8 @@ class EntityView {
   private shown = true;
   /** 是否正在公寓窗口探头：本体与昵称整体不画，只在窗口里留一颗头 */
   private peeked = false;
+  /** 低档名牌预算：只影响昵称那一行，状态行与气泡不受影响 */
+  private nameplateShown = true;
   /** 昵称文字底边（相对脚底）：换装改变头顶高度后重算 */
   private nameBottom: number;
   /** 头顶（相对脚底，负值）：眩晕星星绕它转，与配件挂点同源 */
@@ -445,6 +460,23 @@ class EntityView {
 
   get isShown(): boolean {
     return this.shown;
+  }
+
+  /** 昵称当前是否在画：低档预算的滞回据此选阈值 */
+  get hasNameplate(): boolean {
+    return this.nameplateShown;
+  }
+
+  /**
+   * 低档名牌预算：只切昵称那一行文本。
+   *
+   * 与 `setShown` / `setPeeked` 是第三条独立开关（屏外剔除 / 探头隐藏 / 画质预算），
+   * 三者互不覆盖：`labels` 容器仍归前两者管，这里只动昵称子节点的 `visible`。
+   */
+  setNameplate(shown: boolean): void {
+    if (shown === this.nameplateShown) return;
+    this.nameplateShown = shown;
+    this.label.visible = shown;
   }
 
   /** 头顶的世界坐标 y：眩晕星星与其它「挂头上」的特效都用它 */
@@ -887,6 +919,8 @@ export class GameRenderer {
   private danmaku?: DanmakuField;
   /** 弹幕偏好：由宿主注入，`?danmaku=0` 可临时关闭 */
   private danmakuPrefs: DanmakuPrefs = { ...DEFAULT_DANMAKU_PREFS };
+  /** 低帧自适应画质档：只作用于非关键观感层，默认高档（与改造前逐帧一致） */
+  private qualityTier: QualityTier = 'high';
   /** 季节判定结果：只读一次，其余图层只消费 `winter` 布尔量 */
   private season: SeasonState = { winter: false, snow: false, source: 'date' };
   /** 室内陈设补完层：与季节无关，改动只落在渲染层 */
@@ -918,6 +952,8 @@ export class GameRenderer {
   private lightEnabled = true;
   /** 当前设备像素比：主线程注入或 `resize()` 更新，不再从 `window` 现取 */
   private dpr = 1;
+  /** `?dpr=` 上限：0 表示不封顶（默认与改造前一致），只在低端机自救时显式打开 */
+  private dprCap = 0;
   private metrics: PixelMetrics = pixelMetrics(DEFAULT_CSS_PER_TEXEL, 1, MIN_DEVICE_PX_PER_TEXEL);
   /** 本实例实际使用的倍率：默认值或 `?zoom=` 覆盖值 */
   private cssPerTexel = DEFAULT_CSS_PER_TEXEL;
@@ -942,7 +978,9 @@ export class GameRenderer {
   private metricScreenH = -1;
 
   async init(options: RendererInit): Promise<void> {
-    const dpr = normalizeDpr(options.dpr);
+    // 上限先于度量计算：`pixelMetrics` 的整数化与 backing store 必须用同一个 dpr
+    this.dprCap = resolveDprCap(options.search);
+    const dpr = capDpr(normalizeDpr(options.dpr), this.dprCap);
     const params = new URLSearchParams(options.search);
     const zoom = readCssPerTexel(options.search);
     // 后端只判定一次：默认 WebGL2，`?gpu=webgpu` 才开 WebGPU（ADR-0071）
@@ -1340,6 +1378,8 @@ export class GameRenderer {
     // 所有检查通过，正式加入渲染系统
     this.views.set(id, view);
     if (view.isGuard) this.beacons.add(view);
+    // 护士帽红十字登记到覆盖层（ADR-0109）：她巡游时帽徽跟着走，不留在站位
+    if (role === ENTITY_ROLE_NURSE) this.clinic?.addNurse(id);
     // 伤员状态包可能早于 AOI 里的实体视图到达：补一次，保证盾牌 / 星星不丢
     this.applyPatientStatus(id, view, this.patientStates.get(id));
     // 先把位置摆好再挂进 band：否则首帧会停在 (0,0)，在地图左上角闪一下
@@ -1366,6 +1406,7 @@ export class GameRenderer {
       this.views.delete(id);
       this.goldHelmets.delete(id);
       this.beacons.delete(view);
+      this.clinic?.removeNurse(id);
       this.p2pFx.drop(id);
       this.windowPeek?.drop(id);
       view.destroy();
@@ -1391,7 +1432,10 @@ export class GameRenderer {
     if (!view) return false;
     const shown = this.isEntityVisible(x, y);
     view.setShown(shown);
-    if (shown) this.place(view, x, y);
+    if (shown) {
+      this.place(view, x, y);
+      this.applyNameplateBudget(view, x, y);
+    }
     return shown;
   }
 
@@ -1411,6 +1455,24 @@ export class GameRenderer {
     if (view.setWadingAt(sx, sy)) this.waterFx?.spawn(sx, sy, true);
     // 脚底 y 即深度：站在树后会被树冠挡住，站到树前就压回去
     this.sortLayer.update(view.root, sy);
+  }
+
+  /**
+   * 低档名牌预算：只保留玩家附近的昵称。
+   *
+   * 以相机焦点（玩家所在处）而不是屏幕边缘作基准，配两段阈值做滞回。高档时只做一次
+   * 布尔比较就返回；降档后每个可见角色多算 4 次乘加，比裁掉一张文字位图的绘制便宜得多。
+   */
+  private applyNameplateBudget(view: EntityView, x: number, y: number): void {
+    if (this.qualityTier !== 'low') {
+      if (!view.hasNameplate) view.setNameplate(true);
+      return;
+    }
+    const dx = x - this.focusX;
+    const dy = y - this.focusY;
+    const d2 = dx * dx + dy * dy;
+    const show = d2 <= (view.hasNameplate ? NAMEPLATE_DROP_R2 : NAMEPLATE_KEEP_R2);
+    if (show !== view.hasNameplate) view.setNameplate(show);
   }
 
   setPose(id: number, direction: number, column: number): void {
@@ -1531,6 +1593,24 @@ export class GameRenderer {
   setDanmakuPrefs(prefs: DanmakuPrefs): void {
     this.danmakuPrefs = { ...prefs };
     this.danmaku?.setPrefs(prefs);
+  }
+
+  /**
+   * 低帧自适应画质档：只开关非关键观感层。
+   *
+   * - `balanced` 关掉光图的 screen 层（一次全屏混合，只在傍晚/夜间存在）；
+   * - `low` 再关飘雪与远景昵称。
+   *
+   * 刻意不动 DPR、光图分辨率与角色本体：改它们会在高 DPR 屏上引入重采样、
+   * 让夜景糊成色块，或者拿走玩家判断位置的全部依据——那是画风与手感损失，
+   * 不是「降一档画质」。档位变化极少（一次会话个位数次），这里打一条日志便于线上核对。
+   */
+  setQualityTier(tier: QualityTier): void {
+    if (tier === this.qualityTier) return;
+    this.qualityTier = tier;
+    this.lightmap?.setScreenEnabled(tier === 'high');
+    if (this.snow) this.snow.container.visible = tier !== 'low';
+    console.info(`[render] 画质档 ${tier}`);
   }
 
   /** 重连 / 换园区时清屏：旧弹幕不该漂在新世界里 */
@@ -1719,10 +1799,20 @@ export class GameRenderer {
     }
   }
 
+  /**
+   * 诊所覆盖层按实体跟位：直接读视图根节点的当前插值坐标。
+   *
+   * 箭头属性只建一次，每帧最多被问 2 次（护士帽 + 伤员爱心），不分配对象。
+   */
+  private readonly clinicAnchor = (id: number): { x: number; y: number } | null => {
+    const view = this.views.get(id);
+    return view ? view.root.position : null;
+  };
+
   tickBubbles(dtMs: number): void {
     const now = performance.now();
-    // 救护车警灯与护士头顶爱心共用同一条帧时钟，400ms 相位不额外维护状态
-    this.clinic?.update(now);
+    // 救护车警灯、护士帽红十字与伤员爱心共用同一条帧时钟，400ms 相位不额外维护状态
+    this.clinic?.update(now, this.clinicAnchor);
 
     // 活跃气泡通常 0–3 个，复用一块数组：原来每帧新建数组 + 每个气泡一个
     // `{id, view, bubbleUntil}` 对象 + 一次 sort，哪怕一个气泡都没有。
@@ -1780,8 +1870,9 @@ export class GameRenderer {
     this.terrain?.update(dtMs);
     // 跑马灯：只推进滚动坐标，文案每秒重算一次（ADR-0059）
     this.bulletin?.update(dtMs);
-    // 雪在屏幕空间，只累加坐标；灯串亮度由它自己 30s 采样一次
-    this.snow?.update(dtMs);
+    // 雪在屏幕空间，只累加坐标；灯串亮度由它自己 30s 采样一次。
+    // 低档整层不画，连坐标推进一起停掉：不可见的雪没有更新的理由
+    if (this.qualityTier !== 'low') this.snow?.update(dtMs);
     // 弹幕与雪同一层空间：只改 x / alpha，离屏当帧回收
     this.danmaku?.update(dtMs);
     this.winterArt?.update(now);
@@ -1854,7 +1945,8 @@ export class GameRenderer {
     if (this.destroyed) return;
     const nextW = Math.max(1, Math.round(width));
     const nextH = Math.max(1, Math.round(height));
-    const nextDpr = normalizeDpr(dpr);
+    // 与 `init` 走同一条口径：拖窗口跨屏时上限照样生效
+    const nextDpr = capDpr(normalizeDpr(dpr), this.dprCap);
     if (nextW === this.app.screen.width && nextH === this.app.screen.height && nextDpr === this.dpr) return;
     this.dpr = nextDpr;
     this.app.renderer.resize(nextW, nextH, nextDpr);

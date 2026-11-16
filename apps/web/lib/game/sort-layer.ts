@@ -43,6 +43,17 @@ export function bandIndexAt(y: number, originY: number, bandHeight: number, band
   return raw >= bandCount ? bandCount - 1 : raw;
 }
 
+/**
+ * 纯判定：这次 `update` 是否还需要真正写深度值。
+ *
+ * 已经在目标 band 里、且深度值与目标一致时什么都不用做。抽成纯函数是为了让
+ * 「静止角色每帧不写深度」这条性能契约能在 bun 里被直接断言——Pixi 的
+ * Container 不进单测，但它决定的只是一次布尔比较。
+ */
+export function depthWriteNeeded(sameBand: boolean, zIndex: number, nextY: number): boolean {
+  return !sameBand || zIndex !== nextY;
+}
+
 export class SortLayer implements DepthSink {
   readonly container = new Container();
   private readonly bands: Container[] = [];
@@ -72,9 +83,16 @@ export class SortLayer implements DepthSink {
   /**
    * 帧循环用：同 band 只写 zIndex（值不变时 Pixi 自己会早退），
    * 跨 band 才换父容器。角色 165px/s ÷ 256 纹素 ≈ 每秒换一次。
+   *
+   * 静止角色（站立 / 坐着 / 靠墙）的 y 经 `place()` 取整后逐帧恒定，
+   * 原来那句无条件赋值仍然每帧走一次 zIndex setter；在 `sortableChildren`
+   * 的 band 上，一次真实写入就会把整块 band 标脏，让渲染前的 `sortChildren`
+   * 重排一次（O(n log n)）。早退之后这类角色每帧 0 次 setter、0 次脏标记，
+   * 走动角色 y 每帧变化，行为与改造前逐帧一致。
    */
   update(child: Container, y: number): void {
     const band = this.bands[this.indexAt(y)]!;
+    if (!depthWriteNeeded(child.parent === band, child.zIndex, y)) return;
     if (child.parent !== band) {
       child.parent?.removeChild(child);
       band.addChild(child);

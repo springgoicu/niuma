@@ -60,6 +60,8 @@ export class LightmapLayer {
   private tone: LightTone | null = null;
   private nextToneAt = 0;
   private viewReady = false;
+  /** 画质降档时关掉 screen 抬暗部那一层（默认开，观感与改造前一致） */
+  private screenEnabled = true;
 
   private originX = 0;
   private originY = 0;
@@ -109,6 +111,18 @@ export class LightmapLayer {
   /** 注册地标光源；构造期一次，之后只读 */
   register(specs: readonly LightSpec[]): void {
     this.registry.addAll(specs);
+  }
+
+  /**
+   * 关掉 screen 抬暗部那一层（画质降档用）。
+   *
+   * 保留 multiply 主合成：夜色压暗的观感基本不变，只失去暗部的提亮。省掉的是一次
+   * 全屏混合 quad——傍晚与夜间才有的那份填充率，也正是玩家最集中上线的时段。
+   */
+  setScreenEnabled(enabled: boolean): void {
+    if (enabled === this.screenEnabled) return;
+    this.screenEnabled = enabled;
+    this.screen.visible = enabled;
   }
 
   /** 视口尺寸变化时先跟上尺寸；相机参数由下一帧 setView 补齐 */

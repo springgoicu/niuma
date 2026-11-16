@@ -37,7 +37,8 @@ function clearLine(from: { x: number; y: number }, to: { x: number; y: number })
 const westFence: SolidRect[] = CLINIC_FENCE_SOLIDS.filter((bar) => bar.w < bar.h && bar.x < CLINIC_RECT.x);
 
 describe('护士站围挡（ADR-0092 / ADR-0097）', () => {
-  it('西侧人行门洞可通行，进门就是站台铺装', () => {
+  // 几何上门洞是开的；能不能走进去由 `clinic-gate` 的步行门禁另算（ADR-0107）
+  it('西侧人行门洞几何可通行，进门就是站台铺装', () => {
     expect(clearLine({ x: 4980, y: 3750 }, { x: 5080, y: 3750 })).toBe(true);
     // 门洞正中心留出玩家半径净空：9 + 56 + 9 的通道随便走
     expect(isBlocked(5035, 3730, PLAYER_RADIUS)).toBe(false);

@@ -2,7 +2,7 @@ import {
   GUARD_FOLLOW_STOP_PX,
   POSE,
   TICK_MS,
-  resolveMotionInto,
+  resolveWalkInto,
   type MotionTarget,
 } from '@niuma/shared-types';
 import type { World } from '../sim/world';
@@ -125,7 +125,7 @@ function walk(agent: NpcAgent, task: FollowTask, speed: number): void {
       continue;
     }
     const step = Math.min(remaining, segment);
-    resolveMotionInto(MOTION, guard.x, guard.y, guard.x + (dx / segment) * step, guard.y + (dy / segment) * step);
+    resolveWalkInto(MOTION, guard.x, guard.y, guard.x + (dx / segment) * step, guard.y + (dy / segment) * step);
     const realX = MOTION.x - guard.x;
     const realY = MOTION.y - guard.y;
     guard.x = MOTION.x;

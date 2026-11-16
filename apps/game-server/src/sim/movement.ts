@@ -7,7 +7,7 @@ import {
   clampToRing,
   dequantizeCoord,
   isInRing,
-  resolveMotionInto,
+  resolveWalkInto,
   seatById,
   seatPose,
   unpackState,
@@ -153,7 +153,8 @@ export function applyMove(
   // 先按时间窗截断，再交给地形求解：碰撞只负责「能不能走过去」，不负责限速
   const nextX = clampWorldX(player.x + dx * scale);
   const nextY = clampWorldY(player.y + dy * scale);
-  resolveMotionInto(MOTION, player.x, player.y, nextX, nextY);
+  // 护士站门禁叠在求解里（ADR-0107）：只挡站外跨进站内，治好的伤员仍能走出来
+  resolveWalkInto(MOTION, player.x, player.y, nextX, nextY);
 
   /**
    * 擂台边界：参赛者向内夹取；非参赛者不允许靠移动跨进围绳。

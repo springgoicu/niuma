@@ -591,8 +591,9 @@ export function startGameServer(config: ServerConfig) {
     broadcastSeats,
     now: clock.now(),
   });
-  // 急救链只认识实体（ADR-0106）：NPC 的归位与任务续接通过窄端口交还 npc 层
-  clinic.setNpcRecovery({ restore: (playerId, spot, now) => npcs.restore(playerId, spot, now) });
+  // 急救链只认识实体（ADR-0106）：NPC 的康复续接通过窄端口交还 npc 层；
+  // 位置已由 clinic 写在床尾，npc 层不再需要倒地点（ADR-0109）
+  clinic.setNpcRecovery({ restore: (playerId, now) => npcs.restore(playerId, now) });
   const ventObserver = {
     onVentHit(attacker: Parameters<typeof clinic.observeHit>[0], target: Parameters<typeof clinic.observeHit>[1], now: number): void {
       detention?.onVentHit(attacker, target, now);

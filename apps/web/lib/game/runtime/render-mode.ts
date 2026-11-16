@@ -69,6 +69,21 @@ export function markRenderFallback(): void {
   }
 }
 
+/**
+ * 玩家点「切回渲染线程」时清掉回退标记。
+ *
+ * 只清标记、不改地址：下一次 `pickRenderMode` 会重新探测能力并尝试 Worker。
+ * 若环境本身起不来 Worker，会再回退一次并重新记上标记（HUD 角标回来），
+ * 不会形成「强制 → 崩 → 再强制」的刷新打转。
+ */
+export function clearRenderFallback(): void {
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(FALLBACK_KEY);
+  } catch {
+    // 存储被禁用：地址上没有 `render=main` 时仍走能力探测，重试同样有效
+  }
+}
+
 function renderFallbackMarked(): boolean {
   try {
     return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(FALLBACK_KEY) === '1';
@@ -116,6 +131,18 @@ export interface RenderFatalReloadOptions {
 export function renderFatalUrl(href: string): string {
   const url = new URL(href);
   url.searchParams.set('gpu', 'webgl');
+  return url.toString();
+}
+
+/**
+ * 重试地址：只把 `render` 参数去掉，交回能力探测。
+ *
+ * 不钉 `?render=worker`：那个参数会永远盖过回退标记，Worker 再次崩掉时
+ * 用户会被困在「刷新 → 又崩」里。清参数 + 清标记，这次重试只发生一次。
+ */
+export function retryRenderUrl(href: string): string {
+  const url = new URL(href);
+  url.searchParams.delete('render');
   return url.toString();
 }
 

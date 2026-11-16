@@ -44,12 +44,24 @@ export class SeatRegistry {
   /**
    * 占住一个座位：吸附到锚点、按种类落姿态，并把变化追加到 `out`。
    * 床位与凳子共用这一条路径，姿态只由 `seatPose` 决定。
+   *
+   * `snap = false` 只占住座位与落姿态，**不动坐标**（ADR-0109）：急救站把伤员
+   * 扶上床时，位置由调用方按 Tick 逐帧挪过去，一次式吸附在客户端就是一记瞬移。
+   * 占了座不等于占着锚点，调用方必须自己保证最终停在锚点上。
    */
-  occupy(player: Player, seat: SeatInstance, now: number, out: SeatStateEntry[]): SeatStateEntry[] {
+  occupy(
+    player: Player,
+    seat: SeatInstance,
+    now: number,
+    out: SeatStateEntry[],
+    snap = true,
+  ): SeatStateEntry[] {
     this.occupant[seat.id] = player.id;
     player.seat = seat.id;
-    player.x = seat.x;
-    player.y = seat.y;
+    if (snap) {
+      player.x = seat.x;
+      player.y = seat.y;
+    }
     player.lastMoveAt = now;
     player.applyState(seat.facing, seatPose(seat.kind), false);
     player.dirty = true;

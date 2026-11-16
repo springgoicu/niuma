@@ -2,6 +2,7 @@ import type { CareerSummary, CharacterAppearance, EconomyProfile } from '@niuma/
 import type { DanmakuPrefs } from '../danmaku-prefs';
 import type { InteractiveKind } from '../interactions';
 import type { ControlBlock, SnapshotPatch, ViewportInfo } from './control-channel';
+import type { RenderMode } from './render-mode';
 
 /** 入场身份：一次会话内不变，重连与换装广播都以它为准 */
 export interface SessionProfile {
@@ -51,6 +52,13 @@ export interface EngineEnv {
   readonly search: string;
   /** 已经建好的渲染目标：主线程是 `<canvas>`，Worker 是移交进来的 `OffscreenCanvas` */
   readonly canvas: HTMLCanvasElement | OffscreenCanvas;
+  /**
+   * 这份 env 建在哪个宿主里：`worker` 是渲染线程，`main` 是回退实现。
+   *
+   * 只用于上报（HUD 让玩家知道自己掉到了主线程），引擎内部不得据此分支——
+   * 两条路径必须跑同一套逻辑，否则回退模式会变成一条没人日常走的腐烂分支。
+   */
+  readonly renderMode: RenderMode;
   /** 输入控制块：按键掩码、摇杆、动作环。两侧是同一块内存或同一条降级通路 */
   readonly control: ControlBlock;
   /** 每帧调用；尺寸或 DPR 真的变了才返回 true，渲染层据此重算倍率与文字位图 */

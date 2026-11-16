@@ -84,6 +84,7 @@ export function runWorkerHost(scope: WorkerScope): void {
     let clockForwardTz = Number.NaN;
     const env: EngineEnv = {
       search: message.search,
+      renderMode: 'worker',
       canvas: message.canvas,
       control: block,
       readViewport: (out) => block.readViewport(out),

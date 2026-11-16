@@ -25,6 +25,7 @@ import { create } from 'zustand';
 import { loadChatOpen, saveChatOpen } from './chat-prefs';
 import type { BoardEntry, PlayerBadge } from './game/badge';
 import type { ChatEntry, SessionStats } from './game/session';
+import type { RenderMode } from './game/runtime/render-mode';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'queued' | 'online' | 'offline' | 'error';
 
@@ -34,6 +35,8 @@ interface GameUiState {
   selfId: number;
   detail: string;
   backend: string;
+  /** 渲染宿主：`main` 表示已回退主线程，HUD 据此显示角标与重试入口 */
+  renderMode: RenderMode;
   fps: number;
   ping: number;
   x: number;
@@ -246,6 +249,8 @@ const INITIAL = {
   selfId: 0,
   detail: '',
   backend: 'initializing',
+  // 首帧统计到达前按「渲染线程」显示：宁可晚一拍提示，也不要在正常的 Worker 会话上闪一下角标
+  renderMode: 'worker' as RenderMode,
   fps: 0,
   ping: 0,
   x: 4096,
@@ -395,6 +400,7 @@ export const useGameUi = create<GameUiState>((set) => ({
       board: stats.board,
       rank: stats.rank,
       backend: stats.backend,
+      renderMode: stats.renderMode,
     }),
 
   setQueue: (queue) => set({ queue }),
