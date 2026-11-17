@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback } from 'react';
 import { Coins, Lock, ShoppingBag, Sparkles, Swords, X } from 'lucide-react';
 import {
   COSMETIC_SKUS,
@@ -12,6 +13,7 @@ import {
   type ItemSku,
 } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
+import { useModalKeys } from '@/lib/game/use-modal-keys';
 
 interface CoinShopDialogProps {
   onBuy: (kind: number, id: number, count?: number) => void;
@@ -32,6 +34,8 @@ export function CoinShopDialog({ onBuy, onUse, onShout }: CoinShopDialogProps) {
   const tab = useGameUi((state) => state.shopTab);
   const wallet = useGameUi((state) => state.wallet);
   const setOpen = useGameUi((state) => state.setShopOpen);
+  const close = useCallback(() => setOpen(false), [setOpen]);
+  useModalKeys(open, close);
   if (!open) return null;
 
   const selfItems = ITEM_SKUS.filter((sku) => sku.target === ITEM_TARGET.Self);

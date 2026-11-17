@@ -1,4 +1,5 @@
-import { P2P_GAME_TYPE, P2P_INVITE_REASON, P2P_INVITE_TTL_MS } from '@niuma/shared-types';
+import { OpCode, P2P_GAME_TYPE, P2P_INVITE_REASON, P2P_INVITE_TTL_MS } from '@niuma/shared-types';
+import { decodeP2PInviteResult } from '@niuma/shared-types';
 import { describe, expect, it } from 'bun:test';
 import { EconomyService } from '../economy/service';
 import { Player } from '../sim/world';
@@ -35,6 +36,13 @@ function setup(random = () => 0.2) {
   });
   bus.register(duelHandler);
   return { a, b, c, bus, economy, sent };
+}
+
+/** 从已发包里取出某人收到的邀请结果回执（按 wsId 区分收件人） */
+function resultsFor(sent: Array<{ wsId: number; packet: Uint8Array }>, wsId: number) {
+  return sent
+    .filter((entry) => entry.wsId === wsId && entry.packet[0] === OpCode.S2C_P2P_INVITE_RESULT)
+    .map((entry) => decodeP2PInviteResult(entry.packet));
 }
 
 describe('ChallengeBus', () => {
@@ -89,6 +97,28 @@ describe('ChallengeBus', () => {
     expect(bus.pendingCount).toBe(0);
     expect(a.pendingInviteId).toBe(0);
     expect(b.pendingInviteId).toBe(0);
+  });
+
+  it('到期瞬间点接受：应战方也收到 Expired 回执', () => {
+    const { a, b, bus, sent } = setup();
+    bus.invite(a, { targetId: b.id, gameType: P2P_GAME_TYPE.Duel, wager: 20, extra: 0 }, 1000);
+    const inviteId = b.pendingInviteId;
+    // 卡在到期之后、下次 tick 清账之前点接受，走 respond 的 now >= expiresAt 分支
+    bus.respond(b, { inviteId, accept: true }, 1000 + P2P_INVITE_TTL_MS + 1);
+    const toB = resultsFor(sent, b.wsId);
+    expect(toB.length).toBe(1);
+    expect(toB[0]!.reason).toBe(P2P_INVITE_REASON.Expired);
+    expect(toB[0]!.accepted).toBe(false);
+  });
+
+  it('发起方邀请后掉线：应战方点接受收到 Offline 回执', () => {
+    const { a, b, bus, sent } = setup();
+    bus.invite(a, { targetId: b.id, gameType: P2P_GAME_TYPE.Duel, wager: 20, extra: 0 }, 1000);
+    a.wsId = 0; // 模拟发起方断线（sendResult 对 wsId=0 静默，但应战方仍要收到）
+    bus.respond(b, { inviteId: b.pendingInviteId, accept: true }, 1010);
+    const toB = resultsFor(sent, b.wsId);
+    expect(toB.length).toBe(1);
+    expect(toB[0]!.reason).toBe(P2P_INVITE_REASON.Offline);
   });
 
   it('对局中掉线按对手获胜结算，双方不再忙碌', () => {

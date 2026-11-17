@@ -2618,7 +2618,14 @@ export class GameSession {
     });
     this.renderer.showBubble(packet.targetId, pickVentVictimLine(packet.targetId));
     this.renderer.setStun(packet.targetId, VENT_STUN_MS);
-    if (packet.ringHit) this.renderer.showRingDamage(packet.targetId, packet.eliminated === true);
+    if (packet.ringHit) {
+      this.renderer.showRingDamage(packet.targetId, packet.eliminated === true);
+    } else if (packet.attackerId === this.localId) {
+      // 本人命中他人：在受击点给一枚轻量「命中」飘字，确认这一脚真的创到了人。
+      // 空放（targetId=0）在上面已 return，擂台命中走 showRingDamage，两条都不重复。
+      // 音效与受方台词照旧，这里只补攻方看得见的回执。
+      this.renderer.showFloatText(x, y, '命中！');
+    }
     if (!targetEid) return;
 
     if (packet.targetId === this.localId) {

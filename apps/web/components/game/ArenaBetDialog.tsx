@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import { useModalKeys } from '@/lib/game/use-modal-keys';
 import {
   RING_BET_MAX,
   RING_BET_MIN,
@@ -31,6 +32,7 @@ const PRESETS = [10, 50, 200, 500] as const;
  * 奖池是双方投入额之和，投选中一侧按投入额比例分走全池，平台不收服务费。
  */
 export function ArenaBetDialog({ pool, ring, coins, seated, onClose, onBet }: ArenaBetDialogProps) {
+  useModalKeys(true, onClose);
   const [side, setSide] = useState<number>(RING_SIDE.Red);
   const [amount, setAmount] = useState(50);
   const [custom, setCustom] = useState('');

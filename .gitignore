@@ -1,4 +1,5 @@
 node_modules/
+.pnpm-store/
 .next/
 .turbo/
 dist/
@@ -26,3 +27,7 @@ apps/game-server/data/
 **/world-state.json
 **/world-state.json.tmp
 **/world-state.json.bad-*
+
+# Lumio 发布工程：只保留在本机，不入库
+apps/lumio/
+apps/web/lib/host.ts

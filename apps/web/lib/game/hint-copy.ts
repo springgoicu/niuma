@@ -19,8 +19,8 @@ export const HINT = {
   /** 世界指路牌（拱门东侧）：纯客户端互动，只展开园区导览卡 */
   directory: '[F] 看园区导览',
   interact: '按 F 互动',
-  /** 赛博财神供案（ADR-0061） */
-  shrine: '[F] 上香祈福',
+  /** 赛博财神供案（ADR-0061）：当日首柱附赠 60s 金光，写进提示让玩家知道收益 */
+  shrine: '[F] 上香祈福 · 今日首柱有惊喜',
   /** 老干部紫砂茶台（ADR-0061 → ADR-0085）：改为打开属性强化面板 */
   tea: '[F] 打开属性强化',
   /** 发泄区老板（ADR-0070）：出招键是 E，不是互动键 F */
@@ -47,8 +47,8 @@ export const HINT = {
   arenaNeedSeat: '按 Z 坐到观战长椅上再投选',
   /** 豪宅小院门口 */
   villa: '[F] 查看小院牌匾',
-  /** 院内摇钱树 */
-  villaTree: '[F] 收摇钱树',
+  /** 院内摇钱树：直接把每分钟产出写进提示 */
+  villaTree: '[F] 收摇钱树 · 每分钟 25 币',
   /** 牛马公寓门口：按 F 从空闲窗口探头（ADR-0098） */
   apartment: '[F] 进入牛马公寓',
   /** 人在窗口里：任意时刻按 F 都回门口 */
@@ -152,7 +152,7 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.bulletin]: '点「互动」查看放假倒计时',
   [HINT.directory]: '点「互动」看园区导览',
   [HINT.interact]: '点「互动」',
-  [HINT.shrine]: '点「互动」上香祈福',
+  [HINT.shrine]: '点「互动」上香祈福 · 今日首柱有惊喜',
   [HINT.tea]: '点「互动」打开属性强化',
   [HINT.boss]: '点「发泄」踹老板一脚',
   [HINT.ringJoin]: '点「互动」报名擂台',
@@ -169,7 +169,7 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.arenaBet]: '点「互动」投选',
   [HINT.arenaNeedSeat]: '点「坐下」坐到观战长椅上再投选',
   [HINT.villa]: '点「互动」查看牌匾',
-  [HINT.villaTree]: '点「互动」收摇钱树',
+  [HINT.villaTree]: '点「互动」收摇钱树 · 每分钟 25 币',
   [HINT.apartment]: '点「互动」进公寓',
   [HINT.apartmentExit]: '点「互动」出门',
   [HINT.clinicGate]: '护士站只收救护车送来的伤员',

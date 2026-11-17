@@ -12,12 +12,15 @@ import {
   DEFAULT_APPEARANCE,
   DIRECTION,
   ENTITY_ROLE_NURSE,
+  JAIL_ANCHOR,
+  NAV_ARRIVALS,
   OpCode,
   PATIENT_STATE,
   POSE,
   TICK_MS,
   VENT_STUN_MS,
   decodeAmbulance,
+  isBlocked,
   isInClinicInterior,
   resolveWalkInto,
   seatById,
@@ -605,4 +608,77 @@ describe('排队出警与开服清场（ADR-0114）', () => {
     expect(npc.y).toBe(bedY);
     expect(npc.incapacitated).toBe(true);
   });
+});
+
+/**
+ * 跨场所出警回归（ADR-0115）：伤员倒在围合场所内时，救护车必须寻路穿过门洞开进去接人，
+ * 而不是直线顶墙、8 秒后盲瞬移落进墙里反复弹。旧实现会在这里卡死或永远接不到人。
+ */
+describe('救护车跨场所出警（ADR-0115）', () => {
+  const CASES = [
+    { name: '小黑屋', spot: { x: JAIL_ANCHOR.x, y: JAIL_ANCHOR.y } },
+    { name: '卫生间', spot: { x: NAV_ARRIVALS.restroom.x, y: NAV_ARRIVALS.restroom.y } },
+  ] as const;
+
+  for (const scene of CASES) {
+    it(`倒在${scene.name}内的伤员被车开进去接起，全程无瞬移并最终治愈`, () => {
+      expect(isBlocked(scene.spot.x, scene.spot.y), `${scene.name}倒地点本身应在空地`).toBe(false);
+      const world = new World();
+      const grid = new SpatialGrid();
+      const cars: AmbulancePacket[] = [];
+      const manager = new AmbulanceManager({
+        world,
+        grid,
+        transport: {
+          send(_wsId, packet) {
+            if (packet.byteLength !== AMBULANCE_PACKET_BYTES) return;
+            if (packet[0] !== OpCode.S2C_AMBULANCE) return;
+            cars.push(decodeAmbulance(packet));
+          },
+        },
+        seats: new SeatRegistry(),
+        broadcastSeats: () => {},
+        now: 0,
+      });
+
+      const attacker = world.create('甲', DEFAULT_APPEARANCE.cow, 11, scene.spot.x + 24, scene.spot.y)!;
+      const victim = world.create('乙', DEFAULT_APPEARANCE.cow, 12, scene.spot.x, scene.spot.y)!;
+      grid.insert(attacker.id, attacker.x, attacker.y);
+      grid.insert(victim.id, victim.x, victim.y);
+
+      const downAt = 1_000;
+      for (let i = 0; i < 3; i += 1) manager.observeHit(attacker, victim, downAt);
+      expect(victim.incapacitated).toBe(true);
+
+      let prevCar: { x: number; y: number } | null = null;
+      /** 接人前车的最大单帧位移：寻路逐点推进很小，旧实现的 8 秒盲瞬移是几百 px */
+      let maxJumpBeforePickup = 0;
+      let pickedUp = false;
+      let healed = false;
+      let prevCarried = victim.carriedBy;
+      for (let elapsed = 0; elapsed <= 90_000 && !healed; elapsed += TICK_MS) {
+        const now = downAt + elapsed;
+        manager.update(now, tick(now));
+        const car = cars.filter((packet) => packet.id === 1).at(-1);
+        if (car) {
+          if (!pickedUp && prevCar) {
+            maxJumpBeforePickup = Math.max(
+              maxJumpBeforePickup,
+              Math.hypot(car.x - prevCar.x, car.y - prevCar.y),
+            );
+          }
+          prevCar = { x: car.x, y: car.y };
+        }
+        if (prevCarried === 0 && victim.carriedBy !== 0) pickedUp = true;
+        prevCarried = victim.carriedBy;
+        if (victim.patientState === PATIENT_STATE.Shielded) healed = true;
+      }
+
+      // 不卡墙的可观测行为：人被接起、最终治愈，且接人全程车没有瞬移跳变
+      expect(pickedUp, `${scene.name}的伤员应被救护车接起`).toBe(true);
+      expect(maxJumpBeforePickup, `${scene.name}接人时车出现瞬移跳变（卡墙后盲瞬移）`).toBeLessThan(120);
+      expect(healed, `${scene.name}的伤员应最终治愈`).toBe(true);
+      expect(victim.patientState).toBe(PATIENT_STATE.Shielded);
+    });
+  }
 });

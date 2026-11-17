@@ -29,6 +29,7 @@ import {
   encodeAmbulance,
   encodePatientStatus,
   findFreePoint,
+  isBlocked,
   isInClinicInterior,
   quantizeCoord,
   rectContains,
@@ -41,6 +42,7 @@ import {
   type PatientState,
   type SeatStateEntry,
 } from '@niuma/shared-types';
+import { findPath, nearestFreePoint, type NavPoint } from '../nav/path';
 import type { SpatialGrid } from '../spatial/grid';
 import type { ActivityHub } from './activity';
 import type { SeatRegistry } from './seats';
@@ -53,8 +55,15 @@ const AMBULANCE_SPEED = MOVE_SPEED * 1.6;
 const PICKUP_RADIUS = 48;
 /** 送回落点判定：车位 / 站内落点 64px 内开始交床 */
 const DROP_RADIUS = 64;
-/** 出警 / 返航的防卡死上限：超过就瞬时脱困 */
+/**
+ * 出警 / 送回 / 返航的防卡死上限：整段路超过这个时长仍未完成就安全落点兜底。
+ * ADR-0115 后正常路段由寻路驱动，不会顶墙；这里只是最后一道保险。
+ */
 const UNSTUCK_MS = 8000;
+/** 寻路中途完全不动多久算卡死：比整段上限更早触发，避免原地磨满 8 秒 */
+const NAV_STALL_MS = 2200;
+/** 停滞判定的最小位移：低于它视作原地打转 */
+const NAV_STALL_EPS = 2;
 /**
  * 出警 / 送回的固定绕行航点（不做寻路，ADR-0097）：
  * 先穿服务广场南沿，再走东主路进中央广场，避开急救站围挡与公寓楼群。
@@ -144,6 +153,18 @@ interface Ambulance {
   phaseAt: number;
   /** 绕行航段：0 东侧空地 → 1 南向主路 → 2 追人 / 回站（站内伤员改走 3：南侧通道口再追人） */
   leg: number;
+  /**
+   * 由 nav/findPath 算出的逐点路线（ADR-0115）。空数组表示尚未规划；
+   * 追人段的目标（昏迷位置）固定，只在派单时算一次，中途失效才重算。
+   */
+  route: NavPoint[];
+  /** route 当前推进到的点下标 */
+  routeIndex: number;
+  /** 这份 route 对应的目标坐标；目标变动超过阈值就重算 */
+  routeGoalX: number;
+  routeGoalY: number;
+  /** 上次产生有效位移的时刻，用于中途停滞提前脱困 */
+  lastProgressAt: number;
   /** 最后一次有意义的移动方向，用于把伤员挂在车尾 */
   dirX: number;
   dirY: number;
@@ -292,6 +313,11 @@ export class AmbulanceManager {
       targetId: 0,
       phaseAt: 0,
       leg: 0,
+      route: [],
+      routeIndex: 0,
+      routeGoalX: 0,
+      routeGoalY: 0,
+      lastProgressAt: 0,
       dirX: 0,
       dirY: 1,
       lastSentState: -1,
@@ -459,6 +485,8 @@ export class AmbulanceManager {
     car.targetId = player.id;
     car.leg = 0;
     car.phaseAt = now;
+    car.lastProgressAt = now;
+    this.clearRoute(car);
     this.activity?.emit(ACTIVITY_KIND.AmbulanceDispatched, player.id, now);
     return true;
   }
@@ -609,11 +637,13 @@ export class AmbulanceManager {
     if (car.state === AMBULANCE_STATE.Returning) {
       const arrived = this.moveCar(car, this.spotX(car), this.spotY(car), now);
       if (arrived || now - car.phaseAt >= UNSTUCK_MS) {
-        car.x = this.spotX(car);
-        car.y = this.spotY(car);
+        const safe = nearestFreePoint(this.spotX(car), this.spotY(car));
+        car.x = safe?.x ?? this.spotX(car);
+        car.y = safe?.y ?? this.spotY(car);
         car.state = AMBULANCE_STATE.Idle;
         car.targetId = 0;
         car.leg = 0;
+        this.clearRoute(car);
       }
       return;
     }
@@ -642,30 +672,36 @@ export class AmbulanceManager {
         return;
       }
 
-      // 伤员昏迷后位置不动，航点只需刷新一次
+      // 伤员昏迷后位置不动：按寻路路线逐点推进，穿过门洞而不是直线顶墙（ADR-0115）
+      const arrived = this.advanceRoute(car, patient.x, patient.y, now);
       const dist = Math.hypot(patient.x - car.x, patient.y - car.y);
-      this.moveCar(car, patient.x, patient.y, now);
-      if (dist <= PICKUP_RADIUS) {
+      if (arrived || dist <= PICKUP_RADIUS) {
         car.state = AMBULANCE_STATE.Transporting;
         car.phaseAt = now;
         car.leg = 0;
         car.targetId = patient.id;
         patient.carriedBy = car.id;
+        this.clearRoute(car);
         this.broadcastPatient(patient, PATIENT_STATE.Incapacitated, 0);
         this.activity?.emit(ACTIVITY_KIND.AmbulanceLoaded, patient.id, now);
         return;
       }
 
-      // 8 秒还没摸到人：瞬移吸附到目标 36px 内，不让墙体把出警卡死
-      if (now - car.phaseAt >= UNSTUCK_MS) {
-        car.x = clampWorldX(patient.x + 36);
-        car.y = clampWorldY(patient.y);
+      // 路线规划失败（目标被围死）或中途卡死：落到伤员附近最近的合法点，绝不写进墙里
+      const stalled = now - car.lastProgressAt >= NAV_STALL_MS;
+      const timedOut = now - car.phaseAt >= UNSTUCK_MS;
+      if (car.route.length === 0 || stalled || timedOut) {
+        const safe = this.safePickupPoint(patient.x, patient.y);
+        car.x = safe.x;
+        car.y = safe.y;
         car.dirX = -1;
         car.dirY = 0;
         car.state = AMBULANCE_STATE.Transporting;
         car.phaseAt = now;
         car.leg = 0;
+        car.targetId = patient.id;
         patient.carriedBy = car.id;
+        this.clearRoute(car);
         this.broadcastPatient(patient, PATIENT_STATE.Incapacitated, 0);
         this.activity?.emit(ACTIVITY_KIND.AmbulanceLoaded, patient.id, now);
       }
@@ -680,18 +716,28 @@ export class AmbulanceManager {
       return;
     }
     this.attachPatient(car, patient);
+    // 送回第一段：从伤员所在场所出来到主路口。场所内有门洞时走路线，避免出场所就顶墙。
     if (car.leg === 0) {
-      this.advanceLeg(car, AMBULANCE_ROAD_GATE.x, AMBULANCE_ROAD_GATE.y, 1, now);
+      const arrived = this.advanceRoute(car, AMBULANCE_ROAD_GATE.x, AMBULANCE_ROAD_GATE.y, now);
+      const stalled = now - car.lastProgressAt >= NAV_STALL_MS;
+      if (arrived || stalled || now - car.phaseAt >= UNSTUCK_MS) {
+        car.leg = 1;
+        car.phaseAt = now;
+        car.lastProgressAt = now;
+        this.clearRoute(car);
+      }
       return;
     }
     if (car.leg === 1) {
       this.advanceLeg(car, AMBULANCE_EAST_GATE.x, AMBULANCE_EAST_GATE.y, 2, now);
       return;
     }
-    const arrived = this.moveCar(car, CLINIC_DROP.x, CLINIC_DROP.y, now);
+    const arrived = this.advanceRoute(car, CLINIC_DROP.x, CLINIC_DROP.y, now);
     if (arrived || now - car.phaseAt >= UNSTUCK_MS) {
-      car.x = CLINIC_DROP.x;
-      car.y = CLINIC_DROP.y;
+      const safe = nearestFreePoint(CLINIC_DROP.x, CLINIC_DROP.y);
+      car.x = safe?.x ?? CLINIC_DROP.x;
+      car.y = safe?.y ?? CLINIC_DROP.y;
+      this.clearRoute(car);
       // 交接期内车停在落点等护士：伤员继续挂车尾，CARRYING 照常亮
       this.beginHandover(car, patient, now);
     }
@@ -702,14 +748,59 @@ export class AmbulanceManager {
     if (this.moveCar(car, tx, ty, now)) {
       car.leg = next;
       car.phaseAt = now;
+      car.lastProgressAt = now;
       return;
     }
     if (now - car.phaseAt >= UNSTUCK_MS) {
-      car.x = tx;
-      car.y = ty;
+      const safe = nearestFreePoint(tx, ty);
+      car.x = safe?.x ?? tx;
+      car.y = safe?.y ?? ty;
       car.leg = next;
       car.phaseAt = now;
+      car.lastProgressAt = now;
     }
+  }
+
+  private clearRoute(car: Ambulance): void {
+    car.route = [];
+    car.routeIndex = 0;
+    car.routeGoalX = 0;
+    car.routeGoalY = 0;
+  }
+
+  /**
+   * 沿路线逐点推进（ADR-0115）。路线只在目标变化或被清空时重算；每 Tick 消费一个
+   * 航点，走到末点返回 true。昏迷伤员坐标固定，一次出警通常只规划一次。
+   */
+  private advanceRoute(car: Ambulance, tx: number, ty: number, now: number): boolean {
+    const goalChanged = Math.hypot(tx - car.routeGoalX, ty - car.routeGoalY) > 24;
+    if (car.route.length === 0 || goalChanged) {
+      const path = findPath({ x: car.x, y: car.y }, { x: tx, y: ty });
+      car.route = path ?? [];
+      car.routeIndex = 0;
+      car.routeGoalX = tx;
+      car.routeGoalY = ty;
+      car.lastProgressAt = now;
+    }
+    while (car.routeIndex < car.route.length) {
+      const point = car.route[car.routeIndex]!;
+      if (!this.moveCar(car, point.x, point.y, now)) break;
+      car.routeIndex += 1;
+      car.lastProgressAt = now;
+    }
+    if (car.routeIndex >= car.route.length) {
+      car.routeIndex = car.route.length;
+      return true;
+    }
+    // 位移有效就刷新停滞计时：贴着路径点滑行时每点位移可能很小，不能误判卡死
+    return false;
+  }
+
+  /** 装人兜底落点：伤员身旁最近的空地，绝不落进墙里 */
+  private safePickupPoint(px: number, py: number): { x: number; y: number } {
+    const free = nearestFreePoint(px, py);
+    if (free) return free;
+    return { x: clampWorldX(px), y: clampWorldY(py) };
   }
 
   private moveCar(car: Ambulance, tx: number, ty: number, now: number): boolean {
@@ -732,9 +823,13 @@ export class AmbulanceManager {
   }
 
   private attachPatient(car: Ambulance, patient: Player): void {
-    // 车尾 = 车头反方向 26px；车头方向取最近一次有效位移方向
-    patient.x = clampWorldX(car.x - car.dirX * 26);
-    patient.y = clampWorldY(car.y - car.dirY * 26);
+    // 车尾 = 车头反方向 26px；车头方向取最近一次有效位移方向。
+    // 车贴着门洞或墙时这个点可能落在障碍里，就近挪到空地，避免把伤员塞进墙（ADR-0115）。
+    const tailX = car.x - car.dirX * 26;
+    const tailY = car.y - car.dirY * 26;
+    const safe = isBlocked(tailX, tailY) ? nearestFreePoint(tailX, tailY) : undefined;
+    patient.x = clampWorldX(safe?.x ?? tailX);
+    patient.y = clampWorldY(safe?.y ?? tailY);
     // 必须走 applyState：只改 pose 不动 state，远端会继续按站立姿态画被拖着的人
     if (patient.pose !== POSE.Lie) patient.applyState(patient.direction, POSE.Lie, false);
     patient.dirty = true;

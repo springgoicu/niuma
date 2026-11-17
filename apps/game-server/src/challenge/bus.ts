@@ -155,6 +155,9 @@ export class ChallengeBus {
     if (now >= invite.expiresAt) {
       this.dropPending(invite);
       this.sendResult(invite.from, invite.id, false, P2P_INVITE_REASON.Expired);
+      // 应战方恰好在到期这一刻点了「接受」：浮窗已按本地 TTL 收起，但也要收到一条
+      // Expired 回执，否则他不知道这一下没接上（客户端 challenge.ts 据此弹「邀请已超时」）
+      this.sendResult(player, invite.id, false, P2P_INVITE_REASON.Expired);
       return;
     }
     if (!request.accept) {
@@ -167,17 +170,21 @@ export class ChallengeBus {
     if (initiator.busyMatchId !== 0 || initiator.wsId === 0) {
       this.dropPending(invite);
       this.sendResult(initiator, invite.id, false, P2P_INVITE_REASON.Offline);
+      // 应战方已点了接受却等不到开赛：给一条 Offline 说明发起方掉线 / 在忙
+      this.sendResult(responder, invite.id, false, P2P_INVITE_REASON.Offline);
       return;
     }
     if (responder.busyMatchId !== 0) {
       // 理论上不可能（pending 与 busy 互斥），但状态被外部改写时仍要能安全退出
       this.dropPending(invite);
       this.sendResult(initiator, invite.id, false, P2P_INVITE_REASON.TargetBusy);
+      this.sendResult(responder, invite.id, false, P2P_INVITE_REASON.TargetBusy);
       return;
     }
     if (this.active.size >= P2P_MAX_ACTIVE_MATCHES) {
       this.dropPending(invite);
       this.sendResult(initiator, invite.id, false, P2P_INVITE_REASON.Limit);
+      this.sendResult(responder, invite.id, false, P2P_INVITE_REASON.Limit);
       return;
     }
     const economy = this.options.economy;
@@ -190,6 +197,7 @@ export class ChallengeBus {
       if (!economy.freezeEscrow(initiator, escrowKey, invite.wager)) {
         this.dropPending(invite);
         this.sendResult(initiator, invite.id, false, P2P_INVITE_REASON.NotEnoughCoins);
+        this.sendResult(responder, invite.id, false, P2P_INVITE_REASON.NotEnoughCoins);
         return;
       }
       if (!economy.freezeEscrow(responder, escrowKey, invite.wager)) {

@@ -660,14 +660,26 @@ export function GameViewport({
             useGameUi.getState().setDiceBoardPending(false);
           }
         },
+        // 四个热区弹窗与榜单 / 告示板同一条纪律：先收回移动控制权，再让面板接管，
+        // 否则按住方向键开面板时，capture 吞键前的那一帧角色仍会顶着面板滑行
         onShopOpen: (tab) => {
+          clientRef.current?.clearMovement();
           // 茶台 F：直接落到属性页（ADR-0085），不再走「喝枸杞茶」的本地反馈
           useGameUi.getState().setShopOpen(true, tab);
         },
         // ---- 热区建筑（ADR-0087）：开面板意图与下行快照 ----
-        onDiceOpen: (table) => useGameUi.getState().setDiceOpen(table),
-        onArenaBetOpen: () => useGameUi.getState().setArenaBetOpen(true),
-        onVillaOpen: (villa) => useGameUi.getState().setVillaOpen(villa),
+        onDiceOpen: (table) => {
+          clientRef.current?.clearMovement();
+          useGameUi.getState().setDiceOpen(table);
+        },
+        onArenaBetOpen: () => {
+          clientRef.current?.clearMovement();
+          useGameUi.getState().setArenaBetOpen(true);
+        },
+        onVillaOpen: (villa) => {
+          clientRef.current?.clearMovement();
+          useGameUi.getState().setVillaOpen(villa);
+        },
         onDiceState: (packet) => useGameUi.getState().setDice(packet),
         onDiceResult: (packet) => useGameUi.getState().setDiceResult(packet),
         onDiceBoard: (packet) => useGameUi.getState().setDiceBoard(packet),

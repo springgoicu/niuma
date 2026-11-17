@@ -1,6 +1,7 @@
 'use client';
 
 import { X } from 'lucide-react';
+import { useModalKeys } from '@/lib/game/use-modal-keys';
 import {
   VILLA_ACTION,
   VILLA_INCOME,
@@ -24,6 +25,7 @@ interface VillaDialogProps {
  * 冠名权只在本运行周期有效，重启园区重新挂牌；牌匾上的名字由服务端随包下发。
  */
 export function VillaDialog({ villa, villas, coins, onClose, onAction }: VillaDialogProps) {
+  useModalKeys(true, onClose);
   const spec = VILLA_SPECS.find((item) => item.id === villa) ?? VILLA_SPECS[0]!;
   const info = villas?.villas.find((item) => item.id === villa) ?? null;
   // 归属由服务端按设备号判定：房主离线时 ownerId 归零，但院子仍算已拥有
