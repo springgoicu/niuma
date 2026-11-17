@@ -34,6 +34,7 @@ import {
   quantizeCoord,
   rectContains,
   resolveMotionInto,
+  resolveWalkInto,
   seatById,
   type AmbulancePacket,
   type AmbulanceState,
@@ -99,6 +100,16 @@ const HANDOVER_TIMEOUT_MS = 6000;
 const ESCORT_TIMEOUT_MS = 9000;
 /** 上床 / 下床的逐 Tick 过渡时长：一次式吸附在客户端就是一记瞬移（ADR-0109） */
 const LIFT_MS = 360;
+/**
+ * 出院速度（ADR-0117）：与护士站内步速同档，看着像自己走出来而不是被弹出去。
+ * 每帧位移 = NURSE_SPEED * TICK_MS / 1000 ≈ 5px，远小于「一记瞬移」的 60px。
+ */
+const DISCHARGE_SPEED = NURSE_SPEED;
+/**
+ * 出院卡死兜底（ADR-0117）：门洞被堵或碰撞求解不动时，到期直接落到站外安全点收尾。
+ * 正常出院路径约 200px / 5px 每帧 ≈ 40 帧 = 2 秒，这里给足余量。
+ */
+const DISCHARGE_TIMEOUT_MS = 6000;
 /** 站位驻足时长 */
 const POST_MS = 2400;
 const POST_JITTER_MS = 2800;
@@ -227,6 +238,19 @@ interface Waiting {
   since: number;
 }
 
+/**
+ * 一次逐帧出院（ADR-0117）：治疗完成、下床过渡结束后接入，
+ * 期间真人保持 Treating（客户端 patientLocked 仍为 true）、NPC 保持
+ * incapacitated（brain 首行 return，不抢坐标），走到站外才 finishStay。
+ */
+interface Discharge {
+  playerId: number;
+  path: DutyPoint[];
+  index: number;
+  /** 上次产生有效位移的时刻，用于卡死超时兜底 */
+  lastProgressAt: number;
+}
+
 export interface ClinicOptions {
   world: World;
   grid: SpatialGrid;
@@ -289,6 +313,8 @@ export class AmbulanceManager {
   private readonly nurseDuty = new Map<number, NurseDuty>();
   /** 正在挪床 / 下床的实体：把坐标变化摊到多个 Tick */
   private readonly tweens = new Map<number, MoveTween>();
+  /** 治疗完成、正在逐帧走出站体的康复者（ADR-0117） */
+  private readonly discharges = new Map<number, Discharge>();
   /** 康复续接端口；`server` 在 npc 层创建之后注入（clinic 构造更早） */
   private recovery: NpcRestorePort | null = null;
   private seq = 0;
@@ -419,6 +445,8 @@ export class AmbulanceManager {
 
   private downPlayer(player: Player, now: number): void {
     player.recentHits = 0;
+    // 出院途中又被打倒：取消出院，重新走救护链，别再被一路推出去（ADR-0117）
+    this.discharges.delete(player.id);
     // 倒下的是护士：手上的伤员必须立刻脱手，否则会被一个趴着的护士拖着走
     if (player.role === ENTITY_ROLE_NURSE) this.releaseNurse(player, now);
     player.incapacitated = true;
@@ -554,6 +582,7 @@ export class AmbulanceManager {
 
   update(now: number, tick: number): void {
     this.advanceTweens(now);
+    this.advanceDischarges(now, tick);
     this.advanceNurses(now);
     this.advanceQueue(now, tick);
     for (const car of this.cars) this.advanceCar(car, now);
@@ -1234,8 +1263,8 @@ export class AmbulanceManager {
       const bedIndex = CLINIC_BED_SEAT_IDS.indexOf(stay.seatId);
       const bed = bedIndex >= 0 ? CLINIC_BEDS[bedIndex] : undefined;
       if (!bed) {
-        // 地面治疗：原地起身，没有床可下
-        this.finishStay(player, now, tick);
+        // 地面治疗：原地起身，没有床可下（ADR-0107）
+        this.finishRecovery(player, now, tick);
         continue;
       }
       // 下床（ADR-0109）：床心 → 床尾外侧，逐 Tick 平移 360ms；
@@ -1243,9 +1272,127 @@ export class AmbulanceManager {
       const tailX = bed.x + bed.w / 2;
       const tailY = bed.y + bed.h + 18;
       this.startTween(player, tailX, tailY, LIFT_MS, now, (done, at) => {
-        this.finishStay(done, at, Math.max(tick, Math.floor(at / TICK_MS)));
+        this.finishRecovery(done, at, Math.max(tick, Math.floor(at / TICK_MS)));
       });
     }
+  }
+
+  /**
+   * 下床/地面治疗完成后的统一出口（ADR-0117）。
+   *
+   * 护士是站内固定岗，不参与出院，直接走原收尾；其余康复者先逐帧走出站体，
+   * 到站外才 `finishStay` 领护盾。这样发 Shielded 时人已在站外，客户端
+   * `patientLocked` 全程保持 true，本地预测不会与服务端出院位移抢写。
+   */
+  private finishRecovery(player: Player, now: number, tick: number): void {
+    // 护士是站内固定岗，不参与出院，直接走原收尾。
+    if (player.role === ENTITY_ROLE_NURSE) {
+      this.finishStay(player, now, tick);
+      return;
+    }
+    this.beginDischarge(player, now);
+  }
+
+  /** 登记一次出院：真人与 NPC 同口径，期间不解锁、不交还 NPC 层 */
+  private beginDischarge(player: Player, now: number): void {
+    if (this.discharges.has(player.id)) return;
+    this.discharges.set(player.id, {
+      playerId: player.id,
+      path: this.dischargePath(player.x, player.y),
+      index: 0,
+      lastProgressAt: now,
+    });
+    // 真人保持 Treating、NPC 保持 incapacitated：两者此刻都不该被本地/NPC 层接管。
+    player.applyState(player.direction, POSE.Idle, false);
+    player.dirty = true;
+    this.grid.update(player.id, player.x, player.y);
+  }
+
+  /**
+   * 出院航点（ADR-0117）：床尾 / 落点 → 护理走廊 → 落点内侧 → 西门门洞 → 站外铺装。
+   *
+   * 每段都是轴对齐的，走廊与门洞几何全部从 `CLINIC_*` 派生，不引入寻路依赖。
+   * 关键：护理走廊 `laneY`(=3780) 比西门门洞下沿(=3778) 还低，不能直接贴走廊
+   * 向西穿墙；必须先沿走廊退到落点内侧（`dropX`，床区以西、柜台以南），再折到
+   * 门洞中心高度 `gateY`，最后沿 `gateY` 穿西门到 `CLINIC_SPILL_POINT`。
+   */
+  private dischargePath(fromX: number, fromY: number): DutyPoint[] {
+    const dropX = CLINIC_DROP.x;
+    const laneY = CLINIC_NURSE_LANE_Y;
+    const gateY = CLINIC_ACCESS_PAVING.y + CLINIC_ACCESS_PAVING.h / 2;
+    // 出门洞即站外：铺装西沿再退 10px 就落在区域矩形之外、服务广场视野内。
+    // 不沿用 CLINIC_SPILL_POINT(4900)：门洞高度上 x=4930~4940 有障碍，走不过去；
+    // 那个点只适合开服一次性瞬移清场，不适合逐帧步行出院。
+    const outsideX = CLINIC_ACCESS_PAVING.x - 10;
+    const points: DutyPoint[] = [];
+    // 起点偏离走廊才先并入（床尾在床区正下方，需先退到走廊横带）
+    if (Math.abs(fromY - laneY) > 2) points.push({ x: fromX, y: laneY });
+    points.push({ x: dropX, y: laneY });
+    points.push({ x: dropX, y: gateY });
+    points.push({ x: outsideX, y: gateY });
+    return points;
+  }
+
+  /**
+   * 逐 Tick 推进所有正在出院的康复者（ADR-0117）。
+   *
+   * 位移复用 `walkPath` 的写法（直线 + `resolveMotionInto` 吃墙体），每帧 ≤ 5px；
+   * 卡死或超时则直接落到站外安全点收尾，绝不把人永久留在院内。走到门洞外侧后
+   * 交回 `finishStay`：真人就地领护盾，NPC 就地续接巡逻。
+   */
+  private advanceDischarges(now: number, tick: number): void {
+    if (this.discharges.size === 0) return;
+    for (const [playerId, discharge] of this.discharges) {
+      const player = this.world.get(playerId);
+      if (!player) {
+        this.discharges.delete(playerId);
+        continue;
+      }
+      const done = this.walkDischarge(player, discharge, now);
+      const timedOut = now - discharge.lastProgressAt >= DISCHARGE_TIMEOUT_MS;
+      if (done || timedOut) {
+        this.discharges.delete(playerId);
+        if (timedOut && !done) {
+          const last = discharge.path[discharge.path.length - 1]!;
+          const safe = nearestFreePoint(last.x, last.y);
+          player.x = safe?.x ?? last.x;
+          player.y = safe?.y ?? last.y;
+          player.dirty = true;
+          this.grid.update(player.id, player.x, player.y);
+        }
+        this.finishStay(player, now, Math.max(tick, Math.floor(now / TICK_MS)));
+      }
+    }
+  }
+
+  private walkDischarge(player: Player, discharge: Discharge, now: number): boolean {
+    const target = discharge.path[discharge.index];
+    if (!target) return true;
+    const dx = target.x - player.x;
+    const dy = target.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= 2) {
+      player.x = target.x;
+      player.y = target.y;
+      discharge.index += 1;
+      discharge.lastProgressAt = now;
+      player.dirty = true;
+      this.grid.update(player.id, player.x, player.y);
+      return discharge.index >= discharge.path.length;
+    }
+    const step = Math.min(dist, (DISCHARGE_SPEED * TICK_MS) / 1000);
+    resolveWalkInto(MOTION, player.x, player.y, player.x + (dx / dist) * step, player.y + (dy / dist) * step);
+    const moved = Math.hypot(MOTION.x - player.x, MOTION.y - player.y);
+    if (moved <= 0.5) return false;
+    player.x = MOTION.x;
+    player.y = MOTION.y;
+    const direction =
+      Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? DIRECTION.Right : DIRECTION.Left) : dy > 0 ? DIRECTION.Down : DIRECTION.Up;
+    player.applyState(direction, POSE.Walk, false);
+    player.markDirtyIfChanged();
+    this.grid.update(player.id, player.x, player.y);
+    discharge.lastProgressAt = now;
+    return false;
   }
 
   /**
@@ -1353,6 +1500,8 @@ export class AmbulanceManager {
     this.shieldUntil.delete(playerId);
     // 正在被挪床的实体直接放弃过渡：人已经走了，没必要再挪
     this.tweens.delete(playerId);
+    // 正在出院的实体一并清掉：人已断线，出院表不能留僵尸记录（ADR-0117）
+    this.discharges.delete(playerId);
     // 正被这名伤员占着交接位的护士也要放单，否则她会对着空气守床 3 秒
     for (const [nurseId, duty] of this.nurseDuty) {
       if (duty.patientId !== playerId) continue;
