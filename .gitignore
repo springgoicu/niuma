@@ -11,7 +11,7 @@ dist/
 next-env.d.ts
 apps/web/public/sprites/*.png
 apps/web/public/sprites/*.json
-# 品牌图同样由 pnpm assets 生成（favicon / iOS 图标 / 导航 logo），不入库
+# 品牌图同样由 npm run assets 生成（favicon / iOS 图标 / 导航 logo），不入库
 apps/web/public/brand/
 # 编辑器/工具会话遗留的临时文件
 _tmp_*

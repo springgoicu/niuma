@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/web",
+    "apps/game-server",
+    "packages/shared-types",
+    "packages/pixel-assets"
   ],
   "engines": {
     "node": ">=20.11"
@@ -13,15 +15,19 @@
     "dev": "node scripts/dev.mjs",
     "build": "npm run assets && npm run build --workspace=apps/web",
     "start": "node scripts/start.mjs",
-    "lint": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/game-server",
-    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/game-server && npm run typecheck --workspace=packages/shared-types",
+    "lint": "npm run typecheck",
+    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/game-server && npm run typecheck --workspace=packages/shared-types && npm run typecheck --workspace=packages/pixel-assets",
+    "test": "vitest run",
     "assets": "npm run generate --workspace=packages/pixel-assets",
+    "bench": "npm run bench --workspace=apps/game-server",
     "server": "npm run dev --workspace=apps/game-server",
     "changelog:check": "npm run changelog:check --workspace=apps/web"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "esbuild": "^0.25.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
   }
 }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# niuma 生产部署：Bun WebSocket 游戏服务器 + Next.js 15 standalone
+# niuma 生产部署：Node WebSocket 游戏服务器 + Next.js 15 standalone
 #
 # 目录约定：
 #   $APP_BASE/game        线上游戏服务器（dist/index.mjs + logs），${GAME_DIR}.old 为上一版本
@@ -30,7 +30,7 @@ set -euo pipefail
 export BUILD_ID=dontKillMe
 export JENKINS_NODE_COOKIE=dontKillMe
 
-# 加载 Node / PNPM 路径
+# 加载 Node 路径
 if [ -s "$HOME/.nvm/nvm.sh" ]; then
   . "$HOME/.nvm/nvm.sh"
 fi
@@ -141,16 +141,12 @@ wait_version() {
 # ==================== 1. 依赖与质量门禁 ====================
 log "[1/4] 安装依赖 + 质量门禁"
 cd "$WS"
-# pnpm 由 install.sh / CI 用 npm i -g 装好；corepack 只是兜底。
-# 它失败时会往日志里刷一大段 stack，对排查毫无价值，这里静音
-corepack enable >/dev/null 2>&1 || true
-pnpm config set store-dir "$HOME/.pnpm-store" >/dev/null 2>&1 || true
-pnpm install --frozen-lockfile --prefer-offline
+npm ci --include=dev --prefer-offline
 
-pnpm run typecheck
+npm run typecheck
 
 if [ "$RUN_TESTS" = "1" ]; then
-  pnpm run test
+  npm run test
 else
   echo ">>> 已跳过测试（RUN_TESTS=0）"
 fi
@@ -162,10 +158,10 @@ if [ "$DEPLOY_WEB" = "1" ]; then
     find "$WS/apps/web/.next" -mindepth 1 -maxdepth 1 ! -name 'cache' -exec rm -rf {} +
   fi
 
-  # 根 build = 生成像素图集（写入 apps/web/public/sprites）+ turbo 构建全部包
+  # 根 build = 生成像素图集（写入 apps/web/public/sprites）+ 构建 Web standalone
   NEXT_PUBLIC_GAME_WS_URL="$NEXT_WS_URL" \
   NODE_OPTIONS="--max-old-space-size=2048" \
-  pnpm run build
+  npm run build
 
   if [ ! -f "$WS/apps/web/.next/BUILD_ID" ]; then
     echo "✖ 前端构建失败：缺少 .next/BUILD_ID"
@@ -175,19 +171,9 @@ else
   echo ">>> DEPLOY_ROLE=$DEPLOY_ROLE：跳过 Next 构建（这台机器不跑 Web）"
 fi
 
-BUN_BIN="$(command -v bun || true)"
-if [ -z "$BUN_BIN" ]; then
-  BUN_BIN="$WS/node_modules/.bin/bun"
-fi
-if [ ! -x "$BUN_BIN" ]; then
-  echo "✖ 未找到 bun（应随 pnpm install 安装在 node_modules/.bin/bun）"
-  exit 1
-fi
-echo ">>> bun: $BUN_BIN ($("$BUN_BIN" --version 2>/dev/null || echo unknown))"
-
 # 游戏服务器的 exports 指向 shared-types 的 .ts 源码，必须内联打成单文件
 rm -rf "$WS/apps/game-server/dist"
-(cd "$WS/apps/game-server" && "$BUN_BIN" build src/index.ts --target=bun --outfile=dist/index.mjs)
+npm run build --workspace=apps/game-server
 if [ ! -f "$WS/apps/game-server/dist/index.mjs" ]; then
   echo "✖ 游戏服务器打包失败"
   exit 1
@@ -216,7 +202,6 @@ mv "$GAME_NEW" "$GAME_DIR"
 GAME_SERVER_PORT="$GAME_PORT" GAME_SERVER_HOST="$GAME_HOST" \
 pm2 start "$GAME_DIR/dist/index.mjs" \
   --name niuma-game \
-  --interpreter "$BUN_BIN" \
   --cwd "$GAME_DIR" \
   --time --max-memory-restart 600M \
   --output "$GAME_DIR/logs/out.log" \
@@ -233,7 +218,7 @@ if ! wait_http_200 "http://127.0.0.1:$GAME_PORT/health" 20; then
     rm -rf "$GAME_DIR"
     mv "${GAME_DIR}.old" "$GAME_DIR"
     GAME_SERVER_PORT="$GAME_PORT" GAME_SERVER_HOST="$GAME_HOST" \
-    pm2 start "$GAME_DIR/dist/index.mjs" --name niuma-game --interpreter "$BUN_BIN" \
+    pm2 start "$GAME_DIR/dist/index.mjs" --name niuma-game \
       --cwd "$GAME_DIR" --time --update-env || true
   fi
   exit 1

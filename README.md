@@ -21,19 +21,19 @@
 
 | 层 | 选型 |
 |---|---|
-| Monorepo | pnpm 10 + Turborepo 2 + TypeScript 5（strict） |
+| Monorepo | npm workspaces + TypeScript 5（strict） |
 | Web | Next.js 15 App Router · React 19 · Tailwind CSS v4 · Zustand 5 |
 | 渲染 | PixiJS 8（默认 WebGL2，`?gpu=webgpu` 灰度 WebGPU）· bitecs 0.4（SoA + TypedArray） |
 | 美术 | 程序化生成 64×64 分层像素图集，34 列帧预算（走 6 拍 / 待机呼吸 + 眨眼 / 坐躺 / 跳 / 站坐躺三套发泄 / 站坐躺三套挥手） |
-| 服务 | Bun `Bun.serve` WebSocket（内部即 uWebSockets）· 20Hz 固定 Tick |
+| 服务 | Node.js `ws` WebSocket · 20Hz 固定 Tick |
 | 协议 | 手写二进制帧，79 个编号 / 78 个在用操作码（`0x01`–`0x5f`），移动包 8 或 14 字节；无 JSON、无轮询 |
 | 数据 | 进程内存（唯一真相）+ 浏览器 `localStorage` 会话 + 六段共享运行态快照（含钱包与骰桌战绩账本）；无数据库、无 ORM |
 
 ## 快速开始
 
 ```bash
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 - 园区首页 <http://localhost:3000>
@@ -42,7 +42,7 @@ pnpm dev
 - 进入园区 <http://localhost:3000/play>
 - 服务器状态 <http://localhost:3001/health>
 
-需要 Node ≥ 20 与 pnpm 10。Bun 作为工作区开发依赖安装（`node_modules/.bin/bun`），无需全局安装。
+需要 Node ≥ 20。依赖与脚本统一走 npm workspaces，无需全局安装 pnpm 或 Bun。
 
 想直接进服，可以用深链：`/play?name=夜班实习生&species=horse`。
 捏人页也认物种：`/create?species=horse` 直接用马开工（优先级：URL 参数 > 本地存档 > 上次显式选择 > 牛）。
@@ -51,20 +51,20 @@ pnpm dev
 
 | 命令 | 说明 |
 |---|---|
-| `pnpm dev` | 重新生成图集并同时启动 Web + 游戏服务器 |
-| `pnpm build` | 生成图集并构建生产包 |
-| `pnpm typecheck` | 四个包全量类型检查 |
-| `pnpm test` | 协议单测（vitest）+ AOI 单测（bun:test）+ 渲染纯模块单测（`autotile` / `decals` / `pony-motion`） |
-| `pnpm assets` | 重新生成双物种分层像素图集 |
-| `pnpm bench` | 200 机器人压测（需先启动服务器） |
-| `pnpm changelog:check` | 校验首页「版本工报」的结构与敏感信息（提交前必跑） |
+| `npm run dev` | 重新生成图集并同时启动 Web + 游戏服务器 |
+| `npm run build` | 生成图集并构建生产包 |
+| `npm run typecheck` | 四个包全量类型检查 |
+| `npm run test` | 全仓单测（vitest，兼容原有 `bun:test` 导入）：协议、AOI 与渲染纯模块 |
+| `npm run assets` | 重新生成双物种分层像素图集 |
+| `npm run bench` | 200 机器人压测（需先启动服务器） |
+| `npm run changelog:check` | 校验首页「版本工报」的结构与敏感信息（提交前必跑） |
 
-压测可调环境变量：`BENCH_BOTS=200 BENCH_MS=20000 pnpm bench`。
+压测可调环境变量：`BENCH_BOTS=200 BENCH_MS=20000 npm run bench`。
 
 ## 目录
 
 ```
-apps/game-server     Bun 权威服务器：Tick 循环、空间哈希 AOI、限速校验、地形碰撞、聊天广播、园区同事
+apps/game-server     Node.js 权威服务器：Tick 循环、空间哈希 AOI、限速校验、地形碰撞、聊天广播、园区同事
 apps/web             Next.js 外壳 + Pixi 视口 + 捏人工作台
 apps/web/data        首页「版本工报」数据（每次提交前追加一条，见 AGENTS.md）
 packages/shared-types 同构契约：类型、OpCode、定点量化、32 字节外观编解码、世界布局与地形碰撞
@@ -102,7 +102,7 @@ docs/deploy-multi-park.md 多园区部署手册（1…N 台）：角色分配、
   squash & stretch，不做浮点缩放。眨眼每 35s（±5s 抖动）由客户端注入闭眼列——
   图集里那一列仍属于 idle，只是不再进循环（见 ADR-0013 第 9 条）。
 
-改帧数只需动 `layout.ts` 再跑 `pnpm assets`：布局会重新写到
+改帧数只需动 `layout.ts` 再跑 `npm run assets`：布局会重新写到
 `apps/web/lib/game/sprite-layout.generated.ts`，客户端与落地页的 CSS mask 都读它。
 
 ## 动作与互动
@@ -836,12 +836,12 @@ p95 才是有效负载下的数字。
 压测命令：
 
 ```bash
-BENCH_BOTS=60 BENCH_MS=12000 pnpm bench                                     # 默认容量满载
-BENCH_BOTS=60 BENCH_IDLE=1 BENCH_MS=12000 pnpm bench                        # 全员坐班（测去脏收益）
-BENCH_BOTS=60 BENCH_FORMAT=legacy BENCH_MS=12000 pnpm bench                 # 旧 7 字节对照
-GAME_MAX_ONLINE=250 GAME_SPAWN_RADIUS=240 BENCH_BOTS=200 BENCH_MS=10000 pnpm bench   # 全互联最坏
-GAME_MAX_ONLINE=250 GAME_SPAWN_RADIUS=3000 BENCH_BOTS=200 BENCH_MS=10000 pnpm bench  # 稀疏
-BENCH_BOTS=120 BENCH_QUEUE_PROBE=1 BENCH_MS=15000 pnpm bench                # 准入与排队
+BENCH_BOTS=60 BENCH_MS=12000 npm run bench                                     # 默认容量满载
+BENCH_BOTS=60 BENCH_IDLE=1 BENCH_MS=12000 npm run bench                        # 全员坐班（测去脏收益）
+BENCH_BOTS=60 BENCH_FORMAT=legacy BENCH_MS=12000 npm run bench                 # 旧 7 字节对照
+GAME_MAX_ONLINE=250 GAME_SPAWN_RADIUS=240 BENCH_BOTS=200 BENCH_MS=10000 npm run bench   # 全互联最坏
+GAME_MAX_ONLINE=250 GAME_SPAWN_RADIUS=3000 BENCH_BOTS=200 BENCH_MS=10000 npm run bench  # 稀疏
+BENCH_BOTS=120 BENCH_QUEUE_PROBE=1 BENCH_MS=15000 npm run bench                # 准入与排队
 ```
 
 **协议层微基准**（同一进程内对照，200 实体规模）：
@@ -899,7 +899,7 @@ GAME_MAX_ONLINE=100        # 只是 AIMD 的上限，实际容量按实测水位
 压测与验证：
 
 ```bash
-BENCH_BOTS=120 BENCH_QUEUE_PROBE=1 BENCH_MS=20000 pnpm bench
+BENCH_BOTS=120 BENCH_QUEUE_PROBE=1 BENCH_MS=20000 npm run bench
 ```
 
 `/health` 返回 `egressKbps` 与 `admission`（闸门状态、容量、队列长度、水位千分比与主导维度），`BENCH_QUEUE_PROBE` 会额外打印峰值排队人数、首个放行时延与平均等待。
@@ -919,8 +919,8 @@ BENCH_BOTS=120 BENCH_QUEUE_PROBE=1 BENCH_MS=20000 pnpm bench
 | 项 | 默认 | 说明 |
 |---|---|---|
 | `GAME_MODERATION_LEXICON` | 空 | 外置词库 JSON 路径；为空只用内置表。文件不可用时降级到内置表并告警，不阻断启动 |
-| 导入 | — | `pnpm --filter @niuma/game-server lexicon:import -- --dir <词库目录> --out lexicon.json`；开源词库来源与许可证见文档 |
-| 自检 | — | `pnpm --filter @niuma/game-server lexicon:check <lexicon.json>` |
+| 导入 | — | `npm run lexicon:import --workspace=apps/game-server -- --dir <词库目录> --out lexicon.json`；开源词库来源与许可证见文档 |
+| 自检 | — | `npm run lexicon:check --workspace=apps/game-server -- <lexicon.json>` |
 
 政治类词条**不随仓库发布**：内置表只有中性占位条目，真实词条必须由合规清单提供，写成外置文件。
 不配置 `GAME_MODERATION_LEXICON` 时，政治类实际不会拦截任何内容。格式与上线流程见
