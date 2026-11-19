@@ -47,7 +47,6 @@ import {
   encodePong,
   encodeQueueRejected,
   encodeQueueStatus,
-  encodeRing,
   encodeSeatState,
   encodeStatusBroadcast,
   encodeTipBroadcast,
@@ -55,20 +54,16 @@ import {
   encodeWorkResult,
   encodeVillaState,
   encodeInteractReject,
-  encodeArenaPool,
-  encodeDiceState,
   encodeApartmentPeek,
-  encodeDiceBoard,
   encodeLoudspeaker,
   encodeSystemNotice,
   ACTIVITY_KIND,
+  DANMAKU_MODE,
+  ENTITY_ROLE_PLAYER,
   decodeActivityReport,
   formatSystemNotice,
   SYSTEM_NOTICE_KIND,
   decodeApartmentRequest,
-  decodeArenaBet,
-  decodeDiceBet,
-  decodeDiceBoardRequest,
   decodeVillaRequest,
   quantizeCoord,
   SHOP_KIND,
@@ -82,22 +77,13 @@ import {
   QUEST_ID,
   bossHitCoins,
   APARTMENT_ACTION,
-  DICE_PHASE,
   INTERACT_ACTION,
   INTERACT_REASON,
-  RING_FEE,
-  RING_SIDE,
-  RING_STREAK_TARGET,
   VILLA_ACTION,
-  VILLA_PRICE,
   HOTSPOT_SERVER_SLACK,
-  RING_PHASE,
   apartmentDoorSlotAt,
   hotspotById,
   isWithinHotspot,
-  RING_BENCH_SEAT_GROUP,
-  seatInGroup,
-  seatMatchesHotspot,
   setDynamicSolids,
   type CareerSummary,
   type SeatStateEntry,
@@ -123,7 +109,7 @@ import { createOriginGuard } from './net/origin';
 import { SpatialGrid } from './spatial/grid';
 import { buildBoardSnapshot, canQueryBoard } from './sim/board';
 import { pruneBuffs } from './sim/buffs';
-import { handleChat } from './sim/chat';
+import { broadcastChatLine, handleChat } from './sim/chat';
 import { useItem } from './sim/items';
 import { handleLike } from './sim/like';
 import { handleShout } from './sim/shout';
@@ -136,21 +122,6 @@ import { AmbulanceManager } from './sim/clinic';
 import { Detention } from './sim/detention';
 import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
-import {
-  broadcastRing,
-  RingRuntime,
-  ringBetKey,
-  ringFeeKey,
-  type RingEnterFailure,
-  type RingSettleEntry,
-} from './sim/ring';
-import {
-  broadcastDice,
-  broadcastDiceResults,
-  DiceHallRuntime,
-  sendDiceResultsTo,
-} from './sim/dice-hall';
-import { DiceLedger } from './sim/dice-ledger';
 import { VillaRuntime } from './sim/villas';
 import { ApartmentRuntime } from './sim/apartment';
 import { resolveSpawn } from './sim/resume';
@@ -185,25 +156,29 @@ const STATUS_THROTTLE_MS = 200;
  * 又不会误伤「照着新想的名字反复改两次」的正常操作。
  */
 const RENAME_THROTTLE_MS = 1000;
-/**
- * 赌桌排行榜的独立冷却（ADR-0110）。
- *
- * 榜单要扫全量账本并排序，比一次下注贵得多；不吃互动包的 500ms 闸门，
- * 也不进 Tick，只在玩家真的打开榜单时按 2 秒一次放行。
- */
-const DICE_BOARD_COOLDOWN_MS = 2000;
+const PVP_REWARD_COOLDOWN_MS = 60_000;
+const NPC_KNOCKDOWN_COOLDOWN_MS = 45_000;
+const NPC_WAVE_COOLDOWN_MS = 60_000;
+
+const NPC_WAVE_LINES = [
+  '早呀牛马！今天也一起摸鱼~',
+  '嗨！刚打卡吗？',
+  '嘿！晚上去霓虹街逛逛？',
+  '同为打工人，互道一声牛马！',
+] as const;
+
+const NPC_KNOCKDOWN_LINES = [
+  '哎哟！光天化日抢打工人的零花钱！',
+  '别创我啊，我刚领的辛苦费！',
+  '嘶——这下摔得不轻……',
+  '记住你了！下次别在街上撞见我！',
+] as const;
 
 export function startGameServer(config: ServerConfig) {
   // 园区唯一时钟（ADR-0081）：时区在启动时定死，运行中途不再读宿主机时区
   const clock = createGameClock(config.tzOffsetMin);
-  // 打点先于世界：快照的 collect 拿到的是「落盘那一刻」的老板与擂台，而不是 boot 时的
+  // 打点先于世界：快照的 collect 拿到的是「落盘那一刻」的老板与房产状态，而不是 boot 时的
   let world: World;
-  /**
-   * 赌桌战绩账本（ADR-0110）：和钱包一样按设备号归户，活得比会话长。
-   *
-   * 先于存档创建，`collect` 才能在每个落盘窗口把累计与最近一局一起交出去。
-   */
-  const diceLedger = new DiceLedger();
   const state = openWorldStateStore({
     path: config.state.path,
     saveDelayMs: config.state.saveDelayMs,
@@ -212,15 +187,11 @@ export function startGameServer(config: ServerConfig) {
     now: () => clock.now(),
     collect: () => ({
       boss: world.boss.snapshot(),
-      ring: world.ring.snapshotForSave(),
       villas: villas.snapshotForSave(),
       wallets: wallets.toJSON(),
-      dice: diceLedger.toJSON(),
     }),
   });
   const saved = state?.load() ?? null;
-  // 战绩段在 v4 才有：老档读出来是空账本，不阻断开服
-  if (saved) diceLedger.restore(saved.dice);
   /**
    * 钱包账本（ADR-0104）：按匿名设备号保存余额、四维、背包、装扮与分 key 托管。
    *
@@ -236,101 +207,22 @@ export function startGameServer(config: ServerConfig) {
     warn: (message) => console.warn(message),
   });
   wallets.restore(saved?.wallets);
-  // 上次进程留下的托管（赌注 / 报名费）原路退回：进行中的局不会跨重启复活
+  // 上次进程留下的托管（如 P2P 切磋押金）原路退回
   const refundedEscrow = wallets.refundAllEscrow();
   if (refundedEscrow > 0) {
     console.log(`[wallet] 启动退回残留托管 ${refundedEscrow} 币`);
     state?.markDirty();
   }
-  /**
-   * 擂台名次入账（ADR-0081 / ADR-0104）：冠亚季军记进匿名档案，重启后工牌口碑接着算。
-   * 只认前三名与带设备号的玩家，与 `rankByHp` 的裁决同源；离线冠军也要入账。
-   */
-  const ring = new RingRuntime((entries) => {
-    if (state) {
-      for (const entry of entries) {
-        if (entry.rank >= 1 && entry.rank <= 3) {
-          state.profiles.addRingMedal(entry.deviceId, entry.rank, clock.now());
-        }
-      }
-      state.markDirty();
-    }
-    // 擂台奖金（ADR-0082）：settle 只回调一次，名次天然幂等；只发前三名
-    const reward: Record<number, number> = {
-      1: ECONOMY_REWARD.RingGold,
-      2: ECONOMY_REWARD.RingSilver,
-      3: ECONOMY_REWARD.RingBronze,
-    };
-    /**
-     * 在线实体优先，但必须和结算时的设备号对得上：会话 id 会在断线后被回收，
-     * 只按 id 找可能把离线冠军的奖金发给刚进园的新人。
-     */
-    const playerOf = (entry: RingSettleEntry): Player | undefined => {
-      if (entry.id === 0) return undefined;
-      const player = world.get(entry.id);
-      if (!player) return undefined;
-      if (entry.deviceId && player.deviceId && player.deviceId !== entry.deviceId) return undefined;
-      return player;
-    };
-    // 报名费：全部成员的 ring 托管合成彩池，冠军拿走（平台不抽水）
-    let feePot = 0;
-    for (const entry of entries) {
-      const wallet = playerOf(entry)?.wallet ?? wallets.get(entry.deviceId);
-      feePot += wallet?.takeEscrow(ringFeeKey(entry.playerId)) ?? 0;
-    }
-    const champion = entries.find((entry) => entry.rank === 1);
-    for (const entry of entries) {
-      const amount = reward[entry.rank];
-      if (!amount) continue;
-      const player = playerOf(entry);
-      if (player) {
-        economy.grantCoins(player, amount, WALLET_REASON.RingReward);
-      } else if (entry.deviceId) {
-        // 夺冠瞬间断线：按设备号补进账本，下次登录看到钱与奖牌
-        wallets.credit(entry.deviceId, amount);
-      }
-    }
-    if (champion && feePot > 0) {
-      const player = playerOf(champion);
-      if (player) economy.grantCoins(player, feePot, WALLET_REASON.ArenaWin);
-      else if (champion.deviceId) wallets.credit(champion.deviceId, feePot);
-    }
-    // 观战押注彩池：押中一侧按注额比例分走全池，0 抽水；没人押中则全额退还
-    const pool = ring.lastPool;
-    if (pool) {
-      for (const entry of pool.payouts) {
-        const player = world.get(entry.id);
-        if (player) economy.payoutFromPool(player, ringBetKey(entry.id), entry.amount, WALLET_REASON.ArenaBetWin);
-      }
-      for (const id of pool.refunds) {
-        const player = world.get(id);
-        if (player) economy.refundEscrow(player, ringBetKey(id));
-      }
-      // 押错的人必须在结算时清账：否则托管会一直挂在钱包里，
-      // 下次重启 refundAllEscrow 会把已经输掉的注额退回，等于造币。
-      for (const id of pool.losers) {
-        const player = world.get(id);
-        if (player) economy.clearEscrow(player, ringBetKey(id));
-      }
-      ring.lastPool = null;
-    }
-    state?.markDirty();
-    // 擂主连胜 ≥3：全服横幅（走大喇叭通道，客户端已有金色置顶样式）
-    if (ring.streak >= RING_STREAK_TARGET && champion) {
-      broadcastLoud(`绩效八角笼：${champion.name} 已连胜 ${ring.streak} 场！`);
-    }
-  });
   const boss = new BossRuntime(clock.now(), clock.tzOffsetMin);
-  world = new World(boss, ring);
-  // 恢复顺序：先档案，再老板与擂台；坏档已在 load 里隔离，这里只会是干净数据
+  world = new World(boss);
+  // 恢复顺序：先档案，再老板；坏档已在 load 里隔离，这里只会是干净数据
   if (state) {
     state.hydrateProfiles(saved);
     if (saved) {
       boss.restore(saved.boss, clock.now());
-      ring.restore(saved.ring);
     }
     console.log(
-      `[state] path=${state.path} restored=${saved ? 'yes' : 'no'} boss=${boss.hp}/${BOSS_MAX_HP} match=${ring.matchId} profiles=${state.profiles.size} wallets=${wallets.size}`,
+      `[state] path=${state.path} restored=${saved ? 'yes' : 'no'} boss=${boss.hp}/${BOSS_MAX_HP} profiles=${state.profiles.size} wallets=${wallets.size}`,
     );
   } else {
     console.log('[state] 持久化关闭（GAME_STATE_PATH 为空）：重启后共享运行态清零');
@@ -347,15 +239,14 @@ export function startGameServer(config: ServerConfig) {
   const moderation = loadModerationFilter(config.moderation.lexiconPath);
   // 频道历史只活在进程内（ADR-0039）：跟着世界一起启动、一起丢弃
   const chatHistory = new ChatHistory(config.chatHistory.capacity, config.chatHistory.ttlMs);
+  /** 街头互动发币按人按目标的独立冷却，避免同目标连刷 */
+  const streetCooldowns = new Map<string, number>();
   let nextWsId = 1;
   let tickCount = 0;
   let lastSampleAt = 0;
-  /** 落盘用的变更指纹：只在老板血量 / 擂台阶段真的变了才打脏标记 */
+  /** 落盘用的变更指纹：只在老板血量真的变了才打脏标记 */
   let lastBossHp = world.boss.hp;
-  let lastRingRevision = world.ring.revision;
-  /** 赌桌快照的心跳节流：状态变化即刻发，否则 1Hz */
-  let lastDiceBroadcastAt = 0;
-  /** 豪宅快照的心跳节流：锁状态与可收币数每秒对齐一次 */
+  /** 房产快照的心跳节流：锁状态与可收币数每秒对齐一次 */
   let lastVillaBroadcastAt = 0;
   /** 钱包容量淘汰的低频节拍：在线与托管中的记录受保护 */
   let lastWalletPruneAt = 0;
@@ -469,43 +360,32 @@ export function startGameServer(config: ServerConfig) {
     }
   }
 
-  function broadcastArenaPool(): void {
-    const pools = world.ring.pools();
-    for (const player of world.players.values()) {
-      if (player.wsId === 0) continue;
-      const bet = world.ring.betOf(player.id);
-      transport.send(
-        player.wsId,
-        encodeArenaPool({
-          matchId: world.ring.matchId,
-          redPool: pools.red,
-          bluePool: pools.blue,
-          phase: world.ring.phase,
-          mySide: bet ? bet.side : -1,
-          myBet: bet ? bet.amount : 0,
-        }),
-      );
-    }
-  }
-
   /** 互动被拒：只回给本人，3 字节，客户端按编号映射中文 */
   function sendInteractReject(player: Player, action: number, reason: number): void {
     if (player.wsId === 0) return;
     transport.send(player.wsId, encodeInteractReject({ action, reason }));
   }
 
-  function ringEnterReason(reason: RingEnterFailure): number {
-    switch (reason) {
-      case 'full':
-        return INTERACT_REASON.Full;
-      case 'phase':
-        return INTERACT_REASON.Phase;
-      case 'far':
-        return INTERACT_REASON.TooFar;
-      case 'already':
-        return INTERACT_REASON.Already;
-      default:
-        return INTERACT_REASON.Unknown;
+  /** 街头互动发币按人按目标的冷却检查（到点即放行并续写冷却戳） */
+  function takeStreetCooldown(
+    kind: string,
+    actorId: number,
+    targetId: number,
+    cooldownMs: number,
+    now: number,
+  ): boolean {
+    const key = `${kind}:${actorId}:${targetId}`;
+    const until = streetCooldowns.get(key) ?? 0;
+    if (now < until) return false;
+    streetCooldowns.set(key, now + cooldownMs);
+    return true;
+  }
+
+  function clearPlayerCooldowns(playerId: number): void {
+    const asActor = `:${playerId}:`;
+    const asTarget = `:${playerId}`;
+    for (const key of streetCooldowns.keys()) {
+      if (key.includes(asActor) || key.endsWith(asTarget)) streetCooldowns.delete(key);
     }
   }
 
@@ -522,37 +402,29 @@ export function startGameServer(config: ServerConfig) {
     }
   }
 
-  /** 摸鱼大赌场：两张桌各自独立跑公共局，彩池结算全部经经济端口 */
-  const dice = new DiceHallRuntime(
-    {
-      freeze: (player, key, amount) => economy.freezeEscrow(player, key, amount),
-      clear: (player, key) => economy.clearEscrow(player, key),
-      // 结算单的净盈亏以真实入账为准：托管已被清掉时这里会返回 0（经济层退本金）
-      payout: (player, key, amount, reason) =>
-        economy.payoutFromPool(player, key, amount, reason),
-      refund: (player, key) => {
-        economy.refundEscrow(player, key);
-      },
-    },
-    clock.now(),
-    Math.random,
-    diceLedger,
-  );
-
-  /** 豪宅小院：本运行周期冠名权、锁门与摇钱树 */
+  /** 园区 8 处分阶房产：冠名、1.5× 溢价收购、锁门与摇钱树 */
   const villas = new VillaRuntime({
     spend: (player, amount, reason) => economy.trySpendCoins(player, amount, reason),
     grant: (player, amount, reason) => {
       economy.grantCoins(player, amount, reason);
+    },
+    creditOwner: (deviceId, amount, reason) => {
+      for (const online of world.players.values()) {
+        if (online.wsId !== 0 && online.deviceId === deviceId) {
+          economy.grantCoins(online, amount, reason);
+          return;
+        }
+      }
+      wallets.credit(deviceId, amount);
     },
   });
 
   /** 牛马公寓：只记「谁在哪栋哪个窗口探头」，没有房间频道也没有室内 */
   const apartment = new ApartmentRuntime();
 
-  // 豪宅冠名权随共享运行态一起恢复：恢复必须在 `villas` 构造之后
+  // 房产冠名权随共享运行态一起恢复：恢复必须在 `villas` 构造之后
   if (state) {
-    villas.restore(saved?.villas);
+    villas.restore(saved?.villas, clock.now());
     applyVillaLocks();
   }
 
@@ -640,12 +512,24 @@ export function startGameServer(config: ServerConfig) {
       detention?.onVentHit(attacker, target, now);
       clinic.observeHit(attacker, target, now);
     },
-    onKnockdown(attacker: Parameters<typeof clinic.observeHit>[0], target: Parameters<typeof clinic.observeHit>[1]): void {
+    onKnockdown(attacker: Parameters<typeof clinic.observeHit>[0], target: Parameters<typeof clinic.observeHit>[1], now: number): void {
       // 全园区通报先发：被创飞的人可能倒在角落，远处只能靠这条消息知道
-      activity.emit(ACTIVITY_KIND.VentKnockdown, target.id, clock.now());
-      // 只奖励真人：NPC 互殴不该往任何人的钱包里记钱
-      if (attacker.wsId === 0 || target.id === attacker.id) return;
-      economy.grantCoins(attacker, ECONOMY_REWARD.Knockdown, WALLET_REASON.KnockdownReward);
+      activity.emit(ACTIVITY_KIND.VentKnockdown, target.id, now);
+      // 只奖励真人：NPC 互殴与自伤不往任何人的钱包里记钱
+      if (attacker.isNpc || attacker.wsId === 0 || target.id === attacker.id) return;
+      if (target.isNpc) {
+        // 只对普通同事 NPC 掉落街头小费；保安与护士按原有执法/救护职责处理
+        if (target.role !== ENTITY_ROLE_PLAYER) return;
+        if (takeStreetCooldown('npckd', attacker.id, target.id, NPC_KNOCKDOWN_COOLDOWN_MS, now)) {
+          economy.grantCoins(attacker, ECONOMY_REWARD.NpcKnockdown, WALLET_REASON.NpcReward);
+        }
+        const line = NPC_KNOCKDOWN_LINES[(target.id + Math.floor(now / 1000)) % NPC_KNOCKDOWN_LINES.length]!;
+        broadcastChatLine(target, line, now, world, transport, chatHistory, 2, DANMAKU_MODE.Scroll);
+        return;
+      }
+      if (target.wsId !== 0 && takeStreetCooldown('pvp', attacker.id, target.id, PVP_REWARD_COOLDOWN_MS, now)) {
+        economy.grantCoins(attacker, ECONOMY_REWARD.Knockdown, WALLET_REASON.KnockdownReward);
+      }
     },
     onBossHit(
       attacker: Parameters<typeof clinic.observeHit>[0],
@@ -797,28 +681,12 @@ export function startGameServer(config: ServerConfig) {
     // 悬赏状态与当前事件横幅的入场补发：晚进来的人也要看到今天的进度与正在进行的活动
     quests.push(player, now);
     worldEvents.sendTo(player, now);
-    // 热区建筑的入场补发：赌桌公共局、豪宅牌匾、锁门动态碰撞、八角笼彩池
-    transport.send(player.wsId, encodeDiceState({ tables: dice.snapshot(player, now) }));
-    // 亮牌结束后才进场的人也要能看到上一局账目，不用干等下一局
-    sendDiceResultsTo(dice, player, transport);
+    // 热区建筑入场补发：房产牌匾与锁门动态碰撞
     transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, now)));
     applyVillaLocks();
-    transport.send(
-      player.wsId,
-      encodeArenaPool({
-        matchId: world.ring.matchId,
-        redPool: world.ring.pools().red,
-        bluePool: world.ring.pools().blue,
-        phase: world.ring.phase,
-        mySide: -1,
-        myBet: 0,
-      }),
-    );
     // 入场补发老板当前血量：新玩家不必等到下一次有人出招才知道血条位置。
     // 这里不调 syncDay，跨日重置只由 Tick 广播，避免入场者把 reset 事件吞掉。
     ws.send(encodeBoss({ hp: world.boss.hp, attackerId: 0, died: false, reset: false }));
-    // 入场补发擂台当前快照：中途加入/围观的人不必等下一次 1Hz 心跳
-    ws.send(encodeRing(world.ring.snapshot(now, world)));
     // 救护车停靠时不发冗余包，入场必须单独补一次位置；在途伤员状态也一并补
     clinic.sendSnapshot(ws.data.wsId, now);
     // 入场补发窗口占用：远处楼里的头不必等下一次有人进出才出现
@@ -946,11 +814,23 @@ export function startGameServer(config: ServerConfig) {
         return;
       }
       const packet = decodeMove(data, MOVE_SCRATCH);
-      const result = applyMove(player, packet, now, seats, world.ring);
+      const wasWaving = player.wave;
+      const result = applyMove(player, packet, now, seats);
       if (result.released.length > 0) broadcastSeats(result.released);
       if (!result.accepted) return;
       if (result.clamped) moveSampler.push(1);
       if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+      // 按 Q 挥手上升沿互动：最近空闲 NPC 转身回礼 + AOI 冒泡，同 NPC 每 60s 奖一次币
+      if (!wasWaving && player.wave) {
+        const npc = npcs.reactToWave(player, now);
+        if (npc) {
+          if (takeStreetCooldown('wave', player.id, npc.id, NPC_WAVE_COOLDOWN_MS, now)) {
+            economy.grantCoins(player, ECONOMY_REWARD.NpcWave, WALLET_REASON.NpcReward);
+          }
+          const greeting = NPC_WAVE_LINES[(npc.id + Math.floor(now / 1000)) % NPC_WAVE_LINES.length]!;
+          broadcastChatLine(npc, greeting, now, world, transport, chatHistory, 0, DANMAKU_MODE.Scroll);
+        }
+      }
       return;
     }
 
@@ -1099,55 +979,6 @@ export function startGameServer(config: ServerConfig) {
       return;
     }
 
-    if (op === OpCode.C2S_RING_ENTER) {
-      // 容量/阶段/靠近先做一次只读裁决，避免“站起来了却报不上名”
-      const verdict = world.ring.canEnter(player);
-      if (verdict !== true) {
-        sendInteractReject(
-          player,
-          INTERACT_ACTION.RingEnter,
-          verdict.ok ? INTERACT_REASON.Already : ringEnterReason(verdict.reason),
-        );
-        return;
-      }
-      // 报名费先冻结：扣不动就上不去，扣完进不去再原路退回
-      if (!economy.freezeEscrow(player, ringFeeKey(player.id), RING_FEE)) {
-        sendInteractReject(player, INTERACT_ACTION.RingEnter, INTERACT_REASON.NotEnoughCoins);
-        return;
-      }
-      broadcastSeats(seats.stand(player));
-      const result = world.ring.enter(player, now, RING_FEE);
-      if (!result.ok) {
-        economy.refundEscrow(player, ringFeeKey(player.id));
-        sendInteractReject(player, INTERACT_ACTION.RingEnter, ringEnterReason(result.reason));
-        return;
-      }
-      grid.update(player.id, player.x, player.y);
-      player.needsViewRefresh = true;
-      // 开赛/中途补入都由同一个快照包收口，客户端不需要推导阶段
-      broadcastRing(world, transport, now);
-      if (result.started) broadcastArenaPool();
-      return;
-    }
-
-    if (op === OpCode.C2S_RING_LEAVE) {
-      const leave = world.ring.leave(player, now);
-      if (!leave.ok) {
-        sendInteractReject(player, INTERACT_ACTION.RingLeave, INTERACT_REASON.Phase);
-        return;
-      }
-      // 只有等待期离场才退报名费；颁奖期名次已结算，退费就是凭空造币
-      if (leave.refundFee) economy.refundEscrow(player, ringFeeKey(player.id));
-      // 离场顺手撤注（观战押注是另一个 key，不会误伤报名费）
-      const dropped = world.ring.dropBet(player.id);
-      if (dropped > 0) economy.refundEscrow(player, ringBetKey(player.id));
-      grid.update(player.id, player.x, player.y);
-      player.needsViewRefresh = true;
-      broadcastRing(world, transport, now);
-      broadcastArenaPool();
-      return;
-    }
-
     if (op === OpCode.C2S_BOARD) {
       // 按需查询：距离门 + 限频都收在 sim/board，dispatch 只负责解码与发送
       if (!canQueryBoard(player, now)) return;
@@ -1263,18 +1094,12 @@ export function startGameServer(config: ServerConfig) {
       op === OpCode.C2S_USE_ITEM ||
       op === OpCode.C2S_SHOP_BUY ||
       op === OpCode.C2S_SHOUT ||
-      // 热区建筑（ADR-0087）：下注 / 押注 / 买院 / 房间操作同样共用这道闸门
-      op === OpCode.C2S_DICE_BET ||
-      op === OpCode.C2S_ARENA_BET ||
+      // 热区建筑（ADR-0087）：房产交易与公寓探头共用这道闸门
       op === OpCode.C2S_VILLA ||
       op === OpCode.C2S_APARTMENT;
     if (interactive && now - player.lastP2PAt < P2P_PACKET_INTERVAL_MS) {
       // 热区互动被限频时也要回执；P2P / 打赏 / 道具各有自己的拒绝包，这里只补热区玩法
-      if (op === OpCode.C2S_DICE_BET) {
-        sendInteractReject(player, INTERACT_ACTION.DiceBet, INTERACT_REASON.Cooldown);
-      } else if (op === OpCode.C2S_ARENA_BET) {
-        sendInteractReject(player, INTERACT_ACTION.ArenaBet, INTERACT_REASON.Cooldown);
-      } else if (op === OpCode.C2S_VILLA) {
+      if (op === OpCode.C2S_VILLA) {
         sendInteractReject(player, INTERACT_ACTION.VillaBuy, INTERACT_REASON.Cooldown);
       } else if (op === OpCode.C2S_APARTMENT) {
         sendInteractReject(player, INTERACT_ACTION.Apartment, INTERACT_REASON.Cooldown);
@@ -1347,8 +1172,7 @@ export function startGameServer(config: ServerConfig) {
       player.lastP2PAt = now;
       const request = decodeShopBuy(data);
       if (request.kind === SHOP_KIND.Stat) {
-        // 属性升级一次一级：价格由服务端按当前等级算，客户端报价只用于展示
-        economy.upgradeStat(player, request.id);
+        sendInteractReject(player, INTERACT_ACTION.Unknown, INTERACT_REASON.Unknown);
       } else if (request.kind === SHOP_KIND.Item) {
         economy.buyItem(player, request.id, request.count <= 0 ? 1 : request.count);
       } else if (request.kind === SHOP_KIND.Cosmetic) {
@@ -1358,86 +1182,7 @@ export function startGameServer(config: ServerConfig) {
       return;
     }
 
-    // ---- 热区建筑（ADR-0087）：赌桌 / 八角笼押注 / 豪宅 / 公寓 ----
-
-    if (op === OpCode.C2S_DICE_BET) {
-      player.lastP2PAt = now;
-      const request = decodeDiceBet(data);
-      // 入座门（ADR-0093）：必须坐在这一桌自己的圆凳上；站着只回一条拒绝包
-      const hotspot = hotspotById(`dice-table-${request.table}`);
-      if (!hotspot || !seatMatchesHotspot(hotspot, player.seat)) {
-        sendInteractReject(player, INTERACT_ACTION.DiceBet, INTERACT_REASON.NotSeated);
-        return;
-      }
-      if (!nearHotspot(`dice-table-${request.table}`, player)) {
-        sendInteractReject(player, INTERACT_ACTION.DiceBet, INTERACT_REASON.TooFar);
-        return;
-      }
-      if (dice.placeBet(player, request.table, request.side, request.amount, now)) {
-        broadcastDice(dice, world, transport, now);
-      } else {
-        // placeBet 内部已按阶段 / 注额 / 重复下注 / 余额逐条判过；
-        // 这里只补一条最可能的可读原因，客户端至少不会「点了没反应」
-        const table = dice.table(request.table);
-        const reason =
-          !table || table.phase !== DICE_PHASE.Betting
-            ? INTERACT_REASON.Phase
-            : table.bets.has(player.id)
-              ? INTERACT_REASON.Already
-              : player.coins < Math.floor(request.amount)
-                ? INTERACT_REASON.NotEnoughCoins
-                : INTERACT_REASON.BadAmount;
-        sendInteractReject(player, INTERACT_ACTION.DiceBet, reason);
-      }
-      return;
-    }
-
-    if (op === OpCode.C2S_DICE_BOARD) {
-      // 只读快照，但排序比下注贵：独立冷却，被挡时也回执，别让面板一直转圈
-      if (now - player.lastDiceBoardAt < DICE_BOARD_COOLDOWN_MS) {
-        sendInteractReject(player, INTERACT_ACTION.DiceBoard, INTERACT_REASON.Cooldown);
-        return;
-      }
-      player.lastDiceBoardAt = now;
-      transport.send(player.wsId, encodeDiceBoard(dice.board(player, decodeDiceBoardRequest(data))));
-      return;
-    }
-
-    if (op === OpCode.C2S_ARENA_BET) {
-      player.lastP2PAt = now;
-      const request = decodeArenaBet(data);
-      // 押注资格：必须坐在观战长椅上（ADR-0093 统一座位组判定），且比赛中、本局没押过
-      if (!seatInGroup(player.seat, RING_BENCH_SEAT_GROUP)) {
-        sendInteractReject(player, INTERACT_ACTION.ArenaBet, INTERACT_REASON.NotSeated);
-        return;
-      }
-      const verdict = world.ring.betVerdict(player, request.side, request.amount, now);
-      if (verdict !== 'ok') {
-        sendInteractReject(
-          player,
-          INTERACT_ACTION.ArenaBet,
-          verdict === 'phase'
-            ? INTERACT_REASON.Phase
-            : verdict === 'placed'
-              ? INTERACT_REASON.Already
-              : verdict === 'member'
-                ? INTERACT_REASON.Already
-                : INTERACT_REASON.BadAmount,
-        );
-        return;
-      }
-      if (!economy.freezeEscrow(player, ringBetKey(player.id), request.amount)) {
-        sendInteractReject(player, INTERACT_ACTION.ArenaBet, INTERACT_REASON.NotEnoughCoins);
-        return;
-      }
-      if (!world.ring.placeBet(player, request.side, request.amount, now)) {
-        economy.refundEscrow(player, ringBetKey(player.id));
-        sendInteractReject(player, INTERACT_ACTION.ArenaBet, INTERACT_REASON.Already);
-        return;
-      }
-      broadcastArenaPool();
-      return;
-    }
+    // ---- 热区建筑（ADR-0087）：8 处冠名房产 / 公寓 ----
 
     if (op === OpCode.C2S_VILLA) {
       player.lastP2PAt = now;
@@ -1447,21 +1192,31 @@ export function startGameServer(config: ServerConfig) {
           sendInteractReject(player, INTERACT_ACTION.VillaBuy, INTERACT_REASON.TooFar);
           return;
         }
-        if (villas.record(request.villa)) {
-          sendInteractReject(player, INTERACT_ACTION.VillaBuy, INTERACT_REASON.Sold);
-          return;
-        }
-        if (player.coins < VILLA_PRICE) {
-          sendInteractReject(player, INTERACT_ACTION.VillaBuy, INTERACT_REASON.NotEnoughCoins);
-          return;
-        }
-        if (!villas.buy(player, request.villa, now)) {
-          sendInteractReject(player, INTERACT_ACTION.VillaBuy, INTERACT_REASON.Sold);
+        const outcome = villas.buyResult(player, request.villa, now);
+        if (!outcome.ok) {
+          const reason =
+            outcome.reason === 'alreadyMine'
+              ? INTERACT_REASON.Already
+              : outcome.reason === 'coins'
+                ? INTERACT_REASON.NotEnoughCoins
+                : outcome.reason === 'far'
+                  ? INTERACT_REASON.TooFar
+                  : INTERACT_REASON.NoTarget;
+          sendInteractReject(player, INTERACT_ACTION.VillaBuy, reason);
           return;
         }
         applyVillaLocks();
         broadcastVilla();
         state?.markDirty();
+        activity.emit(ACTIVITY_KIND.VillaTrade, player.id, now);
+        if (outcome.buyout) {
+          const refundNote = outcome.prevOwnerName
+            ? `（原房主 ${outcome.prevOwnerName} 获赔 ${outcome.refund} 币）`
+            : '';
+          broadcastLoud(`地产易主：${player.name} 以 ${outcome.price} 币溢价收购了「${outcome.spec.name}」${refundNote}`);
+        } else {
+          broadcastLoud(`冠名落槌：${player.name} 买下了「${outcome.spec.name}」的冠名权！`);
+        }
         return;
       }
       if (request.action === VILLA_ACTION.ToggleLock) {
@@ -1501,8 +1256,12 @@ export function startGameServer(config: ServerConfig) {
           sendInteractReject(player, INTERACT_ACTION.VillaCollect, INTERACT_REASON.OwnerOnly);
           return;
         }
-        if (villas.collect(player, request.villa, now) > 0) broadcastVilla();
-        else sendInteractReject(player, INTERACT_ACTION.VillaCollect, INTERACT_REASON.NoIncome);
+        if (villas.collect(player, request.villa, now) > 0) {
+          broadcastVilla();
+          state?.markDirty();
+        } else {
+          sendInteractReject(player, INTERACT_ACTION.VillaCollect, INTERACT_REASON.NoIncome);
+        }
         return;
       }
       sendInteractReject(player, INTERACT_ACTION.Unknown, INTERACT_REASON.NoTarget);
@@ -1573,25 +1332,8 @@ export function startGameServer(config: ServerConfig) {
     activity.forget(player.id);
     // 盯梢中的保安立刻收工，别对着一个已经消失的目标原地打转
     npcs.cancelFollow(player.id);
+    clearPlayerCooldowns(player.id);
     broadcastSeats(seats.release(player));
-    // 擂台断线清理：先移除名单再广播，剩下的人继续计时，走空则回 idle
-    const ringRemoval = world.ring.removePlayer(player.id, clock.now());
-    if (ringRemoval.removed) {
-      // 等待期断线：这一局没开打，报名费原路退回
-      if (ringRemoval.refundFee) player.wallet.refundEscrow(ringFeeKey(player.id));
-      // 两人都走了：把这局所有人的报名费一起退回，别让钱包永久少一笔。
-      // 没有设备号的匿名会话没有可找回的账本，不能把别人的费用退到当前玩家身上。
-      for (const fee of ringRemoval.abandonedFees) {
-        if (!fee.deviceId) continue;
-        wallets.get(fee.deviceId)?.refundEscrow(ringFeeKey(fee.playerId));
-      }
-      broadcastRing(world, transport, clock.now());
-      state?.markDirty();
-    }
-    // 观战押注与赌桌注额原路退回；窗口释放，让后来的人能探头
-    const droppedBet = world.ring.dropBet(player.id);
-    if (droppedBet > 0) economy.refundEscrow(player, ringBetKey(player.id));
-    dice.onDisconnect(player.id, world);
     const releasedWindow = apartment.leave(player.id);
     player.roomId = 0;
     if (releasedWindow) broadcastApartmentPeek();
@@ -1826,32 +1568,7 @@ export function startGameServer(config: ServerConfig) {
       state?.markDirty();
     }
 
-    // 擂台计时/结算先于发泄：到点后 phase=award，后续出招会被冻结；
-    // 领奖台传送产生的 moved 列表在同一 Tick 里补空间索引与视野刷新。
-    const ringTick = world.ring.tick(now, world);
-    for (const movedPlayer of ringTick.moved) {
-      if (grid.update(movedPlayer.id, movedPlayer.x, movedPlayer.y)) {
-        movedPlayer.needsViewRefresh = true;
-      }
-    }
-    if (ringTick.changed) {
-      broadcastRing(world, transport, now);
-      broadcastArenaPool();
-    }
-
-    // 赌桌公共局：状态机每 Tick 推进；亮牌期的倒计时靠 1Hz 心跳刷新 HUD
-    const diceTick = dice.tick(now, world);
-    if (diceTick.changed || now - lastDiceBroadcastAt >= 1000) {
-      lastDiceBroadcastAt = now;
-      broadcastDice(dice, world, transport, now);
-    }
-    if (diceTick.settled.length > 0) {
-      // 先发状态（亮牌）再发结算单，客户端顺序才是「看到点数 → 看到账目」
-      broadcastDiceResults(dice, world, transport, diceTick.settled);
-      state?.markDirty();
-    }
-
-    // 豪宅：房主改名 / 上线要让牌匾跟着换字；每秒对齐一次可收币数
+    // 房产：房主改名 / 上线要让牌匾跟着换字；每秒对齐一次可收币数
     if (villas.refreshOwners(world.players.values())) {
       broadcastVilla();
       state?.markDirty();
@@ -1906,10 +1623,6 @@ export function startGameServer(config: ServerConfig) {
     // 共享运行态落盘（ADR-0081）：只在指纹变化时打脏标记，
     // 写盘本身被 store 的 debounce 合并，绝不进 50ms 帧路径
     if (state) {
-      if (world.ring.revision !== lastRingRevision) {
-        lastRingRevision = world.ring.revision;
-        state.markDirty();
-      }
       if (world.boss.hp !== lastBossHp) {
         lastBossHp = world.boss.hp;
         state.markDirty();

@@ -25,11 +25,9 @@ import {
   WORKROOM,
 } from './campus';
 import { CLINIC_ACCESS_PAVING, CLINIC_RECT } from './clinic';
-import { DICE_HALL } from './dice-hall';
 import { rectContains, rectExpanded, type WorldRect } from './geometry';
 import { AMUSEMENT_PARK } from './park';
-import { RING_ARENA } from './ring';
-import { VILLA_SPECS } from './villas';
+import { VILLA_SPECS, type PropertyNavId, type VillaSpec } from './villas';
 
 /** 中央广场：五条街的起点，也是出生点与迎宾拱门所在 */
 export const PLAZA_REGION_NAME = '中央迎宾广场';
@@ -67,12 +65,13 @@ const SCENERY_RECTS: ReadonlyArray<WorldRect> = [
   rectExpanded(RING_LAKE_RECT, 60),
   rectExpanded(MOPING_LAKE_RECT, 30),
   rectExpanded(CHENSI_POND_RECT, 30),
-  // 摸鱼亭拆除后的原址（ADR-0105）：200×180 的草地仍归景观区，
-  // 免得玩家从湖岸走进来横幅闪一下「野地」，小地图出现一块空洞。
+  // 摸鱼湖钓屋坐落于原摸鱼亭原址草地，归景观区
   { x: 5250, y: 4710, w: 200, h: 180 },
+  // 沉思浅塘北岸：沉思畔茶院半岛（避开西侧游乐区与南侧服务广场）
+  { x: 4900, y: 2440, w: 300, h: 250 },
   // 西主路尽头的区门前庭
   { x: 2680, y: 4010, w: 360, h: 300 },
-  // 竹林：西主路以南、涟漪湖以北的绿带
+  // 竹林：西主路以南、涟漪湖以北的绿带（含翠竹隐士居）
   { x: 3100, y: 4180, w: 400, h: 320 },
 ];
 
@@ -168,10 +167,7 @@ export type NavTargetId =
   | 'shrine'
   | 'park'
   | 'bossArena'
-  | 'ring'
-  | 'diceHall'
-  | 'villa1'
-  | 'villa2'
+  | PropertyNavId
   | 'apartment'
   // ADR-0099：影音室 / 急救站补进导览（广场不进本表，见 `PLAZA_HOME`）
   | 'theater'
@@ -204,6 +200,14 @@ function venue(
   navId?: NavTargetId,
 ): VenueSpec {
   return { id, name, district, scene, rect, navId };
+}
+
+function propertyScene(spec: VillaSpec): SceneKind {
+  return spec.kind === 'stall' ? 'semi' : 'indoor';
+}
+
+function propertyArrive(spec: VillaSpec): { readonly x: number; readonly y: number } {
+  return { x: spec.gate.x, y: spec.gate.y + 26 };
 }
 
 /**
@@ -243,15 +247,14 @@ export const VENUES: ReadonlyArray<VenueSpec> = [
     h: TEA_STATION.height,
   }),
   venue('workroom', '工作区', 'corporate', 'indoor', WORKROOM, 'workroom'),
-  // ---- 游乐区 ----
+  // ---- 游乐区（霓虹娱乐街 + 游乐园） ----
   venue('park', '游乐园', 'amusement', 'outdoor', AMUSEMENT_PARK, 'park'),
-  venue('diceHall', '摸鱼骰子馆', 'amusement', 'semi', DICE_HALL, 'diceHall'),
-  venue('ring', '绩效八角笼', 'amusement', 'outdoor', RING_ARENA, 'ring'),
   // ---- 生活区 ----
   venue('lounge', '宿舍区', 'living', 'indoor', LOUNGE, 'lounge'),
   venue('theater', '家庭影音室', 'living', 'indoor', HOME_THEATER, 'theater'),
+  // ---- 全园 8 栋分阶房产（含游乐街夜店/改车/拉面、生活小院、景观湖/竹/茶院） ----
   ...VILLA_SPECS.map((spec) =>
-    venue(`villa${spec.id + 1}`, spec.name, 'living', 'indoor', spec.rect, spec.id === 0 ? 'villa1' : 'villa2'),
+    venue(spec.navId, spec.name, spec.district, propertyScene(spec), spec.rect, spec.navId),
   ),
   // 唯一一栋公寓（ADR-0101）：区域名「牛马公寓」，小地图按楼填色
   venue('apartment', '牛马公寓', 'living', 'indoor', APARTMENT_SPECS[0]!.rect, 'apartment'),
@@ -288,6 +291,10 @@ function rectCenter(rect: WorldRect): { x: number; y: number } {
   return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
 }
 
+const PROPERTY_ARRIVALS = Object.fromEntries(
+  VILLA_SPECS.map((spec) => [spec.navId, propertyArrive(spec)]),
+) as Record<PropertyNavId, { readonly x: number; readonly y: number }>;
+
 /**
  * 各目标的落地到达点：房间沿用进门空地，设施类落在「站过去就能互动」的那一步之内。
  */
@@ -302,13 +309,7 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   park: { x: 4096, y: 3020 },
   // 发泄室垫内左下角：老板左脚外侧，站过去就能出招
   bossArena: { x: BOSS_ARENA.x + 50, y: BOSS_ARENA.y + BOSS_ARENA.h - 20 },
-  // 八角笼南门外：围绳外 32px，仍落在报名感应圈里
-  ring: { x: RING_ARENA.x + 150, y: RING_ARENA.y + RING_ARENA.h + 32 },
-  // 赌场两张桌之间的空地：站过去就同时够得着两张桌的提示
-  diceHall: { x: DICE_HALL.x + DICE_HALL.w / 2, y: DICE_HALL.y + 190 },
-  // 两栋小院的院门外台阶
-  villa1: { x: VILLA_SPECS[0]!.gate.x, y: VILLA_SPECS[0]!.gate.y + 24 },
-  villa2: { x: VILLA_SPECS[1]!.gate.x, y: VILLA_SPECS[1]!.gate.y + 24 },
+  ...PROPERTY_ARRIVALS,
   // 公寓门口台阶：唯一一栋，导览直接送到 301 门口
   apartment: { x: APARTMENT_SPECS[0]!.outside.x, y: APARTMENT_SPECS[0]!.outside.y },
   // 影音室：东门内侧的走道（三排座椅东侧），进门两步就能坐下
@@ -331,13 +332,23 @@ const NAV_SOURCES: ReadonlyArray<{
   { id: 'shrine', name: '财神供案', district: 'corporate', scene: 'indoor', x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y },
   { id: 'bossArena', name: '发泄区', district: 'corporate', scene: 'indoor', ...rectCenter(BOSS_ARENA) },
   { id: 'park', name: '游乐园', district: 'amusement', scene: 'outdoor', ...rectCenter(AMUSEMENT_PARK) },
-  { id: 'diceHall', name: '摸鱼骰子馆', district: 'amusement', scene: 'semi', ...rectCenter(DICE_HALL) },
-  { id: 'ring', name: '绩效八角笼', district: 'amusement', scene: 'outdoor', ...rectCenter(RING_ARENA) },
+  ...VILLA_SPECS.filter((spec) => spec.district === 'amusement').map((spec) => ({
+    id: spec.navId,
+    name: spec.name,
+    district: spec.district,
+    scene: propertyScene(spec),
+    ...rectCenter(spec.rect),
+  })),
   { id: 'apartment', name: '牛马公寓', district: 'living', scene: 'indoor', ...rectCenter(APARTMENT_SPECS[0]!.rect) },
   { id: 'lounge', name: '宿舍区', district: 'living', scene: 'indoor', ...rectCenter(LOUNGE) },
   { id: 'theater', name: '家庭影音室', district: 'living', scene: 'indoor', ...rectCenter(HOME_THEATER) },
-  { id: 'villa1', name: VILLA_SPECS[0]!.name, district: 'living', scene: 'indoor', ...rectCenter(VILLA_SPECS[0]!.rect) },
-  { id: 'villa2', name: VILLA_SPECS[1]!.name, district: 'living', scene: 'indoor', ...rectCenter(VILLA_SPECS[1]!.rect) },
+  ...VILLA_SPECS.filter((spec) => spec.district !== 'amusement').map((spec) => ({
+    id: spec.navId,
+    name: spec.name,
+    district: spec.district,
+    scene: propertyScene(spec),
+    ...rectCenter(spec.rect),
+  })),
   { id: 'restroom', name: '卫生间', district: 'service', scene: 'indoor', ...rectCenter(RESTROOM) },
   { id: 'clinic', name: '护士急救站', district: 'service', scene: 'indoor', ...rectCenter(CLINIC_RECT) },
 ];

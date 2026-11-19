@@ -16,9 +16,9 @@ export function WalletBadge({ compact = false }: { compact?: boolean }) {
   return (
     <button
       type="button"
-      onClick={() => setShopOpen(true, 'stats')}
+      onClick={() => setShopOpen(true, 'items')}
       aria-label="打开牛马币商店"
-      title="牛马币：升级属性、购买道具"
+      title="牛马币：购买道具与装扮"
       className={`${hudButtonClassName({ compact })} relative min-w-[64px] gap-1 px-2`}
     >
       <Coins className="h-4 w-4 text-[#F2C879]" aria-hidden />

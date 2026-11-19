@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BOSS_MAX_HP } from '@niuma/shared-types';
 import { ProfileBook, PROFILE_TTL_MS } from './profiles';
-import type { DiceLedgerSaveState } from '../sim/dice-ledger';
 import {
   openWorldStateStore,
   WORLD_STATE_VERSION,
@@ -30,14 +29,8 @@ function tempPath(name = 'world-state.json'): string {
 
 const PARTS: WorldStateParts = {
   boss: { hp: 123, resetAt: NOW + 3_600_000 },
-  ring: {
-    matchId: 41,
-    nextMatchId: 42,
-    lastMatch: { matchId: 40, endedAt: NOW - 1_000, top: [{ name: '牛马', rank: 1, hp: 33 }] },
-  },
   villas: { villas: [] },
   wallets: [],
-  dice: { players: [], lastRounds: [] },
 };
 
 function storeAt(path: string, overrides: Partial<WorldStateParts> = {}): WorldStateStore {
@@ -81,8 +74,7 @@ describe('WorldStateStore 往返', () => {
     const reopened = storeAt(path);
     const loaded = reopened.load();
     expect(loaded?.boss).toEqual(PARTS.boss);
-    expect(loaded?.ring.matchId).toBe(41);
-    expect(loaded?.ring.lastMatch?.top[0]?.name).toBe('牛马');
+    expect(loaded?.villas).toEqual(PARTS.villas);
     reopened.dispose();
   });
 
@@ -100,7 +92,7 @@ describe('WorldStateStore 往返', () => {
     store.markDirty();
     store.flushSync();
     store.dispose();
-    expect(JSON.parse(readFileSync(path, 'utf8')).ring.nextMatchId).toBe(42);
+    expect(JSON.parse(readFileSync(path, 'utf8')).boss.hp).toBe(123);
   });
 
   it('先写临时文件再改名：读到的永远是完整 JSON', async () => {
@@ -140,80 +132,29 @@ describe('WorldStateStore 往返', () => {
     reopened.dispose();
   });
 
-  it('v4 赌桌战绩段往返：累计口径与最近一局的名单都进快照', async () => {
+  it('v5 房产段支持全部 8 栋冠名记录往返', async () => {
     const path = tempPath();
-    const dice: DiceLedgerSaveState = {
-      players: [
-        {
-          id: DEVICE,
-          name: '摸鱼王',
-          lastSeenAt: NOW,
-          tables: [
-            { rounds: 3, wins: 2, losses: 1, refunds: 0, totalBet: 300, totalPayout: 520, net: 220, bestWin: 200 },
-            { rounds: 1, wins: 0, losses: 1, refunds: 0, totalBet: 50, totalPayout: 0, net: -50, bestWin: 0 },
-          ],
-          history: [
-            {
-              table: 0,
-              round: 3,
-              dice: [4, 5, 6] as [number, number, number],
-              hit: 0,
-              bet: 100,
-              payout: 300,
-              net: 200,
-              refunded: false,
-            },
-          ],
-        },
-      ],
-      lastRounds: [
-        {
-          tableId: 0,
-          roundId: 3,
-          dice: [4, 5, 6] as [number, number, number],
-          hit: 0,
-          raid: false,
-          endedAt: NOW,
-          entries: [
-            { deviceId: DEVICE, name: '摸鱼王', side: 0, bet: 100, payout: 300, net: 200, refunded: false },
-          ],
-        },
-      ],
+    const villas = {
+      villas: Array.from({ length: 8 }, (_, id) => ({
+        id,
+        ownerDeviceId: DEVICE,
+        ownerName: `房主${id}`,
+        ownerId: 0,
+        locked: id % 2 === 0,
+        lastCollectAt: NOW - id * 1000,
+      })),
     };
-    const store = storeAt(path, { dice });
+    const store = storeAt(path, { villas });
     store.markDirty();
     await store.flush();
     store.dispose();
 
     const reopened = storeAt(path);
-    expect(reopened.load()?.dice).toEqual(dice);
+    expect(reopened.load()?.villas).toEqual(villas);
     reopened.dispose();
   });
 
-  it('v3 档没有赌桌战绩段：按空账本接管，不当坏档', () => {
-    const path = tempPath();
-    writeFileSync(
-      path,
-      JSON.stringify({
-        version: 3,
-        savedAt: NOW,
-        tzOffsetMin: 480,
-        boss: { hp: 1, resetAt: NOW + 60_000 },
-        ring: { matchId: 1, nextMatchId: 2, lastMatch: null },
-        villas: { villas: [] },
-        wallets: [],
-        profiles: [],
-      }),
-      'utf8',
-    );
-    const store = storeAt(path);
-    const loaded = store.load();
-    expect(loaded?.dice).toEqual({ players: [], lastRounds: [] });
-    expect(loaded?.version).toBe(WORLD_STATE_VERSION);
-    store.dispose();
-  });
-
-  it('赌桌战绩里的坏行只丢自己，合法行照常读回', () => {
+  it('v4/v3 旧档包含 ring 与 dice 时平滑迁移并升至 v5', () => {
     const path = tempPath();
     writeFileSync(
       path,
@@ -221,27 +162,21 @@ describe('WorldStateStore 往返', () => {
         version: 4,
         savedAt: NOW,
         tzOffsetMin: 480,
-        boss: { hp: 1, resetAt: NOW + 60_000 },
-        ring: { matchId: 1, nextMatchId: 2, lastMatch: null },
+        boss: { hp: 88, resetAt: NOW + 60_000 },
+        ring: { matchId: 12, nextMatchId: 13, lastMatch: null },
         villas: { villas: [] },
         wallets: [],
-        dice: {
-          players: [
-            { id: DEVICE, name: '牛马', tables: [], history: [{ round: 1, dice: [1, 2] }] },
-            { id: 'not-a-device', name: '幽灵' },
-          ],
-          lastRounds: [{ tableId: 7, roundId: 1, dice: [1, 1, 1], entries: [] }],
-        },
+        dice: { players: [{ id: DEVICE, name: '牛马' }], lastRounds: [] },
         profiles: [],
       }),
       'utf8',
     );
     const store = storeAt(path);
     const loaded = store.load();
-    expect(loaded?.dice.players).toHaveLength(1);
-    expect(loaded?.dice.players[0]!.id).toBe(DEVICE);
-    expect(loaded?.dice.players[0]!.history).toHaveLength(0);
-    expect(loaded?.dice.lastRounds).toHaveLength(0);
+    expect(loaded?.version).toBe(WORLD_STATE_VERSION);
+    expect(loaded?.boss.hp).toBe(88);
+    expect('ring' in (loaded ?? {})).toBe(false);
+    expect('dice' in (loaded ?? {})).toBe(false);
     store.dispose();
   });
 
@@ -281,7 +216,7 @@ describe('WorldStateStore 往返', () => {
     writeFileSync(path, '{ broken', 'utf8');
     const reopened = storeAt(path);
     const loaded = reopened.load();
-    expect(loaded?.ring.matchId).toBe(41);
+    expect(loaded?.boss.hp).toBe(123);
     reopened.dispose();
   });
 });
@@ -314,7 +249,6 @@ describe('读档容错', () => {
         savedAt: NOW,
         tzOffsetMin: 480,
         boss: { hp: 99_999, resetAt: NOW + 60_000 },
-        ring: { matchId: -5, nextMatchId: 0, lastMatch: null },
         profiles: [],
       }),
       'utf8',
@@ -322,9 +256,7 @@ describe('读档容错', () => {
     const store = storeAt(path);
     const loaded = store.load();
     expect(loaded?.boss.hp).toBe(BOSS_MAX_HP);
-    expect(loaded?.ring.matchId).toBe(0);
-    expect(loaded?.ring.nextMatchId).toBe(1);
-    // v1 档没有豪宅段：按空豪宅接管，不当成坏档隔离
+    // v1 档没有房产段：按空房产接管，不当成坏档隔离
     expect(loaded?.villas.villas).toEqual([]);
     store.dispose();
   });

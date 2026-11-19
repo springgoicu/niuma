@@ -22,7 +22,6 @@ import {
   decodePongClock,
   decodeQueueRejected,
   decodeQueueStatus,
-  decodeRing,
   decodeSeatState,
   decodeSpawn,
   decodeItemEffect,
@@ -41,24 +40,17 @@ import {
   decodeVent,
   decodeWalletSync,
   decodeWelcome,
-  decodeDiceState,
-  decodeDiceResult,
-  decodeDiceBoard,
   decodeVillaState,
   decodeQuestState,
   decodeWorkResult,
   decodeWorldEvent,
   decodeEventClaimResult,
-  decodeArenaPool,
   decodeApartmentPeek,
   decodeInteractReject,
-  encodeDiceBet,
-  encodeDiceBoardRequest,
   encodeWorkClaim,
   encodeQuestClaim,
   encodeEventClaim,
   encodeVillaRequest,
-  encodeArenaBet,
   encodeApartmentRequest,
   encodeBoardRequest,
   encodeCareerReport,
@@ -72,8 +64,6 @@ import {
   encodeP2PInvite,
   encodeP2PRespond,
   encodePing,
-  encodeRingEnter,
-  encodeRingLeave,
   encodeSetAppearance,
   encodeShopBuy,
   encodeShout,
@@ -118,7 +108,6 @@ import {
   type WalletSyncPacket,
   type QueueStatusPacket,
   type ResumeState,
-  type RingPacket,
   type SeatStateEntry,
   type ShoutRejectPacket,
   type SpawnPacket,
@@ -126,12 +115,7 @@ import {
   type SystemNoticePacket,
   type VentEventPacket,
   type WelcomePacket,
-  type DiceStatePacket,
-  type DiceResultPacket,
-  type DiceBoardPacket,
-  type DiceBoardRequest,
   type VillaStatePacket,
-  type ArenaPoolPacket,
   type ApartmentPeekPacket,
   type BossShockPacket,
   type EventClaimResult,
@@ -196,18 +180,8 @@ export interface NetHandlers {
   onAmbulance?(packet: AmbulancePacket): void;
   /** 伤员昏迷 / 治疗 / 工伤保护状态变化，客户端按 seconds 本地倒计时 */
   onPatient?(packet: PatientStatusPacket): void;
-  /** 擂台快照：阶段变化 / 扣血 / 1Hz 心跳都会广播；会话层用服务器时刻记锚点，本地递减倒计时 */
-  onRing(packet: RingPacket): void;
-  /** 赌桌公共局快照（ADR-0087）：两张桌一包，亮牌期 1Hz 心跳 */
-  onDiceState?(packet: DiceStatePacket): void;
-  /** 一桌一局的结算单（ADR-0110）：亮牌时逐人下发，`self` 由服务端标出 */
-  onDiceResult?(packet: DiceResultPacket): void;
-  /** 赌桌排行榜快照：按需拉取，不跟着心跳推送 */
-  onDiceBoard?(packet: DiceBoardPacket): void;
-  /** 豪宅牌匾 / 锁状态，1Hz 心跳对齐可收币数 */
+  /** 房产牌匾 / 锁状态，1Hz 心跳对齐可收币数 */
   onVillaState?(packet: VillaStatePacket): void;
-  /** 八角笼彩池快照：押注、开赛与结算各一条 */
-  onArenaPool?(packet: ArenaPoolPacket): void;
   /** 公寓窗口探头全量快照：谁在哪栋哪个窗口 */
   onApartmentPeek?(packet: ApartmentPeekPacket): void;
   /** 互动被拒：只带动作与原因编号，客户端映射成中文，不再“点了没反应” */
@@ -553,9 +527,6 @@ export class NetClient {
       case OpCode.S2C_PATIENT:
         this.handlers.onPatient?.(decodePatientStatus(data));
         break;
-      case OpCode.S2C_RING:
-        this.handlers.onRing(decodeRing(data));
-        break;
       case OpCode.S2C_QUEUE_STATUS:
         this.handlers.onQueue(decodeQueueStatus(data));
         break;
@@ -605,20 +576,8 @@ export class NetClient {
       case OpCode.S2C_ITEM_REJECT:
         this.handlers.onItemReject?.(decodeItemReject(data));
         break;
-      case OpCode.S2C_DICE_STATE:
-        this.handlers.onDiceState?.(decodeDiceState(data));
-        break;
-      case OpCode.S2C_DICE_RESULT:
-        this.handlers.onDiceResult?.(decodeDiceResult(data));
-        break;
-      case OpCode.S2C_DICE_BOARD:
-        this.handlers.onDiceBoard?.(decodeDiceBoard(data));
-        break;
       case OpCode.S2C_VILLA_STATE:
         this.handlers.onVillaState?.(decodeVillaState(data));
-        break;
-      case OpCode.S2C_ARENA_POOL:
-        this.handlers.onArenaPool?.(decodeArenaPool(data));
         break;
       case OpCode.S2C_APARTMENT_PEEK:
         this.handlers.onApartmentPeek?.(decodeApartmentPeek(data));
@@ -764,18 +723,6 @@ export class NetClient {
     this.socket.send(encodeActivityReport({ kind, sub }));
   }
 
-  /** 擂台报名：服务端按容量 / 阶段 / 距离二次裁决 */
-  sendRingEnter(): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeRingEnter());
-  }
-
-  /** 取消报名：只允许在等待第 2 人阶段生效 */
-  sendRingLeave(): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeRingLeave());
-  }
-
   /** 发起对战邀请：距离 / 忙碌 / 赌注都由服务端二次裁决（ADR-0083） */
   sendP2PInvite(request: P2PInviteRequest): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
@@ -845,25 +792,9 @@ export class NetClient {
 
   // ---- 热区建筑（ADR-0087）：上行只带意图，金额与资格由服务端复核 ----
 
-  sendDiceBet(request: { table: number; side: number; amount: number }): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeDiceBet(request));
-  }
-
-  /** 赌桌排行榜：只读快照，服务端按 2 秒冷却限频 */
-  sendDiceBoard(request: DiceBoardRequest): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeDiceBoardRequest(request));
-  }
-
   sendVilla(request: { villa: number; action: number }): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeVillaRequest(request));
-  }
-
-  sendArenaBet(request: { side: number; amount: number }): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(encodeArenaBet(request));
   }
 
   sendApartment(request: { action: number; arg: number }): void {

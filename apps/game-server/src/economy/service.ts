@@ -87,18 +87,9 @@ export class EconomyService {
     return true;
   }
 
-  /** 属性升级：等级封顶 / 余额不足都只返回 false，不改任何字段 */
-  upgradeStat(player: Player, statIndex: number): boolean {
-    const key = STAT_KEYS[statIndex] as StatKey | undefined;
-    if (!key) return false;
-    const level = player.stats[key];
-    if (level >= 10) return false;
-    const price = statUpgradePrice(key, level);
-    if (player.coins < price) return false;
-    player.coins -= price;
-    player.stats[key] = level + 1;
-    this.push(player, WALLET_REASON.ShopUpgrade);
-    return true;
+  /** 属性系统已废除：统一返回 false，不再消耗金币升级属性 */
+  upgradeStat(_player: Player, _statIndex: number): boolean {
+    return false;
   }
 
   /** 商店购买：caller 已校验 sku；这里只负责扣钱与入包 */

@@ -1,7 +1,5 @@
 import {
-  P2P_DUEL_ARMOR_PER_LEVEL,
   P2P_DUEL_BASE_DAMAGE,
-  P2P_DUEL_CRIT_PER_LEVEL,
   P2P_DUEL_DURATION_MS,
   P2P_DUEL_ESCAPE_PX,
   P2P_DUEL_FLAG_FINISHED,
@@ -38,10 +36,9 @@ function hpOf(state: DuelState, match: ActiveMatch, player: Player): number {
   return player.id === match.a.id ? state.hpA : state.hpB;
 }
 
-function damageOf(attacker: Player, target: Player): number {
-  const crit = 1 + attacker.stats.critLv * P2P_DUEL_CRIT_PER_LEVEL;
-  const armor = 1 + target.stats.armorLv * P2P_DUEL_ARMOR_PER_LEVEL;
-  return Math.max(1, Math.round((P2P_DUEL_BASE_DAMAGE * crit) / armor));
+function damageOf(_attacker: Player, _target: Player): number {
+  // 属性倍率已废除：野外单挑只保留统一基础伤害
+  return P2P_DUEL_BASE_DAMAGE;
 }
 
 function settleWith(

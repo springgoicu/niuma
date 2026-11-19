@@ -4,9 +4,7 @@ import {
   POSE,
   clampWorldX,
   clampWorldY,
-  clampToRing,
   dequantizeCoord,
-  isInRing,
   resolveWalkInto,
   seatById,
   seatPose,
@@ -18,7 +16,6 @@ import {
 } from '@niuma/shared-types';
 import type { Player } from './world';
 import type { SeatRegistry } from './seats';
-import type { RingRuntime } from './ring';
 
 /** 允许的时间窗下限，避免同一毫秒内连发被误判 */
 const MIN_WINDOW_MS = 8;
@@ -69,7 +66,6 @@ export function applyMove(
   packet: MovePacket,
   now: number,
   seats?: SeatRegistry,
-  ring?: RingRuntime,
 ): MoveResult {
   // packet.id 仅用于协议完整性与日志，服务端一律以连接绑定的实体为准
 
@@ -87,13 +83,6 @@ export function applyMove(
 
   // 公寓窗口探头（ADR-0098）：人在窗里，位移与姿态一概不采信，只保留门口台阶上的站姿
   if (player.roomId !== 0) {
-    player.applyState(player.direction, POSE.Idle, false);
-    player.markDirtyIfChanged();
-    return RESULT;
-  }
-
-  // 颁奖阶段冻结参赛者：忽略客户端位移与姿态，直接落回站姿
-  if (ring?.isFrozen(player.id)) {
     player.applyState(player.direction, POSE.Idle, false);
     player.markDirtyIfChanged();
     return RESULT;
@@ -155,23 +144,6 @@ export function applyMove(
   const nextY = clampWorldY(player.y + dy * scale);
   // 护士站门禁叠在求解里（ADR-0107）：只挡站外跨进站内，治好的伤员仍能走出来
   resolveWalkInto(MOTION, player.x, player.y, nextX, nextY);
-
-  /**
-   * 擂台边界：参赛者向内夹取；非参赛者不允许靠移动跨进围绳。
-   * 唯一入场路径是报名后的服务端传送，避免“从绳子缝里挤进去”。
-   */
-  if (ring) {
-    if (ring.has(player.id)) {
-      const clampedPoint = clampToRing(MOTION.x, MOTION.y);
-      if (clampedPoint.x !== MOTION.x || clampedPoint.y !== MOTION.y) RESULT.clamped = true;
-      MOTION.x = clampedPoint.x;
-      MOTION.y = clampedPoint.y;
-    } else if (isInRing(MOTION.x, MOTION.y)) {
-      MOTION.x = player.x;
-      MOTION.y = player.y;
-      RESULT.clamped = true;
-    }
-  }
 
   player.x = MOTION.x;
   player.y = MOTION.y;

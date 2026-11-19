@@ -8,8 +8,6 @@ import {
   JAIL_PHASE,
   OpCode,
   POSE,
-  RING_EXIT,
-  RING_START_SLOTS,
   SYSTEM_NOTICE_KIND,
   decodeJail,
   decodeSystemNotice,
@@ -499,48 +497,5 @@ describe('打人触发执法（ADR-0074）', () => {
 
     expect(h.notices).toEqual([]);
     expect(h.dispatched).toEqual([]);
-  });
-});
-
-describe('擂台赛期间保安不执法（ADR-0075）', () => {
-  /** 报名只认围绳附近的服务端传送：夹具先把人挪到场边，再走同一条入场路径 */
-  function enterRing(h: Harness, at: number): void {
-    h.player.x = RING_EXIT.x;
-    h.player.y = RING_EXIT.y;
-    expect(h.world.ring.enter(h.player, at, 0).ok).toBe(true);
-  }
-
-  it('名单内的玩家不累计坐站循环，也不派单', () => {
-    const h = setup();
-    enterRing(h, 1_000);
-    // 围观者贴到起跑位旁：排除「身边没人」这个不触发原因
-    h.bystander.x = RING_START_SLOTS[0]!.x + 20;
-    h.bystander.y = RING_START_SLOTS[0]!.y;
-
-    let at = 1_100;
-    for (let index = 0; index < 6; index += 1) at = cycle(h, at);
-
-    expect(h.sent).toEqual([]);
-    expect(h.dispatched).toEqual([]);
-  });
-
-  it('已确认的案子在上擂台后撤销：保安原地松手，只发一次 Released', () => {
-    const h = setup();
-    let at = 1_000;
-    for (let index = 0; index < 6; index += 1) at = cycle(h, at);
-    expect(h.dispatched).toEqual([h.player.id]);
-
-    enterRing(h, at);
-    h.detention.update(at);
-
-    expect(h.cancelled).toEqual([h.player.id]);
-    const released = () => h.sent.filter((entry) => entry.packet.phase === JAIL_PHASE.Released);
-    // 本人 + 旁观者各一份
-    expect(released()).toHaveLength(2);
-
-    // 案子只撤销一次：后续 Tick 不重复发 Released，也不重复取消
-    h.detention.update(at + 50);
-    expect(h.cancelled).toEqual([h.player.id]);
-    expect(released()).toHaveLength(2);
   });
 });

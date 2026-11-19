@@ -3,10 +3,6 @@
 import {
   POSE,
   emptyEconomyProfile,
-  type ArenaPoolPacket,
-  type DiceStatePacket,
-  type DiceResultPacket,
-  type DiceBoardPacket,
   type EconomyProfile,
   type NavTargetId,
   type P2PDuelStatePacket,
@@ -16,7 +12,6 @@ import {
   type P2PShowdownPacket,
   type Pose,
   type QueueStatusPacket,
-  type RingPacket,
   type SeatKind,
   type VillaStatePacket,
   type BossShockPacket,
@@ -106,14 +101,6 @@ interface GameUiState {
    * 会话态、不落盘——换个园区、刷新页面都不该记住「上次弹过哪一条」。
    */
   areaBanner: { key: number; title: string; subtitle: string; color: number } | null;
-  /**
-   * 擂台快照与收到时刻。
-   *
-   * 服务端只在阶段变化 / 扣血 / 1Hz 心跳时广播，`receivedAt` 是收到包时的**服务器时刻**
-   * （ADR-0081），HUD 用 `serverNow() - receivedAt` 本地递减；所以必须存这两个值，
-   * 不能只存 remainingMs。
-   */
-  ring: { packet: RingPacket; receivedAt: number } | null;
   /** 牛马币钱包（ADR-0082）：服务端权威快照，金币变动时整块替换 */
   wallet: EconomyProfile;
   /** 收到但还没回应的邀请；`expiresAt` 用服务器时刻，倒计时不受本机时钟影响 */
@@ -132,7 +119,7 @@ interface GameUiState {
   actionTarget: { id: number; name: string; mode: 'tip' | 'item' } | null;
   shopOpen: boolean;
   /** 商店当前页签（ADR-0085 / ADR-0087）：属性 / 消耗品 / 装扮三页 */
-  shopTab: 'stats' | 'items' | 'cosmetics';
+  shopTab: 'items' | 'cosmetics';
   /** 大喇叭输入面板：买下之后才允许打开 */
   shoutOpen: boolean;
   /** 置顶金色横幅：`key` 自增，组件按它重播入场动画 */
@@ -140,27 +127,9 @@ interface GameUiState {
   /** 金币飘字：`key` 自增，组件按它错开动画 */
   coinPops: Array<{ key: number; amount: number; id: number }>;
   // ---- 热区建筑（ADR-0087）----
-  /** 赌桌面板：桌号，null 表示收起 */
-  diceOpen: number | null;
-  /** 赌桌公共局快照：面板与桌心骰子都读它 */
-  dice: DiceStatePacket | null;
-  /**
-   * 最近一局结算单：按桌号存两份（0 / 1），亮牌到达即替换。
-   *
-   * 保留上一局而不是清空：玩家在亮牌结束后才打开面板，也要能看到刚才谁赢了多少。
-   */
-  diceResults: Array<DiceResultPacket | null>;
-  /** 赌桌排行榜快照：只在打开榜单页签时按需拉取 */
-  diceBoard: DiceBoardPacket | null;
-  /** 榜单请求在途：面板据此显示「正在算榜」，拒绝回执会把它清掉 */
-  diceBoardPending: boolean;
-  /** 八角笼观战押注面板 */
-  arenaBetOpen: boolean;
-  /** 八角笼彩池快照 */
-  arenaPool: ArenaPoolPacket | null;
-  /** 豪宅卡片：villaId，null 表示收起 */
+  /** 房产地契卡片：villaId，null 表示收起 */
   villaOpen: number | null;
-  /** 两栋小院的牌匾 / 锁状态 */
+  /** 8 处分阶房产的牌匾 / 锁状态 */
   villas: VillaStatePacket | null;
 
   // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
@@ -190,13 +159,6 @@ interface GameUiState {
   setQuestOpen: (open: boolean) => void;
   setWorldEvent: (packet: WorldEventPacket | null) => void;
   setBossShock: (packet: BossShockPacket | null, receivedAt?: number) => void;
-  setDiceOpen: (table: number | null) => void;
-  setDice: (packet: DiceStatePacket | null) => void;
-  setDiceResult: (packet: DiceResultPacket) => void;
-  setDiceBoard: (packet: DiceBoardPacket | null) => void;
-  setDiceBoardPending: (pending: boolean) => void;
-  setArenaBetOpen: (open: boolean) => void;
-  setArenaPool: (packet: ArenaPoolPacket | null) => void;
   setVillaOpen: (villa: number | null) => void;
   setVillas: (packet: VillaStatePacket | null) => void;
   setWallet: (wallet: EconomyProfile) => void;
@@ -208,7 +170,7 @@ interface GameUiState {
   setMenuTarget: (target: { id: number; name: string; badge: PlayerBadge | null } | null) => void;
   setActionTarget: (target: { id: number; name: string; mode: 'tip' | 'item' } | null) => void;
   /** `tab` 缺省时保留当前页签：老调用点只有一个布尔量，不该被新参数打断 */
-  setShopOpen: (open: boolean, tab?: 'stats' | 'items' | 'cosmetics') => void;
+  setShopOpen: (open: boolean, tab?: 'items' | 'cosmetics') => void;
   setShoutOpen: (open: boolean) => void;
   pushShoutBanner: (fromId: number, text: string) => void;
   clearShoutBanner: (key: number) => void;
@@ -220,7 +182,6 @@ interface GameUiState {
     seatKind: SeatKind | null;
     seatGroup: string | null;
   }) => void;
-  setRing: (packet: RingPacket | null, receivedAt: number) => void;
   setHint: (hint: string | null) => void;
   setNavTarget: (nav: { id: NavTargetId | 'plaza'; name: string } | null) => void;
   /** 请求展开导览卡：只自增序号，真正的开合仍由 NavCard 决定 */
@@ -306,7 +267,6 @@ const INITIAL = {
   navTarget: null as { id: NavTargetId | 'plaza'; name: string } | null,
   navOpenSeq: 0,
   areaBanner: null as { key: number; title: string; subtitle: string; color: number } | null,
-  ring: null as { packet: RingPacket; receivedAt: number } | null,
   wallet: emptyEconomyProfile(),
   invite: null as { packet: P2PInviteNotifyPacket; expiresAt: number } | null,
   inviteResult: null as P2PInviteResultPacket | null,
@@ -316,17 +276,10 @@ const INITIAL = {
   menuTarget: null as { id: number; name: string; badge: PlayerBadge | null } | null,
   actionTarget: null as { id: number; name: string; mode: 'tip' | 'item' } | null,
   shopOpen: false,
-  shopTab: 'items' as 'stats' | 'items' | 'cosmetics',
+  shopTab: 'items' as 'items' | 'cosmetics',
   shoutOpen: false,
   shoutBanner: null as { key: number; fromId: number; text: string } | null,
   coinPops: [] as Array<{ key: number; amount: number; id: number }>,
-  diceOpen: null as number | null,
-  dice: null as DiceStatePacket | null,
-  diceResults: [null, null] as Array<DiceResultPacket | null>,
-  diceBoard: null as DiceBoardPacket | null,
-  diceBoardPending: false,
-  arenaBetOpen: false,
-  arenaPool: null as ArenaPoolPacket | null,
   villaOpen: null as number | null,
   villas: null as VillaStatePacket | null,
   workOpen: false,
@@ -350,8 +303,6 @@ export const useGameUi = create<GameUiState>((set) => ({
 
   setLocalState: ({ pose, seated, seatKind, seatGroup }) =>
     set({ localPose: pose, seated, seatKind, seatGroup }),
-
-  setRing: (packet, receivedAt) => set({ ring: packet ? { packet, receivedAt } : null }),
 
   setWallet: (wallet) => set({ wallet }),
 
@@ -393,24 +344,6 @@ export const useGameUi = create<GameUiState>((set) => ({
     set((state) => ({ coinPops: state.coinPops.filter((pop) => pop.key !== key) })),
 
   // ---- 热区建筑（ADR-0087）----
-  setDiceOpen: (diceOpen) => set({ diceOpen }),
-  setDice: (dice) => set({ dice }),
-  setDiceResult: (packet) =>
-    set((state) => {
-      const index = packet.table === 1 ? 1 : 0;
-      const previous = state.diceResults[index];
-      // 同一局会被补发一次（进场 / 重连）：直接丢弃，避免面板闪一下重播
-      if (previous && previous.roundId === packet.roundId && previous.entries.length === packet.entries.length) {
-        return state;
-      }
-      const next = [...state.diceResults];
-      next[index] = packet;
-      return { diceResults: next };
-    }),
-  setDiceBoard: (diceBoard) => set({ diceBoard, diceBoardPending: false }),
-  setDiceBoardPending: (diceBoardPending) => set({ diceBoardPending }),
-  setArenaBetOpen: (arenaBetOpen) => set({ arenaBetOpen }),
-  setArenaPool: (arenaPool) => set({ arenaPool }),
   setVillaOpen: (villaOpen) => set({ villaOpen }),
   setVillas: (villas) => set({ villas }),
 

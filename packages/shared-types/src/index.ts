@@ -28,8 +28,6 @@ export * from './world/park';
 export * from './world/collision';
 export * from './world/vent';
 export * from './world/boss';
-export * from './world/ring';
-export * from './world/dice-hall';
 export * from './world/villas';
 export * from './world/apartment';
 export * from './world/hotspots';

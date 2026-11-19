@@ -40,13 +40,8 @@ import {
   WORLD_EVENT_KIND,
   WORLD_EVENT_PACKET_BYTES,
   WORLD_EVENT_PHASE,
-  RING_CAPACITY,
-  RING_PHASE,
   JAIL_PACKET_BYTES,
   JAIL_PHASE,
-  RING_VENT_FLAG_ELIMINATED,
-  RING_VENT_FLAG_HIT,
-  VENT_PACKET_WITH_FLAGS_BYTES,
   DEFAULT_APPEARANCE,
   decodeAppearance,
   decodeAppearanceBroadcast,
@@ -73,7 +68,6 @@ import {
   decodeStatusBroadcast,
   decodeSystemNotice,
   decodeSync,
-  decodeRing,
   decodeVent,
   decodeWelcome,
   decodeWorldEvent,
@@ -93,12 +87,6 @@ import {
   encodeCareerSegment,
   encodeChatRejected,
   encodeDespawn,
-  encodeDiceBoard,
-  encodeDiceBoardRequest,
-  encodeDiceResult,
-  decodeDiceBoard,
-  decodeDiceBoardRequest,
-  decodeDiceResult,
   encodeHello,
   encodeJail,
   encodeMove,
@@ -107,7 +95,6 @@ import {
   encodeQueueRejected,
   encodeQueueStatus,
   encodeSpawn,
-  encodeRing,
   encodeSpawnInto,
   encodeSetName,
   encodeSetStatus,
@@ -404,84 +391,14 @@ describe('发泄结算包', () => {
   });
 
   it('空放：targetId = 0，坐标仍然可解（调用方不看）', () => {
-    expect(decodeVent(encodeVent(7, 0, 0, 0))).toEqual({ attackerId: 7, targetId: 0, x: 0, y: 0 });
-  });
-
-  it('擂台命中追加 flags，普通命中仍保持 9 字节', () => {
-    const plain = encodeVent(7, 8, 100, 200);
+    const plain = encodeVent(7, 0, 0, 0);
     expect(plain.byteLength).toBe(VENT_PACKET_BYTES);
-
-    const ring = encodeVent(7, 8, 100, 200, RING_VENT_FLAG_HIT | RING_VENT_FLAG_ELIMINATED);
-    expect(ring.byteLength).toBe(VENT_PACKET_WITH_FLAGS_BYTES);
-    expect(decodeVent(ring)).toEqual({
-      attackerId: 7,
-      targetId: 8,
-      x: 100,
-      y: 200,
-      ringHit: true,
-      eliminated: true,
-    });
+    expect(decodeVent(plain)).toEqual({ attackerId: 7, targetId: 0, x: 0, y: 0 });
   });
 
   it('拒绝错误 opcode 与错误长度', () => {
     expect(() => decodeVent(encodeDespawn(1))).toThrow(/must be 9 or 10 bytes/);
     expect(() => decodeVent(encodeVent(1, 1, 1, 1).subarray(0, 8))).toThrow(/must be 9 or 10 bytes/);
-  });
-});
-
-describe('擂台快照包', () => {
-  it('round-trip 阶段、对局、剩余时间与红蓝两个席位', () => {
-    const packet = encodeRing({
-      phase: RING_PHASE.Award,
-      matchId: 7,
-      remainingMs: 0,
-      members: [
-        { id: 1, name: '甲', hp: 6, eliminated: false, rank: 1 },
-        { id: 2, name: '乙', hp: 0, eliminated: true, rank: 2 },
-      ],
-    });
-    expect(packet[0]).toBe(OpCode.S2C_RING);
-    expect(decodeRing(packet)).toEqual({
-      phase: RING_PHASE.Award,
-      matchId: 7,
-      remainingMs: 0,
-      members: [
-        { id: 1, slot: 0, name: '甲', hp: 6, eliminated: false, rank: 1 },
-        { id: 2, slot: 1, name: '乙', hp: 0, eliminated: true, rank: 2 },
-      ],
-    });
-  });
-
-  it('空擂台只有 9 字节头部', () => {
-    expect(encodeRing({ phase: RING_PHASE.Idle, matchId: 0, remainingMs: 0, members: [] }).byteLength).toBe(9);
-  });
-
-  it('拒绝超容量、非法阶段与截断名字', () => {
-    expect(() =>
-      encodeRing({
-        phase: RING_PHASE.Running,
-        matchId: 1,
-        remainingMs: 1,
-        members: Array.from({ length: RING_CAPACITY + 1 }, (_, i) => ({
-          id: i + 1,
-          name: '牛',
-          hp: 10,
-          eliminated: false,
-          rank: 0,
-        })),
-      }),
-    ).toThrow(new RegExp(`supports ${RING_CAPACITY} members`));
-
-    const packet = encodeRing({
-      phase: RING_PHASE.Running,
-      matchId: 1,
-      remainingMs: 1,
-      members: [{ id: 1, name: '牛', hp: 10, eliminated: false, rank: 0 }],
-    });
-    const badPhase = packet.slice();
-    badPhase[1] = 9;
-    expect(() => decodeRing(badPhase)).toThrow(/phase out of range/);
-    expect(() => decodeRing(packet.subarray(0, packet.byteLength - 2))).toThrow(/name length out of range/);
   });
 });
 
@@ -1766,134 +1683,5 @@ describe('世界事件与画饼冲击波包（ADR-0088）', () => {
     };
     const truncated = encodeBossShock(packet).subarray(0, BOSS_SHOCK_PACKET_BYTES - 1);
     expect(() => decodeBossShock(truncated)).toThrow(/boss shock must be/);
-  });
-});
-
-describe('赌桌结算单', () => {
-  it('round-trip 每位下注者的昵称 / 档位 / 注额 / 到手 / 净盈亏 / 退款 / 本人标记', () => {
-    const packet = {
-      table: 1,
-      roundId: 513,
-      dice: [2, 2, 2] as const,
-      hit: 2,
-      raid: true,
-      entries: [
-        { name: '摸鱼王', side: 2, bet: 500, payout: 1425, net: 925, refunded: false, self: true },
-        { name: '划水牛', side: 0, bet: 30, payout: 0, net: -30, refunded: false, self: false },
-        { name: '夜班马', side: 1, bet: 20, payout: 20, net: 0, refunded: true, self: false },
-      ],
-    };
-    expect(decodeDiceResult(encodeDiceResult(packet))).toEqual(packet);
-  });
-
-  it('无人命中用 hit = -1，空名单也能解', () => {
-    const packet = { table: 0, roundId: 7, dice: [1, 1, 3] as const, hit: -1, raid: false, entries: [] };
-    expect(decodeDiceResult(encodeDiceResult(packet))).toEqual(packet);
-  });
-
-  it('超长昵称按字符与字节双上限截断，不会把后续行解错位', () => {
-    const long = '牛'.repeat(30);
-    const packet = {
-      table: 0,
-      roundId: 1,
-      dice: [4, 5, 6] as const,
-      hit: 0,
-      raid: false,
-      entries: [{ name: long, side: 0, bet: 100, payout: 180, net: 80, refunded: false, self: true }],
-    };
-    const decoded = decodeDiceResult(encodeDiceResult(packet));
-    expect(decoded.entries).toHaveLength(1);
-    expect(decoded.entries[0]!.name).toBe(truncateName(long));
-  });
-
-  it('截断的结算包不会越界读取，只是丢掉读不全的行', () => {
-    const packet = {
-      table: 0,
-      roundId: 1,
-      dice: [1, 2, 3] as const,
-      hit: 1,
-      raid: false,
-      entries: [{ name: '王二', side: 1, bet: 10, payout: 10, net: 0, refunded: true, self: true }],
-    };
-    const bytes = encodeDiceResult(packet);
-    const truncated = bytes.subarray(0, bytes.byteLength - 1);
-    expect(decodeDiceResult(truncated).entries).toHaveLength(0);
-  });
-});
-
-describe('赌桌排行榜包', () => {
-  it('请求只带范围与口径', () => {
-    expect(decodeDiceBoardRequest(encodeDiceBoardRequest({ scope: 2, metric: 1 }))).toEqual({
-      scope: 2,
-      metric: 1,
-    });
-  });
-
-  it('round-trip 名次 / 昵称 / 净收益 / 胜率 / 局数 / 本人行', () => {
-    const packet = {
-      scope: 0,
-      metric: 1,
-      total: 37,
-      entries: [
-        { rank: 1, name: '摸鱼王', net: 12800, winRate: 0.72, rounds: 64, self: false },
-        { rank: 2, name: '划水牛', net: -900, winRate: -1, rounds: 3, self: true },
-      ],
-      self: null,
-    };
-    expect(decodeDiceBoard(encodeDiceBoard(packet))).toEqual(packet);
-  });
-
-  it('负收益按有符号读回，不会被当成 40 亿', () => {
-    const packet = {
-      scope: 1,
-      metric: 0,
-      total: 1,
-      entries: [{ rank: 1, name: '倒贴马', net: -123456, winRate: 0.1, rounds: 10, self: true }],
-      self: null,
-    };
-    expect(decodeDiceBoard(encodeDiceBoard(packet)).entries[0]!.net).toBe(-123456);
-  });
-
-  it('同一趟带回「我的战绩」：三份口径与逐局历史都能解回', () => {
-    const agg = { rounds: 6, wins: 2, losses: 3, refunds: 1, totalBet: 900, totalPayout: 1120, net: 220, bestWin: 480 };
-    const packet = {
-      scope: 0,
-      metric: 0,
-      total: 2,
-      entries: [{ rank: 1, name: '摸鱼王', net: 220, winRate: 0.4, rounds: 6, self: true }],
-      self: {
-        all: agg,
-        table0: { ...agg, rounds: 4 },
-        table1: { ...agg, rounds: 2, net: -80 },
-        history: [
-          {
-            table: 1,
-            roundId: 88,
-            dice: [3, 3, 3] as const,
-            hit: 2,
-            bet: 200,
-            payout: 680,
-            net: 480,
-            refunded: false,
-          },
-          {
-            table: 0,
-            roundId: 87,
-            dice: [1, 2, 3] as const,
-            hit: -1,
-            bet: 50,
-            payout: 50,
-            net: 0,
-            refunded: true,
-          },
-        ],
-      },
-    };
-    expect(decodeDiceBoard(encodeDiceBoard(packet))).toEqual(packet);
-  });
-
-  it('没有战绩时不写本人段，解回来是 null', () => {
-    const packet = { scope: 0, metric: 0, total: 0, entries: [], self: null };
-    expect(decodeDiceBoard(encodeDiceBoard(packet)).self).toBeNull();
   });
 });

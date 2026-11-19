@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   BULLETIN_BOARD,
-  DICE_HALL_SEAT_IDS,
-  DICE_TABLES,
   DIRECTION,
-  RING_BENCH_SEAT_IDS,
   TEA_STATION,
   WELCOME_LANDMARKS,
   WORLD_HOTSPOTS,
@@ -158,58 +155,14 @@ describe('弱交互场所提示', () => {
 });
 
 describe('入座类玩法的提示（ADR-0093）', () => {
-  /** 某张赌桌的凳子：按座位组筛，不手写座位 id */
-  function stoolOf(group: string): number {
-    const stool = DICE_HALL_SEAT_IDS.find((id) => seatById(id)?.group === group);
-    if (stool === undefined) throw new Error(`没有 ${group} 的凳子`);
-    return stool;
-  }
-
-  it('脚下有红包时提示抢红包，优先于赌桌等热区', () => {
-    const table = DICE_TABLES[0]!;
-    const hint = selectContextHint(table.x, table.y, DIRECTION.Down, {
+  it('脚下有红包时提示抢红包，优先于工位等热区', () => {
+    const desk = WORLD_HOTSPOTS.find((def) => def.kind === 'workDesk')!;
+    const hint = selectContextHint(desk.x, desk.y, DIRECTION.Down, {
       isFreeSeat: noSeats,
       seatId: 0,
       redPacketNear: true,
     });
     expect(hint).toBe(HINT.redPacket);
-  });
-
-  it('站在赌桌旁没坐下：只提示先入座，且不给可点的按钮', () => {
-    const table = DICE_TABLES[0]!;
-    const hint = selectContextHint(table.x, table.y, DIRECTION.Down, {
-      isFreeSeat: noSeats,
-      seatId: 0,
-    });
-    expect(hint).toBe(HINT.diceNeedSeat);
-    expect(hintButton(hint!)).toBeNull();
-  });
-
-  it('坐在本桌凳子上才给「押一把」，坐在另一桌仍是先入座', () => {
-    const [a, b] = DICE_TABLES;
-    expect(
-      selectContextHint(a!.x, a!.y, DIRECTION.Down, {
-        isFreeSeat: noSeats,
-        seatId: stoolOf(a!.group),
-      }),
-    ).toBe(HINT.dice);
-    expect(
-      selectContextHint(a!.x, a!.y, DIRECTION.Down, {
-        isFreeSeat: noSeats,
-        seatId: stoolOf(b!.group),
-      }),
-    ).toBe(HINT.diceNeedSeat);
-  });
-
-  it('观战长椅同理：坐上才提示押注', () => {
-    const bench = WORLD_HOTSPOTS.find((def) => def.kind === 'arenaSeat')!;
-    const benchSeat = RING_BENCH_SEAT_IDS[0]!;
-    expect(selectContextHint(bench.x, bench.y, DIRECTION.Down, { isFreeSeat: noSeats })).toBe(
-      HINT.arenaNeedSeat,
-    );
-    expect(
-      selectContextHint(bench.x, bench.y, DIRECTION.Down, { isFreeSeat: noSeats, seatId: benchSeat }),
-    ).toBe(HINT.arenaBet);
   });
 
   it('工位同理：坐在本工位才提示搬砖', () => {

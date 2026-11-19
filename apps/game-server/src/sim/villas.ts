@@ -1,22 +1,26 @@
 import {
   WALLET_REASON,
-  VILLA_PRICE,
   VILLA_SPECS,
   VILLA_TREE_RANGE,
   isNearVillaGate,
   isNearVillaTree,
+  villaBuyPrice,
+  villaBuyoutRefund,
   villaDoorSolid,
   villaPendingIncome,
   type VillaPacket,
+  type VillaSpec,
   type VillaStatePacket,
   type WorldRect,
 } from '@niuma/shared-types';
 import type { Player } from './world';
 
-/** 经济端口：买院与收币两个动作 */
+/** 经济端口：扣款、发币与溢价收购退赔前房主 */
 export interface VillaPorts {
   spend: (player: Player, amount: number, reason: number) => boolean;
   grant: (player: Player, amount: number, reason: number) => void;
+  /** 将补偿打入前任房主（在线或离线档案均可） */
+  creditOwner?: (deviceId: string, amount: number, reason: number) => void;
 }
 
 export interface VillaRecord {
@@ -34,11 +38,24 @@ export interface VillaSaveState {
   villas: VillaRecord[];
 }
 
+export type VillaBuyOutcome =
+  | {
+      ok: true;
+      spec: VillaSpec;
+      price: number;
+      buyout: boolean;
+      refund: number;
+      prevOwnerName: string;
+      prevOwnerDeviceId: string;
+    }
+  | { ok: false; reason: 'invalid' | 'far' | 'alreadyMine' | 'coins' };
+
 /**
- * 豪宅小院：本运行周期内的冠名权、锁门与摇钱树。
+ * 园区房产（8 栋分阶产业，ADR-0087 扩展版）：
  *
- * 所有权按 `deviceId` 记（重连换的是新的 Player 实体，设备号不变），
- * 展示名与在线实体 id 随时刷新；房主离线时产出照算，但没人能替他收。
+ * - 支持无主原价冠名与 **1.5× 溢价收购**他人已冠名房产；
+ * - 被收购的原房主自动拿到 1.2× 溢价赔偿 + 未收完的摇钱树零钱；
+ * - 所有权按 `deviceId` 记（重连换新 Player 实体，设备号不变）。
  */
 export class VillaRuntime {
   private readonly records = new Map<number, VillaRecord>();
@@ -54,13 +71,38 @@ export class VillaRuntime {
     return (this.records.get(id)?.ownerId ?? 0) !== 0;
   }
 
-  /** 买下冠名权：无主 + 站在院门口 + 余额够 */
-  buy(player: Player, id: number, now: number): boolean {
+  /**
+   * 买下无主房产或 1.5× 溢价收购他人房产。
+   * 自己已拥有的房产不可重复购买；接管时自动解锁并清空累积计息起点。
+   */
+  buyResult(player: Player, id: number, now: number): VillaBuyOutcome {
     const spec = VILLA_SPECS.find((entry) => entry.id === id);
-    if (!spec) return false;
-    if (this.records.has(id)) return false;
-    if (!isNearVillaGate(spec, player.x, player.y)) return false;
-    if (!this.ports.spend(player, VILLA_PRICE, WALLET_REASON.VillaBuy)) return false;
+    if (!spec) return { ok: false, reason: 'invalid' };
+    const existing = this.records.get(id);
+    if (existing && existing.ownerDeviceId === player.deviceId) {
+      return { ok: false, reason: 'alreadyMine' };
+    }
+    if (!isNearVillaGate(spec, player.x, player.y)) return { ok: false, reason: 'far' };
+
+    const buyout = Boolean(existing);
+    const price = villaBuyPrice(spec, buyout);
+    if (!this.ports.spend(player, price, WALLET_REASON.VillaBuy)) {
+      return { ok: false, reason: 'coins' };
+    }
+
+    let refund = 0;
+    let prevOwnerName = '';
+    let prevOwnerDeviceId = '';
+    if (existing) {
+      const pending = villaPendingIncome(existing.lastCollectAt, now, spec.income);
+      refund = villaBuyoutRefund(spec) + pending;
+      prevOwnerName = existing.ownerName;
+      prevOwnerDeviceId = existing.ownerDeviceId;
+      if (prevOwnerDeviceId && refund > 0) {
+        this.ports.creditOwner?.(prevOwnerDeviceId, refund, WALLET_REASON.VillaBuyout);
+      }
+    }
+
     this.records.set(id, {
       id,
       ownerDeviceId: player.deviceId,
@@ -69,7 +111,12 @@ export class VillaRuntime {
       locked: false,
       lastCollectAt: now,
     });
-    return true;
+    return { ok: true, spec, price, buyout, refund, prevOwnerName, prevOwnerDeviceId };
+  }
+
+  /** 布尔便捷入口：供只关心成败的测试使用 */
+  buy(player: Player, id: number, now: number): boolean {
+    return this.buyResult(player, id, now).ok;
   }
 
   /** 锁门开关：只有房主本人（同设备号）能切 */
@@ -86,7 +133,7 @@ export class VillaRuntime {
     const record = this.records.get(id);
     if (!spec || !record || record.ownerDeviceId !== player.deviceId) return 0;
     if (!isNearVillaTree(spec, player.x, player.y, VILLA_TREE_RANGE + 24)) return 0;
-    const pending = villaPendingIncome(record.lastCollectAt, now);
+    const pending = villaPendingIncome(record.lastCollectAt, now, spec.income);
     if (pending <= 0) return 0;
     record.lastCollectAt = now;
     this.ports.grant(player, pending, WALLET_REASON.VillaIncome);
@@ -126,10 +173,10 @@ export class VillaRuntime {
         ownerId: record.ownerId,
         ownerName: record.ownerName,
         locked: record.locked,
-        // 离线房主也算已拥有：ownerId 归零只表示他不在线，不表示院子重新挂牌
+        // 离线房主也算已拥有：ownerId 归零只表示他不在线，不表示房产重新挂牌
         owned: true,
         mine,
-        pending: mine ? Math.min(0xffff, villaPendingIncome(record.lastCollectAt, now)) : 0,
+        pending: mine ? Math.min(0xffff, villaPendingIncome(record.lastCollectAt, now, spec.income)) : 0,
       };
     });
     return { villas };
@@ -140,7 +187,7 @@ export class VillaRuntime {
     return { villas: [...this.records.values()].map((record) => ({ ...record })) };
   }
 
-  restore(state: VillaSaveState | undefined): void {
+  restore(state: VillaSaveState | undefined, now = 0): void {
     this.records.clear();
     if (!state) return;
     for (const record of state.villas) {
@@ -152,7 +199,7 @@ export class VillaRuntime {
         ownerName: typeof record.ownerName === 'string' ? record.ownerName.slice(0, 24) : '',
         ownerId: 0,
         locked: record.locked === true,
-        lastCollectAt: Number.isFinite(record.lastCollectAt) ? Math.floor(record.lastCollectAt) : Date.now(),
+        lastCollectAt: Number.isFinite(record.lastCollectAt) ? Math.floor(record.lastCollectAt) : now,
       });
     }
   }

@@ -2,56 +2,84 @@
 
 import { Container, Graphics, Text } from 'pixi.js';
 import {
-  VILLA_PRICE,
   VILLA_SPECS,
   VILLA_WALL_SOLIDS,
+  villaBuyPrice,
+  type VillaSpec,
   type VillaStatePacket,
 } from '@niuma/shared-types';
 import type { DepthSink } from './sort-layer';
 import { WINTER_COLORS } from './terrain-palette';
+import { VENUE_OUTLINE } from './venue-palette';
 
 /**
- * 豪宅小院的美术层（ADR-0087）。
+ * 园区 8 处分阶房产美术与实时冠名牌匾层（ADR-0087 扩展版）：
  *
- * 院墙是静态碰撞、门栅是动态碰撞（视觉上门栅由 `locked` 决定要不要画），
- * 牌匾上的字随 `S2C_VILLA_STATE` 实时更新：无主时写标价，有主时写房主名与锁形图标。
+ * - 五类建筑立面（夜店 / 改车铺 / 拉面摊 / 木屋茶院 / 砖瓦小院），全用深靛描边 `VENUE_OUTLINE`；
+ * - 门前牌匾三态渲染：待售标价 / 他人冠名（王冠 + 在线状态灯 + 1.5×收购价） / 我的产业（金框 + 收益气泡）；
+ * - 零 GC 增量重绘：仅当某栋房产的状态字段发生变化时才重画 `plaqueBg` / `led` / `gate` 与文本。
  */
 
 const CJK_FONT =
   "'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI Emoji', 'Apple Color Emoji', sans-serif";
 
 const C = {
-  outline: 0x1a1512,
+  outline: VENUE_OUTLINE,
   brick: 0x8f4a3c,
   brickLight: 0xb3604c,
   brickDark: 0x5f2f26,
+  timber: 0x7b5336,
+  timberLight: 0xa2744e,
+  timberDark: 0x4e3422,
+  clubWall: 0x2f364e,
+  clubTrim: 0xf472b6,
+  garageWall: 0x3b4459,
+  garageTrim: 0x38bdf8,
+  stallRoof: 0xc94f3a,
+  stallStripe: 0xf6eedb,
   plaster: 0xd9c9b0,
-  roof: 0x2b2f36,
-  roofLight: 0x49505a,
+  roof: 0x2f374c,
+  roofLight: 0x49536e,
   gateIron: 0x2f3439,
   gateIronLight: 0x5b636b,
-  // 院门牌匾：奶油牌面 + 木边 + 墨绿字（ADR-0096）
-  plaque: 0xfff6e0,
-  plaqueEdge: 0x8a6446,
-  plaqueInk: 0x2f5d4a,
+  plaqueFree: 0xfff6e0,
+  plaqueOwned: 0x23293b,
+  plaqueMine: 0x2e271d,
+  plaqueEdgeFree: 0x8a6446,
+  plaqueEdgeOwned: 0x38bdf8,
+  plaqueEdgeMine: 0xf2c879,
+  inkDark: 0x2f5d4a,
+  inkLight: 0xf3f5f8,
   gold: 0xf2c879,
   goldDark: 0xa8802f,
   coin: 0xffd166,
   leaf: 0x2f8f63,
   leafLight: 0x4fbf85,
-  /** 屋顶积雪与地面雪同一色阶：两套白会在地脚处露一条接缝 */
+  ledOnline: 0x38ef7d,
+  ledOffline: 0x64748b,
   snow: WINTER_COLORS.snowBase,
 } as const;
 
-interface LabelSlot {
-  text: Text;
+interface PropertySlot {
+  spec: VillaSpec;
+  plaqueBg: Graphics;
+  led: Graphics;
   lock: Graphics;
+  gate: Graphics;
+  nameText: Text;
+  subText: Text;
+  badgeText: Text;
+  lastOwned: boolean;
+  lastMine: boolean;
+  lastLocked: boolean;
+  lastOnline: boolean;
+  lastOwnerName: string;
+  lastPending: number;
 }
 
 export class VillasView {
   private readonly roots: Container[] = [];
-  private readonly labels: LabelSlot[] = [];
-  private readonly gates: Graphics[] = [];
+  private readonly slots: Array<PropertySlot | undefined> = [];
   private readonly texts: Text[] = [];
   private devicePxPerTexel: number;
 
@@ -64,94 +92,104 @@ export class VillasView {
 
   build(depth: DepthSink, base: Container): void {
     const ground = new Graphics();
+
     for (const spec of VILLA_SPECS) {
-      // 院内铺装与草皮
-      ground
-        .rect(spec.rect.x + 8, spec.rect.y + 8, spec.rect.w - 16, spec.rect.h - 16)
-        .fill({ color: C.plaster, alpha: 0.28 });
-      // 小楼本体（走深度层，会被角色挡住）
+      this.paintPropertyGround(ground, spec);
+
+      // 主建筑立面
       const house = new Container();
       house.position.set(spec.house.x, spec.house.y + spec.house.h);
       const hg = new Graphics();
-      hg.rect(0, -spec.house.h, spec.house.w, spec.house.h).fill(C.brickDark);
-      hg.rect(2, -spec.house.h + 2, spec.house.w - 4, spec.house.h - 4).fill(C.brick);
-      for (let i = 0; i < 4; i += 1) {
-        hg.rect(6 + i * 52, -spec.house.h + 8, 34, 22).fill(C.roofLight);
-        hg.rect(6 + i * 52, -spec.house.h + 8, 34, 3).fill(C.goldDark);
-      }
-      hg.rect(0, -spec.house.h - 8, spec.house.w, 10).fill(C.roof);
-      hg.rect(0, -spec.house.h - 8, spec.house.w, 3).fill(C.roofLight);
-      if (this.winter) hg.rect(0, -spec.house.h - 9, spec.house.w, 3).fill(C.snow);
+      this.paintPropertyHouse(hg, spec);
       house.addChild(hg);
       depth.add(spec.house.y + spec.house.h, house);
       this.roots.push(house);
 
-      // 摇钱树：金色树冠 + 地面落币
+      // 摇钱树 / 街边收银柜台
       const tree = new Container();
       tree.position.set(spec.tree.x, spec.tree.y);
       const tg = new Graphics();
-      tg.rect(-3, -34, 6, 34).fill(C.brickDark);
-      tg.circle(0, -44, 22).fill(C.leaf);
-      tg.circle(-12, -38, 14).fill(C.leafLight);
-      tg.circle(12, -40, 13).fill(C.leaf);
-      for (let i = 0; i < 9; i += 1) {
-        tg.circle(-18 + (i % 5) * 9, -50 + Math.floor(i / 5) * 10, 2.6).fill(C.coin);
-      }
-      if (this.winter) tg.circle(0, -58, 10).fill(C.snow);
+      this.paintIncomeProp(tg, spec);
       tree.addChild(tg);
       depth.add(spec.tree.y, tree);
       this.roots.push(tree);
 
-      // 院门 + 牌匾
-      const gate = new Container();
-      gate.position.set(spec.gate.x, spec.gate.y);
-      const gg = new Graphics();
-      gg.rect(-30, -6, 60, 6).fill(C.outline);
-      gg.rect(-28, -4, 56, 3).fill(C.gateIronLight);
-      this.drawGate(gg, false);
-      gate.addChild(gg);
-      this.gates[spec.id] = gg;
+      // 门栅与三态房产牌匾
+      const gateCont = new Container();
+      gateCont.position.set(spec.gate.x, spec.gate.y);
 
-      // 院门牌匾：26 高，上行静态院名、下行归属（待售 / 房主名）
-      const plaque = new Graphics();
-      plaque.rect(-52, -50, 104, 26).fill(C.outline);
-      plaque.rect(-50, -48, 100, 22).fill(C.plaque);
-      plaque.rect(-50, -48, 100, 2).fill(C.plaqueEdge);
-      gate.addChild(plaque);
+      const gate = new Graphics();
+      this.drawGate(gate, false, spec.kind);
+      gateCont.addChild(gate);
 
-      const name = new Text({
+      const plaqueBg = new Graphics();
+      gateCont.addChild(plaqueBg);
+
+      const nameText = new Text({
         text: spec.name,
         resolution: this.devicePxPerTexel,
-        style: { fontFamily: CJK_FONT, fontSize: 7, fontWeight: '600', fill: C.plaqueInk, letterSpacing: 1 },
+        style: { fontFamily: CJK_FONT, fontSize: 7, fontWeight: '700', fill: C.inkDark, letterSpacing: 1 },
       });
-      name.anchor.set(0.5, 0.5);
-      name.position.set(0, -43);
-      gate.addChild(name);
-      this.texts.push(name);
+      nameText.anchor.set(0.5, 0.5);
+      nameText.position.set(0, -49);
+      gateCont.addChild(nameText);
 
-      const text = new Text({
-        text: `待售 ${VILLA_PRICE}`,
+      const subText = new Text({
+        text: `FOR SALE · ¥${spec.price}`,
         resolution: this.devicePxPerTexel,
-        style: { fontFamily: CJK_FONT, fontSize: 9, fontWeight: '600', fill: C.plaqueInk },
+        style: { fontFamily: CJK_FONT, fontSize: 8.5, fontWeight: '700', fill: C.inkDark },
       });
-      text.anchor.set(0.5, 0.5);
-      text.position.set(0, -33);
-      gate.addChild(text);
+      subText.anchor.set(0.5, 0.5);
+      subText.position.set(0, -37);
+      gateCont.addChild(subText);
+
+      const badgeText = new Text({
+        text: `T${spec.tier} +${spec.income}/分`,
+        resolution: this.devicePxPerTexel,
+        style: { fontFamily: CJK_FONT, fontSize: 6.5, fontWeight: '700', fill: C.goldDark },
+      });
+      badgeText.anchor.set(0.5, 0.5);
+      badgeText.position.set(0, -27);
+      gateCont.addChild(badgeText);
+
+      const led = new Graphics();
+      led.position.set(-48, -37);
+      gateCont.addChild(led);
+
       const lock = new Graphics();
-      lock.position.set(44, -33);
-      gate.addChild(lock);
-      this.texts.push(text);
-      this.labels[spec.id] = { text, lock };
-      depth.add(spec.gate.y, gate);
-      this.roots.push(gate);
+      lock.position.set(48, -37);
+      gateCont.addChild(lock);
+
+      this.texts.push(nameText, subText, badgeText);
+      const slot: PropertySlot = {
+        spec,
+        plaqueBg,
+        led,
+        lock,
+        gate,
+        nameText,
+        subText,
+        badgeText,
+        lastOwned: false,
+        lastMine: false,
+        lastLocked: false,
+        lastOnline: false,
+        lastOwnerName: '',
+        lastPending: -1,
+      };
+      this.redrawPlaque(slot, false, false, false, false, '', 0);
+      this.slots[spec.id] = slot;
+
+      depth.add(spec.gate.y, gateCont);
+      this.roots.push(gateCont);
     }
 
-    // 院墙：静态碰撞的视觉对照，贴地画一条砖带
+    // 院墙静态立面轮廓（全走深靛描边，无纯黑）
     for (const wall of VILLA_WALL_SOLIDS) {
       ground
         .rect(wall.x, wall.y, wall.w, wall.h)
         .fill(C.brick)
-        .rect(wall.x, wall.y, wall.w, Math.max(1, wall.h - 4))
+        .rect(wall.x, wall.y, wall.w, Math.max(1, wall.h - 3))
         .fill(C.brickLight);
     }
     if (this.winter) {
@@ -162,25 +200,35 @@ export class VillasView {
     base.addChild(ground);
   }
 
-  /** 牌匾与锁状态：房主名过长时由 Pixi 自己缩放，不做二次截断 */
+  /** 按原始字段比对：仅在状态真的变动时才重绘，帧路径零分配 */
   setState(packet: VillaStatePacket): void {
-    for (const info of packet.villas) {
-      const slot = this.labels[info.id];
+    for (let i = 0; i < packet.villas.length; i += 1) {
+      const info = packet.villas[i]!;
+      const slot = this.slots[info.id];
       if (!slot) continue;
-      slot.text.text = info.ownerName ? info.ownerName.slice(0, 10) : `待售 ${VILLA_PRICE}`;
-      slot.lock.clear();
-      if (info.locked) {
-        slot.lock.rect(-3, -2, 6, 6).fill(C.gold);
-        slot.lock.rect(-1, -2, 2, 3).fill(C.outline);
-        slot.lock.rect(-4, -6, 8, 3).stroke({ color: C.gold, width: 1.4 });
+
+      const owned = info.owned;
+      const mine = info.mine;
+      const locked = info.locked;
+      const online = info.ownerId !== 0;
+      const ownerName = info.ownerName;
+      const pending = info.pending;
+
+      if (
+        slot.lastOwned === owned &&
+        slot.lastMine === mine &&
+        slot.lastLocked === locked &&
+        slot.lastOnline === online &&
+        slot.lastOwnerName === ownerName &&
+        slot.lastPending === pending
+      ) {
+        continue;
       }
-      const gate = this.gates[info.id];
-      if (gate) {
-        gate.clear();
-        gate.rect(-30, -6, 60, 6).fill(C.outline);
-        gate.rect(-28, -4, 56, 3).fill(C.gateIronLight);
-        this.drawGate(gate, info.locked);
+
+      if (slot.lastLocked !== locked) {
+        this.drawGate(slot.gate, locked, slot.spec.kind);
       }
+      this.redrawPlaque(slot, owned, mine, locked, online, ownerName, pending);
     }
   }
 
@@ -193,12 +241,183 @@ export class VillasView {
   destroy(): void {
     for (const root of this.roots) root.destroy({ children: true });
     this.roots.length = 0;
-    this.labels.length = 0;
+    this.slots.length = 0;
     this.texts.length = 0;
   }
 
-  /** 铁艺门扇：锁上时加一道横闩 */
-  private drawGate(g: Graphics, locked: boolean): void {
+  private redrawPlaque(
+    slot: PropertySlot,
+    owned: boolean,
+    mine: boolean,
+    locked: boolean,
+    online: boolean,
+    ownerName: string,
+    pending: number,
+  ): void {
+    slot.lastOwned = owned;
+    slot.lastMine = mine;
+    slot.lastLocked = locked;
+    slot.lastOnline = online;
+    slot.lastOwnerName = ownerName;
+    slot.lastPending = pending;
+
+    const { plaqueBg, led, lock, spec, nameText, subText, badgeText } = slot;
+    const bg = mine ? C.plaqueMine : owned ? C.plaqueOwned : C.plaqueFree;
+    const edge = mine ? C.plaqueEdgeMine : owned ? C.plaqueEdgeOwned : C.plaqueEdgeFree;
+
+    plaqueBg.clear();
+    plaqueBg.rect(-60, -58, 120, 38).fill(C.outline);
+    plaqueBg.rect(-58, -56, 116, 34).fill(bg);
+    plaqueBg.rect(-58, -56, 116, 2).fill(edge);
+
+    if (!owned) {
+      nameText.style.fill = C.inkDark;
+      subText.style.fill = C.inkDark;
+      subText.text = `待售 ¥${spec.price}`;
+      badgeText.style.fill = C.goldDark;
+      badgeText.text = `T${spec.tier} · +${spec.income}/分`;
+    } else if (mine) {
+      nameText.style.fill = C.gold;
+      subText.style.fill = C.inkLight;
+      subText.text = `我的产业 · ${ownerName ? ownerName.slice(0, 7) : '本人'}`;
+      badgeText.style.fill = C.coin;
+      badgeText.text = pending > 0 ? `+¥${pending} 可收` : `+${spec.income}/分 · ${locked ? '已锁门' : '开放'}`;
+    } else {
+      nameText.style.fill = C.plaqueEdgeOwned;
+      subText.style.fill = C.inkLight;
+      subText.text = ownerName ? ownerName.slice(0, 9) : '神秘房主';
+      badgeText.style.fill = C.gold;
+      badgeText.text = `收购 ¥${villaBuyPrice(spec, true)}`;
+    }
+
+    led.clear();
+    if (owned) {
+      led.rect(-4, -4, 8, 8).fill(C.outline);
+      led.rect(-3, -3, 6, 6).fill(mine ? C.gold : online ? C.ledOnline : C.ledOffline);
+      if (mine) {
+        // 房主金皇冠像素点缀
+        led.rect(-2, -6, 1, 2).fill(C.gold);
+        led.rect(1, -6, 1, 2).fill(C.gold);
+      }
+    }
+
+    lock.clear();
+    if (locked) {
+      lock.rect(-3, -2, 6, 6).fill(C.gold);
+      lock.rect(-1, -2, 2, 3).fill(C.outline);
+      lock.rect(-4, -6, 8, 3).stroke({ color: C.gold, width: 1.4 });
+    }
+  }
+
+  private paintPropertyGround(ground: Graphics, spec: VillaSpec): void {
+    const { x, y, w, h } = spec.rect;
+    if (spec.kind === 'club') {
+      ground.rect(x + 6, y + 6, w - 12, h - 12).fill({ color: 0x28324c, alpha: 0.55 });
+      for (let ty = y + 20; ty < y + h - 24; ty += 36) {
+        for (let tx = x + 20; tx < x + w - 24; tx += 36) {
+          if (((tx + ty) / 36) % 2 === 0) {
+            ground.rect(tx, ty, 32, 32).fill({ color: C.clubTrim, alpha: 0.14 });
+          }
+        }
+      }
+      return;
+    }
+    if (spec.kind === 'garage') {
+      ground.rect(x + 6, y + 6, w - 12, h - 12).fill({ color: 0x3b4459, alpha: 0.48 });
+      // 街头胎印
+      ground.rect(x + w / 2 - 14, y + h - 42, 4, 24).fill({ color: C.outline, alpha: 0.25 });
+      ground.rect(x + w / 2 + 10, y + h - 42, 4, 24).fill({ color: C.outline, alpha: 0.25 });
+      return;
+    }
+    if (spec.kind === 'stall') {
+      ground.rect(x + 6, y + 6, w - 12, h - 12).fill({ color: C.plaster, alpha: 0.36 });
+      return;
+    }
+    ground.rect(x + 8, y + 8, w - 16, h - 16).fill({
+      color: spec.kind === 'lodge' ? C.timberLight : C.plaster,
+      alpha: 0.28,
+    });
+  }
+
+  private paintPropertyHouse(hg: Graphics, spec: VillaSpec): void {
+    const { w, h } = spec.house;
+    if (spec.kind === 'club') {
+      hg.rect(0, -h, w, h).fill(C.outline);
+      hg.rect(2, -h + 2, w - 4, h - 4).fill(C.clubWall);
+      hg.rect(4, -h - 8, w - 8, 10).fill(C.roof);
+      hg.rect(6, -h - 5, w - 12, 3).fill(C.clubTrim);
+      for (let i = 0; i < 5 && 14 + i * 52 + 28 < w; i += 1) {
+        hg.rect(14 + i * 52, -h + 10, 28, 18).fill(i % 2 === 0 ? C.garageTrim : C.clubTrim);
+      }
+      if (this.winter) hg.rect(0, -h - 9, w, 3).fill(C.snow);
+      return;
+    }
+    if (spec.kind === 'garage') {
+      hg.rect(0, -h, w, h).fill(C.outline);
+      hg.rect(2, -h + 2, w - 4, h - 4).fill(C.garageWall);
+      hg.rect(0, -h - 6, w, 8).fill(C.roof);
+      hg.rect(0, -h - 6, w, 2).fill(C.garageTrim);
+      // 卷帘车库门与霓虹条纹
+      hg.rect(Math.round(w / 2 - 40), -h + 14, 80, h - 16).fill(C.roofLight);
+      for (let ry = -h + 20; ry < -6; ry += 6) {
+        hg.rect(Math.round(w / 2 - 36), ry, 72, 2).fill(C.outline);
+      }
+      if (this.winter) hg.rect(0, -h - 7, w, 3).fill(C.snow);
+      return;
+    }
+    if (spec.kind === 'stall') {
+      // 日式红白条纹屋台顶棚 + 暖黄灯笼
+      hg.rect(0, -h, w, h).fill(C.timberDark);
+      hg.rect(2, -h + 2, w - 4, h - 4).fill(C.timber);
+      for (let sx = 0; sx < w; sx += 16) {
+        const stripeW = Math.min(16, w - sx);
+        hg.rect(sx, -h - 8, stripeW, 11).fill((sx / 16) % 2 === 0 ? C.stallRoof : C.stallStripe);
+      }
+      for (const lx of [18, w / 2, w - 18]) {
+        hg.rect(lx - 4, -h + 4, 8, 10).fill(C.stallRoof);
+        hg.rect(lx - 2, -h + 6, 4, 6).fill(C.coin);
+      }
+      if (this.winter) hg.rect(0, -h - 9, w, 3).fill(C.snow);
+      return;
+    }
+    const wallDark = spec.kind === 'lodge' ? C.timberDark : C.brickDark;
+    const wallMain = spec.kind === 'lodge' ? C.timber : C.brick;
+    hg.rect(0, -h, w, h).fill(wallDark);
+    hg.rect(2, -h + 2, w - 4, h - 4).fill(wallMain);
+    for (let i = 0; i < 4 && 10 + i * 44 + 28 < w; i += 1) {
+      hg.rect(10 + i * 44, -h + 10, 28, 18).fill(C.roofLight);
+      hg.rect(10 + i * 44, -h + 10, 28, 3).fill(C.goldDark);
+    }
+    hg.rect(0, -h - 8, w, 10).fill(C.roof);
+    hg.rect(0, -h - 8, w, 3).fill(C.roofLight);
+    if (this.winter) hg.rect(0, -h - 9, w, 3).fill(C.snow);
+  }
+
+  private paintIncomeProp(tg: Graphics, spec: VillaSpec): void {
+    if (spec.kind === 'club' || spec.kind === 'garage' || spec.kind === 'stall') {
+      // 街边招财收银台 + 招财猫金罐
+      tg.rect(-14, -22, 28, 22).fill(C.outline);
+      tg.rect(-12, -20, 24, 18).fill(spec.kind === 'club' ? C.clubWall : C.timber);
+      tg.rect(-14, -22, 28, 4).fill(spec.kind === 'garage' ? C.garageTrim : C.gold);
+      tg.circle(0, -28, 6).fill(C.coin);
+      return;
+    }
+    // 摇钱树：金色树冠 + 地面落币
+    tg.rect(-3, -34, 6, 34).fill(C.timberDark);
+    tg.circle(0, -44, 22).fill(C.leaf);
+    tg.circle(-12, -38, 14).fill(C.leafLight);
+    tg.circle(12, -40, 13).fill(C.leaf);
+    for (let i = 0; i < 9; i += 1) {
+      tg.circle(-18 + (i % 5) * 9, -50 + Math.floor(i / 5) * 10, 2.6).fill(C.coin);
+    }
+    if (this.winter) tg.circle(0, -58, 10).fill(C.snow);
+  }
+
+  private drawGate(g: Graphics, locked: boolean, kind: VillaSpec['kind']): void {
+    g.clear();
+    g.rect(-30, -6, 60, 6).fill(C.outline);
+    g.rect(-28, -4, 56, 3).fill(C.gateIronLight);
+    if (kind === 'stall' && !locked) return;
     for (let i = 0; i < 5; i += 1) {
       g.rect(-24 + i * 12, -34, 3, 30).fill(C.gateIron);
     }

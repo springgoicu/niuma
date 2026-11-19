@@ -1020,19 +1020,20 @@ function fillSolidFlat(g: Graphics, s: SolidRect): void {
   rect(g, s.x, s.y + s.h - 1, s.w, 1, COLOR.fixtureEdge);
 }
 
-/** 赌场墨绿绒：60px 大方格无缝绒面，靠极低的对比度表现「吸光的布」 */
+/** 墨绿绒面：60px 大方格无缝绒面，靠极低的对比度表现「吸光的布」 */
 function fillFloorFelt(g: Graphics, r: WorldRect): void {
-  const c = VENUE_COLORS.diceHall;
+  const main = 0x2f6b52;
+  const alt = 0x3b7a5e;
   const tile = 60;
-  rect(g, r.x, r.y, r.w, r.h, c.main);
+  rect(g, r.x, r.y, r.w, r.h, main);
   for (let row = 0, y = r.y; y < r.y + r.h; row += 1, y += tile) {
     for (let col = 0, x = r.x; x < r.x + r.w; col += 1, x += tile) {
-      if ((row + col) % 2 === 0) rect(g, x, y, tile, tile, c.alt);
+      if ((row + col) % 2 === 0) rect(g, x, y, tile, tile, alt);
     }
   }
   // 绒面没有硬缝，只留一层压暗的织纹格，走近才看得出
-  for (let y = r.y; y < r.y + r.h; y += tile) rect(g, r.x, y, r.w, 1, darken(c.main, 0.88));
-  for (let x = r.x; x < r.x + r.w; x += tile) rect(g, x, r.y, 1, r.h, darken(c.main, 0.88));
+  for (let y = r.y; y < r.y + r.h; y += tile) rect(g, r.x, y, r.w, 1, darken(main, 0.88));
+  for (let x = r.x; x < r.x + r.w; x += tile) rect(g, x, r.y, 1, r.h, darken(main, 0.88));
 }
 
 /** 公寓暖灰抹面：46px 伸缩缝 + 每块左上角一线受光，安静但不像水泥地 */

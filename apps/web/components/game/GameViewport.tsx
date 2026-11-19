@@ -9,8 +9,6 @@ import {
   INTERACT_ACTION,
   INTERACT_REASON,
   ITEM_REJECT_LABEL,
-  RING_BENCH_SEAT_GROUP,
-  RING_PHASE,
   SHOUT_REJECT_LABEL,
   type BoardMetric,
   type BoardPacket,
@@ -20,7 +18,6 @@ import {
   BOSS_SHOCK_PHASE,
   isNightShift,
   findCosmeticSkuById,
-  diceTableByGroup,
   type ChatSendPacket,
   type NavTargetId,
 } from '@niuma/shared-types';
@@ -91,7 +88,6 @@ import { MiniMap } from './MiniMap';
 import { NavCard } from './NavCard';
 import { NoticeBoard } from './NoticeBoard';
 import { QueueGate } from './QueueGate';
-import { RingHud } from './RingHud';
 import { ShopButton } from './ShopButton';
 import { WalletBadge } from './WalletBadge';
 import { WelcomeBanner } from './WelcomeBanner';
@@ -117,18 +113,13 @@ export interface GameViewportProps {
 
 /** 互动动作 → 玩家能看懂的动词 */
 const INTERACT_VERB: Record<number, string> = {
-  [INTERACT_ACTION.RingEnter]: '报名',
-  [INTERACT_ACTION.RingLeave]: '离场',
-  [INTERACT_ACTION.DiceBet]: '投入',
-  [INTERACT_ACTION.ArenaBet]: '投选',
-  [INTERACT_ACTION.VillaBuy]: '买院',
+  [INTERACT_ACTION.VillaBuy]: '买房冠名',
   [INTERACT_ACTION.VillaLock]: '锁门',
   [INTERACT_ACTION.VillaCollect]: '收币',
   [INTERACT_ACTION.WorkClaim]: '搬砖结算',
   [INTERACT_ACTION.QuestClaim]: '领悬赏',
   [INTERACT_ACTION.EventClaim]: '抢红包',
   [INTERACT_ACTION.Apartment]: '公寓探头',
-  [INTERACT_ACTION.DiceBoard]: '看榜',
   [INTERACT_ACTION.Unknown]: '操作',
 };
 
@@ -213,15 +204,6 @@ export function GameViewport({
   const arrivalSeededRef = useRef(false);
   /** 上一次入座状态：只在「未坐 → 坐」的边沿记一次摸鱼 */
   const lastSeatedRef = useRef(false);
-  /** 上一次的座位组：骰桌面板只在坐进 / 离开凳子那一次打开或收起（ADR-0093） */
-  const seatedGroupRef = useRef<string | null>(null);
-  /**
-   * 已经入账过的擂台 matchId。
-   *
-   * 颁奖包按 1Hz 重复下发，而奖牌只该加一次；matchId 由服务端每局递增，
-   * 用它做幂等键比自己数「第几次收到 award」可靠。
-   */
-  const awardedMatchRef = useRef<number | null>(null);
   /**
    * 入场兜底的告知条：首选园区探活失败、被顶替到另一座时要让玩家知道
    * 自己去的不是原本那座，而不是安静地换一个世界。几秒后自行消失。
@@ -256,7 +238,6 @@ export function GameViewport({
   const requestNavCardOpen = useGameUi((state) => state.requestNavCardOpen);
   const pushAreaBanner = useGameUi((state) => state.pushAreaBanner);
   const pushActivity = useGameUi((state) => state.pushActivity);
-  const setRing = useGameUi((state) => state.setRing);
   const hint = useGameUi((state) => state.hint);
   const status = useGameUi((state) => state.status);
   // ---- 打工产出与随机事件（ADR-0088）----
@@ -545,20 +526,6 @@ export function GameViewport({
         onHint: (next) => setHint(next),
         onLocalState: (state) => {
           setLocalState(state);
-          // 骰桌：坐上本桌圆凳即自动入局，离座 / 换桌自动收起（ADR-0093）。
-          // 只在座位组变化的那一次动面板：手动关掉后不会被同一张凳子反复弹回来。
-          if (state.seatGroup !== seatedGroupRef.current) {
-            seatedGroupRef.current = state.seatGroup;
-            const table = state.seatGroup ? diceTableByGroup(state.seatGroup) : undefined;
-            const nextTable = table ? table.id : null;
-            if (useGameUi.getState().diceOpen !== nextTable) {
-              useGameUi.getState().setDiceOpen(nextTable);
-            }
-          }
-          // 观战投选只对观战长椅开放：离座立刻收起，避免面板留着但提交必被拒
-          if (state.seatGroup !== RING_BENCH_SEAT_GROUP) {
-            useGameUi.getState().setArenaBetOpen(false);
-          }
           // 如厕计时跟座位类型走：坐在马桶座上攒今日如厕，起身即结算。
           // setToilet 内部按 active 变化短路，重复上报同一状态不会重复计时。
           attendanceClockRef.current?.setToilet(
@@ -571,18 +538,6 @@ export function GameViewport({
           lastSeatedRef.current = state.seated;
         },
         onNav: (nav) => setNavTarget(nav),
-        onRing: (packet, receivedAt) => {
-          setRing(packet, receivedAt);
-          // 奖牌只认「本人 + 前三」；同一局只入账一次，重发包与心跳包不会叠加
-          if (!packet || packet.phase !== RING_PHASE.Award) return;
-          const self = packet.members.find(
-            (entry) => entry.id === useGameUi.getState().selfId,
-          );
-          if (!self || self.rank < 1 || self.rank > 3) return;
-          if (awardedMatchRef.current === packet.matchId) return;
-          awardedMatchRef.current = packet.matchId;
-          careerClockRef.current?.recordRingMedal(self.rank as 1 | 2 | 3);
-        },
         onVentHit: (local) => {
           if (local) careerClockRef.current?.recordVented();
         },
@@ -655,36 +610,17 @@ export function GameViewport({
         onInteractReject: (packet) => {
           // 服务端只发动作 + 原因编号，中文文案集中在 interactRejectText
           useGameUi.getState().setHint(interactRejectText(packet.action, packet.reason));
-          // 榜单被冷却挡下：把「正在算榜」收掉，别让面板一直转圈
-          if (packet.action === INTERACT_ACTION.DiceBoard) {
-            useGameUi.getState().setDiceBoardPending(false);
-          }
         },
-        // 四个热区弹窗与榜单 / 告示板同一条纪律：先收回移动控制权，再让面板接管，
-        // 否则按住方向键开面板时，capture 吞键前的那一帧角色仍会顶着面板滑行
         onShopOpen: (tab) => {
           clientRef.current?.clearMovement();
-          // 茶台 F：直接落到属性页（ADR-0085），不再走「喝枸杞茶」的本地反馈
           useGameUi.getState().setShopOpen(true, tab);
         },
-        // ---- 热区建筑（ADR-0087）：开面板意图与下行快照 ----
-        onDiceOpen: (table) => {
-          clientRef.current?.clearMovement();
-          useGameUi.getState().setDiceOpen(table);
-        },
-        onArenaBetOpen: () => {
-          clientRef.current?.clearMovement();
-          useGameUi.getState().setArenaBetOpen(true);
-        },
+        // ---- 热区建筑（ADR-0087）：房产开面板意图与下行快照 ----
         onVillaOpen: (villa) => {
           clientRef.current?.clearMovement();
           useGameUi.getState().setVillaOpen(villa);
         },
-        onDiceState: (packet) => useGameUi.getState().setDice(packet),
-        onDiceResult: (packet) => useGameUi.getState().setDiceResult(packet),
-        onDiceBoard: (packet) => useGameUi.getState().setDiceBoard(packet),
         onVillaState: (packet) => useGameUi.getState().setVillas(packet),
-        onArenaPool: (packet) => useGameUi.getState().setArenaPool(packet),
         // ---- 打工产出与随机事件（ADR-0088）----
         onWorkOpen: () => useGameUi.getState().setWorkOpen(true),
         onWorkResult: (packet) => {
@@ -1014,9 +950,6 @@ export function GameViewport({
               isTouch ? 'game-safe' : 'p-4'
             }`}
           >
-            {/* 擂台 HUD 挂在顶栏之上：靠近擂台或本人参赛时才出现，
-                不与工牌/工具栏抢左右两侧的位置 */}
-            <RingHud touch={isTouch} />
             {/* 顶栏：左侧工牌、右侧系统工具栏。对齐用 items-start，
                 工牌展开时只向下长，右侧工具栏不跟着跳。 */}
             <div className="flex items-start justify-between gap-3">
@@ -1138,9 +1071,6 @@ export function GameViewport({
             onRespond={(inviteId, accept) => clientRef.current?.respond(inviteId, accept)}
             onP2PAction={(matchId, action) => clientRef.current?.p2pAction(matchId, action)}
             onShout={(text) => clientRef.current?.shout(text)}
-            onDiceBet={(table, side, amount) => clientRef.current?.diceBet(table, side, amount)}
-            onDiceBoard={(scope, metric) => clientRef.current?.diceBoard(scope, metric)}
-            onArenaBet={(side, amount) => clientRef.current?.arenaBet(side, amount)}
             onVilla={(villa, action) => clientRef.current?.villaAction(villa, action)}
           />
 
@@ -1230,7 +1160,6 @@ export function GameViewport({
           {/* 加班搬砖：下三分之一的终端浮窗，中央画面与老板血条都露着 */}
           <WorkGrindOverlay
             open={workOpen && seated}
-            workEffLv={wallet.stats.workEffLv}
             night={isNightShift(workHour)}
             onClaim={(combo) => clientRef.current?.claimWork(combo)}
             onClose={() => setWorkOpen(false)}

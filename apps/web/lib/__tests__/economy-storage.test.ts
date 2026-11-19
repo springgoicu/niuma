@@ -36,7 +36,7 @@ describe('economy storage', () => {
     );
     const loaded = loadEconomy(storage);
     expect(loaded.coins).toBe(1234);
-    expect(loaded.stats.atkSpeedLv).toBe(3);
+    expect(loaded.stats.atkSpeedLv).toBe(0);
     expect(loaded.inventory).toEqual({ ice_americano: 2, slack_shield: 1 });
   });
 
@@ -48,7 +48,7 @@ describe('economy storage', () => {
     );
     const loaded = loadEconomy(storage);
     expect(loaded.coins).toBe(0);
-    expect(loaded.stats.atkSpeedLv).toBe(10);
+    expect(loaded.stats.atkSpeedLv).toBe(0);
     expect(loaded.inventory).toEqual({});
   });
 });

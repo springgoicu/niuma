@@ -14,8 +14,6 @@ import {
 
 interface WorkGrindOverlayProps {
   open: boolean;
-  /** 工效等级：只用于「本轮 ≈ N 币」的预估，真金额由服务端算 */
-  workEffLv: number;
   /** 是否夜班：与 `isNightShift` 同一把尺子 */
   night: boolean;
   /** 完成一轮：宿主转发 `claimWork`，金额回包后由飘字呈现 */
@@ -43,7 +41,6 @@ function isEditableTarget(target: EventTarget | null): boolean {
  */
 export function WorkGrindOverlay({
   open,
-  workEffLv,
   night,
   onClaim,
   onClose,
@@ -62,8 +59,8 @@ export function WorkGrindOverlay({
   const barRef = useRef<HTMLDivElement | null>(null);
 
   const estimate = useMemo(
-    () => workPayout(0.5, workEffLv, night),
-    [workEffLv, night],
+    () => workPayout(0.5, 0, night),
+    [night],
   );
 
   const restart = useCallback(() => {
@@ -259,7 +256,6 @@ export function WorkGrindOverlay({
           <span>
             本轮 ≈ <span className="text-[#f5c451]">{estimate}</span> 币
             {night ? ' · 夜班 ×1.5' : ''}
-            {workEffLv > 0 ? ` · 工效 +${workEffLv * 8}%` : ''}
           </span>
           <span className="text-[#5c6b8a]">
             {streak ? '已提交结算 · ' : ''}ESC 摸鱼

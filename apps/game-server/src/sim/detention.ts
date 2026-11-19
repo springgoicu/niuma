@@ -26,9 +26,6 @@ import type { Player, World } from './world';
  *
  * 判定只认真人玩家的完整 `Sit → Idle` 循环，坐在椅子或地上都算；躺下不算。
  * 只在姿态跃迁时做一次 56px 邻域查询，稳态成本是每 Tick 一次姿态比较。
- *
- * 擂台赛（ADR-0075）是执法豁免区：名单内的玩家不进入判定，已确认的案子在
- * 报名那一刻撤销。豁免只读 `World.ring`，不新增第二份「谁在场上」的事实源。
  */
 
 /** 判定阈值：全部是「正常玩家碰不到」的边界，不需要按人数调整 */
@@ -201,7 +198,6 @@ export class Detention implements VentHitObserver {
     if (attacker.isNpc || attacker.wsId === 0) return;
     if (attacker.id === victim.id) return;
     if (attacker.incapacitated || now < attacker.stunUntil || attacker.roomId !== 0) return;
-    if (this.world.ring.has(attacker.id)) return;
     // 已在押送流程里的人不再累计：避免刚放出来就立刻被第二张单子带走
     if (this.cases.has(attacker.id)) return;
 
@@ -243,12 +239,6 @@ export class Detention implements VentHitObserver {
     this.flushPendingReleases();
     for (const player of this.world.players.values()) {
       if (player.isNpc || player.wsId === 0) continue;
-      // 擂台赛期间保安不执法（ADR-0075）：不判定，并丢掉已有的循环计数，
-      // 免得场内的坐站动作攒进下一轮观察窗、下场后立刻被翻旧账
-      if (this.world.ring.has(player.id)) {
-        this.watches.delete(player.id);
-        continue;
-      }
       // 昏迷、硬直或窗口探头期间不计入坐站骚扰（被抓/被放倒时躺站转换不是故意刷动作）
       if (player.incapacitated || player.roomId !== 0 || now < player.stunUntil) {
         this.watches.delete(player.id);
@@ -305,13 +295,6 @@ export class Detention implements VentHitObserver {
       if (!player || player.wsId === 0) {
         this.escort.cancel(playerId);
         this.cases.delete(playerId);
-        continue;
-      }
-
-      // 上了擂台就退出执法域（ADR-0075）：既有案子就地撤销，保安原地松手，
-      // 不再往围绳里追、也不把参赛者从场上拖走——围绳内的位置只归擂台裁决
-      if (this.world.ring.has(playerId)) {
-        this.abort(player, entry, 'cancelled');
         continue;
       }
 

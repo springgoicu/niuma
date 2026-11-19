@@ -2,14 +2,11 @@ import {
   P2P_DUEL_KNOCKBACK_PX,
   PLAYER_EFFECT,
   POSE,
-  RING_VENT_FLAG_ELIMINATED,
-  RING_VENT_FLAG_HIT,
   VENT_FACING,
   VENT_KNOCKBACK_PX,
   VENT_STUN_MS,
   bossCritChance,
   bossHitPoint,
-  clampToRing,
   effectiveVentCooldownMs,
   encodeVent,
   quantizeCoord,
@@ -20,7 +17,6 @@ import {
 import { consumeShield } from './buffs';
 import { broadcastBoss } from './boss';
 import { broadcastPlayerEffect } from './effects';
-import { broadcastRing } from './ring';
 import type { SpatialGrid } from '../spatial/grid';
 import type { DuelCombatPort } from '../challenge/types';
 import type { Player, World } from './world';
@@ -98,22 +94,16 @@ export function resolveVents(
     if (!attacker.vent) continue;
     // 自己躺在地上 / 昏迷被拖走时出不了招
     if (now < attacker.stunUntil || attacker.incapacitated) continue;
-    // 限频：冷却 = 攻速等级 × Buff 乘子（冰美式打七折，ADR-0085）
-    if (now - attacker.lastVentAt < effectiveVentCooldownMs(attacker.stats.atkSpeedLv, attacker.ventCdMul)) {
+    // 限频：固定 600ms 基础冷却 × Buff 乘子（冰美式打七折，最低 420ms）
+    if (now - attacker.lastVentAt < effectiveVentCooldownMs(0, attacker.ventCdMul)) {
       continue;
     }
     attacker.lastVentAt = now;
 
-    const attackerInRing = world.ring.has(attacker.id);
-    // 颁奖阶段参赛者被冻结；擂台内的出招只在 running 阶段生效
-    if (attackerInRing && !world.ring.isRunning()) continue;
-
-    const target = nearestInCone(world, attacker, now, attackerInRing, duel);
+    const target = nearestInCone(world, attacker, now, duel);
     if (!target) {
       broadcastVent(world, attacker, 0, 0, 0, transport);
-      // 擂台内没有对手就空放，绝不把拳风穿到老板或场外；
-      // 场外只有「扇形内没有可命中玩家」才轮到老板。
-      if (!attackerInRing && !duel?.isDueling(attacker)) {
+      if (!duel?.isDueling(attacker)) {
         resolveBossHit(world, attacker, now, transport, observer, random);
       }
       continue;
@@ -161,20 +151,8 @@ export function resolveVents(
       }
     }
 
-    const ringHit = attackerInRing && world.ring.has(target.id);
-    let flags = 0;
-    let eliminated = false;
-    if (ringHit) {
-      const hit = world.ring.applyHit(attacker, target, now);
-      if (!hit) continue;
-      flags |= RING_VENT_FLAG_HIT;
-      eliminated = hit.eliminated;
-      if (eliminated) flags |= RING_VENT_FLAG_ELIMINATED;
-    }
-
-    // 摸鱼护盾只在擂台外生效：场内是独立战斗域，不能被道具打乱血量裁决。
-    // 判定必须排在击退之前——「抵消撞飞」意味着连那 32px 位移也不该发生。
-    const shielded = !ringHit && consumeShield(target, now);
+    // 摸鱼护盾判定必须排在击退之前——「抵消撞飞」意味着连那 32px 位移也不该发生。
+    const shielded = consumeShield(target, now);
     if (shielded) {
       // 挡下的这一下仍然要广播：目标与旁观者都要看到护盾碎裂，而不是「打了没反应」
       broadcastPlayerEffect(world, transport, {
@@ -195,29 +173,16 @@ export function resolveVents(
       );
       target.x = MOTION.x;
       target.y = MOTION.y;
-      if (ringHit) {
-        const clamped = clampToRing(target.x, target.y);
-        target.x = clamped.x;
-        target.y = clamped.y;
-      }
       // 强制倒地：姿态由服务端写死，客户端的上报在硬直期内一律不被采信（见 applyMove）
       target.applyState(target.direction, POSE.Lie, false);
-      // 淘汰者躺到本局结算，避免倒地后站起来又参与移动 / 出招；
-      // 结算可能因冠军已定而提前（ADR-0076），所以取 endsAt 而不是写死 120 秒
-      target.stunUntil = eliminated
-        ? Math.max(now + VENT_STUN_MS, world.ring.endsAt)
-        : now + VENT_STUN_MS;
+      target.stunUntil = now + VENT_STUN_MS;
     }
     target.dirty = true;
     if (grid.update(target.id, target.x, target.y)) target.needsViewRefresh = true;
 
-    broadcastVent(world, attacker, target.id, target.x, target.y, transport, flags);
-    if (ringHit) broadcastRing(world, transport, now);
-    // 擂台是独立战斗域（ADR-0073）：场内命中只结算血量，不进执法统计
-    else {
-      observer?.onVentHit?.(attacker, target, now);
-      if (!shielded) observer?.onKnockdown?.(attacker, target, now);
-    }
+    broadcastVent(world, attacker, target.id, target.x, target.y, transport);
+    observer?.onVentHit?.(attacker, target, now);
+    if (!shielded) observer?.onKnockdown?.(attacker, target, now);
   }
 }
 
@@ -245,8 +210,8 @@ function resolveBossHit(
     died: result.justDied,
     reset: false,
   });
-  // 暴击在这里摇一次：掉落倍率与「暴击！」飘字读的是同一颗骰子
-  const crit = random() < bossCritChance(attacker.stats.critLv);
+  // 固定基础暴击概率（属性暴击升级已废除）
+  const crit = random() < bossCritChance(0);
   observer?.onBossHit?.(attacker, now, {
     crit,
     hp: result.hp,
@@ -266,7 +231,6 @@ function nearestInCone(
   world: World,
   attacker: Player,
   now: number,
-  attackerInRing: boolean,
   duel?: DuelCombatPort,
 ): Player | null {
   let best: Player | null = null;
@@ -281,8 +245,6 @@ function nearestInCone(
     // 切磋中的双方不被场外路人打断：只有对手能命中
     if (!opponent && duel?.isDueling(candidate)) continue;
     if (now < candidate.stunUntil) continue;
-    // 擂台是独立战斗域：场内只打场内，场外只打场外，围绳两边互不穿透
-    if (world.ring.has(candidate.id) !== attackerInRing) continue;
     if (!withinVentCone(attacker.x, attacker.y, attacker.direction, candidate.x, candidate.y)) continue;
     const dx = candidate.x - attacker.x;
     const dy = candidate.y - attacker.y;
@@ -308,14 +270,12 @@ function broadcastVent(
   x: number,
   y: number,
   transport: Transport,
-  flags = 0,
 ): void {
   const packet = encodeVent(
     attacker.id,
     targetId,
     quantizeCoord(x),
     quantizeCoord(y),
-    flags,
   );
   transport.send(attacker.wsId, packet);
   for (const id of attacker.known) {

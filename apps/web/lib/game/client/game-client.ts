@@ -59,19 +59,13 @@ export interface GameClient {
   tip(targetId: number, amount: number): void;
   /** 对目标使用背包道具：库存由服务端扣减 */
   useItem(targetId: number, itemId: number): void;
-  /** 商店购买：kind 见 SHOP_KIND，属性升级或补货 */
+  /** 商店购买：kind 见 SHOP_KIND（恶搞道具与个性化装扮） */
   buyShop(kind: number, id: number, count?: number): void;
   /** 全服大喇叭：文案由服务端审核，通过才扣道具（ADR-0085） */
   shout(text: string): void;
   // ---- 热区建筑（ADR-0087）：上行只带意图，裁决在服务端 ----
-  /** 赌桌下注：side 见 DICE_SIDE，注额由服务端夹到上下限 */
-  diceBet(table: number, side: number, amount: number): void;
-  /** 赌桌排行榜：scope 见 DICE_BOARD_SCOPE，metric 见 DICE_BOARD_METRIC */
-  diceBoard(scope: number, metric: number): void;
-  /** 豪宅：买院 / 锁门 / 收摇钱树，action 见 VILLA_ACTION */
+  /** 房产：买下冠名 / 1.5× 溢价收购 / 锁门 / 收摇钱树，action 见 VILLA_ACTION */
   villaAction(villa: number, action: number): void;
-  /** 八角笼观战押注：必须坐在观战长椅上，服务端复核座位组 */
-  arenaBet(side: number, amount: number): void;
   /** 公寓：0 进屋探头 / 1 出门（ADR-0098） */
   apartmentAction(action: number): void;
   // ---- 打工产出与随机事件（ADR-0088）----

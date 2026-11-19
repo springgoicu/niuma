@@ -72,9 +72,6 @@ defineExact(OpCode.C2S_LIKE, 3); // [op][targetId u16]
 defineExact(OpCode.C2S_BOARD, 2); // [op][metric u8]
 defineExact(OpCode.C2S_CHAT_HISTORY, 4); // [op][beforeMsgId u16][limit u8]
 defineExact(OpCode.C2S_SET_APPEARANCE, 1 + APPEARANCE_BYTES);
-// 擂台报名/取消都是单字节 opcode；容量、阶段与靠近由 sim/ring 二次裁决
-defineExact(OpCode.C2S_RING_ENTER, 1);
-defineExact(OpCode.C2S_RING_LEAVE, 1);
 // 互动包全部定长：长度多一个字节即视为伪造（ADR-0083）
 defineExact(OpCode.C2S_P2P_INVITE, 10); // [op][targetId u16][gameType u8][wager u32][extra u16]
 defineExact(OpCode.C2S_P2P_RESPOND, 6); // [op][inviteId u32][accept u8]
@@ -85,10 +82,8 @@ defineExact(OpCode.C2S_SHOP_BUY, 4); // [op][kind u8][id u8][count u8]
 // 大喇叭：`[op][len u8][utf8]`，长度由 decoder 再截到 30 字（90 字节）
 defineVariable(OpCode.C2S_SHOUT, 2, 1, 1);
 
-// ---- 热区建筑与高阶多人玩法（ADR-0087）----
-defineExact(OpCode.C2S_DICE_BET, 7); // [op][table u8][side u8][amount u32]
+// ---- 热区建筑与房产玩法（ADR-0087）----
 defineExact(OpCode.C2S_VILLA, 3); // [op][villa u8][action u8]
-defineExact(OpCode.C2S_ARENA_BET, 6); // [op][side u8][amount u32]
 defineExact(OpCode.C2S_APARTMENT, 3); // [op][action u8][arg u8]
 
 // ---- 打工产出 / 世界事件 / 每日悬赏（ADR-0088）：三个单字节参数的上行包 ----

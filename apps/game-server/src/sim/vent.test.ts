@@ -7,8 +7,6 @@ import {
   DIRECTION,
   OpCode,
   POSE,
-  RING_EXIT,
-  RING_MAX_HP,
   VENT_KNOCKBACK_PX,
   VENT_STUN_MS,
   WORLD_LAYOUT,
@@ -261,30 +259,6 @@ describe('命中观察者（ADR-0074）', () => {
     const seatedHits: number[] = [];
     ventTick(seated, recorder().transport, 10_000, { onVentHit: () => seatedHits.push(1) });
     expect(seatedHits).toEqual([]);
-  });
-
-  it('擂台内互打只结算血量，不进执法统计', () => {
-    const world = new World();
-    const grid = new SpatialGrid();
-    const a = world.create('甲', DEFAULT_APPEARANCE.cow, 11, RING_EXIT.x, RING_EXIT.y)!;
-    const b = world.create('乙', DEFAULT_APPEARANCE.cow, 12, RING_EXIT.x, RING_EXIT.y)!;
-    expect(world.ring.enter(a, 10_000, 0).ok).toBe(true);
-    expect(world.ring.enter(b, 10_000, 0).ok).toBe(true);
-    // 入场会把两人送到起跑位：把甲挪到乙左侧 24px，正对出招
-    a.x = b.x - 24;
-    a.y = b.y;
-    a.applyState(DIRECTION.Right, POSE.Idle, false, true);
-    a.known.add(b.id);
-    b.known.add(a.id);
-
-    const { transport } = recorder();
-    const hits: number[] = [];
-    ventTick({ world, grid }, transport, 10_000, { onVentHit: () => hits.push(1) });
-
-    expect(hits).toEqual([]);
-    // 命中确实发生了：擂台血量掉 1
-    const member = world.ring.snapshot(10_000, world).members.find((entry) => entry.id === b.id)!;
-    expect(member.hp).toBe(RING_MAX_HP - 1);
   });
 });
 

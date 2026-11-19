@@ -85,22 +85,7 @@ import {
   PARK_SOUTH_GATE,
 } from './park';
 import { BOSS_ARENA, BOSS_SOLID } from './boss';
-import {
-  RING_ARENA,
-  RING_BENCH_SEAT_DRAFTS,
-  RING_BENCH_SOLIDS,
-  RING_FENCE_SOLIDS,
-  RING_SIGNUP,
-} from './ring';
-import {
-  DICE_HALL,
-  DICE_HALL_APRON,
-  DICE_HALL_SEAT_DRAFTS,
-  DICE_HALL_SOLIDS,
-  DICE_TABLE_SOLIDS,
-  DICE_TABLES,
-} from './dice-hall';
-import { VILLA_SPECS, VILLA_WALL_SOLIDS } from './villas';
+import { VILLA_SPECS, VILLA_WALL_SOLIDS, type PropertyKind, type PropertyNavId } from './villas';
 import { APARTMENT_GARDEN, APARTMENT_SPECS, APARTMENT_WALL_SOLIDS } from './apartment';
 import {
   CLINIC_ACCESS_PAVING,
@@ -444,7 +429,7 @@ export const DOOR_LANTERN_POSTS: ReadonlyArray<LanternPost> = [
  * 所以在入口立一块小门牌。匾额文案一律取自导览目标的中文名，不在第二处手写场所名。
  */
 export interface DoorPlaque {
-  readonly id: Exclude<NavTargetId, 'villa1' | 'villa2'>;
+  readonly id: Exclude<NavTargetId, PropertyNavId>;
   /** 标准中文名，取自 `NAV_TARGETS` */
   readonly text: string;
   /** 门头中心 x（门牌的对称轴） */
@@ -594,15 +579,25 @@ const PATHS: PathShape[] = [
     ],
     PATH_BRANCH_HALF_WIDTH,
   ),
-  // 游乐大街：赌场亭 → 游乐园南门
+  // 游乐大街（霓虹娱乐街）：不夜城夜店门前 → 游乐园南门
   buildPath(
     [
-      [3000, 3060],
+      [2760, 3060],
       [3700, 3060],
       [4036, 3096],
       [4096, 3160],
     ],
     PATH_BRANCH_HALF_WIDTH,
+  ),
+  // 沉思北岸小路：北向主路游乐口 → 游乐园东侧草带 → 沉思畔茶院门前
+  buildPath(
+    [
+      [4096, 3200],
+      [4690, 3200],
+      [4690, 2656],
+      [5050, 2656],
+    ],
+    36,
   ),
   // 影音室门前小路：生活大街 → 影厅东门（夹在影厅与宿舍之间）
   buildPath(
@@ -630,6 +625,16 @@ const PATHS: PathShape[] = [
       [5050, 3180],
     ],
     PATH_BRANCH_HALF_WIDTH,
+  ),
+  // 摸鱼湖钓屋支路：东主路尽头 → 服务广场南沿 → 摸鱼湖钓屋门前
+  buildPath(
+    [
+      [5040, 4096],
+      [5040, 4460],
+      [5204, 4932],
+      [5350, 4932],
+    ],
+    24,
   ),
 ];
 
@@ -753,20 +758,6 @@ export const DOOR_PLAQUES: ReadonlyArray<DoorPlaque> = [
     depthY: VENT_ROOM.y + 30,
   },
   {
-    // 南门外东侧：离门洞中线 84px，避开围栏与两侧观战长椅
-    id: 'ring',
-    text: navName('ring'),
-    x: RING_SIGNUP.x + 84,
-    depthY: RING_ARENA.y + RING_ARENA.h + 12,
-  },
-  {
-    // 南侧迎宾铺装东半边：不挡中间进亭动线
-    id: 'diceHall',
-    text: navName('diceHall'),
-    x: DICE_HALL.x + DICE_HALL.w - 130,
-    depthY: DICE_HALL_APRON.y + 14,
-  },
-  {
     // 301 栋门口台阶东侧 110px：避开正门热区与立面招牌
     id: 'apartment',
     text: navName('apartment'),
@@ -828,8 +819,10 @@ export function isWadingAt(x: number, y: number): boolean {
 
 /** 企业楼前庭：从楼门到西主路之间的铺装 */
 export const COMPANY_FORECOURT: WorldRect = { x: 3540, y: 3480, w: 200, h: 200 };
-/** 游乐大街：赌场亭 → 游乐园南门，整条街一次铺到底 */
+/** 游乐大街（霓虹娱乐街）：不夜城夜店 → 游乐园南门，整条街一次铺到底 */
 export const AMUSEMENT_STREET: WorldRect = { x: 2600, y: 3020, w: 1440, h: 96 };
+/** 霓虹娱乐街门前广场：无缝衔接夜店 / 改车铺 / 拉面摊南门与游乐大街 */
+export const NEON_STRIP_PLAZA: WorldRect = { x: 2600, y: 2960, w: 880, h: 60 };
 /** 游乐大街到公园南门的接坡 */
 export const PARK_GATE_LINK: WorldRect = { x: 4036, y: 3116, w: 120, h: 44 };
 /** 服务广场：卫生间 / 小黑屋 / 急救站共用的大院子 */
@@ -936,15 +929,18 @@ function isPlantable(x: number, y: number): boolean {
   // 护士急救站：站台 + 进站铺装外扩 60，树冠不能压到救护车出入口
   if (rectContains(rectExpanded(CLINIC_RECT, 60), x, y)) return false;
   if (rectContains(rectExpanded(CLINIC_ACCESS_PAVING, 40), x, y)) return false;
-  // 五区街面：游乐大街、服务广场、生活大街与企业前庭都不种树
-  for (const paving of [AMUSEMENT_STREET, PARK_GATE_LINK, SERVICE_SQUARE, LIVING_AVENUE, COMPANY_FORECOURT]) {
+  // 五区街面与门前广场：不种树
+  for (const paving of [
+    AMUSEMENT_STREET,
+    NEON_STRIP_PLAZA,
+    PARK_GATE_LINK,
+    SERVICE_SQUARE,
+    LIVING_AVENUE,
+    COMPANY_FORECOURT,
+  ]) {
     if (rectContains(rectExpanded(paving, 30), x, y)) return false;
   }
-  // 赌场亭与门前铺装、豪宅小院、牛马公寓
-  if (rectContains(rectExpanded(DICE_HALL, 40), x, y)) return false;
-  if (rectContains(rectExpanded(DICE_HALL_APRON, 24), x, y)) return false;
-  // 八角笼围栏与观战长椅（ADR-0097 搬进游乐大街）：树不能长进擂台
-  if (rectContains(rectExpanded(RING_ARENA, 40), x, y)) return false;
+  // 8 栋房产地标、牛马公寓：门牌与院落内及周边留白 36/60px
   for (const spec of VILLA_SPECS) if (rectContains(rectExpanded(spec.rect, 36), x, y)) return false;
   // 公寓留白 60：门牌与门口台阶在楼体南沿外 24–50px，树不能站在门口
   for (const spec of APARTMENT_SPECS) if (rectContains(rectExpanded(spec.rect, 60), x, y)) return false;
@@ -1134,8 +1130,8 @@ const ROAD_PROPS: PropInstance[] = [
   { kind: 'lamp', x: 4212, y: 3400 },
   { kind: 'sign', x: 4290, y: 3380 },
   { kind: 'bin', x: 3900, y: 3380 },
-  // 游乐大街
-  { kind: 'lamp', x: 3080, y: 3000 },
+  // 霓虹娱乐街（夜店 / 改车铺 / 拉面摊前）
+  { kind: 'lamp', x: 2950, y: 3000 },
   { kind: 'lamp', x: 3600, y: 3000 },
   { kind: 'bench', x: 3700, y: 3130 },
   // 南主路 / 生活区街口
@@ -1154,8 +1150,8 @@ const ROAD_PROPS: PropInstance[] = [
   { kind: 'lamp', x: 5000, y: 3980 },
   { kind: 'lamp', x: 5000, y: 4212 },
   { kind: 'bench', x: 4920, y: 4400 },
-  // 东北支路 / 沉思浅塘：灯与长椅在塘南岸
-  { kind: 'lamp', x: 4700, y: 2650 },
+  // 东北支路 / 沉思浅塘：灯在北岸小路转角，长椅在塘南岸
+  { kind: 'lamp', x: 4740, y: 2690 },
   { kind: 'bench', x: 5240, y: 3300 },
   // 摸鱼湖：北岸一组 + 南岸一组
   { kind: 'lamp', x: 5000, y: 4900 },
@@ -1346,38 +1342,26 @@ const CLINIC_SOLIDS: SolidRect[] = [
   ]),
 ];
 
-/**
- * 新建筑座位：赌桌 12 张圆凳 + 八角笼 4 张观战长椅。
- *
- * 接在急救站病床之后——`niuma:session:v1` 里存着旧座位的 id，
- * 只能往后追加，不能插队。
- */
-const NEW_SEAT_BASE = SEAT_DRAFTS.length + BENCH_SEATS.length + CLINIC_SEATS.length;
-
-const DICE_HALL_SEATS: SeatInstance[] = DICE_HALL_SEAT_DRAFTS.map((seat, index) => ({
-  id: NEW_SEAT_BASE + index + 1,
-  desk: -1,
-  ...seat,
-}));
-
-const RING_BENCH_SEATS: SeatInstance[] = RING_BENCH_SEAT_DRAFTS.map((seat, index) => ({
-  id: NEW_SEAT_BASE + DICE_HALL_SEATS.length + index + 1,
-  desk: -1,
-  ...seat,
-}));
-
 const SEATS: SeatInstance[] = [
   ...SEAT_DRAFTS.map((seat, index) => ({ id: index + 1, ...seat })),
   ...BENCH_SEATS,
   ...CLINIC_SEATS,
-  ...DICE_HALL_SEATS,
-  ...RING_BENCH_SEATS,
 ];
 
-/** 赌桌座位 id：服务端开奖后把不在座的人请下桌要用 */
-export const DICE_HALL_SEAT_IDS: ReadonlyArray<number> = DICE_HALL_SEATS.map((seat) => seat.id);
-/** 观战长椅座位 id：押注资格判定读它 */
-export const RING_BENCH_SEAT_IDS: ReadonlyArray<number> = RING_BENCH_SEATS.map((seat) => seat.id);
+function propertyFloor(kind: PropertyKind) {
+  switch (kind) {
+    case 'club':
+      return 'cinema' as const;
+    case 'garage':
+      return 'concrete' as const;
+    case 'stall':
+      return 'plaster' as const;
+    case 'lodge':
+      return 'wood' as const;
+    default:
+      return 'walnut' as const;
+  }
+}
 
 /**
  * 树丛在道具与花箱之后生成：`isPlantable` 要读到 PROPS / PLANTERS 的占地，
@@ -1428,36 +1412,28 @@ export const WORLD_LAYOUT: WorldLayout = {
     ...CLINIC_SOLIDS,
     // 护士站围挡（ADR-0092）：三面栏杆 + 西门人行门洞，南侧留救护车通道
     ...CLINIC_FENCE_SOLIDS,
-    // 摸鱼骰子馆：亭柱、吧台、两张骰桌
-    ...DICE_HALL_SOLIDS,
-    ...DICE_TABLE_SOLIDS,
-    // 豪宅小院：四面院墙（南墙留门洞，锁门时另加动态门栅）
+    // 园区 8 栋房产：四面院墙（南墙留门洞，锁门时另加动态门栅）
     ...VILLA_WALL_SOLIDS,
     // 牛马公寓：唯一一栋，整圈封闭的外墙
     ...APARTMENT_WALL_SOLIDS,
-    // 绩效八角笼：围栏（南北门洞）+ 4 张观战长椅底座
-    ...RING_FENCE_SOLIDS,
-    ...RING_BENCH_SOLIDS,
   ],
   buildings: [
     ...CAMPUS_BUILDINGS,
     PARK_BUILDING,
-    // 墨绿绒地面：和办公楼与住宅拉开色相，进门就知道换地方了
-    { name: '摸鱼骰子馆', rect: DICE_HALL, floor: 'felt' },
-    ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: spec.house, floor: 'walnut' as const })),
+    ...VILLA_SPECS.map((spec) => ({ name: spec.name, rect: spec.house, floor: propertyFloor(spec.kind) })),
     // 唯一一栋单户公寓楼（ADR-0095 / ADR-0101）：区域名与树带都按 rect 展开
     ...APARTMENT_SPECS.map((spec) => ({ name: '牛马公寓', rect: spec.rect, floor: 'plaster' as const })),
   ],
   paved: [
     COMPANY_FORECOURT,
     AMUSEMENT_STREET,
+    NEON_STRIP_PLAZA,
     PARK_GATE_LINK,
     SERVICE_SQUARE,
     LIVING_AVENUE,
     PARK_GATE_PAVING,
     CLINIC_RECT,
     CLINIC_ACCESS_PAVING,
-    DICE_HALL_APRON,
     ...VILLA_SPECS.map((spec) => spec.rect),
     ...APARTMENT_SPECS.map((spec) => spec.rect),
     ...DOOR_PAVING,

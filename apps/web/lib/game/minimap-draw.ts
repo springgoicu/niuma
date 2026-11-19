@@ -2,15 +2,15 @@ import {
   APARTMENT_SPECS,
   BOSS_ARENA,
   CLINIC_RECT,
-  DICE_HALL,
   DISTRICTS,
   ISLAND,
-  RING_ARENA,
+  VILLA_SPECS,
   WORLD_CENTER,
   WORLD_LAYOUT,
   type DistrictId,
   type Point,
   type TreeInstance,
+  type VillaPacket,
   type WorldRect,
 } from '@niuma/shared-types';
 import { ACTIVITY_TTL_MS } from './activity-feed';
@@ -54,6 +54,8 @@ export interface MinimapFrame {
   points: ReadonlyArray<{ x: number; y: number; self: boolean }>;
   /** 全园区播报事件（ADR-0112）：视野内脉冲、视野外贴边箭头 */
   events?: ReadonlyArray<MinimapEvent>;
+  /** 8 处房产归属态：直接绘制三态屋标（我的 / 他人 / 待售） */
+  villas?: ReadonlyArray<VillaPacket>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -99,16 +101,20 @@ function buildingRect(name: string): WorldRect {
   return found ? found.rect : { x: 0, y: 0, w: 0, h: 0 };
 }
 
-/** 核心场所：7 处「新人第一眼要找」的地标（顺序即绘制顺序，后画的压在上面） */
+/** 核心场所：6 处地标 + 房产三态屋标由 drawVillaPins 单独绘制 */
 export const MINIMAP_VENUE_MARKS: ReadonlyArray<MiniMapMark> = [
   markAt(BOSS_ARENA, 'corporate'),
-  markAt(DICE_HALL, 'amusement'),
-  markAt(RING_ARENA, 'amusement'),
+  markAt({ x: 3000, y: 2840, w: 80, h: 80 }, 'amusement'),
   markAt(CLINIC_RECT, 'service'),
   markAt(buildingRect('卫生间'), 'service'),
   markAt(buildingRect('小黑屋'), 'service'),
   markAt(APARTMENT_SPECS[0]!.rect, 'living'),
 ];
+
+const VILLA_PIN_OUTLINE = '#2a3142';
+const VILLA_PIN_MINE = '#f2c879';
+const VILLA_PIN_OTHER = '#38bdf8';
+const VILLA_PIN_FREE = '#e6dec8';
 
 /** 按 DPR 出图，否则 1px 围栏线在 2x 屏上会糊成两像素灰边 */
 export function prepareMiniMap(ctx: MiniMapContext, dpr: number): void {
@@ -373,8 +379,9 @@ export function drawMiniMap(ctx: MiniMapContext, frame: MinimapFrame): void {
   const camY = frame.y;
   drawTerrain(ctx, camX, camY);
 
-  // 核心场所：发泄区 / 赌场 / 擂台 / 急救站 / 卫生间 / 小黑屋 / 公寓
+  // 核心场所地标 + 8 处房产三态屋标
   for (const mark of MINIMAP_VENUE_MARKS) drawMark(ctx, mark, camX, camY, 2);
+  drawVillaPins(ctx, frame.villas, camX, camY);
 
   // 事件层压在场所图标之上、玩家点之下：玩家永远是最上层
   if (frame.events && frame.events.length > 0) drawEvents(ctx, frame.events, camX, camY);
@@ -396,5 +403,36 @@ export function drawMiniMap(ctx: MiniMapContext, frame: MinimapFrame): void {
     ctx.fillRect(px - 2, py - 2, 5, 5);
     ctx.fillStyle = M.self;
     ctx.fillRect(px - 1, py - 1, 3, 3);
+  }
+}
+
+/** 8 处房产的小地图 5x5 像素屋标：金=我的 / 青=他人 / 米=待售 */
+function drawVillaPins(
+  ctx: MiniMapContext,
+  villas: ReadonlyArray<VillaPacket> | undefined,
+  camX: number,
+  camY: number,
+): void {
+  for (let i = 0; i < VILLA_SPECS.length; i += 1) {
+    const spec = VILLA_SPECS[i]!;
+    const px = screenX(spec.gate.x, camX);
+    const py = screenY(spec.gate.y, camY);
+    if (px < -4 || py < -4 || px > MINIMAP_SIZE + 4 || py > MINIMAP_SIZE + 4) continue;
+
+    let fill = VILLA_PIN_FREE;
+    if (villas) {
+      for (let j = 0; j < villas.length; j += 1) {
+        const v = villas[j]!;
+        if (v.id === spec.id) {
+          fill = v.mine ? VILLA_PIN_MINE : v.owned ? VILLA_PIN_OTHER : VILLA_PIN_FREE;
+          break;
+        }
+      }
+    }
+    ctx.fillStyle = VILLA_PIN_OUTLINE;
+    ctx.fillRect(px - 2, py - 2, 5, 5);
+    ctx.fillStyle = fill;
+    ctx.fillRect(px - 1, py - 1, 3, 3);
+    ctx.fillRect(px, py - 3, 1, 1);
   }
 }

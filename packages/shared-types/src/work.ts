@@ -39,18 +39,16 @@ export function isNightShift(hour: number): boolean {
 }
 
 /**
- * 一轮搬砖的产出。
+ * 一轮搬砖的产出（属性成长已废除，只保留夜班时段加成）。
  *
  * `roll` 是服务端随机数（0 ≤ roll < 1），客户端只用固定 0.5 做「预估」展示，
  * 真正的金额永远以服务端下发的 `S2C_WORK_RESULT` 为准。
  */
-export function workPayout(roll: number, workEffLv: number, night: boolean): number {
+export function workPayout(roll: number, _workEffLv: number, night: boolean): number {
   const r = Number.isFinite(roll) ? Math.max(0, Math.min(0.999999, roll)) : 0.5;
   const base = WORK_REWARD.Min + Math.floor(r * (WORK_REWARD.Max - WORK_REWARD.Min + 1));
-  const level = Math.max(0, Math.min(10, Math.floor(workEffLv) || 0));
-  const effMul = 1 + WORK_REWARD.PerEffLv * level;
   const nightMul = night ? WORK_REWARD.NightMul : 1;
-  return Math.min(WORK_REWARD.Cap, Math.round(base * effMul * nightMul));
+  return Math.min(WORK_REWARD.Cap, Math.round(base * nightMul));
 }
 
 /** 工位热区 id：与 `WORKSTATIONS` 下标一一对应 */
@@ -72,14 +70,13 @@ export const WORK_DESK_RANGE = 84;
  * 用整数阈值才能在 `BossRuntime` 里用一次比较判断「这一脚是否跨过 25%」。
  */
 export const BOSS_REWARD = {
-  HitMin: 2,
-  HitMax: 5,
+  HitMin: 4,
+  HitMax: 8,
   CritMul: 2,
   /** 尾刀大奖：只在 justDied 那一次发放 */
   Blade: 500,
-  /** 暴击率：每级 5%，封顶 35% */
-  CritPerLv: 0.05,
-  CritCap: 0.35,
+  /** 固定街头幸运暴击率 15%（不依赖属性升级） */
+  CritCap: 0.15,
 } as const;
 
 export const BOSS_SHOCK = {
@@ -92,10 +89,9 @@ export const BOSS_SHOCK = {
   StunMs: 1500,
 } as const;
 
-/** 暴击率：商店文案与命中结算共用 */
-export function bossCritChance(critLv: number): number {
-  const level = Math.max(0, Math.min(10, Math.floor(critLv) || 0));
-  return Math.min(BOSS_REWARD.CritCap, level * BOSS_REWARD.CritPerLv);
+/** 固定街机暴击率：所有玩家一致为 15% */
+export function bossCritChance(_critLv = 0): number {
+  return BOSS_REWARD.CritCap;
 }
 
 /** 单次命中的掉落：2~5 币，暴击翻倍 */

@@ -1,14 +1,11 @@
 import {
   PLAYER_RADIUS,
-  RING_ARENA,
   VILLA_SPECS,
   WORLD_BOUNDS,
   findFreePoint,
   isBlocked,
   isInClinicInterior,
   isInVillaYard,
-  rectContains,
-  rectExpanded,
 } from '@niuma/shared-types';
 import type { Rng } from './rng';
 
@@ -16,7 +13,7 @@ import type { Rng } from './rng';
  * NPC 的落点采样：整座岛随机漫游。
  *
  * 直接在 `WORLD_BOUNDS`（岛包围盒）里均匀取点，用 `isBlocked` 与场所禁入区
- * 过掉海、障碍、护士站、擂台围栏与豪宅院子，再交由 `brain` 沿寻路网格绕障。
+ * 过掉海、障碍、护士站与房产院子，再交由 `brain` 沿寻路网格绕障。
  */
 export interface NpcSpot {
   x: number;
@@ -29,15 +26,25 @@ const RETRY_COUNT = 24;
 const MIN_WALK_PX = 240;
 /** 出生点之间至少拉开 160px，避免 5 个人叠在一格 */
 const MIN_SPAWN_GAP = 160;
-const RING_EXCLUSION = rectExpanded(RING_ARENA, PLAYER_RADIUS);
+/** 街头热闹热区（霓虹商业街广场 & 沉思浅塘北岸），供 NPC 优先漫步打卡 */
+const FEATURED_SPOTS: ReadonlyArray<NpcSpot> = [
+  { x: 3000, y: 2990 },
+  { x: 4980, y: 2660 },
+];
 
 function isExcludedNpcSpot(x: number, y: number): boolean {
   if (isInClinicInterior(x, y)) return true;
-  if (rectContains(RING_EXCLUSION, x, y)) return true;
   return VILLA_SPECS.some((spec) => isInVillaYard(spec, x, y));
 }
 
 function sampleIslandPoint(rng: Rng): NpcSpot {
+  if (rng.chance(0.12)) {
+    const base = FEATURED_SPOTS[Math.floor(rng.range(0, FEATURED_SPOTS.length))]!;
+    return {
+      x: base.x + rng.range(-120, 120),
+      y: base.y + rng.range(-40, 40),
+    };
+  }
   const { x, y, w, h } = WORLD_BOUNDS;
   return { x: x + rng.range(0, w), y: y + rng.range(0, h) };
 }

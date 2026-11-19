@@ -58,10 +58,12 @@ export interface EconomyProfile {
 /** 钱包变动原因：协议里是 u8，只追加不复用（旧客户端只做展示兜底） */
 export const WALLET_REASON = {
   Init: 0,
+  /** 0x01 原擂台奖金：随擂台下线停发，编号永久保留不复用 */
   RingReward: 1,
   KnockdownReward: 2,
   BossReward: 3,
   QuestReward: 4,
+  /** 0x05 原属性升级：随四维属性废除停用，编号永久保留不复用 */
   ShopUpgrade: 5,
   ShopItem: 6,
   TipOut: 7,
@@ -73,24 +75,16 @@ export const WALLET_REASON = {
   ItemUse: 13,
   /** 道具没生效（保安缺席等）原路退回：只追加不复用 */
   ItemRefund: 14,
-  // ---- 四类新建筑（热区注册表同一轮）----
-  /** 赌桌下注冻结 */
+  /** 15–22 曾用于骰桌与八角笼彩池：下线后永久留空不复用 */
   DiceBet: 15,
-  /** 赌桌彩池派彩 */
   DiceWin: 16,
-  /** 保安查岗抽水（彩蛋） */
   GuardRake: 17,
-  /** 八角笼报名费 */
   ArenaFee: 18,
-  /** 八角笼胜者拿走 100 币彩池 */
   ArenaWin: 19,
-  /** 观战押注冻结 */
   ArenaBet: 20,
-  /** 观战押注派彩 */
   ArenaBetWin: 21,
-  /** 押注退款（无人对押 / 比赛取消） */
   ArenaBetRefund: 22,
-  /** 豪宅冠名权 */
+  /** 房产冠名权购买 / 溢价收购 */
   VillaBuy: 23,
   /** 摇钱树收币 */
   VillaIncome: 24,
@@ -109,35 +103,39 @@ export const WALLET_REASON = {
   BossHit: 30,
   /** 突击查岗全勤奖 */
   InspectionBonus: 31,
+  /** 被他人在先冠名房产上溢价收购时收到的 1.2× 补偿 */
+  VillaBuyout: 32,
+  /** 街头 NPC 互动赏金（击倒同事 NPC / 挥手打招呼） */
+  NpcReward: 33,
 } as const;
 export type WalletReason = (typeof WALLET_REASON)[keyof typeof WALLET_REASON];
 
 export const WALLET_REASON_LABEL: Record<number, string> = {
   [WALLET_REASON.Init]: '进园结算',
-  [WALLET_REASON.RingReward]: '擂台奖金',
-  [WALLET_REASON.KnockdownReward]: '击倒奖励',
-  [WALLET_REASON.BossReward]: '老板倒下',
-  [WALLET_REASON.QuestReward]: '每日任务',
-  [WALLET_REASON.ShopUpgrade]: '属性升级',
-  [WALLET_REASON.ShopItem]: '购买道具',
+  [WALLET_REASON.RingReward]: '历史赛事奖金',
+  [WALLET_REASON.KnockdownReward]: '街头击倒赏金',
+  [WALLET_REASON.BossReward]: '老板倒下大奖',
+  [WALLET_REASON.QuestReward]: '每日悬赏',
+  [WALLET_REASON.ShopUpgrade]: '历史属性消费',
+  [WALLET_REASON.ShopItem]: '购买整蛊道具',
   [WALLET_REASON.TipOut]: '打赏支出',
   [WALLET_REASON.TipIn]: '收到打赏',
-  [WALLET_REASON.EscrowFreeze]: '赌注冻结',
-  [WALLET_REASON.EscrowRefund]: '赌注退还',
+  [WALLET_REASON.EscrowFreeze]: '切磋托管',
+  [WALLET_REASON.EscrowRefund]: '托管退还',
   [WALLET_REASON.MatchReward]: '对局获胜',
   [WALLET_REASON.MatchLoss]: '对局落败',
   [WALLET_REASON.ItemUse]: '使用道具',
   [WALLET_REASON.ItemRefund]: '道具退还',
-  [WALLET_REASON.DiceBet]: '赌桌下注',
-  [WALLET_REASON.DiceWin]: '赌桌派彩',
+  [WALLET_REASON.DiceBet]: '历史玩法投入',
+  [WALLET_REASON.DiceWin]: '历史玩法返奖',
   [WALLET_REASON.GuardRake]: '保安抽水',
-  [WALLET_REASON.ArenaFee]: '八角笼报名',
-  [WALLET_REASON.ArenaWin]: '八角笼奖金',
-  [WALLET_REASON.ArenaBet]: '观战押注',
-  [WALLET_REASON.ArenaBetWin]: '押注派彩',
-  [WALLET_REASON.ArenaBetRefund]: '押注退还',
-  [WALLET_REASON.VillaBuy]: '买下小院',
-  [WALLET_REASON.VillaIncome]: '摇钱树收币',
+  [WALLET_REASON.ArenaFee]: '历史报名费用',
+  [WALLET_REASON.ArenaWin]: '历史奖金',
+  [WALLET_REASON.ArenaBet]: '历史投入',
+  [WALLET_REASON.ArenaBetWin]: '历史返奖',
+  [WALLET_REASON.ArenaBetRefund]: '历史退还',
+  [WALLET_REASON.VillaBuy]: '买下房产冠名',
+  [WALLET_REASON.VillaIncome]: '产业收益收币',
   [WALLET_REASON.Cosmetic]: '购买装扮',
   [WALLET_REASON.HouseUpgrade]: '户型升级',
   [WALLET_REASON.Furniture]: '购买家具',
@@ -145,16 +143,20 @@ export const WALLET_REASON_LABEL: Record<number, string> = {
   [WALLET_REASON.RedPacket]: '抢到红包',
   [WALLET_REASON.BossHit]: '踢老板掉落',
   [WALLET_REASON.InspectionBonus]: '查岗全勤',
+  [WALLET_REASON.VillaBuyout]: '房产溢价补偿',
+  [WALLET_REASON.NpcReward]: 'NPC 互动赏金',
 };
 
 /** 固定收益：一处定义，服务端发币与商店文案共用 */
 export const ECONOMY_REWARD = {
-  RingGold: 300,
-  RingSilver: 150,
-  RingBronze: 80,
-  Knockdown: 12,
-  BossKill: 150,
-  Quest: 30,
+  /** 击倒真人玩家赏金（同目标 60 秒冷却） */
+  Knockdown: 20,
+  /** 击倒普通 NPC 同事赏金（同 NPC 45 秒冷却） */
+  NpcKnockdown: 30,
+  /** 对附近 NPC 挥手互动打招呼赏金（同 NPC 60 秒冷却） */
+  NpcWave: 15,
+  BossKill: 500,
+  Quest: 40,
 } as const;
 
 export interface StatSku {
@@ -165,41 +167,11 @@ export interface StatSku {
   stepPrice: number;
 }
 
-export const STAT_SKUS: readonly StatSku[] = [
-  {
-    key: 'atkSpeedLv',
-    name: '攻速',
-    blurb: '每级发泄冷却 −70ms，10 级锁在 500ms。',
-    basePrice: 120,
-    stepPrice: 80,
-  },
-  {
-    key: 'workEffLv',
-    name: '工效',
-    blurb: '每级让工位搬砖多产 8%，夜班再 ×1.5。',
-    basePrice: 100,
-    stepPrice: 60,
-  },
-  {
-    key: 'critLv',
-    name: '暴击',
-    blurb: '每级 +5% 踢老板暴击（掉落翻倍），封顶 35%。',
-    basePrice: 140,
-    stepPrice: 90,
-  },
-  {
-    key: 'armorLv',
-    name: '护甲',
-    blurb: '后续受击减伤的预备属性。',
-    basePrice: 110,
-    stepPrice: 70,
-  },
-];
+/** 属性升级体系已全面废除（去数值化），保留空数组以维持类型导出 */
+export const STAT_SKUS: readonly StatSku[] = [];
 
-export function statUpgradePrice(key: StatKey, level: number): number {
-  const sku = STAT_SKUS.find((entry) => entry.key === key);
-  if (!sku) return 0;
-  return sku.basePrice + sku.stepPrice * clampStatLevel(level);
+export function statUpgradePrice(_key: StatKey, _level: number): number {
+  return 0;
 }
 
 /** 消耗品效果：服务端只认这几种；未知 id 一律拒绝 */
@@ -387,26 +359,22 @@ export function clampItemCount(value: number): number {
   return Math.max(0, Math.min(MAX_ITEM_COUNT, Math.floor(value)));
 }
 
-/** 发泄冷却的唯一尺子：服务端校验与客户端预估必须读同一个函数 */
-export const VENT_COOLDOWN_BASE_MS = 1200;
-export const VENT_COOLDOWN_MIN_MS = 500;
-export const VENT_COOLDOWN_PER_LEVEL_MS = 70;
+/** 发泄冷却的唯一尺子：人人平等 600ms 基线（属性成长已废除，仅冰美式可乘 0.7） */
+export const VENT_COOLDOWN_BASE_MS = 600;
+export const VENT_COOLDOWN_MIN_MS = 420;
+export const VENT_COOLDOWN_PER_LEVEL_MS = 0;
 
-export function ventCooldownMs(atkSpeedLv: number): number {
-  return Math.max(
-    VENT_COOLDOWN_MIN_MS,
-    VENT_COOLDOWN_BASE_MS - VENT_COOLDOWN_PER_LEVEL_MS * clampStatLevel(atkSpeedLv),
-  );
+export function ventCooldownMs(_atkSpeedLv = 0): number {
+  return VENT_COOLDOWN_BASE_MS;
 }
 
 /**
  * 带 Buff 乘子的实际冷却。
  *
- * `cdMul` 来自 `ventCooldownMultiplier`（冰美式乘 0.7），钳在 0.5~1；
- * 下限仍是 500ms，不允许任何道具把尺子打穿。
+ * `cdMul` 来自 `ventCooldownMultiplier`（冰美式乘 0.7 → 420ms），钳在 0.5~1。
  */
-export function effectiveVentCooldownMs(atkSpeedLv: number, cdMul = 1): number {
-  const base = ventCooldownMs(atkSpeedLv);
+export function effectiveVentCooldownMs(_atkSpeedLv = 0, cdMul = 1): number {
+  const base = ventCooldownMs(0);
   const mul = Number.isFinite(cdMul) ? Math.max(0.5, Math.min(1, cdMul)) : 1;
   return Math.max(VENT_COOLDOWN_MIN_MS, Math.round(base * mul));
 }
@@ -475,21 +443,12 @@ function sanitizeDailyQuests(raw: unknown): DailyQuestState {
   return { day, progress, claimed };
 }
 
-/** 本地档案 → 可信档案：所有入口（读盘、HELLO、商店）都先过这一层 */
+/** 本地档案 → 可信档案：属性升级已废除，进园统一清零，金币/背包/装扮完整保留 */
 export function sanitizeEconomyProfile(raw: unknown): EconomyProfile {
   const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const statsRaw = (source.stats && typeof source.stats === 'object' ? source.stats : {}) as Record<
-    string,
-    unknown
-  >;
   return {
     coins: clampCoins(Number(source.coins) || 0),
-    stats: {
-      atkSpeedLv: clampStatLevel(Number(statsRaw.atkSpeedLv) || 0),
-      workEffLv: clampStatLevel(Number(statsRaw.workEffLv) || 0),
-      critLv: clampStatLevel(Number(statsRaw.critLv) || 0),
-      armorLv: clampStatLevel(Number(statsRaw.armorLv) || 0),
-    },
+    stats: emptyStats(),
     unlockedCosmetics: sanitizeCosmetics(source.unlockedCosmetics),
     inventory: sanitizeInventory(source.inventory),
     dailyQuests: sanitizeDailyQuests(source.dailyQuests),

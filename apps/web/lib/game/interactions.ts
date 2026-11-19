@@ -279,10 +279,6 @@ export function hintForHotspot(def: HotspotDef): string {
       return HINT.shrine;
     case 'tea':
       return HINT.tea;
-    case 'diceTable':
-      return HINT.dice;
-    case 'arenaSeat':
-      return HINT.arenaBet;
     case 'villaGate':
       return HINT.villa;
     case 'villaTree':
@@ -314,10 +310,6 @@ export function hintForVenueSpot(kind: VenueSpotKind): string {
 /** 入座类玩法的「先坐下」文案：与 `seatMatchesHotspot` 的拒绝口径一一对应（ADR-0093） */
 export function needSeatHint(def: HotspotDef): string {
   switch (def.kind) {
-    case 'diceTable':
-      return HINT.diceNeedSeat;
-    case 'arenaSeat':
-      return HINT.arenaNeedSeat;
     case 'workDesk':
       return HINT.workNeedSeat;
     default:
@@ -397,7 +389,6 @@ export function selectContextHint(
   }
   const def = hotspotAtForSeat(x, y, seatId, (candidate) => {
     if (candidate.kind === 'bulletin') return facesBulletin(x, y, direction);
-    if (candidate.kind === 'ring') return false;
     return true;
   });
   if (def) {

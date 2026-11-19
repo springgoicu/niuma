@@ -1,8 +1,8 @@
 import { PLAYER_RADIUS, POSE, WORLD_CENTER, findFreePoint } from '@niuma/shared-types';
 import type { Transport } from '../sim/view';
-import type { World } from '../sim/world';
+import type { Player, World } from '../sim/world';
 import type { SpatialGrid } from '../spatial/grid';
-import { createAgent, directionOf, updateAgent, type NpcAgent } from './brain';
+import { createAgent, directionOf, faceToward, startWave, updateAgent, type NpcAgent } from './brain';
 import type { NpcConfig } from './config';
 import { ESCORT, stepEscort } from './escort';
 import { finishFollow, stepFollow } from './follow';
@@ -56,6 +56,8 @@ export interface NpcDirector {
   restore(playerId: number, now: number): boolean;
   /** 押送事件出口：server 用它转给 sim/detention，不让 NPC 层认识 Detention */
   setEscortListener(listener: ((event: EscortEvent) => void) | null): void;
+  /** 玩家在近距离按 Q 挥手时，挑最近的一位空闲 NPC 朝其转身并挥手回应 */
+  reactToWave(actor: Player, now: number): Player | null;
 }
 
 export interface NpcDirectorOptions {
@@ -334,6 +336,30 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     updateMs = performance.now() - started;
   }
 
+  function reactToWave(actor: Player, now: number): Player | null {
+    const maxDistSq = 130 * 130;
+    let best: NpcAgent | null = null;
+    let bestDistSq = maxDistSq;
+    for (const agent of agents.values()) {
+      const npc = agent.player;
+      if (agent.escort || npc.incapacitated || now < npc.stunUntil) continue;
+      const dx = npc.x - actor.x;
+      const dy = npc.y - actor.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= bestDistSq) {
+        bestDistSq = distSq;
+        best = agent;
+      }
+    }
+    if (!best) return null;
+    faceToward(best, actor, now);
+    best.phase = 'pause';
+    best.pauseMs = 1100;
+    best.pauseUntil = Math.max(best.pauseUntil, now + 1100);
+    startWave(best, now);
+    return best.player;
+  }
+
   return {
     spawn,
     update,
@@ -351,6 +377,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     dispatchFollow,
     cancelFollow,
     restore,
+    reactToWave,
     setEscortListener(listener) {
       escortListener = listener;
     },

@@ -24,8 +24,6 @@ import {
   type P2PDuelStatePacket,
   type P2PShowdownPacket,
   type PatientStatusPacket,
-  type RingPacket,
-  type DiceStatePacket,
   type ApartmentPeekEntry,
   type VillaStatePacket,
   type BossShockPacket,
@@ -42,8 +40,6 @@ import { FestivalArt } from './festival-art';
 import { readFestivalEnabled } from './festival-decor';
 import { ParkView } from './park';
 import { PlaqueView } from './plaques';
-import { RingView } from './ring';
-import { DiceHallView } from './dice-hall-view';
 import { VillasView } from './villas-view';
 import { ApartmentView } from './apartment-view';
 import { WindowPeekView } from './window-peek';
@@ -916,17 +912,11 @@ export class GameRenderer {
   private readonly patientStates = new Map<number, PatientStatusPacket['state']>();
   /** 发泄区胖老板：地面垫子、200×256 本体、血条与倒地纸板（ADR-0070） */
   private boss?: BossView;
-  /** 三人擂台：垫子、角柱、领奖台、奖杯与彩带（ADR-0073） */
-  private ring?: RingView;
   /** P2P 头顶演出：骰子 / 猜拳手势 / 切磋血条 / 打赏飘字 */
   private readonly p2pFx = new P2PFx();
-  /** 擂台覆盖层：领奖台与彩带必须压在排序层之后，才不会被角色吃掉 */
-  private readonly ringOverlay = new Container();
   /** 场所门牌：各入口一块小门牌（ADR-0091 / ADR-0096） */
   private plaques?: PlaqueView;
-  /** 摸鱼骰子馆：亭台、两张绿绒骰桌与亮牌骰子（ADR-0087） */
-  private dice?: DiceHallView;
-  /** 豪宅小院：院墙、牌匾与摇钱树 */
+  /** 园区 8 处分阶房产：建筑、牌匾与收益道具 */
   private villas?: VillasView;
   /** 牛马公寓：只有外立面，室内与家具随 ADR-0098 下线 */
   private apartment?: ApartmentView;
@@ -1246,18 +1236,11 @@ export class GameRenderer {
     this.boss = new BossView(this.app.renderer, this.metrics.devicePxPerTexel);
     this.boss.build(this.sortLayer, this.props.base, this.labels);
 
-    // 三人擂台（ADR-0073）：垫子与角柱在地面/排序层，领奖台与彩带进覆盖层
-    this.ring = new RingView(this.app.renderer, this.metrics.devicePxPerTexel);
-    this.ring.build(this.sortLayer, this.props.base, this.ringOverlay);
-
     // 场所门牌（ADR-0091 / ADR-0096）：墙体是平铺色带没有立面，各入口立一块小门牌
     this.plaques = new PlaqueView(this.metrics.devicePxPerTexel);
     this.plaques.build(this.sortLayer);
 
-    // 热区建筑（ADR-0087）：赌场亭、豪宅小院、牛马公寓外立面。
-    // 三处都自己按底边 y 进排序层，与树、长椅、角色共用同一套遮挡；冬季传 winter 标记
-    this.dice = new DiceHallView(this.season.winter, this.metrics.devicePxPerTexel);
-    this.dice.build(this.sortLayer, this.props.base);
+    // 园区建筑（ADR-0087）：8 处分阶房产、牛马公寓外立面。
     this.villas = new VillasView(this.season.winter, this.metrics.devicePxPerTexel);
     this.villas.build(this.sortLayer, this.props.base);
     this.apartment = new ApartmentView(this.season.winter, this.metrics.devicePxPerTexel);
@@ -1305,9 +1288,6 @@ export class GameRenderer {
       this.venueFx = new VenueFx(this.app.renderer);
       this.world.addChild(this.venueFx.container);
     }
-
-    // 擂台的领奖台与彩带压在 y 排序层之后：角色站在台上时不该把台面盖住
-    this.world.addChild(this.ringOverlay);
 
     // 护士站的救护车与护士帽红十字：动态物体，压在同层角色之上，避免车头被身体啃掉
     if (this.clinic) this.world.addChild(this.clinic.overlay);
@@ -1728,17 +1708,7 @@ export class GameRenderer {
     this.buffFx?.clearAll();
   }
 
-  /** 擂台快照：阶段变化时驱动领奖台升降与彩带，其余情况只更新内部阶段（ADR-0073） */
-  setRing(packet: RingPacket | null): void {
-    this.ring?.setState(packet);
-  }
-
-  /** 赌桌公共局快照：亮牌期在桌心摆出三颗骰子（ADR-0087） */
-  setDiceState(packet: DiceStatePacket): void {
-    this.dice?.setState(packet);
-  }
-
-  /** 豪宅牌匾：房主名、锁形图标与门扇开合 */
+  /** 房产牌匾：房主名、在线指示灯、锁形图标与门扇开合 */
   setVillaState(packet: VillaStatePacket): void {
     this.villas?.setState(packet);
   }
@@ -1755,18 +1725,6 @@ export class GameRenderer {
     for (const entry of entries) peeking.add(entry.id);
     for (const [id, view] of this.views) view.setPeeked(peeking.has(id));
     this.windowPeek?.setEntries(entries, (id) => this.views.get(id)?.body.appearance);
-  }
-
-  /**
-   * 擂台命中飘字：服务端只给「是否淘汰」，伤害固定 1 点，
-   * 所以这里不猜血量，只把结果画在受害者头顶。
-   */
-  showRingDamage(id: number, eliminated: boolean): void {
-    const view = this.views.get(id);
-    if (!view) return;
-    const x = view.root.position.x;
-    const y = view.root.position.y - 56;
-    this.ritual?.floatText(x, y, eliminated ? '-1 淘汰' : '-1', performance.now());
   }
 
   /** 上香成功：财神像闪一道金色微光（ADR-0061） */
@@ -1942,7 +1900,6 @@ export class GameRenderer {
     this.shrine?.update(dtMs);
     this.tea?.update(dtMs);
     this.boss?.update(dtMs);
-    this.ring?.update(dtMs);
     this.ritual?.update(now);
     if (this.auraEid !== 0) {
       const auraView = this.views.get(this.auraEid);
@@ -2127,8 +2084,6 @@ export class GameRenderer {
     this.plaques?.setTextResolution(next.devicePxPerTexel);
     this.park?.setTextResolution(next.devicePxPerTexel);
     this.boss?.setTextResolution(next.devicePxPerTexel);
-    this.ring?.setTextResolution(next.devicePxPerTexel);
-    this.dice?.setTextResolution(next.devicePxPerTexel);
     this.villas?.setTextResolution(next.devicePxPerTexel);
     this.apartment?.setTextResolution(next.devicePxPerTexel);
   }
@@ -2260,9 +2215,7 @@ export class GameRenderer {
     this.shrine?.destroy();
     this.tea?.destroy();
     this.boss?.destroy();
-    this.ring?.destroy();
     this.plaques?.destroy();
-    this.dice?.destroy();
     this.villas?.destroy();
     this.apartment?.destroy();
     this.windowPeek?.destroy();

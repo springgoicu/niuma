@@ -16,7 +16,7 @@ describe('Wallet 聚合（ADR-0104）', () => {
       123,
     );
     expect(wallet.coins).toBe(1_000);
-    expect(wallet.stats.atkSpeedLv).toBe(10);
+    expect(wallet.stats.atkSpeedLv).toBe(0);
     expect(wallet.inventory).toEqual({ ice_americano: 99 });
     expect(wallet.unlockedCosmetics).toEqual(['top']);
     expect(wallet.importedAt).toBe(123);

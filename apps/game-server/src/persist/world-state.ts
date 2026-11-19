@@ -3,16 +3,14 @@ import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BossSaveState } from '../sim/boss';
-import type { RingLastMatchState, RingSaveState } from '../sim/ring';
 import type { VillaSaveState } from '../sim/villas';
 import type { WalletSaveState } from '../economy/wallet';
-import { normalizeDiceLedgerState, type DiceLedgerSaveState } from '../sim/dice-ledger';
 import { ProfileBook, type ProfileRecord } from './profiles';
 
 /**
  * 园区共享运行态快照（ADR-0081 / ADR-0104）。
  *
- * 落盘范围：老板血量与回满点、擂台的局号与上一局名次、小院冠名、匿名档案里的
+ * 落盘范围：老板血量与回满点、园区 8 处房产冠名、匿名档案里的
  * 赞与名次，以及按匿名设备号的钱包账本。玩家会话、聊天、考勤仍不进这里。
  *
  * 写盘纪律：
@@ -25,33 +23,25 @@ import { ProfileBook, type ProfileRecord } from './profiles';
 
 /** 版本 3：追加服务端钱包账本（`wallets`，ADR-0104） */
 export const WORLD_STATE_VERSION_V3 = 3;
-/** 版本 4：追加赌桌战绩账本（`dice`，ADR-0110） */
-export const WORLD_STATE_VERSION = 4;
-/** 兼容读取的旧版本号：v1 无豪宅、v2 无钱包 */
+/** 版本 4：曾经的赌桌战绩版本（读取时平滑迁移） */
+export const WORLD_STATE_VERSION_V4 = 4;
+/** 版本 5：移除擂台/赌桌，支持 8 处房产冠名与街头金币体系 */
+export const WORLD_STATE_VERSION = 5;
+/** 兼容读取的旧版本号：v1 无房产、v2 无钱包、v3/v4 含旧赌桌或擂台字段 */
 export const WORLD_STATE_VERSION_V1 = 1;
 export const WORLD_STATE_VERSION_V2 = 2;
 
-/**
- * 快照里的各段结构直接复用各 runtime 的落盘类型。
- *
- * 抄一份形状相同的 interface 会立刻漂：改了 `sim/boss.ts` 却忘了改存档层，
- * 类型检查过、运行时字段对不上。所以这里只做转出，不重新定义。
- */
 export type { BossSaveState } from '../sim/boss';
-export type { RingLastMatchState, RingSaveState } from '../sim/ring';
 export type { VillaSaveState } from '../sim/villas';
 export type { WalletSaveState } from '../economy/wallet';
-export type { DiceLedgerSaveState } from '../sim/dice-ledger';
 
 export interface WorldStateParts {
   boss: BossSaveState;
-  ring: RingSaveState;
   villas: VillaSaveState;
   wallets: WalletSaveState[];
-  dice: DiceLedgerSaveState;
 }
 
-/** 对外仍叫 `WorldStateV1` 是为了少改调用点；结构已经是当前版本 v4 */
+/** 对外仍叫 `WorldStateV1` 是为了少改调用点；结构已经是当前版本 v5 */
 export interface WorldStateV1 extends WorldStateParts {
   version: typeof WORLD_STATE_VERSION;
   savedAt: number;
@@ -289,6 +279,7 @@ function normalizeWorldState(raw: unknown): WorldStateV1 | null {
   const source = raw as Partial<WorldStateV1> & { version?: unknown };
   if (
     source.version !== WORLD_STATE_VERSION &&
+    source.version !== WORLD_STATE_VERSION_V4 &&
     source.version !== WORLD_STATE_VERSION_V3 &&
     source.version !== WORLD_STATE_VERSION_V2 &&
     source.version !== WORLD_STATE_VERSION_V1
@@ -296,10 +287,8 @@ function normalizeWorldState(raw: unknown): WorldStateV1 | null {
     return null;
   }
   const boss = source.boss;
-  const ring = source.ring;
-  if (!boss || typeof boss !== 'object' || !ring || typeof ring !== 'object') return null;
+  if (!boss || typeof boss !== 'object') return null;
   if (!Number.isFinite(boss.hp) || !Number.isFinite(boss.resetAt)) return null;
-  if (!Number.isFinite(ring.matchId) || !Number.isFinite(ring.nextMatchId)) return null;
 
   return {
     version: WORLD_STATE_VERSION,
@@ -309,17 +298,11 @@ function normalizeWorldState(raw: unknown): WorldStateV1 | null {
       hp: Math.max(0, Math.min(BOSS_MAX_HP, Math.floor(boss.hp))),
       resetAt: Math.floor(boss.resetAt),
     },
-    ring: {
-      matchId: Math.max(0, Math.floor(ring.matchId)),
-      nextMatchId: Math.max(1, Math.floor(ring.nextMatchId)),
-      lastMatch: normalizeLastMatch(ring.lastMatch),
-    },
-    // v1 没有豪宅、v2 没有钱包、v3 没有赌桌战绩：都按空段接管，老档不会被当成坏档隔离
+    // v1 无房产、v2 无钱包、v3/v4 废弃的擂台/赌桌字段：读入时自动平滑迁移
     villas: normalizeVillas(source.villas),
     wallets: Array.isArray(source.wallets)
       ? (source.wallets.filter((entry) => entry && typeof entry === 'object') as WalletSaveState[])
       : [],
-    dice: normalizeDiceLedgerState(source.dice),
     profiles: Array.isArray(source.profiles) ? source.profiles.filter(isProfileRecord) : [],
   };
 }
@@ -329,7 +312,7 @@ function normalizeVillas(raw: unknown): { villas: VillaRecordShape[] } {
   const villas: VillaRecordShape[] = [];
   if (!Array.isArray(source.villas)) return { villas };
   for (const entry of source.villas) {
-    if (villas.length >= 8) break;
+    if (villas.length >= 16) break;
     if (!entry || typeof entry !== 'object') continue;
     const record = entry as Partial<VillaRecordShape>;
     if (!Number.isFinite(record.id)) continue;
@@ -353,28 +336,6 @@ type VillaRecordShape = {
   locked: boolean;
   lastCollectAt: number;
 };
-
-function normalizeLastMatch(raw: unknown): RingLastMatchState | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const match = raw as Partial<RingLastMatchState>;
-  if (!Number.isFinite(match.matchId) || !Number.isFinite(match.endedAt)) return null;
-  const top = Array.isArray(match.top) ? match.top.filter(isRankEntry) : [];
-  return {
-    matchId: Math.max(0, Math.floor(match.matchId!)),
-    endedAt: Math.floor(match.endedAt!),
-    top,
-  };
-}
-
-function isRankEntry(value: unknown): value is { name: string; rank: number; hp: number } {
-  if (!value || typeof value !== 'object') return false;
-  const entry = value as { name?: unknown; rank?: unknown; hp?: unknown };
-  return (
-    typeof entry.name === 'string' &&
-    Number.isFinite(entry.rank) &&
-    Number.isFinite(entry.hp)
-  );
-}
 
 function isProfileRecord(value: unknown): value is ProfileRecord {
   if (!value || typeof value !== 'object') return false;

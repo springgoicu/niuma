@@ -21,34 +21,18 @@ export const HINT = {
   interact: '按 F 互动',
   /** 赛博财神供案（ADR-0061）：当日首柱附赠 60s 金光，写进提示让玩家知道收益 */
   shrine: '[F] 上香祈福 · 今日首柱有惊喜',
-  /** 老干部紫砂茶台（ADR-0061 → ADR-0085）：改为打开属性强化面板 */
-  tea: '[F] 打开属性强化',
+  /** 老干部紫砂茶台（ADR-0061 → ADR-0085）：打开街头商店（道具/装扮） */
+  tea: '[F] 打开街头商店',
   /** 发泄区老板（ADR-0070）：出招键是 E，不是互动键 F */
   boss: '[E] 发泄·踹老板一脚',
-  /** 三人擂台（ADR-0073）：报名入口只有场边 F 传送，围绳不能靠走进去 */
-  ringJoin: '[F] 报名擂台',
-  ringLeave: '[F] 取消报名',
-  /** 颁奖期（ADR-0076）：奖牌已入账，参赛者不必站满窗口 */
-  ringAwardLeave: '[F] 领奖离场',
-  ringFull: '擂台已满员，先在外围绕观',
-  ringFighting: '擂台比赛中，等本局结束',
-  ringAward: '颁奖中，稍后再来',
   lieOnSeat: '座位上不能躺，先按 Z 起身',
   sitOnBed: '床上只能躺，按 X 起身',
   bedOnly: '床上只能躺，按 X 上床',
   // ---- 热区建筑（ADR-0087 → ADR-0093） ----
-  /** 摸鱼骰子馆：坐上本桌圆凳即自动入局，F 只是重新打开面板 */
-  dice: '[F] 试一把（大 / 小 / 同点）',
-  /** 站在骰桌旁但没坐上本桌凳子：只提示，不给可点的「试一把」 */
-  diceNeedSeat: '按 Z 坐进本桌凳子再投入',
-  /** 绩效八角笼观战长椅 */
-  arenaBet: '[F] 投选红方 / 蓝方',
-  /** 站在长椅旁但没坐上去 */
-  arenaNeedSeat: '按 Z 坐到观战长椅上再投选',
-  /** 豪宅小院门口 */
-  villa: '[F] 查看小院牌匾',
-  /** 院内摇钱树：直接把每分钟产出写进提示 */
-  villaTree: '[F] 收摇钱树 · 每分钟 25 币',
+  /** 房产门前牌匾 */
+  villa: '[F] 查看房产牌匾',
+  /** 院内摇钱树 */
+  villaTree: '[F] 收摇钱树收益',
   /** 牛马公寓门口：按 F 从空闲窗口探头（ADR-0098） */
   apartment: '[F] 进入牛马公寓',
   /** 人在窗口里：任意时刻按 F 都回门口 */
@@ -97,23 +81,12 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.directory]: { action: 'interact', label: '看园区导览', key: 'F' },
   [HINT.interact]: { action: 'interact', label: '互动', key: 'F' },
   [HINT.shrine]: { action: 'interact', label: '上香祈福', key: 'F' },
-  [HINT.tea]: { action: 'interact', label: '打开属性强化', key: 'F' },
+  [HINT.tea]: { action: 'interact', label: '打开街头商店', key: 'F' },
   [HINT.boss]: { action: 'vent', label: '发泄', key: 'E' },
-  [HINT.ringJoin]: { action: 'interact', label: '报名擂台', key: 'F' },
-  [HINT.ringLeave]: { action: 'interact', label: '取消报名', key: 'F' },
-  [HINT.ringAwardLeave]: { action: 'interact', label: '领奖离场', key: 'F' },
   // 劝阻文案没有可执行动作：保留纯文本，避免把「不能躺」渲染成按钮
-  [HINT.ringFull]: null,
-  [HINT.ringFighting]: null,
-  [HINT.ringAward]: null,
   [HINT.lieOnSeat]: null,
   [HINT.sitOnBed]: null,
   [HINT.bedOnly]: null,
-  [HINT.dice]: { action: 'interact', label: '试一把', key: 'F' },
-  // 没坐下时不可执行：只提醒，不给按钮（ADR-0093）
-  [HINT.diceNeedSeat]: null,
-  [HINT.arenaBet]: { action: 'interact', label: '投选', key: 'F' },
-  [HINT.arenaNeedSeat]: null,
   [HINT.villa]: { action: 'interact', label: '查看牌匾', key: 'F' },
   [HINT.villaTree]: { action: 'interact', label: '收摇钱树', key: 'F' },
   [HINT.apartment]: { action: 'interact', label: '进公寓', key: 'F' },
@@ -153,23 +126,13 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.directory]: '点「互动」看园区导览',
   [HINT.interact]: '点「互动」',
   [HINT.shrine]: '点「互动」上香祈福 · 今日首柱有惊喜',
-  [HINT.tea]: '点「互动」打开属性强化',
+  [HINT.tea]: '点「互动」打开街头商店',
   [HINT.boss]: '点「发泄」踹老板一脚',
-  [HINT.ringJoin]: '点「互动」报名擂台',
-  [HINT.ringLeave]: '点「互动」取消报名',
-  [HINT.ringAwardLeave]: '点「互动」领奖离场',
-  [HINT.ringFull]: '擂台已满员，先在外围绕观',
-  [HINT.ringFighting]: '擂台比赛中，等本局结束',
-  [HINT.ringAward]: '颁奖中，稍后再来',
   [HINT.lieOnSeat]: '座位上不能躺，先点「起身」',
   [HINT.sitOnBed]: '床上只能躺，点「起身」',
   [HINT.bedOnly]: '床上只能躺，点「躺平」',
-  [HINT.dice]: '点「互动」试一把',
-  [HINT.diceNeedSeat]: '点「坐下」坐进本桌凳子再投入',
-  [HINT.arenaBet]: '点「互动」投选',
-  [HINT.arenaNeedSeat]: '点「坐下」坐到观战长椅上再投选',
   [HINT.villa]: '点「互动」查看牌匾',
-  [HINT.villaTree]: '点「互动」收摇钱树 · 每分钟 25 币',
+  [HINT.villaTree]: '点「互动」收摇钱树收益',
   [HINT.apartment]: '点「互动」进公寓',
   [HINT.apartmentExit]: '点「互动」出门',
   [HINT.clinicGate]: '护士站只收救护车送来的伤员',

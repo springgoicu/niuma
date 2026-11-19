@@ -16,13 +16,13 @@ import {
 describe('互动拒绝回执（ADR-0104）', () => {
   it('3 字节定长往返', () => {
     const packet = encodeInteractReject({
-      action: INTERACT_ACTION.DiceBet,
+      action: INTERACT_ACTION.VillaBuy,
       reason: INTERACT_REASON.NotSeated,
     });
     expect(packet.byteLength).toBe(INTERACT_REJECT_BYTES);
     expect(packet[0]).toBe(OpCode.S2C_INTERACT_REJECT);
     expect(decodeInteractReject(packet)).toEqual({
-      action: INTERACT_ACTION.DiceBet,
+      action: INTERACT_ACTION.VillaBuy,
       reason: INTERACT_REASON.NotSeated,
     });
   });

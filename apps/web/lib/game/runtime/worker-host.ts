@@ -125,7 +125,6 @@ export function runWorkerHost(scope: WorkerScope): void {
         onBulletinOpen: () => post({ t: 'bulletinOpen' }),
         onBoard: (packet) => post({ t: 'board', packet }),
         onLike: (packet) => post({ t: 'like', packet }),
-        onRing: (packet, receivedAt) => post({ t: 'ring', packet, receivedAt }),
         onWallet: (packet) => post({ t: 'wallet', packet }),
         onInvite: (packet) => post({ t: 'p2pInvite', packet }),
         onInviteResult: (packet) => post({ t: 'p2pInviteResult', packet }),
@@ -140,15 +139,9 @@ export function runWorkerHost(scope: WorkerScope): void {
         onInteractReject: (packet) => post({ t: 'interactReject', packet }),
         // 茶台 F：把「开面板」这个 React 侧的意图交回主线程
         onShopOpen: (tab) => post({ t: 'shopOpen', tab }),
-        // 热区建筑（ADR-0087）：开面板意图与下行快照都要透传，漏一条 Worker 模式就丢包
-        onDiceOpen: (table) => post({ t: 'diceOpen', table }),
-        onArenaBetOpen: () => post({ t: 'arenaBetOpen' }),
+        // 热区建筑（ADR-0087）：房产开面板与下行快照透传
         onVillaOpen: (villa) => post({ t: 'villaOpen', villa }),
-        onDiceState: (packet) => post({ t: 'dice', packet }),
-        onDiceResult: (packet) => post({ t: 'diceResult', packet }),
-        onDiceBoard: (packet) => post({ t: 'diceBoard', packet }),
         onVillaState: (packet) => post({ t: 'villa', packet }),
-        onArenaPool: (packet) => post({ t: 'arenaPool', packet }),
         // 打工产出与随机事件（ADR-0088）
         onWorkOpen: () => post({ t: 'workOpen' }),
         onWorkResult: (packet) => post({ t: 'workResult', packet }),
@@ -271,17 +264,8 @@ export function runWorkerHost(scope: WorkerScope): void {
       case 'shout':
         session?.shout(message.text);
         return;
-      case 'diceBet':
-        session?.placeDiceBet(message.request.table, message.request.side, message.request.amount);
-        return;
-      case 'diceBoard':
-        session?.requestDiceBoard(message.request.scope, message.request.metric);
-        return;
       case 'villa':
         session?.villaAction(message.request.villa, message.request.action);
-        return;
-      case 'arenaBet':
-        session?.placeArenaBet(message.request.side, message.request.amount);
         return;
       case 'apartment':
         if (message.request.action === 1) session?.exitApartment();

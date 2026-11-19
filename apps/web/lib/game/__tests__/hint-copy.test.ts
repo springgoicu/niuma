@@ -29,12 +29,6 @@ describe('触屏提示文案', () => {
     expect(touchHint('已到达食堂')).toBe('已到达食堂');
     expect(touchHint('附近没有可互动的设施')).toBe('附近没有可互动的设施');
   });
-
-  it('擂台状态提示是纯文本，两端说法一致', () => {
-    for (const copy of [HINT.ringFull, HINT.ringFighting, HINT.ringAward]) {
-      expect(touchHint(copy)).toBe(copy);
-    }
-  });
 });
 
 describe('放假告示板文案', () => {
@@ -54,10 +48,9 @@ describe('设施提示按钮映射', () => {
     [HINT.bulletin, 'interact', '查看放假倒计时', 'F'],
     [HINT.interact, 'interact', '互动', 'F'],
     [HINT.shrine, 'interact', '上香祈福', 'F'],
-    [HINT.tea, 'interact', '打开属性强化', 'F'],
-    [HINT.ringJoin, 'interact', '报名擂台', 'F'],
-    [HINT.ringLeave, 'interact', '取消报名', 'F'],
-    [HINT.ringAwardLeave, 'interact', '领奖离场', 'F'],
+    [HINT.tea, 'interact', '打开街头商店', 'F'],
+    [HINT.villa, 'interact', '查看牌匾', 'F'],
+    [HINT.villaTree, 'interact', '收摇钱树', 'F'],
   ] as const;
 
   it('每条可互动提示都映射到动作、动作名与键帽', () => {
@@ -78,20 +71,13 @@ describe('设施提示按钮映射', () => {
   });
 
   it('劝阻文案保持纯文本，不映射成按钮', () => {
-    for (const copy of [
-      HINT.lieOnSeat,
-      HINT.sitOnBed,
-      HINT.bedOnly,
-      HINT.ringFull,
-      HINT.ringFighting,
-      HINT.ringAward,
-    ]) {
+    for (const copy of [HINT.lieOnSeat, HINT.sitOnBed, HINT.bedOnly, HINT.clinicGate]) {
       expect(hintButton(copy)).toBeNull();
     }
   });
 
   it('入座类玩法没坐下时只提醒，不映射成按钮（ADR-0093）', () => {
-    for (const copy of [HINT.diceNeedSeat, HINT.arenaNeedSeat, HINT.workNeedSeat]) {
+    for (const copy of [HINT.workNeedSeat]) {
       expect(hintButton(copy)).toBeNull();
       // 手势说法必须提到动作盘上的「坐下」，否则触屏玩家找不到入口
       expect(touchHint(copy)).toContain('「坐下」');

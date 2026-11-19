@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { DICE_TABLES, PLAZA_CENTER, WORLD_LAYOUT } from '@niuma/shared-types';
+import { PLAZA_CENTER, VILLA_SPECS, WORLD_LAYOUT } from '@niuma/shared-types';
 import {
   LightRegistry,
   MAX_LIGHTS,
@@ -193,10 +193,10 @@ describe('地标光源派生', () => {
     expect(center!.x).toBe(PLAZA_CENTER.x);
     expect(center!.y).toBe(PLAZA_CENTER.y);
     expect(center!.intensity).toBeLessThanOrEqual(0.25);
-    // 两张绿绒桌：桌心 40px 内各有一盏
-    for (const table of DICE_TABLES) {
+    // 8 处街区冠名房产门口：门口 40px 内各有一盏灯
+    for (const villa of VILLA_SPECS) {
       const hit = specs.some(
-        (spec) => Math.abs(spec.x - table.x) < 40 && Math.abs(spec.y - (table.y + table.h / 2)) < 40,
+        (spec) => Math.abs(spec.x - villa.gate.x) < 40 && Math.abs(spec.y - villa.gate.y) < 40,
       );
       expect(hit).toBe(true);
     }

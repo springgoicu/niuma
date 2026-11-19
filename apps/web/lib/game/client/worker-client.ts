@@ -465,24 +465,9 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'shout', text });
   }
 
-  diceBet(table: number, side: number, amount: number): void {
-    if (this.delegate) return this.delegate.diceBet(table, side, amount);
-    this.post({ t: 'diceBet', request: { table, side, amount } });
-  }
-
-  diceBoard(scope: number, metric: number): void {
-    if (this.delegate) return this.delegate.diceBoard(scope, metric);
-    this.post({ t: 'diceBoard', request: { scope, metric } });
-  }
-
   villaAction(villa: number, action: number): void {
     if (this.delegate) return this.delegate.villaAction(villa, action);
     this.post({ t: 'villa', request: { villa, action } });
-  }
-
-  arenaBet(side: number, amount: number): void {
-    if (this.delegate) return this.delegate.arenaBet(side, amount);
-    this.post({ t: 'arenaBet', request: { side, amount } });
   }
 
   apartmentAction(action: number): void {
@@ -694,29 +679,8 @@ export class WorkerGameClient implements GameClient {
       case 'shopOpen':
         callbacks.onShopOpen?.(message.tab);
         return;
-      case 'ring':
-        callbacks.onRing?.(message.packet, message.receivedAt);
-        return;
-      case 'dice':
-        callbacks.onDiceState?.(message.packet);
-        return;
-      case 'diceResult':
-        callbacks.onDiceResult?.(message.packet);
-        return;
-      case 'diceBoard':
-        callbacks.onDiceBoard?.(message.packet);
-        return;
       case 'villa':
         callbacks.onVillaState?.(message.packet);
-        return;
-      case 'arenaPool':
-        callbacks.onArenaPool?.(message.packet);
-        return;
-      case 'diceOpen':
-        callbacks.onDiceOpen?.(message.table);
-        return;
-      case 'arenaBetOpen':
-        callbacks.onArenaBetOpen?.();
         return;
       case 'villaOpen':
         callbacks.onVillaOpen?.(message.villa);

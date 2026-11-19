@@ -6,7 +6,6 @@
 import type { CareerSummary } from './career';
 import type { Direction, Pose, SyncFormat } from './constants';
 import type { DanmakuMode } from './danmaku';
-import type { RingPhase } from './world/ring';
 
 export type Species = 'cow' | 'horse';
 
@@ -155,12 +154,10 @@ export const OpCode = {
    * 空挥不发包；同 Tick 多人命中按服务端裁决顺序各发一条。
    */
   S2C_BOSS: 0x2c,
-  /** 擂台报名：`[op]`，服务端校验靠近、容量、阶段后传送入场 */
-  C2S_RING_ENTER: 0x2d,
-  /** 擂台取消：`[op]`，仅在等待开赛阶段有效 */
-  C2S_RING_LEAVE: 0x2e,
-  /** 擂台快照：阶段/对局/剩余时间 + 最多 3 个席位 */
-  S2C_RING: 0x2f,
+  /*
+   * 0x2d / 0x2e / 0x2f 曾是绩效八角笼报名、取消与快照（C2S_RING_* / S2C_RING），
+   * 现随擂台玩法下线永久留空不复用，避免旧客户端把新包误判成擂台事件。
+   */
   /**
    * 小黑屋处置：`[op][entityId u16][phase u8][flags u8][seconds u16][guardId u16]`，
    * 9 字节定长。押送坐标本身走 Tick，这条包只表达「谁被警告 / 被带走 / 被松手」。
@@ -225,19 +222,15 @@ export const OpCode = {
   S2C_PLAYER_EFFECT: 0x44,
   /** 道具未生效：`[op][reason u8][itemId u8]`，只回给操作者，见 `ITEM_REJECT`。 */
   S2C_ITEM_REJECT: 0x45,
-  // ---- 热区建筑与高阶多人玩法（ADR-0087），从 0x46 继续追加 ----
-  /** 赌桌下注：`[op][table u8][side u8][amount u32]`，7 字节定长 */
-  C2S_DICE_BET: 0x46,
-  /** 赌桌公共局快照：两张桌一包下发，见 `encodeDiceState` */
-  S2C_DICE_STATE: 0x47,
-  /** 豪宅操作：`[op][villa u8][action u8]`，3 字节定长 */
+  // ---- 热点建筑与房产冠名（ADR-0087）----
+  /*
+   * 0x46 / 0x47 / 0x4a / 0x4b 曾用于骰桌与八角笼押注（C2S_DICE_BET / S2C_DICE_STATE /
+   * C2S_ARENA_BET / S2C_ARENA_POOL），下线后永久留空不复用。
+   */
+  /** 房产操作：`[op][villa u8][action u8]`，3 字节定长 */
   C2S_VILLA: 0x48,
-  /** 豪宅状态：`[op][count u8]` + 每栋一条，见 `encodeVillaState` */
+  /** 房产状态：`[op][count u8]` + 每栋一条，见 `encodeVillaState` */
   S2C_VILLA_STATE: 0x49,
-  /** 八角笼观战押注：`[op][side u8][amount u32]`，6 字节定长 */
-  C2S_ARENA_BET: 0x4a,
-  /** 八角笼彩池快照：`[op][matchId u16][red u32][blue u32][phase u8][mySide u8][myBet u32]` */
-  S2C_ARENA_POOL: 0x4b,
   /** 公寓操作：`[op][action u8][arg u8]`，3 字节定长 */
   C2S_APARTMENT: 0x4c,
   // 0x4d–0x50 永久留空不复用：邀请串门、家具布局、房间状态、串门通知随
@@ -282,25 +275,9 @@ export const OpCode = {
    * `INTERACT_REASON` 映射中文，服务端只负责裁决与编号。
    */
   S2C_INTERACT_REJECT: 0x5a,
-  // ---- 赌桌结算单与战绩榜（ADR-0110），从 0x5b 继续追加 ----
-  /**
-   * 一桌一局的结算单（ADR-0110）：`[op][table u8][round u16][d0 u8][d1 u8][d2 u8]
-   * [hit u8][flags u8][count u8]` + count × `[nameLen u8][utf8][side u8][bet u32]
-   * [payout u32][net i32][flags u8]`。
-   *
-   * 逐人下发而不是全桌同包：`flags bit1` 标出「这一行是我」，昵称可重名，
-   * 客户端不能靠名字推断身份。
+  /*
+   * 0x5b / 0x5c / 0x5d 曾是骰桌结算单与战绩榜（ADR-0110），随骰桌下线永久留空不复用。
    */
-  S2C_DICE_RESULT: 0x5b,
-  /** 拉取赌桌排行榜：`[op][scope u8][metric u8]`，3 字节定长 */
-  C2S_DICE_BOARD: 0x5c,
-  /**
-   * 排行榜快照：`[op][scope u8][metric u8][total u16][count u8]` + count ×
-   * `[rank u8][nameLen u8][utf8][net i32][winPct u8][rounds u16][flags u8]`。
-   *
-   * `winPct=255` 表示还没有分出胜负；本人不在前 N 名时由服务端补在末尾。
-   */
-  S2C_DICE_BOARD: 0x5d,
   /**
    * 全园区交互播报（ADR-0112）：`[op][kind u8][actorId u16][x u16][y u16][len u8][utf8]`。
    *
@@ -323,10 +300,7 @@ export const OpCode = {
  * 编号只追加不复用：旧客户端不认识新编号时按「未知」静默处理即可。
  */
 export const INTERACT_ACTION = {
-  RingEnter: 0,
-  RingLeave: 1,
-  DiceBet: 2,
-  ArenaBet: 3,
+  // 0 / 1 / 2 / 3 / 11 曾用于擂台与骰桌，编号永久保留不复用
   VillaBuy: 4,
   VillaLock: 5,
   VillaCollect: 6,
@@ -334,8 +308,6 @@ export const INTERACT_ACTION = {
   QuestClaim: 8,
   EventClaim: 9,
   Apartment: 10,
-  /** 拉赌桌排行榜被限频（ADR-0110） */
-  DiceBoard: 11,
   /** 未知 / 未识别的互动动作，客户端给通用兜底文案 */
   Unknown: 255,
 } as const;
@@ -444,10 +416,6 @@ export interface PatientStatusPacket {
   /** 剩余秒数：治疗倒计时 / 免疫护盾剩余时间；昏迷为 0 */
   seconds: number;
 }
-
-/** 擂台命中 flags：bit0 表示这一击来自擂台，bit1 表示目标因此淘汰 */
-export const RING_VENT_FLAG_HIT = 1;
-export const RING_VENT_FLAG_ELIMINATED = 1 << 1;
 
 export type OpCodeValue = (typeof OpCode)[keyof typeof OpCode];
 
@@ -578,10 +546,6 @@ export interface VentEventPacket {
   targetId: number;
   x: number;
   y: number;
-  /** 这一击是否发生在擂台内：擂台伤害不写普通考勤、不喷奶 */
-  ringHit?: boolean;
-  /** 目标是否因这一击血量归零；仅擂台包会带 */
-  eliminated?: boolean;
 }
 
 /**
@@ -598,155 +562,11 @@ export interface BossPacket {
   reset: boolean;
 }
 
-/**
- * 擂台席位快照。
- *
- * `rank` 在等待/进行阶段为 0，颁奖阶段为 1..n；`eliminated` 与 hp=0 同义，
- * 但独立下发可以让 HUD 在扣血包到达前就展示倒地状态。
- */
-export interface RingSlot {
-  id: number;
-  /**
-   * 起跑位序号 0..2。客户端据此把本人落到服务端传送的同一坐标；
-   * 旧包缺省时按成员顺序推算（服务端现在总会填）。
-   */
-  slot?: number;
-  name: string;
-  hp: number;
-  eliminated: boolean;
-  rank: number;
-}
-
-/** 擂台快照（`S2C_RING`）：只下行，阶段变化/血量变化/1Hz 心跳时广播。 */
-export interface RingPacket {
-  phase: RingPhase;
-  matchId: number;
-  remainingMs: number;
-  members: RingSlot[];
-}
-
 /* ------------------------------------------------------------------ *
- * 热区建筑与高阶多人玩法（ADR-0087）
+ * 园区房产地标（ADR-0087）
  * ------------------------------------------------------------------ */
 
-/** 赌桌下注请求 */
-export interface DiceBetRequest {
-  table: number;
-  side: number;
-  amount: number;
-}
-
-/** 一张赌桌的公共局快照；`dice` 为 [0,0,0] 表示还没亮牌 */
-export interface DiceTablePacket {
-  id: number;
-  phase: number;
-  remainingMs: number;
-  roundId: number;
-  dice: readonly [number, number, number];
-  totalPot: number;
-  /** 观战者自己的押注档位与注额（-1 / 0 表示没押） */
-  mySide: number;
-  myBet: number;
-  /** 本局是否触发保安查岗彩蛋 */
-  raid: boolean;
-}
-
-export interface DiceStatePacket {
-  tables: DiceTablePacket[];
-}
-
-/** 结算单里的一位下注者；顺序即服务端牌桌座位顺序，`self` 由服务端逐人标出 */
-export interface DiceResultEntry {
-  name: string;
-  side: number;
-  bet: number;
-  payout: number;
-  /** 实际入账减本金：赢为正、输为负、退款为 0 */
-  net: number;
-  refunded: boolean;
-  self: boolean;
-}
-
-/** 一桌一局的结算单（ADR-0110）：亮牌时逐人下发，落败者也能看到谁赢了多少 */
-export interface DiceResultPacket {
-  table: number;
-  roundId: number;
-  dice: readonly [number, number, number];
-  /** 命中档位；`-1` 表示这一档没人押、全员退款 */
-  hit: number;
-  raid: boolean;
-  entries: DiceResultEntry[];
-}
-
-/** 赌桌排行榜查询：`scope` 见 DICE_BOARD_SCOPE，`metric` 见 DICE_BOARD_METRIC */
-export interface DiceBoardRequest {
-  scope: number;
-  metric: number;
-}
-
-export interface DiceBoardEntry {
-  rank: number;
-  name: string;
-  net: number;
-  /** 0–1；`-1` 表示还没有分出胜负的局（胜率显示为「—」） */
-  winRate: number;
-  rounds: number;
-  self: boolean;
-}
-
-export interface DiceBoardPacket {
-  scope: number;
-  metric: number;
-  /** 该口径下有战绩的总人数，用于显示「共 N 人」 */
-  total: number;
-  entries: DiceBoardEntry[];
-  /**
-   * 本人战绩（累计 + 最近若干局）。
-   *
-   * 与榜单同一趟下发：面板的「我的战绩」页签和「排行榜」页签一起读这份快照，
-   * 不用为逐局历史再开一个包和一个冷却。没有参与过任何一局时是 `null`。
-   */
-  self: DiceSelfSnapshot | null;
-}
-
-/**
- * 一份累计口径（总榜 / 翡翠桌 / 鎏金桌各一份）。
- *
- * 金额全部是整数币；`net` 可以为负，`bestWin` 只记单局最大盈利（永远 ≥0）。
- */
-export interface DiceAggregatePacket {
-  rounds: number;
-  wins: number;
-  losses: number;
-  /** 退款 / 平局局数：进局数但不进胜率分母 */
-  refunds: number;
-  totalBet: number;
-  totalPayout: number;
-  net: number;
-  bestWin: number;
-}
-
-/** 本人最近一局的回放行：只带自己那一注，不带同局其他人的明细 */
-export interface DiceHistoryEntry {
-  table: number;
-  roundId: number;
-  dice: readonly [number, number, number];
-  hit: number;
-  bet: number;
-  payout: number;
-  net: number;
-  refunded: boolean;
-}
-
-/** 本人战绩快照：三份累计口径 + 最近若干局（最新在前） */
-export interface DiceSelfSnapshot {
-  all: DiceAggregatePacket;
-  table0: DiceAggregatePacket;
-  table1: DiceAggregatePacket;
-  history: DiceHistoryEntry[];
-}
-
-/** 豪宅操作 */
+/** 房产操作 */
 export interface VillaRequest {
   villa: number;
   action: number;
@@ -758,16 +578,16 @@ export const VILLA_ACTION = {
   Collect: 2,
 } as const;
 
-/** 一栋小院的公开状态 */
+/** 一栋房产的公开状态 */
 export interface VillaPacket {
   id: number;
   /** 房主当前在线的实体 id；离线为 0，只用于广播定位，不表示「无主」 */
   ownerId: number;
   ownerName: string;
   locked: boolean;
-  /** 是否已有房主（离线也算）：离线房主的小院不能再买 */
+  /** 是否已有房主（离线也算）：被他人冠名后可按 1.5× 溢价收购 */
   owned: boolean;
-  /** 收包人是不是本小院的房主（按设备号判定，离线/重连都稳定） */
+  /** 收包人是不是本房产的房主（按设备号判定，离线/重连都稳定） */
   mine: boolean;
   /** 摇钱树当前可收币数（只有房主看得出准确值，其他人读到 0） */
   pending: number;
@@ -775,22 +595,6 @@ export interface VillaPacket {
 
 export interface VillaStatePacket {
   villas: VillaPacket[];
-}
-
-/** 八角笼观战押注请求 */
-export interface ArenaBetRequest {
-  side: number;
-  amount: number;
-}
-
-/** 八角笼彩池快照：`mySide = -1` 表示没押 */
-export interface ArenaPoolPacket {
-  matchId: number;
-  redPool: number;
-  bluePool: number;
-  phase: number;
-  mySide: number;
-  myBet: number;
 }
 
 /** 公寓操作：0 进屋探头 / 1 出门；2 曾用于户型升级，随 ADR-0098 下线且不复用 */

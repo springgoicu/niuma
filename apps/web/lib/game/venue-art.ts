@@ -12,13 +12,10 @@ import {
   CLINIC_RECT,
   COMPANY_CORRIDOR,
   COMPANY_FORECOURT,
-  DICE_HALL,
-  DICE_HALL_CENTER,
   LIVING_AVENUE,
+  NEON_STRIP_PLAZA,
   PLAZA_CENTER,
   PLAZA_RADIUS,
-  RING_ARENA,
-  RING_BENCHES,
   SERVICE_SQUARE,
   SHRINE_ALTAR,
   TEA_STATION,
@@ -84,9 +81,8 @@ export class VenueArt {
     const glow = new Graphics();
     this.glow = glow;
 
-    this.paintDiceHallFloor(flat);
+    this.paintNeonStripApron(flat);
     this.paintClinicApron(flat);
-    this.paintRingApron(flat);
     this.paintApartmentDoors(flat);
     this.paintApartmentGarden(flat);
     this.paintVillaGardens(flat);
@@ -110,7 +106,6 @@ export class VenueArt {
 
     this.depthApartmentDoors(depth);
     this.depthVillaGardens(depth);
-    this.depthRingCorners(depth);
     // 建筑外立面：檐口色带 + 用途徽记。扫一眼墙面就知道里头是干什么的
     this.depthFacades(depth);
   }
@@ -380,53 +375,20 @@ export class VenueArt {
     }
   }
 
-  private depthRingCorners(depth: DepthSink): void {
-    const corners = [
-      { x: RING_ARENA.x + 6, y: RING_ARENA.y + 6 },
-      { x: RING_ARENA.x + RING_ARENA.w - 6, y: RING_ARENA.y + 6 },
-      { x: RING_ARENA.x + 6, y: RING_ARENA.y + RING_ARENA.h - 6 },
-      { x: RING_ARENA.x + RING_ARENA.w - 6, y: RING_ARENA.y + RING_ARENA.h - 6 },
-    ];
-    corners.forEach((corner, index) => {
-      const root = new Container();
-      root.position.set(corner.x, corner.y);
-      const g = new Graphics();
-      // 角旗：深蓝旗面 + 沙色横条，与围绳同族
-      g.rect(-1, -34, 2, 34).fill(darken(VENUE_COLORS.ring.seam, 0.85));
-      g.rect(1, -34, 16, 11).fill(VENUE_COLORS.ring.accent);
-      g.rect(1, -30, 16, 3).fill(VENUE_COLORS.ring.main);
-      g.rect(1, -34, 16, 1).fill(lighten(VENUE_COLORS.ring.main, 0.4));
-      if (index % 2 === 1) g.rect(1, -34, 16, 11).fill({ color: 0xffffff, alpha: 0.06 });
-      root.addChild(g);
-      depth.add(corner.y, root);
-      this.roots.push(root);
-    });
-  }
-
-  private paintDiceHallFloor(g: Graphics): void {
-    const c = VENUE_COLORS.diceHall;
-    this.pool(g, DICE_HALL_CENTER.x, DICE_HALL.y + DICE_HALL.h - 60, 190, 120, c.accent);
-    // 金线方格：绒面地毯上的 60px 暗金格，只在边角出现，不压赌桌
-    for (let y = DICE_HALL.y + 10; y < DICE_HALL.y + DICE_HALL.h; y += 60) {
-      g.rect(DICE_HALL.x + 10, y, DICE_HALL.w - 20, 1).fill({ color: c.accent, alpha: 0.22 });
+  /** 霓虹娱乐街北侧商业前广场：暗靛石板路面 + 粉青双道霓虹灯带与斑马线 */
+  private paintNeonStripApron(g: Graphics): void {
+    const c = VENUE_COLORS.neonStrip;
+    const plaza = NEON_STRIP_PLAZA;
+    g.rect(plaza.x, plaza.y, plaza.w, plaza.h).fill({ color: c.main, alpha: 0.72 });
+    g.rect(plaza.x, plaza.y, plaza.w, 3).fill({ color: c.accent, alpha: 0.7 });
+    g.rect(plaza.x, plaza.y + plaza.h - 3, plaza.w, 3).fill({ color: c.glow, alpha: 0.6 });
+    for (let x = plaza.x + 28; x < plaza.x + plaza.w - 20; x += 56) {
+      g.rect(x, plaza.y + 18, 22, 24).fill({ color: c.alt, alpha: 0.55 });
     }
-    for (let x = DICE_HALL.x + 10; x < DICE_HALL.x + DICE_HALL.w; x += 60) {
-      g.rect(x, DICE_HALL.y + 10, 1, DICE_HALL.h - 20).fill({ color: c.accent, alpha: 0.22 });
-    }
-    // 收边：内圈一道亮金线，读得出「这是一张赌桌大厅的地毯」
-    g.rect(DICE_HALL.x + 6, DICE_HALL.y + 6, DICE_HALL.w - 12, 2).fill({ color: c.accent, alpha: 0.4 });
-    g.rect(DICE_HALL.x + 6, DICE_HALL.y + DICE_HALL.h - 8, DICE_HALL.w - 12, 2).fill({ color: c.accent, alpha: 0.28 });
-    // 台边散落的筹码：三处小堆，比整片装饰更像有人刚玩过
-    const chips: ReadonlyArray<readonly [number, number]> = [
-      [DICE_HALL_CENTER.x - 96, DICE_HALL.y + DICE_HALL.h - 78],
-      [DICE_HALL_CENTER.x + 74, DICE_HALL.y + DICE_HALL.h - 104],
-      [DICE_HALL_CENTER.x + 8, DICE_HALL.y + DICE_HALL.h - 46],
-    ];
-    for (const [cx, cy] of chips) {
-      g.rect(cx, cy, 9, 3).fill(0xd64545);
-      g.rect(cx + 2, cy - 3, 7, 3).fill(0xf2c879);
-      g.rect(cx + 1, cy + 3, 8, 2).fill({ color: 0x1e2846, alpha: 0.25 });
-    }
+    const club = VILLA_SPECS[2];
+    if (club) this.pool(g, club.gate.x, club.gate.y + 12, 130, 56, c.accent);
+    const garage = VILLA_SPECS[3];
+    if (garage) this.pool(g, garage.gate.x, garage.gate.y + 10, 96, 44, c.glow);
   }
 
   private paintClinicApron(g: Graphics): void {
@@ -438,21 +400,6 @@ export class VenueArt {
     g.rect(apron.x + 12, apron.y + apron.h - 6, 26, 2).fill({ color: 0xe8c47a, alpha: 0.55 });
     g.rect(apron.x + 44, apron.y + 8, 10, 3).fill({ color: c.accent, alpha: 0.5 });
     g.rect(apron.x + 47, apron.y + 5, 4, 9).fill({ color: c.accent, alpha: 0.5 });
-  }
-
-  private paintRingApron(g: Graphics): void {
-    const c = VENUE_COLORS.ring;
-    // 擂台外的夯土圈：一圈被踩踏的浅沙，和 Arena 的毡垫区分开
-    g.ellipse(
-      RING_ARENA.x + RING_ARENA.w / 2,
-      RING_ARENA.y + RING_ARENA.h / 2,
-      RING_ARENA.w / 2 + 42,
-      RING_ARENA.h / 2 + 34,
-    ).fill({ color: c.main, alpha: 0.18 });
-    // 观众席脚下的两道踏痕
-    for (const bench of RING_BENCHES) {
-      g.rect(bench.x - 26, bench.y + 16, 52, 8).fill({ color: c.seam, alpha: 0.16 });
-    }
   }
 
   private paintApartmentDoors(g: Graphics): void {
@@ -735,10 +682,11 @@ export class VenueFx {
       }
     }
 
+    const club = VILLA_SPECS[2];
     this.neon = new Sprite(glow);
     this.neon.anchor.set(0.5, 0.5);
-    this.neon.tint = 0xff6fb0;
-    this.neon.position.set(DICE_HALL_CENTER.x, DICE_HALL.y - 137);
+    this.neon.tint = VENUE_COLORS.neonStrip.accent;
+    this.neon.position.set(club ? club.gate.x : 2760, club ? club.rect.y - 16 : 2624);
     this.container.addChild(this.neon);
   }
 

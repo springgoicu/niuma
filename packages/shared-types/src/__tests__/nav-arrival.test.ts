@@ -11,7 +11,6 @@ import {
 import { CLINIC_ACCESS_PAVING, CLINIC_REGION_RECT, CLINIC_RECT } from '../world/clinic';
 import { isInClinicInterior } from '../world/clinic-gate';
 import { BOSS_ARENA } from '../world/boss';
-import { RING_ARENA, RING_EXIT, RING_NEAR_PX } from '../world/ring';
 import { isBlocked, PLAYER_RADIUS } from '../world/collision';
 import {
   DISTRICTS,
@@ -33,35 +32,27 @@ const ROOM_OF: Partial<Record<NavTargetId, { x: number; y: number; w: number; h:
 };
 
 /** 户外设施：到达点必须是陆地、不下水 */
-const OUTDOOR: NavTargetId[] = ['park', 'ring', 'diceHall'];
-
-/** 点到矩形的最短距离：用来断言擂台落点在报名半径内 */
-function distanceToRect(
-  rect: { readonly x: number; readonly y: number; readonly w: number; readonly h: number },
-  x: number,
-  y: number,
-): number {
-  const dx = Math.max(rect.x - x, 0, x - (rect.x + rect.w));
-  const dy = Math.max(rect.y - y, 0, y - (rect.y + rect.h));
-  return Math.hypot(dx, dy);
-}
+const OUTDOOR: NavTargetId[] = ['park', 'ramenStall'];
 
 describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
-  it('14 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
-    // 企业区 4 + 游乐区 3 + 生活区 5 + 服务区 2（ADR-0099 补影音室 / 急救站；摸鱼亭已拆除）
+  it('18 个目标：id 唯一、名称非空、到达点都落在岛内', () => {
     expect(NAV_TARGETS.map((target) => target.id)).toEqual([
       'workroom',
       'meeting',
       'shrine',
       'bossArena',
       'park',
-      'diceHall',
-      'ring',
+      'clubNeon',
+      'streetGarage',
+      'ramenStall',
       'apartment',
       'lounge',
       'theater',
       'villa1',
       'villa2',
+      'lakeLodge',
+      'bambooYard',
+      'pondPavilion',
       'restroom',
       'clinic',
     ]);
@@ -111,14 +102,6 @@ describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
     if (!bossArena) throw new Error('缺少发泄区导览目标');
     expect(rectContains(BOSS_ARENA, bossArena.arrive.x, bossArena.arrive.y)).toBe(true);
     expect(rectContains(VENT_ROOM, bossArena.arrive.x, bossArena.arrive.y)).toBe(true);
-  });
-
-  it('擂台：到达点在围绳外，且落在报名半径内', () => {
-    const ring = NAV_TARGETS.find((item) => item.id === 'ring');
-    if (!ring) throw new Error('缺少擂台导览目标');
-    expect(rectContains(RING_ARENA, ring.arrive.x, ring.arrive.y)).toBe(false);
-    expect(distanceToRect(RING_ARENA, ring.arrive.x, ring.arrive.y)).toBeLessThanOrEqual(RING_NEAR_PX);
-    expect(ring.arrive).toEqual({ x: RING_EXIT.x, y: RING_EXIT.y });
   });
 
   it('财神供案：到达点在工作区内，落在案面正前方', () => {

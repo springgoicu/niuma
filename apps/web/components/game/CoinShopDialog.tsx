@@ -1,15 +1,12 @@
 'use client';
 
 import { useCallback } from 'react';
-import { Coins, Lock, ShoppingBag, Sparkles, Swords, X } from 'lucide-react';
+import { Coins, ShoppingBag, Sparkles, Swords, X } from 'lucide-react';
 import {
   COSMETIC_SKUS,
   ITEM_SKUS,
   ITEM_TARGET,
-  MAX_STAT_LEVEL,
   SHOP_KIND,
-  STAT_SKUS,
-  statUpgradePrice,
   type ItemSku,
 } from '@niuma/shared-types';
 import { useGameUi } from '@/lib/game-ui';
@@ -24,10 +21,10 @@ interface CoinShopDialogProps {
 }
 
 /**
- * 摸鱼百宝箱（ADR-0085）：右侧抽屉，拆成「属性 / 消耗品」两个页签。
+ * 摸鱼百宝箱（ADR-0085）：右侧抽屉，拆成「消耗品 / 装扮」两个页签。
  *
- * 价格、目录、等级上限全部读 shared-types，客户端不另造一份价目表；
- * 页签状态放在 `useGameUi.shopTab`，茶台 F 与购物车按钮因此能直接落到对应页。
+ * 价格、目录全部读 shared-types，客户端不另造一份价目表；
+ * 页签状态放在 `useGameUi.shopTab`，街头商店与购物车按钮因此能直接落到对应页。
  */
 export function CoinShopDialog({ onBuy, onUse, onShout }: CoinShopDialogProps) {
   const open = useGameUi((state) => state.shopOpen);
@@ -73,18 +70,13 @@ export function CoinShopDialog({ onBuy, onUse, onShout }: CoinShopDialogProps) {
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-1 border-b-2 border-ink-700 px-4 py-2">
-          <TabButton
-            active={tab === 'stats'}
-            label="属性强化"
-            onClick={() => setOpen(true, 'stats')}
-          />
+        <div className="grid grid-cols-2 gap-1 border-b-2 border-ink-700 px-4 py-2">
           <TabButton
             active={tab === 'items'}
             label="消耗品"
             onClick={() => setOpen(true, 'items')}
           />
-          {/* 赛博茶水强化站的装扮货架（ADR-0087）：买下即解锁，捏人界面可直接换 */}
+          {/* 装扮货架（ADR-0087）：买下即解锁，捏人界面可直接换 */}
           <TabButton
             active={tab === 'cosmetics'}
             label="装扮"
@@ -93,56 +85,7 @@ export function CoinShopDialog({ onBuy, onUse, onShout }: CoinShopDialogProps) {
         </div>
 
         <section className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {tab === 'stats' ? (
-            <div className="flex flex-col gap-2">
-              {STAT_SKUS.map((sku, statIndex) => {
-                const level = wallet.stats[sku.key];
-                const price = statUpgradePrice(sku.key, level);
-                const maxed = level >= MAX_STAT_LEVEL;
-                const short = price > wallet.coins;
-                return (
-                  <div key={sku.key} className="border-2 border-ink-700 bg-ink-950/50 px-3 py-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-[13px] font-semibold text-mist-100">{sku.name}</p>
-                        <p className="text-[11px] leading-snug text-mist-400">{sku.blurb}</p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={maxed || short}
-                        onClick={() => onBuy(0, statIndex, 1)}
-                        className={`shrink-0 border-2 px-2 py-1 font-mono text-[11px] tracking-wide ${
-                          maxed
-                            ? 'cursor-not-allowed border-ink-700 text-mist-500'
-                            : short
-                              ? 'cursor-not-allowed border-signal-500/60 text-signal-500'
-                              : 'border-mint-500 text-mint-400 hover:bg-mint-500/15 active:translate-y-px'
-                        }`}
-                      >
-                        {maxed ? (
-                          <span className="flex items-center gap-1">
-                            <Lock className="h-3 w-3" /> 满级
-                          </span>
-                        ) : short ? (
-                          `${price} 币`
-                        ) : (
-                          `升级 ${price}`
-                        )}
-                      </button>
-                    </div>
-                    <div className="mt-2 flex gap-1" aria-label={`${sku.name}等级 ${level}`}>
-                      {Array.from({ length: MAX_STAT_LEVEL }, (_, index) => (
-                        <span
-                          key={index}
-                          className={`h-1.5 flex-1 ${index < level ? 'bg-mint-400' : 'bg-ink-700'}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : tab === 'items' ? (
+          {tab === 'items' ? (
             <>
               <h3 className="mb-3 flex items-center gap-1 text-[11px] tracking-[0.2em] text-mist-400">
                 <Sparkles className="h-3 w-3" aria-hidden /> 自用

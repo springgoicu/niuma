@@ -1,5 +1,4 @@
 import { BossRuntime } from './boss';
-import { RingRuntime } from './ring';
 import { Wallet, createEphemeralWallet } from '../economy/wallet';
 import {
   DEFAULT_APPEARANCE,
@@ -217,8 +216,6 @@ export class Player {
   lastShoutAt = 0;
   /** 互动包限频时间戳：邀请 / 打赏 / 道具 / 购买共用同一个闸门 */
   lastP2PAt = 0;
-  /** 赌桌排行榜拉取的独立冷却：排序要扫全量账本，不能跟着互动包一起放行 */
-  lastDiceBoardAt = 0;
   /** 上一次搬砖结算时刻：工位搬砖的最小间隔靠它，重发包刷不出双份工资（ADR-0088） */
   lastWorkClaimAt = 0;
 
@@ -261,7 +258,6 @@ export class Player {
     this.ventCdMul = 1;
     this.lastShoutAt = 0;
     this.lastP2PAt = 0;
-    this.lastDiceBoardAt = 0;
   }
 
   /** 发钱包同步包时读的快照：只带服务端权威字段，每日任务留在本地 */
@@ -302,8 +298,6 @@ export class Player {
    * 全园区都看得见那颗头（客户端按窗口快照画）。
    */
   roomId = 0;
-  /** 八角笼连胜：同一人连续拿冠军的次数，断线或换人夺冠即清零 */
-  ringStreak = 0;
   /** 当前视野内的实体 id，与对方集合保持对称 */
   known = new Set<number>();
   /** 每人一个可复用发送缓冲，避免每 Tick 新建 */
@@ -396,7 +390,6 @@ export class Player {
     this.wave = false;
     this.seat = 0;
     this.roomId = 0;
-    this.ringStreak = 0;
     this.dirty = false;
     this.needsViewRefresh = false;
     this.lastBroadcastQx = -1;
@@ -429,7 +422,6 @@ export class Player {
     this.ventCdMul = 1;
     this.lastShoutAt = 0;
     this.lastP2PAt = 0;
-    this.lastDiceBoardAt = 0;
     this.lastWorkClaimAt = 0;
     this.questDay = '';
     this.questProgress = {};
@@ -472,19 +464,16 @@ export class Player {
 /**
  * 世界：实体与共享运行态的容器。
  *
- * 老板与擂台由外部构造后注入：它们的时区与恢复数据来自进程级配置与快照
+ * 老板由外部构造后注入：其时区与恢复数据来自进程级配置与快照
  * （ADR-0081），不再各自偷偷读 `Date.now()` / 本地时区。
  */
 export class World {
   readonly players = new Map<number, Player>();
   /** 发泄区老板：静态地标，不占实体 id，也不进入 AOI 与同步快照 */
   readonly boss: BossRuntime;
-  /** 发泄区擂台：状态机；重启后按快照恢复局号，但不复活进行中的比赛 */
-  readonly ring: RingRuntime;
 
-  constructor(boss = new BossRuntime(), ring = new RingRuntime()) {
+  constructor(boss = new BossRuntime()) {
     this.boss = boss;
-    this.ring = ring;
   }
   private readonly pool: Player[] = [];
   private nextId = 1;

@@ -4,7 +4,7 @@ import { CharacterSprite, footPad } from './CharacterSprite';
 import { SPECIES, type SpeciesProfile } from './species';
 
 /** HUD 条只留三个能在窄屏并排站住的数：口径都出自下方技术底牌，没有新增 */
-const HUD_METRICS = ['20 hz tick', '8 b move', '900 px aoi'];
+const HUD_METRICS = ['20 hz tick', '8 b move', '1000 px aoi'];
 
 /** 四角选择框：角色选择画面里最省笔墨的「这一格可以按」 */
 const SELECT_CORNERS = [

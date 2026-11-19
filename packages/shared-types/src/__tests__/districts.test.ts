@@ -88,12 +88,21 @@ describe('五区注册表（ADR-0097）', () => {
     }
   });
 
-  it('摸鱼亭拆除后的原址仍报景观区，场所表里不再有亭子', () => {
-    // ADR-0105：原址（5250,4710 起 200×180）并回景观区草地，不再有独立场所名
+  it('摸鱼亭拆除后原址由摸鱼湖钓屋接管；8 处房产场所与霓虹商业街分别归属各自大区', () => {
     expect(VENUES.some((venue) => venue.id === 'pavilion')).toBe(false);
-    expect(venueAt(5350, 4800)).toBeUndefined();
-    expect(regionAt(5350, 4800)).toBe('景观区');
-    expect(districtAt(5350, 4800)?.id).toBe('scenery');
+    expect(VENUES.some((venue) => venue.id === 'diceHall')).toBe(false);
+    expect(VENUES.some((venue) => venue.id === 'ring')).toBe(false);
+    expect(venueAt(5350, 4880)).toBeUndefined();
+    expect(regionAt(5350, 4880)).toBe('景观区');
+    expect(districtAt(5350, 4880)?.id).toBe('scenery');
+
+    expect(venueAt(2760, 2800)?.id).toBe('clubNeon');
+    expect(regionAt(2760, 2800)).toBe('不夜城夜店');
+    expect(venueAt(3100, 2830)?.id).toBe('streetGarage');
+    expect(venueAt(3380, 2870)?.id).toBe('ramenStall');
+    expect(venueAt(5350, 4785)?.id).toBe('lakeLodge');
+    expect(venueAt(3215, 4395)?.id).toBe('bambooYard');
+    expect(venueAt(5050, 2535)?.id).toBe('pondPavilion');
   });
 
   it('岛上一块空地仍会如实报野地，不会被硬塞进某个区', () => {

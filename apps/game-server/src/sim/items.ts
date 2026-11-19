@@ -72,8 +72,8 @@ export function useItem(
     if (dx * dx + dy * dy > MAX_TRICK_DISTANCE_PX * MAX_TRICK_DISTANCE_PX) {
       return reject(ITEM_REJECT.InvalidTarget);
     }
-    // 入座 / 治疗 / 擂台内：与发泄同一条免伤口径，整蛊道具也不该穿透
-    if (target.seat !== 0 || target.incapacitated || world.ring.has(target.id)) {
+    // 入座 / 治疗期间：与发泄同一条免伤口径，整蛊道具也不该穿透
+    if (target.seat !== 0 || target.incapacitated) {
       return reject(ITEM_REJECT.InvalidTarget);
     }
   }

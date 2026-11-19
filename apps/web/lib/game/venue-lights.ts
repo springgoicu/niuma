@@ -13,12 +13,8 @@ import {
   CLINIC_ACCESS_PAVING,
   CLINIC_RECT,
   COMPANY_CORRIDOR,
-  DICE_HALL,
-  DICE_HALL_CENTER,
-  DICE_TABLES,
   PLAZA_CENTER,
   PLAZA_RADIUS,
-  RING_ARENA,
   TEA_STATION,
   VENT_ROOM,
   VILLA_SPECS,
@@ -54,67 +50,22 @@ export function venueLights(): LightSpec[] {
     });
   }
 
-  // 两栋小院：院门一盏，夜里能看见「家在哪儿」
+  // 8 处房产各配一盏标识焦点光：霓虹娱乐街用青/品红双色光，其余院落与木屋保持暖琥珀门灯
+  // （正好与移除原擂台+赌场释放的 6 盏预算等量置换：venueLights() 仍维持 20 盏）
   for (const spec of VILLA_SPECS) {
+    const color =
+      spec.kind === 'club'
+        ? VENUE_COLORS.neonStrip.accent
+        : spec.kind === 'garage'
+          ? VENUE_COLORS.neonStrip.glow
+          : VENUE_COLORS.villas.glow;
     lights.push({
       x: spec.gate.x,
       y: spec.gate.y - 18,
-      radius: 72,
-      color: VENUE_COLORS.villas.glow,
-      intensity: 0.46,
-      flicker: 0.08,
-    });
-  }
-
-  // 擂台：顶部一盏冷白聚光 + 南侧一盏暖补光，胜者侧偏暖
-  lights.push(
-    {
-      x: RING_ARENA.x + RING_ARENA.w / 2,
-      y: RING_ARENA.y + 8,
-      radius: 150,
-      color: 0xfff0b8,
-      intensity: 0.6,
-    },
-    {
-      x: RING_ARENA.x + RING_ARENA.w / 2,
-      y: RING_ARENA.y + RING_ARENA.h,
-      radius: 110,
-      color: 0xffd08a,
-      // 0.3：南侧补光只负责把围绳外那一圈观众席托起来，压过顶灯就变成两团抢戏
-      intensity: 0.3,
-    },
-  );
-
-  // 赌场：招牌霓虹（几乎不闪）+ 大厅暖灯
-  lights.push(
-    {
-      x: DICE_HALL_CENTER.x,
-      y: DICE_HALL.y + 20,
-      radius: 140,
-      color: 0xff6fb0,
-      intensity: 0.5,
-      flicker: 0.02,
-    },
-    {
-      x: DICE_HALL_CENTER.x,
-      y: DICE_HALL.y + DICE_HALL.h - 70,
-      radius: 120,
-      color: 0xffd08a,
-      intensity: 0.4,
-      flicker: 0.1,
-    },
-  );
-
-  // 两张绿绒桌各一盏：此前桌心离厅内两盏灯都有 190px，桌面在夜里几乎没有直射光。
-  // 强度 0.32 / 半径 84 只照亮桌面与牌位，让「坐下来那一局」有自己的光。
-  for (const table of DICE_TABLES) {
-    lights.push({
-      x: table.x,
-      y: table.y + table.h / 2 - 6,
-      radius: 84,
-      color: 0xffd9a0,
-      intensity: 0.32,
-      flicker: 0.05,
+      radius: spec.kind === 'club' ? 116 : spec.kind === 'garage' ? 96 : 74,
+      color,
+      intensity: spec.kind === 'club' ? 0.52 : 0.46,
+      flicker: spec.kind === 'club' || spec.kind === 'garage' ? 0.04 : 0.08,
     });
   }
 

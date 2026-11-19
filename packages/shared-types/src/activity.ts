@@ -59,12 +59,13 @@ export const ACTIVITY_KIND = {
   Stand: 23,
   /** 跳跃 */
   Jump: 24,
-  /** 坐上赌桌圆凳 */
+  /** 25 / 26 曾用于赌桌圆凳与擂台观战席：编号永久留空不复用 */
   TableSeat: 25,
-  /** 坐上擂台观战席 */
   RingSeat: 26,
   /** 打招呼 */
   Wave: 27,
+  /** 买下或溢价收购园区房产冠名权 */
+  VillaTrade: 28,
 } as const;
 export type ActivityKind = (typeof ACTIVITY_KIND)[keyof typeof ACTIVITY_KIND];
 
@@ -106,6 +107,7 @@ export const ACTIVITY_TIER: ReadonlyMap<number, ActivityTier> = new Map<number, 
   [ACTIVITY_KIND.TableSeat, 'routine'],
   [ACTIVITY_KIND.RingSeat, 'routine'],
   [ACTIVITY_KIND.Wave, 'routine'],
+  [ACTIVITY_KIND.VillaTrade, 'dramatic'],
 ]);
 
 /** 允许客户端上报的编号：只能报纯观感事件，权威事件一律不接受伪造 */
@@ -208,6 +210,8 @@ export function formatActivity(kind: number, params: ActivityTextParams): string
       return `${name} 坐上了擂台观战席`;
     case ACTIVITY_KIND.Wave:
       return `${name} 打了个招呼`;
+    case ACTIVITY_KIND.VillaTrade:
+      return region ? `${name} 拿下了 ${region} 的冠名权` : `${name} 买下了一处园区地标`;
     default:
       return null;
   }

@@ -25,8 +25,7 @@ export type VenueId =
   | 'arch'
   | 'shrine'
   | 'tea'
-  | 'diceHall'
-  | 'ring'
+  | 'neonStrip'
   | 'clinic'
   | 'apartment'
   | 'villas'
@@ -65,8 +64,8 @@ export const VENUE_COLORS: Record<VenueId, VenueColors> = {
   /** 石砌神龛：暖灰石地 + 铜件点缀（ADR-0096） */
   shrine: { main: 0xcfc7b6, alt: 0xc0b8a6, seam: 0x9a9284, accent: 0xc9a14a, glow: 0xffc98a },
   tea: { main: 0xd8b184, alt: 0xc79c6c, seam: 0xa87f52, accent: 0x8fbf7a, glow: 0xffc98a },
-  diceHall: { main: 0x2f6b52, alt: 0x3b7a5e, seam: 0x214c3b, accent: 0xe8c47a, glow: 0xff6fb0 },
-  ring: { main: 0xd9c096, alt: 0xe7d2ac, seam: 0x8f7a52, accent: 0x3b4a6b, glow: 0xfff0b8 },
+  /** 霓虹商业街：靛青石板主路面 + 品红/青霓虹点缀，暖调压暗不刺眼 */
+  neonStrip: { main: 0x2b3248, alt: 0x353f59, seam: 0x23293b, accent: 0xf472b6, glow: 0x38bdf8 },
   clinic: { main: 0xf3f8fb, alt: 0xe3edf3, seam: 0xbfd0dc, accent: 0xd64545, glow: 0xe8f4ff },
   apartment: { main: 0xd8cfc2, alt: 0xcfc5b6, seam: 0xa79a88, accent: 0x8fe3c7, glow: 0xffd08a },
   villas: { main: 0xe0b48a, alt: 0xd3a578, seam: 0xa87f52, accent: 0x6fcf8e, glow: 0xffd08a },

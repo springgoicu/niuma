@@ -28,16 +28,8 @@ import type {
   WalletSyncPacket,
   QueueStatusPacket,
   ResumeState,
-  RingPacket,
   SeatKind,
   ApartmentRequest,
-  ArenaBetRequest,
-  ArenaPoolPacket,
-  DiceBetRequest,
-  DiceBoardPacket,
-  DiceBoardRequest,
-  DiceResultPacket,
-  DiceStatePacket,
   VillaRequest,
   VillaStatePacket,
   BossShockPacket,
@@ -112,11 +104,7 @@ export type MainToWorker =
   /** 大喇叭文案：编码侧截到 30 字，服务端再过一次审核（ADR-0085） */
   | { t: 'shout'; text: string }
   /** 热区建筑（ADR-0087）：上行只带意图 */
-  | { t: 'diceBet'; request: DiceBetRequest }
-  /** 赌桌排行榜：只读快照，服务端 2 秒冷却内会回执拒绝 */
-  | { t: 'diceBoard'; request: DiceBoardRequest }
   | { t: 'villa'; request: VillaRequest }
-  | { t: 'arenaBet'; request: ArenaBetRequest }
   | { t: 'apartment'; request: ApartmentRequest }
   /** 打工产出与随机事件（ADR-0088）：上行只带意图 */
   | { t: 'claimWork'; combo: number }
@@ -174,8 +162,6 @@ export type WorkerToMain =
   | { t: 'boardOpen' }
   /** 在放假告示板旁按 F / 点击牌面：主线程展开软木看板（ADR-0059） */
   | { t: 'bulletinOpen' }
-  /** 擂台快照：低频事件（阶段变化 / 扣血 / 1Hz 心跳），`receivedAt` 是服务器时刻，供 HUD 递减 */
-  | { t: 'ring'; packet: RingPacket | null; receivedAt: number }
   /**
    * 服务器时钟样本（ADR-0081）：Worker 侧 1Hz 收到 pong，转发到主线程时按 5s 节流，
    * 只传「此刻的服务器毫秒 + 园区时区」。两侧单调时钟基准不同，所以传绝对时刻而不是偏移。
@@ -198,21 +184,14 @@ export type WorkerToMain =
   | { t: 'loudspeaker'; packet: LoudspeakerPacket }
   | { t: 'shoutReject'; packet: ShoutRejectPacket }
   | { t: 'itemReject'; packet: ItemRejectPacket }
-  /** 互动被拒（ADR-0104）：赌桌 / 擂台 / 别墅 / 搬砖 / 悬赏的统一回执 */
+  /** 互动被拒（ADR-0104）：房产 / 搬砖 / 悬赏的统一回执 */
   | { t: 'interactReject'; packet: InteractRejectPacket }
   /** 茶台按 F：主线程打开商店并切到指定页签（ADR-0085 / ADR-0087 增加装扮页签） */
-  | { t: 'shopOpen'; tab: 'stats' | 'items' | 'cosmetics' }
-  /** 赌桌 / 八角笼 / 豪宅的「按 F 开面板」意图 */
-  | { t: 'diceOpen'; table: number }
-  | { t: 'arenaBetOpen' }
+  | { t: 'shopOpen'; tab: 'items' | 'cosmetics' }
+  /** 房产的「按 F 开面板」意图 */
   | { t: 'villaOpen'; villa: number }
-  /** 热区建筑的下行快照 */
-  | { t: 'dice'; packet: DiceStatePacket }
-  /** 一桌一局结算单（ADR-0110）：亮牌时逐人到达，`self` 已由服务端标好 */
-  | { t: 'diceResult'; packet: DiceResultPacket }
-  | { t: 'diceBoard'; packet: DiceBoardPacket }
+  /** 房产冠名与收益下行快照 */
   | { t: 'villa'; packet: VillaStatePacket }
-  | { t: 'arenaPool'; packet: ArenaPoolPacket }
   /** 打工产出与随机事件（ADR-0088） */
   | { t: 'workOpen' }
   | { t: 'workResult'; packet: WorkResultPacket }

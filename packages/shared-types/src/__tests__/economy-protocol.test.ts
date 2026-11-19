@@ -101,7 +101,7 @@ describe('牛马币经济段', () => {
       inventory: { ice_americano: 500, unknown_item: 9 },
     });
     expect(profile.coins).toBe(0);
-    expect(profile.stats.atkSpeedLv).toBe(10);
+    expect(profile.stats.atkSpeedLv).toBe(0);
     expect(profile.inventory).toEqual({ ice_americano: 99 });
     expect(clampCoins(1e12)).toBe(999_999_999);
   });
@@ -254,24 +254,23 @@ describe('打赏、道具与商店编解码', () => {
 });
 
 describe('经济数值口径', () => {
-  it('发泄冷却随攻速递减并锁在 500ms', () => {
-    expect(ventCooldownMs(0)).toBe(1200);
-    expect(ventCooldownMs(3)).toBe(990);
-    expect(ventCooldownMs(10)).toBe(500);
-    expect(ventCooldownMs(99)).toBe(500);
+  it('发泄冷却固定为 600ms，废除攻速加成', () => {
+    expect(ventCooldownMs(0)).toBe(600);
+    expect(ventCooldownMs(3)).toBe(600);
+    expect(ventCooldownMs(10)).toBe(600);
+    expect(ventCooldownMs(99)).toBe(600);
   });
 
-  it('冰美式按乘子缩短冷却，永远不会低于 500ms', () => {
-    // ADR-0085：道具从「定值 −150ms」改成「乘 0.7」，与 ventCdMul 同一套语义
-    expect(effectiveVentCooldownMs(0, 0.7)).toBe(840);
-    expect(effectiveVentCooldownMs(10, 0.7)).toBe(500);
-    expect(effectiveVentCooldownMs(2, 1)).toBe(1060);
+  it('冰美式按乘子缩短冷却，最低钳制在 420ms', () => {
+    expect(effectiveVentCooldownMs(0, 0.7)).toBe(420);
+    expect(effectiveVentCooldownMs(10, 0.7)).toBe(420);
+    expect(effectiveVentCooldownMs(2, 1)).toBe(600);
   });
 
-  it('属性升级价格随等级递增，封顶后没有下一档', () => {
-    expect(statUpgradePrice('atkSpeedLv', 0)).toBe(120);
-    expect(statUpgradePrice('atkSpeedLv', 5)).toBe(520);
-    expect(statUpgradePrice('atkSpeedLv', 10)).toBe(920);
+  it('属性升级已废除，统一返回 0', () => {
+    expect(statUpgradePrice('atkSpeedLv', 0)).toBe(0);
+    expect(statUpgradePrice('atkSpeedLv', 5)).toBe(0);
+    expect(statUpgradePrice('atkSpeedLv', 10)).toBe(0);
   });
 
   it('道具目录 id 唯一且价格为正', () => {

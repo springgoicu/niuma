@@ -52,7 +52,7 @@ interface LightSpec {
 
 ### 预算
 
-- `MAX_LIGHTS = 64`（`lighting/light-registry.ts:38`），注释记录「场景常驻 39」。新增场所光之前先算总数，并跑 `apps/web/lib/game/__tests__/lighting.test.ts` 的预算断言。
+- `MAX_LIGHTS = 96`（`lighting/light-registry.ts:45`），场所常驻光保持 18–22 盏。新增场所光之前先算总数，并跑 `apps/web/lib/game/__tests__/lighting.test.ts` 的预算断言。
 - 单场所只留 **1–2 盏焦点光**，其余靠地面提亮与烘焙暖色块表现。夜景靠对比，不靠堆灯。
 
 ### 抖动

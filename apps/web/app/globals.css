@@ -316,6 +316,38 @@
     color: var(--color-mist-300);
   }
 
+  .pixel-panel {
+    background-color: #f4efe6;
+    border: 2px solid #2a3142;
+    box-shadow: 4px 4px 0 #2a3142;
+    color: #2a3142;
+  }
+
+  .pixel-btn {
+    border: 2px solid #2a3142;
+    box-shadow: 2px 2px 0 #2a3142;
+    font-family: var(--font-mono);
+    transition: transform 60ms linear, box-shadow 60ms linear;
+  }
+
+  .pixel-btn:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+  }
+
+  .pixel-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border: 1.5px solid #2a3142;
+    background-color: #ebe4d5;
+    padding: 0.1rem 0.45rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    color: #2a3142;
+  }
+
   .field {
     width: 100%;
     border: 2px solid var(--color-ink-500);

@@ -54,11 +54,9 @@ export function resolveWorkClaim(
   }
 
   const night = isNightShift(hour);
-  const level = Math.max(0, Math.min(10, Math.floor(player.stats.workEffLv) || 0));
-  const amount = workPayout(roll, level, night);
+  const amount = workPayout(roll, 0, night);
   if (amount <= 0) return { ok: false, reason: 'unknown' };
-  const effMul = 1 + WORK_REWARD.PerEffLv * level;
-  const mult = Math.round(effMul * (night ? WORK_REWARD.NightMul : 1) * 10);
+  const mult = Math.round((night ? WORK_REWARD.NightMul : 1) * 10);
 
   player.lastWorkClaimAt = now;
   return { ok: true, outcome: { amount, mult, night } };

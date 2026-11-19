@@ -15,9 +15,7 @@
 import { WORK_DESK_RANGE, workDeskHotspotId } from '../work';
 import { APARTMENT_SPECS } from './apartment';
 import { WORKSTATIONS } from './campus';
-import { DICE_TABLES } from './dice-hall';
 import { BULLETIN_BOARD, SHRINE_ALTAR, TEA_STATION, WELCOME_LANDMARKS } from './layout';
-import { RING_BENCHES, RING_BENCH_SEAT_GROUP, RING_SIGNUP, RING_SIGNUP_RANGE } from './ring';
 import { VILLA_GATE_RANGE, VILLA_SPECS, VILLA_TREE_RANGE, type VillaSpec } from './villas';
 
 /** 服务端距离门的额外余量：包在网络上飞半个 RTT，不能用半径当硬门 */
@@ -29,9 +27,6 @@ export type HotspotKind =
   | 'bulletin'
   | 'shrine'
   | 'tea'
-  | 'ring'
-  | 'diceTable'
-  | 'arenaSeat'
   | 'villaGate'
   | 'villaTree'
   | 'apartmentDoor'
@@ -129,39 +124,7 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
     radius: 48,
     label: 'tea',
   },
-  // ---- 绩效八角笼 ----
-  {
-    id: 'arena-signup',
-    kind: 'ring',
-    x: RING_SIGNUP.x,
-    y: RING_SIGNUP.y,
-    radius: RING_SIGNUP_RANGE,
-    label: 'ring',
-  },
-  ...RING_BENCHES.map(
-    (bench, index): HotspotDef => ({
-      id: `arena-bench-${index}`,
-      kind: 'arenaSeat',
-      x: bench.x,
-      y: bench.y + 20,
-      radius: 56,
-      label: 'arenaBet',
-      seatGroupId: RING_BENCH_SEAT_GROUP,
-    }),
-  ),
-  // ---- 摸鱼骰子馆：两张桌各一条 ----
-  ...DICE_TABLES.map(
-    (table): HotspotDef => ({
-      id: `dice-table-${table.id}`,
-      kind: 'diceTable',
-      x: table.x,
-      y: table.y,
-      radius: 96,
-      label: 'dice',
-      seatGroupId: table.group,
-    }),
-  ),
-  // ---- 豪宅小院：门口与摇钱树 ----
+  // ---- 园区 8 栋房产：门口与摇钱树 ----
   ...VILLA_SPECS.map(villaGateHotspot),
   ...VILLA_SPECS.map(villaTreeHotspot),
   // ---- 牛马公寓（ADR-0098 / ADR-0101）：唯一一栋一条门热区，进屋只在窗口探头、不再有出口热区 ----
@@ -197,9 +160,6 @@ export const HOTSPOT_PRIORITY: readonly HotspotKind[] = [
   'shrine',
   'tea',
   'workDesk',
-  'diceTable',
-  'ring',
-  'arenaSeat',
   'villaGate',
   'villaTree',
   'apartmentDoor',

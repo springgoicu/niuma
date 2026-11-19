@@ -30,8 +30,8 @@ describe('园区导览方位（ADR-0036）', () => {
   it('出生点全部导览目标都可读，顺序与 NAV_TARGETS 一致', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
     expect(readings.map((reading) => reading.target.id)).toEqual(NAV_TARGETS.map((target) => target.id));
-    // ADR-0099 补齐影音室 / 急救站，ADR-0105 拆除摸鱼亭后共 14 处
-    expect(readings).toHaveLength(14);
+    // 去掉骰桌/擂台、新增霓虹街区与景观区 8 处分阶房产后共 18 处导览目标
+    expect(readings).toHaveLength(18);
     for (const reading of readings) {
       expect(reading.distance).toBeGreaterThan(0);
       expect(reading.seconds).toBe(Math.max(1, Math.round(reading.distance / MOVE_SPEED)));
@@ -58,26 +58,24 @@ describe('园区导览方位（ADR-0036）', () => {
     expect(octant('restroom')).toBe(1);
     expect(octant('lounge')).toBe(4);
     expect(octant('park')).toBe(0);
-    // 每个目标都带大区与场景，导览卡据此分组（景观区拆掉摸鱼亭后没有目标）
+    // 每个目标都带大区与场景，导览卡据此分组
     expect(NAV_TARGETS.filter((target) => target.district === 'corporate')).toHaveLength(4);
-    expect(NAV_TARGETS.filter((target) => target.district === 'amusement')).toHaveLength(3);
+    expect(NAV_TARGETS.filter((target) => target.district === 'amusement')).toHaveLength(4);
     expect(NAV_TARGETS.filter((target) => target.district === 'living')).toHaveLength(5);
     expect(NAV_TARGETS.filter((target) => target.district === 'service')).toHaveLength(2);
-    expect(NAV_TARGETS.filter((target) => target.district === 'scenery')).toHaveLength(0);
+    expect(NAV_TARGETS.filter((target) => target.district === 'scenery')).toHaveLength(3);
     for (const target of NAV_TARGETS) {
       expect(['indoor', 'outdoor', 'semi']).toContain(target.scene);
     }
   });
 
-  it('有目标的四个大区都远于一步，景观区改步行前往', () => {
+  it('五大区的全部导览目标都远于一步', () => {
     const readings = navReadings(SPAWN_CENTER.x, SPAWN_CENTER.y);
-    for (const district of ['corporate', 'amusement', 'living', 'service'] as const) {
+    for (const district of ['corporate', 'amusement', 'living', 'service', 'scenery'] as const) {
       const inDistrict = readings.filter((reading) => reading.target.district === district);
       expect(inDistrict.length, district).toBeGreaterThan(0);
       for (const reading of inDistrict) expect(reading.distance).toBeGreaterThan(MOVE_SPEED);
     }
-    // ADR-0105：摸鱼亭拆除后景观区没有可互动场所，导览卡不出现空组
-    expect(readings.some((reading) => reading.target.district === 'scenery')).toBe(false);
   });
 
   it('朝目标走 120px，步行秒数不会变大', () => {

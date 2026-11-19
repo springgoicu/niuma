@@ -5,11 +5,9 @@ import {
   CLINIC_BED_SEAT_IDS,
   DESK_H,
   DESK_W,
-  DICE_TABLES,
   DIRECTION,
   PLAYER_RADIUS,
   POSE,
-  RING_BENCHES,
   SIT_RANGE,
   WORLD_LAYOUT,
   chairOffset,
@@ -71,9 +69,8 @@ describe('座位布局', () => {
     const benches = props.filter((prop) => prop.kind === 'bench');
     const benchSeats = seats.filter((seat) => seat.kind === 'bench');
     expect(benches.length).toBeGreaterThan(0);
-    // 园区长椅各配一个坐点；八角笼 4 张观战长椅的坐点由擂台模块追加（ADR-0087）
-    expect(benchSeats.length).toBe(benches.length + RING_BENCHES.length);
-    // 长椅座位仍是既有 id：急救站病床（ADR-0084）与赌桌 / 观战长椅只能追加在它之后
+    expect(benchSeats.length).toBe(benches.length);
+    // 长椅座位保持既有 id 顺序：急救站病床（ADR-0084）追加在长椅之后
     expect(seats.filter((seat) => CLINIC_BED_SEAT_IDS.includes(seat.id)).map((seat) => seat.id)).toEqual([
       ...CLINIC_BED_SEAT_IDS,
     ]);
@@ -86,15 +83,6 @@ describe('座位布局', () => {
       expect(seatPose(seat!.kind)).toBe(POSE.Sit);
       // 坐点必须在长椅自身 40×16 碰撞盒之外，否则入座后会被判成卡在障碍里
       expect(isBlocked(seat!.x, seat!.y, PLAYER_RADIUS)).toBe(false);
-    }
-
-    // 观战长椅：同一套坐点口径，组名留给「坐上才能押注」的资格判定
-    const arenaSeats = benchSeats.filter((seat) => seat.group === 'arena-bench');
-    expect(arenaSeats).toHaveLength(RING_BENCHES.length);
-    for (const seat of arenaSeats) {
-      expect(seat.facing).toBe(DIRECTION.Down);
-      expect(seat.desk).toBe(-1);
-      expect(isBlocked(seat.x, seat.y, PLAYER_RADIUS)).toBe(false);
     }
   });
 
@@ -288,8 +276,8 @@ describe('地图碰撞与装饰', () => {
       const expected = { kind: 'desk' as const, x: desk.x - w / 2, y: desk.y - h / 2, w, h };
       expect(deskSolids).toContainEqual(expected);
     }
-    // 工位桌之外只有两处家具用 desk 占位：两张赌桌与急救站导医柜台（ADR-0084 / 0087）
-    expect(deskSolids).toHaveLength(desks.length + DICE_TABLES.length + 1);
+    // 工位桌之外仅急救站导医柜台用 desk 占位（ADR-0084）
+    expect(deskSolids).toHaveLength(desks.length + 1);
   });
 
   it('有占地的道具：碰撞盒底边贴精灵底座，正面不留隐形墙', () => {
