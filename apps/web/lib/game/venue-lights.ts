@@ -83,7 +83,7 @@ export function venueLights(): LightSpec[] {
       x: CLINIC_ACCESS_PAVING.x + 60,
       y: CLINIC_ACCESS_PAVING.y + 22,
       radius: 88,
-      color: 0xffb84a,
+      color: 0xffc078,
       intensity: 0.4,
       flicker: 0.12,
     },
@@ -128,22 +128,24 @@ export function venueLights(): LightSpec[] {
 
   // 企业楼走廊：920px 的走廊此前一盏灯都没有，夜里从大门进来是一条黑缝。
   // 只放一盏在走廊中段，靠光图半径 120 把两端压低，不至于把整条走廊照成白条。
+  // 色温改冷白荧光：这里是「加班楼」的压强来源，暖光会让它读成员工休息区。
   lights.push({
     x: COMPANY_CORRIDOR.x + COMPANY_CORRIDOR.w / 2,
     y: COMPANY_CORRIDOR.y + COMPANY_CORRIDOR.h / 2,
     radius: 120,
-    color: 0xffd2a0,
+    color: 0xd8eef8,
     intensity: 0.3,
     flicker: 0.05,
   });
 
-  // 发泄室：顶灯一盏，冷白低强度，只照亮橡胶地中央
+  // 发泄室：顶置旋转红光警示灯，低频微光扫过橡胶地中央
   lights.push({
     x: VENT_ROOM.x + VENT_ROOM.w / 2,
     y: VENT_ROOM.y + 24,
     radius: 96,
-    color: 0xffe7c0,
-    intensity: 0.3,
+    color: 0xff6b5a,
+    intensity: 0.26,
+    flicker: 0.18,
   });
 
   // 卫生间：唯一一间此前完全没有灯的室内，补一盏冷白顶灯（flicker 0，照明不抖）。

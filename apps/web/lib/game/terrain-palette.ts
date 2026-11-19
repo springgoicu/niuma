@@ -103,6 +103,46 @@ export const TERRAIN_COLORS = {
 } as const;
 
 /**
+ * 现代铺装与街道质感（去国风重塑）。
+ *
+ * 与 `TERRAIN_COLORS` 并列而不是合并：那套是岛屿自然地貌（草地、土路、湖岸），
+ * 这套是园区人造地面（沥青、清水混凝土、水磨石、人行道砖）。
+ * 纪律同源——最暗档必须带色相（沥青是蓝黑，不是纯黑），描边走本体压暗。
+ */
+export const URBAN_GROUND = {
+  /** 主干道沥青：干面 / 微雨湿面 / 积水反光 / 缝 */
+  asphalt: 0x323a4b,
+  asphaltWet: 0x3d4658,
+  asphaltSheen: 0x55617a,
+  asphaltSeam: 0x272e3d,
+  /** 清水混凝土人行道与建筑基座 */
+  concrete: 0x8c939e,
+  concreteDark: 0x5a606e,
+  concreteLight: 0xb4b8bf,
+  /** 水磨石广场：底 / 石屑点 / 缝 */
+  terrazzo: 0xb9bcc2,
+  terrazzoSpeck: 0x9aa1ac,
+  terrazzoSeam: 0x8a8f99,
+  /** 生活区暖黄透水砖 */
+  paverBrick: 0xc08a72,
+  paverBrickDark: 0x9a6a56,
+  /** 交通标线：警戒黄线 / 斑马线 / 导向箭头 */
+  hazardLine: 0xd8b34a,
+  zebraWhite: 0xdcd9cf,
+  guideArrow: 0xe8c46a,
+  /** 井盖与雨水蓖子 */
+  manholeCover: 0x4a5162,
+  manholeRim: 0x6b7480,
+  /** 微雨积水与空调冷凝水渍：冷靛倒影，不用纯黑 */
+  puddle: 0x55617a,
+  condensate: 0x3a4354,
+  /** 电驴轮胎打滑拖痕：比路面亮一档的浅痕 */
+  tireTrack: 0xb8b5ab,
+  /** 人行道边缘的干枯草屑与落叶微尘 */
+  turfDry: 0xd0b878,
+} as const;
+
+/**
  * 冬季色板（ADR-0046）：只有在 `winter` 为真时才被取用，夏季配色一格不动。
  *
  * 纪律与夏季同一套：雪不是纯白（纯白会把画面拉成一张蒙版、也压不住暖色角色），

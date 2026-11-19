@@ -119,6 +119,84 @@ function drawBin(g: Graphics, variant: 0 | 1, winter: boolean): void {
   if (winter) g.rect(cx - 6, 3, 12, 1).fill(W.snowBase);
 }
 
+/** 电话亭：大红玻璃箱体 + 冷白 CALL 灯箱（二期接单点） */
+function drawPhoneBooth(g: Graphics, variant: 0 | 1, winter: boolean): void {
+  const { w, h } = STREET_DECOR_SIZE.phoneBooth;
+  const cx = Math.round(w / 2);
+  const body = variant === 0 ? 0xc0392b : 0xa93226;
+  const bodyDark = variant === 0 ? 0x7d2a1f : 0x6b231a;
+  const glass = 0x3f5a78;
+  const glassLight = 0x6f96bd;
+  g.ellipse(cx, h - 1, 10, 3).fill({ color: VENUE_SHADOW, alpha: 0.3 });
+  // 底座与箱体
+  g.rect(cx - 10, h - 6, 20, 5).fill(bodyDark);
+  g.rect(cx - 9, 8, 18, h - 14).fill(bodyDark);
+  g.rect(cx - 8, 9, 16, h - 16).fill(body);
+  // 玻璃面：竖向两格，中间一根立柱
+  g.rect(cx - 6, 12, 12, h - 22).fill(glass);
+  g.rect(cx - 6, 12, 2, h - 22).fill(glassLight);
+  g.rect(cx - 1, 12, 1, h - 22).fill(bodyDark);
+  // 顶部 CALL 灯箱
+  g.rect(cx - 9, 2, 18, 7).fill(bodyDark);
+  g.rect(cx - 7, 3, 14, 4).fill(0xd8eef8);
+  g.rect(cx - 3, 4, 6, 2).fill(0x7ca8b8);
+  if (winter) g.rect(cx - 9, 1, 18, 2).fill(W.snowBase);
+}
+
+/** 施工安全锥桶：橙色本体 + 两道冷白反光环，逐行收窄走 2:1 阶梯 */
+function drawCone(g: Graphics, variant: 0 | 1, winter: boolean): void {
+  const { w, h } = STREET_DECOR_SIZE.cone;
+  const cx = Math.round(w / 2);
+  const body = variant === 0 ? 0xd97a3c : 0xc96b34;
+  const bodyDark = 0x8f4a20;
+  g.ellipse(cx, h - 1, 5, 2).fill({ color: VENUE_SHADOW, alpha: 0.26 });
+  g.rect(cx - 5, h - 3, 10, 2).fill(bodyDark);
+  g.rect(cx - 4, h - 6, 8, 3).fill(body);
+  g.rect(cx - 3, h - 9, 6, 3).fill(body);
+  g.rect(cx - 2, h - 12, 4, 3).fill(body);
+  g.rect(cx - 1, h - 14, 2, 2).fill(bodyDark);
+  // 反光环带
+  g.rect(cx - 4, h - 6, 8, 1).fill(0xe6e3d8);
+  g.rect(cx - 3, h - 10, 6, 1).fill(0xe6e3d8);
+  if (winter) g.rect(cx - 2, h - 15, 4, 1).fill(W.snowBase);
+}
+
+/** 空调室外机：格栅外壳 + 出风口 + 底部冷凝水渍 */
+function drawAcUnit(g: Graphics, variant: 0 | 1, winter: boolean): void {
+  const { w, h } = STREET_DECOR_SIZE.acUnit;
+  g.ellipse(Math.round(w / 2), h - 1, 12, 3).fill({ color: VENUE_SHADOW, alpha: 0.28 });
+  g.rect(1, 2, w - 2, h - 4).fill(0x8c939e);
+  g.rect(2, 3, w - 4, h - 6).fill(0xb4b8bf);
+  // 风扇格栅：三层同心方框，读起来像出风口
+  for (let i = 0; i < 3; i += 1) {
+    g.rect(4 + i * 2, 5 + i * 2, w - 10 - i * 4, h - 10 - i * 4).stroke({ color: 0x6b7480, width: 1 });
+  }
+  // 侧面散热片与底部冷凝水渍：冷靛半透，不用纯黑
+  g.rect(w - 6, 4, 3, h - 8).fill(0x6b7480);
+  g.rect(3, h - 2, w - 6, 1).fill({ color: 0x3a4354, alpha: 0.5 });
+  if (winter) g.rect(2, 1, w - 4, 2).fill(W.snowBase);
+}
+
+/** 饮料贩卖机：冷白橱窗 + 荧光按键，variant 只换一排饮料的品红 */
+function drawVending(g: Graphics, variant: 0 | 1, winter: boolean): void {
+  const { w, h } = STREET_DECOR_SIZE.vending;
+  const cx = Math.round(w / 2);
+  g.ellipse(cx, h - 1, 9, 3).fill({ color: VENUE_SHADOW, alpha: 0.3 });
+  g.rect(cx - 9, 3, 18, h - 5).fill(0x2f3540);
+  g.rect(cx - 8, 4, 16, h - 7).fill(0x3a4150);
+  // 橱窗：冷白灯带 + 三排饮料
+  g.rect(cx - 6, 8, 12, 18).fill(0xd9e6ef);
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      g.rect(cx - 5 + col * 4, 10 + row * 6, 3, 4).fill(row === variant ? 0xf06595 : 0x7ca8b8);
+    }
+  }
+  // 荧光按键与取货口
+  g.rect(cx - 6, 28, 12, 3).fill(0x00f5d4);
+  g.rect(cx - 5, h - 9, 10, 5).fill(0x23293b);
+  if (winter) g.rect(cx - 9, 2, 18, 2).fill(W.snowBase);
+}
+
 function drawDecorSprite(
   renderer: TextureFactory,
   kind: StreetDecorKind,
@@ -132,7 +210,11 @@ function drawDecorSprite(
       if (kind === 'shrub' || kind === 'shrubTall') drawShrub(g, variant, kind === 'shrubTall', winter);
       else if (kind === 'postbox') drawPostbox(g, variant, winter);
       else if (kind === 'hydrant') drawHydrant(g, variant, winter);
-      else drawBin(g, variant, winter);
+      else if (kind === 'bin') drawBin(g, variant, winter);
+      else if (kind === 'phoneBooth') drawPhoneBooth(g, variant, winter);
+      else if (kind === 'cone') drawCone(g, variant, winter);
+      else if (kind === 'acUnit') drawAcUnit(g, variant, winter);
+      else drawVending(g, variant, winter);
     },
     { frame: new Rectangle(0, 0, size.w, size.h) },
   );

@@ -70,8 +70,19 @@ export const APARTMENT_GARDEN_BANDS: ReadonlyArray<WorldRect> = [
   },
 ];
 
-/** 立式小物的种类；顺序即纹理帧号，两端只认这一份 */
-export const STREET_DECOR_KINDS = ['shrub', 'shrubTall', 'postbox', 'hydrant', 'bin'] as const;
+/** 立式小物的种类；顺序即纹理帧号，两端只认这一份，只允许尾部追加 */
+export const STREET_DECOR_KINDS = [
+  'shrub',
+  'shrubTall',
+  'postbox',
+  'hydrant',
+  'bin',
+  // 现代都市家具（去国风重塑）：二期接单点、施工痕与工业运转细节
+  'phoneBooth',
+  'cone',
+  'acUnit',
+  'vending',
+] as const;
 export type StreetDecorKind = (typeof STREET_DECOR_KINDS)[number];
 
 export const STREET_DECOR_SIZE: Record<StreetDecorKind, { w: number; h: number }> = {
@@ -80,6 +91,14 @@ export const STREET_DECOR_SIZE: Record<StreetDecorKind, { w: number; h: number }
   postbox: { w: 16, h: 28 },
   hydrant: { w: 12, h: 20 },
   bin: { w: 14, h: 18 },
+  /** 大红色现代玻璃电话亭：顶部冷白 CALL 灯箱，二期接单点 */
+  phoneBooth: { w: 24, h: 48 },
+  /** 施工安全锥桶：反光环带一圈，压在人行道边缘 */
+  cone: { w: 12, h: 16 },
+  /** 空调室外机：格栅外壳 + 底部冷凝水渍 */
+  acUnit: { w: 28, h: 18 },
+  /** 荧光按键饮料贩卖机 */
+  vending: { w: 22, h: 38 },
 };
 
 /** 地面件的包围尺寸：绘制时逐块写 rect，这里只给裁剪与测试用 */
@@ -234,6 +253,52 @@ export const STREET_ANCHORS: ReadonlyArray<{ kind: StreetDecorKind; x: number; y
   { kind: 'bin', x: 4300, y: 4960, variant: 1 },
 ];
 
+/**
+ * 现代街道家具的「基准点」：每种一件，各自贴着一处已确认可站的旧锚点。
+ *
+ * 为什么不写死坐标：`propsAllowed` 会按水距、实体净空、树距逐条否决，
+ * 写死的坐标一旦被树冠或铺装挡住就静默消失（测试会红）。
+ * 这里以基准点为圆心做一轮固定顺序的就近探测，第一个合法落点胜出；
+ * 顺序是常量，所以任何设备算出来的位置完全一致。
+ */
+const MODERN_ANCHORS: ReadonlyArray<{ kind: StreetDecorKind; bx: number; by: number; variant: 0 | 1 }> = [
+  // 霓虹街路口：大红色玻璃电话亭，顶部冷白 CALL 灯箱（二期接单点）
+  { kind: 'phoneBooth', bx: 3060, by: 3160, variant: 0 },
+  // 南主路东侧：第二座电话亭，从生活区回园区先看见它
+  { kind: 'phoneBooth', bx: 4300, by: 4960, variant: 1 },
+  // 企业楼侧巷：施工锥桶与空调外机成组，读得出「这里还在施工 / 机房在运转」
+  { kind: 'cone', bx: 3572, by: 3768, variant: 0 },
+  { kind: 'acUnit', bx: 3788, by: 3548, variant: 0 },
+  // 服务广场北缘：荧光按键饮料贩卖机
+  { kind: 'vending', bx: 4620, by: 3560, variant: 0 },
+];
+
+/** 就近探测顺序：先横向让开一个身位，再上下错位，最后退回基准点本身兜底 */
+const MODERN_OFFSETS: ReadonlyArray<readonly [number, number]> = [
+  [26, 0],
+  [-26, 0],
+  [0, -24],
+  [0, 24],
+  [26, -24],
+  [-26, -24],
+  [26, 24],
+  [-26, 24],
+  [0, -46],
+  [0, 46],
+  [0, 0],
+];
+
+/** 把基准点解成一个合法落点；全部探测失败时返回 null（不静默塞进计划） */
+function resolveModernAnchor(anchor: (typeof MODERN_ANCHORS)[number]): StreetProps | null {
+  for (const [dx, dy] of MODERN_OFFSETS) {
+    const x = Math.round(anchor.bx + dx);
+    const y = Math.round(anchor.by + dy);
+    if (!propsAllowed(x, y, PATH_CLEARANCE)) continue;
+    return { kind: anchor.kind, x, y, variant: anchor.variant };
+  }
+  return null;
+}
+
 /** 排水篦子：沿五区街面与主路的路缘手写，读起来像「这条路有人维护」 */
 export const STREET_GRATE_ANCHORS: ReadonlyArray<{ x: number; y: number; variant: 0 | 1 }> = [
   { x: 3132, y: 3140, variant: 0 },
@@ -344,6 +409,12 @@ export function streetDecorPlan(): StreetDecorPlan {
   for (const anchor of STREET_ANCHORS) {
     if (!propsAllowed(anchor.x, anchor.y, PATH_CLEARANCE)) continue;
     props.push(anchor);
+  }
+  // 现代街道家具：电话亭 / 锥桶 / 空调外机 / 贩卖机。
+  // 落点由基准点就近探测得出，仍是纯数据、零碰撞、不进共享布局。
+  for (const anchor of MODERN_ANCHORS) {
+    const resolved = resolveModernAnchor(anchor);
+    if (resolved) props.push(resolved);
   }
   for (const anchor of STREET_GRATE_ANCHORS) {
     if (!nearPaved(anchor.x, anchor.y) && !isOutdoorGround(anchor.x, anchor.y)) continue;

@@ -6,6 +6,7 @@ import {
   ISLAND,
   ISLAND_SAND,
   LAKE_SHORE,
+  PATH_MAIN_HALF_WIDTH,
   WORLD_HEIGHT,
   WORLD_LAYOUT,
   WORLD_WIDTH,
@@ -46,13 +47,15 @@ import {
   WINTER_GRASS_FRINGE,
   buildMaterialGrid,
   edgeGlyphs,
+  type EdgeStyle,
   type MaterialGrid,
   type MaterialId,
 } from './terrain-edge';
-import { TERRAIN_COLORS as C, WINTER_COLORS as W } from './terrain-palette';
+import { TERRAIN_COLORS as C, URBAN_GROUND as U, WINTER_COLORS as W } from './terrain-palette';
 import {
   PROP_SHADOW,
   TREE_H,
+  makeAsphaltTexture,
   makeDecalAtlas,
   makeDirtTexture,
   makeGrassTexture,
@@ -68,6 +71,7 @@ import {
   type DecalAtlas,
   type TreeTextures,
 } from './terrain-textures';
+import { speciesIndexAt } from './vegetation-species';
 
 /**
  * 地形视图（本项目的 MapRenderer）：把 shared-types 的静态布局铺成 Pixi 图层。
@@ -87,6 +91,8 @@ const WATER_TILE = 96;
 const WILD_TILE = 96;
 /** 必须与 makeDirtTexture 的 size 一致 */
 const DIRT_TILE = 128;
+/** 必须与 makeAsphaltTexture 的 size 一致 */
+const ASPHALT_TILE = 128;
 /** 必须与 makeStoneTexture 的 size 一致 */
 const STONE_TILE = 128;
 /** 边界外林地平铺超出世界矩形的余量：贴边走到尽头也不会看到硬边（ADR-0064） */
@@ -114,9 +120,24 @@ const BORDER_NEAR_TINT = 0xc8d8c0;
 /** 边界密林远排着色：压到一半明度，与林下深色底纹接住，读成一堵暗墙 */
 const BORDER_FAR_TINT = 0x7d9678;
 
+/**
+ * 主干道路缘的冷灰变体（去国风重塑）。
+ *
+ * 刻意不改 `MATERIAL` 枚举：材质网格里主干道仍记作 `dirt`，
+ * 于是 `materialAt`、8 邻掩码、`terrain-edge.test.ts` 与寻路全部零影响，
+ * 只有「贴图换成沥青 + 路缘暗边换成清水混凝土」这两件事发生变化。
+ */
+const ASPHALT_EDGE_STYLE: EdgeStyle = {
+  ...EDGE_STYLE[MATERIAL.dirt],
+  rim: U.concreteDark,
+  toothDeep: C.grassDeep,
+};
+
 interface TerrainTextures {
   grass: Texture;
   dirt: Texture;
+  /** 主干道沥青：支路仍用 `dirt`，靠路宽在 `addPaths` 里分流 */
+  asphalt: Texture;
   stone: Texture;
   water: Texture;
   /** 边界外林地地面（ADR-0064）：四边密林脚下的深色底 */
@@ -141,6 +162,11 @@ interface EdgeJob {
   rim: boolean;
   /** 强制齿的生长方向；缺省由「对面是不是草」推断 */
   grow?: 'in' | 'out';
+  /**
+   * 本段轮廓专用的边缘样式：主干道把暖棕土边换成冷灰清水混凝土路缘。
+   * 缺省走 `EDGE_STYLE[job.self]`，材质 ID 本身不变。
+   */
+  style?: EdgeStyle;
   seed: number;
 }
 
@@ -236,6 +262,7 @@ export class TerrainView {
     this.textures = {
       grass: makeGrassTexture(renderer),
       dirt: makeDirtTexture(renderer),
+      asphalt: makeAsphaltTexture(renderer),
       stone: makeStoneTexture(renderer),
       water: makeWaterTexture(renderer, this.winter),
       wild: makeWildTexture(renderer, this.winter),
@@ -471,12 +498,20 @@ export class TerrainView {
     }
   }
 
-  /** 带状土路：矩形包围盒平铺 + 多边形遮罩，转弯处不再是 90° 硬拼 */
+  /**
+   * 带状道路：矩形包围盒平铺 + 多边形遮罩，转弯处不再是 90° 硬拼。
+   *
+   * 去国风重塑后按路宽分两档贴图：
+   * - **主干道**（`PATH_MAIN_HALF_WIDTH`）铺现代沥青，路缘换冷灰混凝土；
+   * - **支路**仍是踩实的土路，保留「从柏油路拐进泥径」的园区层次。
+   * 两者材质 ID 都是 `dirt`，因此材质网格、8 邻掩码与寻路一行未改。
+   */
   private addPaths(): void {
     for (const path of WORLD_LAYOUT.paths) {
+      const main = path.halfWidth === PATH_MAIN_HALF_WIDTH;
       if (this.options.flat) {
         const g = new Graphics();
-        g.poly(flattenPoints(path.polygon)).fill(C.dirtBase);
+        g.poly(flattenPoints(path.polygon)).fill(main ? U.asphalt : C.dirtBase);
         this.base.addChild(g);
         continue;
       }
@@ -484,9 +519,10 @@ export class TerrainView {
         MATERIAL.dirt,
         MATERIAL.grass,
         path.rect,
-        this.textures.dirt,
-        DIRT_TILE,
+        main ? this.textures.asphalt : this.textures.dirt,
+        main ? ASPHALT_TILE : DIRT_TILE,
         polygonContour(path.polygon, 10),
+        main ? ASPHALT_EDGE_STYLE : undefined,
       );
     }
   }
@@ -504,6 +540,7 @@ export class TerrainView {
     texture: Texture,
     tileSize: number,
     contour: ContourPoint[],
+    style?: EdgeStyle,
   ): void {
     const tiles = new TilingSprite({ texture, width: rect.w, height: rect.h });
     tiles.position.set(rect.x, rect.y);
@@ -527,6 +564,7 @@ export class TerrainView {
         other,
         contour,
         rim: true,
+        ...(style ? { style } : {}),
         seed: 0x9e37 + rect.x * 31 + rect.y,
       });
     }
@@ -546,7 +584,8 @@ export class TerrainView {
       const g = new Graphics();
       const flat = contourPolygon(job.contour);
       const palette = this.winter ? WINTER_EDGE_STYLE : EDGE_STYLE;
-      const style = palette[job.self];
+      // 主干道自带冷灰路缘：只有贴图与路缘色换掉，材质 ID 仍是 dirt
+      const style = job.style ?? palette[job.self];
       // 冬季的「地被」是雪：对面是草的那套齿色整体换成雪色，
       // 否则雪地上会长出一圈绿草尖，整层覆雪就白铺了
       const fringe = this.winter
@@ -819,7 +858,10 @@ export class TerrainView {
       ...WORLD_LAYOUT.looseTrees,
     ];
     for (const tree of trees) {
-      const parts = this.textures.trees[tree.variant % this.textures.trees.length]!;
+      // 树种按坐标派生（银杏 / 冬青 / 羽毛枫 / 罗汉松 / 垂柳）。
+      // 布局里的 `variant` 仍是 0..3 的旧编号，直接拿它取五套色板会错位，
+      // 所以坐标优先、variant 只在这条链路之外（小地图图标等）继续使用。
+      const parts = this.textures.trees[speciesIndexAt(tree.x, tree.y) % this.textures.trees.length]!;
       this.addPropShadow(tree.x, tree.y, this.textures.shadows.tree);
       const trunk = this.treeSprite(depth, parts.trunk, tree.x, tree.y);
       // 树干与树冠同帧同锚点、同 zIndex：角色在树后时两层都在其上，

@@ -4,7 +4,8 @@ import { Graphics, Rectangle, Texture, type Application } from 'pixi.js';
 import { DECAL_KINDS } from './decals';
 import { fillEllipse } from './fx';
 import { seeded } from './seeded';
-import { TERRAIN_COLORS as C, WINTER_COLORS as W } from './terrain-palette';
+import { TERRAIN_COLORS as C, URBAN_GROUND as U, WINTER_COLORS as W } from './terrain-palette';
+import { TREE_SPECIES, TREE_SPECIES_ORDER, type TreeSpeciesPalette } from './vegetation-species';
 
 /**
  * 地形贴图工厂：全部 1:1 生成 + nearest 采样（ADR-0005）。
@@ -244,6 +245,56 @@ export function makeStoneTexture(renderer: TextureFactory): Texture {
   });
 }
 
+/**
+ * 现代沥青主干道：128px 平铺（与 `ASPHALT_TILE` 必须同值）。
+ *
+ * 工艺与土路同源（底色 + `organicBlob` 色簇 + 1px 噪点），换的是色相：
+ * - 微雨湿面用 `asphaltWet` 压出深浅，不叠半透图元，避免平铺边界露出发暗的直角；
+ * - 裂纹是 1px 折线短划，绝不横贯整块，否则会读成地砖缝；
+ * - 反光只做零星 1–3px 短条，低频出现，让「微雨」是暗示而不是镜面。
+ */
+export function makeAsphaltTexture(renderer: TextureFactory): Texture {
+  const size = 128;
+  return bake(renderer, (g) => {
+    g.rect(0, 0, size, size).fill(U.asphalt);
+    const random = seeded(0x6a1f3c57);
+    for (let i = 0; i < 26; i += 1) {
+      organicBlob(
+        g,
+        Math.floor(random() * size),
+        Math.floor(random() * size),
+        9 + Math.floor(random() * 18),
+        4 + Math.floor(random() * 9),
+        size,
+        U.asphaltWet,
+        random,
+      );
+    }
+    // 微裂纹：1px 随机游走，每段 3–7 步，走向不固定
+    for (let i = 0; i < 18; i += 1) {
+      let x = Math.floor(random() * size);
+      let y = Math.floor(random() * size);
+      const length = 3 + Math.floor(random() * 5);
+      for (let step = 0; step < length; step += 1) {
+        wrappedRect(g, x, y, 1, 1, size, U.asphaltSeam);
+        if (random() > 0.5) x += random() > 0.5 ? 1 : -1;
+        else y += random() > 0.5 ? 1 : -1;
+      }
+    }
+    // 石子与湿面反光：亮一档的点与短条，密度压到只做质感
+    for (let i = 0; i < 70; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
+      wrappedRect(g, x, y, random() > 0.86 ? 3 : 1, 1, size, U.asphaltSheen);
+    }
+    for (let i = 0; i < 8; i += 1) {
+      const x = Math.floor(random() * size);
+      const y = Math.floor(random() * size);
+      wrappedRect(g, x, y, 4 + Math.floor(random() * 6), 1, size, U.asphaltSheen);
+    }
+  });
+}
+
 /** 水面色：夏冬两套键名一致，绘制代码只换表不换写法 */
 function seasonPalette(winter: boolean): typeof C {
   return winter ? (W as unknown as typeof C) : C;
@@ -338,22 +389,33 @@ export const TREE_H = 108;
 const TREE_CENTER = TREE_W / 2;
 const TREE_FRAME = new Rectangle(0, 0, TREE_W, TREE_H);
 
-/** 四种不对称树冠轮廓：宽度随高度变化，避免规整的锥形堆叠 */
+/** 五种不对称树冠轮廓：与 `TREE_SPECIES_ORDER` 一一对应，宽度随高度变化，避免规整的锥形堆叠 */
 const TREE_PROFILES: number[][] = [
+  // 银杏：伞状丰满冠顶，上半部最宽
   [0.12, 0.2, 0.3, 0.42, 0.56, 0.7, 0.83, 0.94, 1, 0.98, 0.94, 0.91, 0.96, 1, 0.98, 0.94, 0.88, 0.81, 0.74, 0.66, 0.57, 0.46, 0.32, 0.18],
+  // 冬青球：紧凑近乎正圆，上下对称
   [0.18, 0.3, 0.44, 0.59, 0.74, 0.87, 0.96, 1, 0.96, 0.9, 0.83, 0.77, 0.82, 0.9, 0.97, 0.94, 0.88, 0.81, 0.73, 0.64, 0.54, 0.42, 0.28, 0.14],
+  // 羽毛枫：层叠云片，中段有收腰
   [0.1, 0.19, 0.3, 0.43, 0.57, 0.71, 0.84, 0.95, 0.99, 0.94, 0.87, 0.8, 0.76, 0.82, 0.91, 0.99, 0.97, 0.91, 0.83, 0.74, 0.64, 0.52, 0.36, 0.2],
+  // 罗汉松：窄顶宽底的云片层
   [0.16, 0.28, 0.42, 0.57, 0.72, 0.85, 0.96, 1, 0.97, 0.92, 0.86, 0.8, 0.76, 0.8, 0.88, 0.95, 0.98, 0.94, 0.86, 0.77, 0.67, 0.55, 0.4, 0.23],
+  // 垂柳：细顶尖、下部最宽，柳丝压到接近湖面
+  [0.1, 0.16, 0.24, 0.32, 0.4, 0.48, 0.56, 0.64, 0.72, 0.8, 0.86, 0.9, 0.94, 0.96, 0.98, 0.99, 1, 0.98, 0.94, 0.88, 0.8, 0.7, 0.56, 0.4],
 ];
 const TREE_ROW_HEIGHT = 3;
-const TREE_CANOPY_WIDTHS = [58, 62, 64, 60] as const;
+const TREE_CANOPY_WIDTHS = [58, 62, 64, 60, 56] as const;
 
 export interface TreeTextures {
   trunk: Texture;
   canopy: Texture;
 }
 
-function makeTreeParts(renderer: TextureFactory, variant: number, winter = false): TreeTextures {
+function makeTreeParts(
+  renderer: TextureFactory,
+  variant: number,
+  palette: TreeSpeciesPalette,
+  winter = false,
+): TreeTextures {
   const profile = TREE_PROFILES[variant % TREE_PROFILES.length]!;
   const canopyWidth = TREE_CANOPY_WIDTHS[variant % TREE_CANOPY_WIDTHS.length]!;
   const trunkWidth = 7 + (variant % 2) * 3;
@@ -366,18 +428,18 @@ function makeTreeParts(renderer: TextureFactory, variant: number, winter = false
     renderer,
     (g) => {
       // 树根：底部两格外扩，树才不是插在地上的一根棍
-      g.rect(trunkX - 3, TREE_H - 5, trunkWidth + 6, 5).fill(C.trunkDark);
-      g.rect(trunkX - 2, TREE_H - 6, trunkWidth + 4, 3).fill(C.trunkLight);
-      g.rect(trunkX - 1, trunkTop, trunkWidth + 2, trunkHeight).fill(C.trunkDark);
-      g.rect(trunkX, trunkTop, trunkWidth, trunkHeight).fill(C.trunkLight);
-      g.rect(trunkX, trunkTop, 2, trunkHeight).fill(C.trunkDark);
+      g.rect(trunkX - 3, TREE_H - 5, trunkWidth + 6, 5).fill(palette.trunk);
+      g.rect(trunkX - 2, TREE_H - 6, trunkWidth + 4, 3).fill(palette.trunkLight);
+      g.rect(trunkX - 1, trunkTop, trunkWidth + 2, trunkHeight).fill(palette.trunk);
+      g.rect(trunkX, trunkTop, trunkWidth, trunkHeight).fill(palette.trunkLight);
+      g.rect(trunkX, trunkTop, 2, trunkHeight).fill(palette.trunk);
       // 树皮纹理：只用同一族的两档，靠近黑的深棕会把暖色体系戳破
       for (let i = 0; i < 6; i += 1) {
         const y = trunkTop + 3 + Math.floor(random() * (trunkHeight - 6));
-        g.rect(trunkX + 2 + Math.floor(random() * (trunkWidth - 3)), y, 1, 2).fill(C.trunkDark);
+        g.rect(trunkX + 2 + Math.floor(random() * (trunkWidth - 3)), y, 1, 2).fill(palette.trunk);
       }
       // 树干与树冠的接缝：压一档暗，树冠盖上去才有「长在树上」的感觉
-      g.rect(trunkX - 1, trunkTop, trunkWidth + 2, 2).fill(C.trunkDark);
+      g.rect(trunkX - 1, trunkTop, trunkWidth + 2, 2).fill(palette.trunk);
       if (winter) {
         // 树根积雪：贴地一圈，雪才像「堆在树脚」而不是悬浮在树干上
         g.rect(trunkX - 4, TREE_H - 7, trunkWidth + 8, 3).fill(W.snowBase);
@@ -403,15 +465,15 @@ function makeTreeParts(renderer: TextureFactory, variant: number, winter = false
         rows.push({ x, y, width });
         // 叶簇外沿保留一档暗色，轮廓高低变化而不是齐刷刷叠成层层方片
         const overhang = random() > 0.76 ? 2 : 1;
-        g.rect(x - overhang, y, width + overhang * 2, TREE_ROW_HEIGHT).fill(C.canopyEdge);
-        g.rect(x, y, width, TREE_ROW_HEIGHT).fill(C.canopyMid);
+        g.rect(x - overhang, y, width + overhang * 2, TREE_ROW_HEIGHT).fill(palette.canopyEdge);
+        g.rect(x, y, width, TREE_ROW_HEIGHT).fill(palette.canopyMid);
         if (random() > 0.34) {
           const highlightX = x + 1 + Math.floor(random() * Math.max(1, width - 4));
-          g.rect(highlightX, y, 2 + Math.floor(random() * 3), 1).fill(C.canopyLight);
+          g.rect(highlightX, y, 2 + Math.floor(random() * 3), 1).fill(palette.canopyLight);
         }
         if (random() > 0.48) {
           const shadeX = x + 1 + Math.floor(random() * Math.max(1, width - 3));
-          g.rect(shadeX, y + TREE_ROW_HEIGHT - 1, 2 + Math.floor(random() * 2), 1).fill(C.canopyDeep);
+          g.rect(shadeX, y + TREE_ROW_HEIGHT - 1, 2 + Math.floor(random() * 2), 1).fill(palette.canopyDeep);
         }
 
         // 受光斑点分散成小叶簇，不沿每一行横向排成条纹
@@ -420,7 +482,7 @@ function makeTreeParts(renderer: TextureFactory, variant: number, winter = false
           const mx = x + 2 + Math.floor(random() * Math.max(1, width - 5));
           const my = y + Math.floor(random() * TREE_ROW_HEIGHT);
           const bright = random() > 0.45;
-          g.rect(mx, my, random() > 0.6 ? 3 : 1, 1).fill(bright ? C.canopyGlow : C.canopyDeep);
+          g.rect(mx, my, random() > 0.6 ? 3 : 1, 1).fill(bright ? palette.canopyGlow : palette.canopyDeep);
         }
       });
 
@@ -453,7 +515,7 @@ function makeTreeParts(renderer: TextureFactory, variant: number, winter = false
       // 树冠底缘：向下收一档暗边，和树干之间才有厚度
       const bottomY = trunkTop - TREE_ROW_HEIGHT;
       const bottomWidth = Math.round(profile[profile.length - 1]! * canopyWidth);
-      g.rect(Math.round(TREE_CENTER + centerShift - bottomWidth / 2) - 1, bottomY + 1, bottomWidth + 2, 2).fill(C.canopyDeep);
+      g.rect(Math.round(TREE_CENTER + centerShift - bottomWidth / 2) - 1, bottomY + 1, bottomWidth + 2, 2).fill(palette.canopyDeep);
     },
     { frame: TREE_FRAME },
   );
@@ -461,8 +523,12 @@ function makeTreeParts(renderer: TextureFactory, variant: number, winter = false
   return { trunk, canopy };
 }
 
+/**
+ * 五套树种贴图：索引与 `TREE_SPECIES_ORDER` 一致。
+ * 每套都是 trunk + canopy 两张同帧纹理，构造期一次烘焙，帧循环零生成。
+ */
 export function makeTreeTextures(renderer: TextureFactory, winter = false): TreeTextures[] {
-  return TREE_PROFILES.map((_, index) => makeTreeParts(renderer, index, winter));
+  return TREE_SPECIES_ORDER.map((id, index) => makeTreeParts(renderer, index, TREE_SPECIES[id], winter));
 }
 
 /* ------------------------------------------------------------------ *

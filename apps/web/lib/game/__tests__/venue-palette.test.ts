@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'bun:test';
-import { VENUE_COLORS, darken, lighten, mixColor, outlineOf, seamOf } from '../venue-palette';
+import {
+  URBAN_MATERIALS,
+  VENUE_COLORS,
+  darken,
+  lighten,
+  mixColor,
+  outlineOf,
+  seamOf,
+} from '../venue-palette';
 
 function channels(color: number): [number, number, number] {
   return [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff];
@@ -58,5 +66,39 @@ describe('场所色板', () => {
     expect(mixColor(0x112233, 0x445566, 1)).toBe(0x445566);
     expect(mixColor(0x112233, 0x445566, -5)).toBe(0x112233);
     expect(mixColor(0x112233, 0x445566, 5)).toBe(0x445566);
+  });
+});
+
+describe('现代都市材质色板', () => {
+  it('每档材质都不是纯黑纯白，且不带中性死灰', () => {
+    for (const [key, value] of Object.entries(URBAN_MATERIALS)) {
+      expect(Number.isInteger(value), `${key} 必须是整数色值`).toBe(true);
+      expect(value, `${key} 不应是纯黑`).not.toBe(0x000000);
+      expect(value, `${key} 不应是纯白`).not.toBe(0xffffff);
+      // 混凝土允许低饱和，但 r=g=b 的中性灰会把画面拉回廉价马赛克
+      const [r, g, b] = channels(value);
+      expect(Math.max(r, g, b) - Math.min(r, g, b), `${key} 不应是中性死灰`).toBeGreaterThan(0);
+    }
+  });
+
+  it('冷暖分区：企业/市政偏冷，生活/房产偏暖', () => {
+    const cold = ['workroom', 'meeting', 'cell', 'plaza', 'arch', 'shrine'] as const;
+    const warm = ['lounge', 'apartment', 'villas'] as const;
+    for (const id of cold) {
+      const [r, , b] = channels(VENUE_COLORS[id].main);
+      expect(b, `${id} 地面主色应偏冷：蓝通道高于红通道`).toBeGreaterThan(r);
+    }
+    for (const id of warm) {
+      const [r, , b] = channels(VENUE_COLORS[id].main);
+      expect(r, `${id} 地面主色应偏暖：红通道高于蓝通道`).toBeGreaterThan(b);
+    }
+  });
+
+  it('霓虹街的三原色与地面对撞但不互相吞没', () => {
+    const strip = VENUE_COLORS.neonStrip;
+    expect(strip.accent).toBe(URBAN_MATERIALS.neonPink);
+    expect(strip.glow).toBe(URBAN_MATERIALS.neonTeal);
+    // 地面极暗、点缀极亮：明度差至少 3 档，霓虹才压得住夜色
+    expect(luminance(strip.accent)).toBeGreaterThan(luminance(strip.main) * 2.5);
   });
 });

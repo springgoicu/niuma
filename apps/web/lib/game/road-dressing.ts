@@ -18,7 +18,8 @@ import {
   rectContains,
   type WorldRect,
 } from '@niuma/shared-types';
-import { TERRAIN_COLORS as C } from './terrain-palette';
+import { URBAN_GROUND as U } from './terrain-palette';
+import { seeded } from './seeded';
 
 /**
  * 路面叙事（ADR-0099）：路口铺砖、斑马线、低饱和指引箭头。
@@ -82,10 +83,23 @@ export interface RoadArrow {
   readonly dirY: number;
 }
 
+/** 主干道上的地表微细节：井盖、雨水蓖子、微雨积水、细裂纹 */
+export type RoadPatchKind = 'manhole' | 'grate' | 'puddle' | 'crack';
+
+export interface RoadPatch {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  readonly kind: RoadPatchKind;
+}
+
 export interface RoadDressingPlan {
   readonly junctions: readonly JunctionTile[];
   readonly crossings: readonly CrossingStripe[];
   readonly arrows: readonly RoadArrow[];
+  /** 主干道地表微细节：不碰撞、不进 `WORLD_LAYOUT.props`，纯渲染 */
+  readonly patches: readonly RoadPatch[];
 }
 
 /** 该点是不是「路面或广场」：路口四向探针读这一份 */
@@ -245,11 +259,80 @@ function buildArrows(): RoadArrow[] {
   return arrows;
 }
 
+/** 井盖节奏：沿主干道每 560px 一枚，第一枚离起点 220 */
+const MANHOLE_PITCH = 560;
+const MANHOLE_LEAD = 220;
+/** 积水节奏：比井盖密一倍，对应「微雨后的浅坑」 */
+const PUDDLE_PITCH = 260;
+const PUDDLE_LEAD = 130;
+
+/**
+ * 主干道地表微细节：井盖、雨水蓖子、微雨积水与细裂纹。
+ *
+ * 全部沿主干道中心线按固定节奏落点，落点必须过 `isDressable`（不踩水、不压楼），
+ * 并跳过广场（广场自己是一整片水磨石）。纯装饰、零碰撞、不进 `WORLD_LAYOUT.props`。
+ */
+function buildPatches(): RoadPatch[] {
+  const patches: RoadPatch[] = [];
+  const random = seeded(0x4b7d19e3);
+  for (const path of WORLD_LAYOUT.paths) {
+    if (path.halfWidth !== PATH_MAIN_HALF_WIDTH) continue;
+    const points = path.centerline;
+    let manholeNext = MANHOLE_LEAD;
+    let puddleNext = PUDDLE_LEAD;
+    for (let i = points.length - 1; i > 0; i -= 1) {
+      const [x0, y0] = points[i]!;
+      const [x1, y1] = points[i - 1]!;
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const length = Math.hypot(dx, dy);
+      if (length < 1) continue;
+      const dirX = dx / length;
+      const dirY = dy / length;
+      // 侧向法线：让井盖与积水不齐刷刷压在中心线上
+      const sideX = -dirY;
+      const sideY = dirX;
+      let walked = 0;
+      while (walked + manholeNext <= length) {
+        walked += manholeNext;
+        manholeNext = MANHOLE_PITCH;
+        const shift = Math.round((random() - 0.5) * 18);
+        const px = Math.round(x0 + dirX * walked + sideX * shift);
+        const py = Math.round(y0 + dirY * walked + sideY * shift);
+        if (!isDressable(px, py) || isOnPlaza(px, py)) continue;
+        patches.push({ x: px - 12, y: py - 12, w: 24, h: 24, kind: 'manhole' });
+        patches.push({ x: px + 18, y: py - 5, w: 10, h: 10, kind: 'grate' });
+      }
+      walked = 0;
+      while (walked + puddleNext <= length) {
+        walked += puddleNext;
+        puddleNext = PUDDLE_PITCH;
+        const shift = Math.round((random() - 0.5) * 26);
+        const px = Math.round(x0 + dirX * walked + sideX * shift);
+        const py = Math.round(y0 + dirY * walked + sideY * shift);
+        if (!isDressable(px, py) || isOnPlaza(px, py)) continue;
+        const w = 10 + Math.floor(random() * 9);
+        patches.push({ x: px - Math.floor(w / 2), y: py - 3, w, h: 6, kind: 'puddle' });
+        if (random() > 0.55) {
+          patches.push({ x: px + 14, y: py + 8, w: 6, h: 1, kind: 'crack' });
+          patches.push({ x: px + 19, y: py + 9, w: 4, h: 1, kind: 'crack' });
+        }
+      }
+    }
+  }
+  return patches;
+}
+
 let cached: RoadDressingPlan | null = null;
 
 /** 一次算好整份路面装饰；纯函数、可单测，不进帧循环 */
 export function roadDressingPlan(): RoadDressingPlan {
-  cached ??= { junctions: buildJunctions(), crossings: buildCrossings(), arrows: buildArrows() };
+  cached ??= {
+    junctions: buildJunctions(),
+    crossings: buildCrossings(),
+    arrows: buildArrows(),
+    patches: buildPatches(),
+  };
   return cached;
 }
 
@@ -257,34 +340,71 @@ function rect(g: Graphics, x: number, y: number, w: number, h: number, color: nu
   g.rect(x, y, w, h).fill({ color, alpha });
 }
 
+/**
+ * 主干道地表微细节：全部整数 rect 拼装，不用 arc/ellipse。
+ * 圆形井盖靠「四角各削 2px」读成圆，符合像素画 2:1 阶梯的工艺。
+ */
+function paintPatch(g: Graphics, patch: RoadPatch): void {
+  switch (patch.kind) {
+    case 'manhole': {
+      const { x, y, w, h } = patch;
+      rect(g, x, y + 2, w, h - 4, U.manholeRim);
+      rect(g, x + 2, y, w - 4, h, U.manholeRim);
+      rect(g, x + 2, y + 2, w - 4, h - 4, U.manholeCover);
+      // 十字压纹：一格宽的凹槽，井盖不会糊成一个深色圆饼
+      rect(g, x + w / 2 - 1, y + 3, 2, h - 6, U.manholeRim);
+      rect(g, x + 3, y + h / 2 - 1, w - 6, 2, U.manholeRim);
+      break;
+    }
+    case 'grate': {
+      const { x, y, w, h } = patch;
+      rect(g, x, y, w, h, U.manholeCover);
+      for (let i = 2; i < h - 1; i += 3) rect(g, x + 1, y + i, w - 2, 1, U.manholeRim);
+      break;
+    }
+    case 'puddle': {
+      const { x, y, w, h } = patch;
+      // 冷靛积水：三条横带近似椭圆，最宽的一行在中间，不压纯黑
+      rect(g, x + 2, y, w - 4, h, U.puddle, 0.55);
+      rect(g, x, y + 2, w, h - 4, U.puddle, 0.55);
+      rect(g, x + 3, y + 1, w - 6, 1, U.asphaltSheen, 0.7);
+      break;
+    }
+    case 'crack': {
+      rect(g, patch.x, patch.y, patch.w, patch.h, U.asphaltSeam, 0.85);
+      break;
+    }
+  }
+}
+
 /** 一块路口拼花：48×48 石砖 + 隔行错缝 + 没接路的那几面压 2px 路缘 */
 function paintJunction(g: Graphics, tile: JunctionTile): void {
   const left = tile.x - JUNCTION_SIZE / 2;
   const top = tile.y - JUNCTION_SIZE / 2;
-  rect(g, left, top, JUNCTION_SIZE, JUNCTION_SIZE, C.stoneAlt);
+  rect(g, left, top, JUNCTION_SIZE, JUNCTION_SIZE, U.terrazzo);
   // 错缝砖：只动明度一档，缝比砖暗
   for (let row = 0; row < JUNCTION_SIZE / BRICK_H; row += 1) {
     const y = top + row * BRICK_H;
     const offset = (row % 2) * (BRICK_W / 2);
     for (let x = left + offset; x < left + JUNCTION_SIZE; x += BRICK_W) {
-      if (x > left) rect(g, x, y, 1, BRICK_H, C.stoneSeam);
+      if (x > left) rect(g, x, y, 1, BRICK_H, U.terrazzoSeam);
     }
-    rect(g, left, y, JUNCTION_SIZE, 1, C.stoneSeam);
+    rect(g, left, y, JUNCTION_SIZE, 1, U.terrazzoSeam);
   }
   // 四向：接路的边留空，没接路的那几面压路缘石
   const r = JUNCTION_SIZE - 2;
-  if (!tile.arms[0]) rect(g, left, top, JUNCTION_SIZE, 2, C.plazaCurb);
-  if (!tile.arms[1]) rect(g, left + r, top, 2, JUNCTION_SIZE, C.plazaCurb);
-  if (!tile.arms[2]) rect(g, left, top + r, JUNCTION_SIZE, 2, C.plazaCurb);
-  if (!tile.arms[3]) rect(g, left, top, 2, JUNCTION_SIZE, C.plazaCurb);
+  if (!tile.arms[0]) rect(g, left, top, JUNCTION_SIZE, 2, U.concreteLight);
+  if (!tile.arms[1]) rect(g, left + r, top, 2, JUNCTION_SIZE, U.concreteLight);
+  if (!tile.arms[2]) rect(g, left, top + r, JUNCTION_SIZE, 2, U.concreteLight);
+  if (!tile.arms[3]) rect(g, left, top, 2, JUNCTION_SIZE, U.concreteLight);
   // 转角铆钉石块：只压在双面无路缘的外角，强化路口收边清晰度
-  if (!tile.arms[0] && !tile.arms[3]) rect(g, left + 1, top + 1, 2, 2, C.stoneSeam);
-  if (!tile.arms[0] && !tile.arms[1]) rect(g, left + r - 1, top + 1, 2, 2, C.stoneSeam);
-  if (!tile.arms[2] && !tile.arms[3]) rect(g, left + 1, top + r - 1, 2, 2, C.stoneSeam);
-  if (!tile.arms[2] && !tile.arms[1]) rect(g, left + r - 1, top + r - 1, 2, 2, C.stoneSeam);
+  if (!tile.arms[0] && !tile.arms[3]) rect(g, left + 1, top + 1, 2, 2, U.terrazzoSeam);
+  if (!tile.arms[0] && !tile.arms[1]) rect(g, left + r - 1, top + 1, 2, 2, U.terrazzoSeam);
+  if (!tile.arms[2] && !tile.arms[3]) rect(g, left + 1, top + r - 1, 2, 2, U.terrazzoSeam);
+  if (!tile.arms[2] && !tile.arms[1]) rect(g, left + r - 1, top + r - 1, 2, 2, U.terrazzoSeam);
   // 外沿 1px 深缝：路缘石才有厚度，不会糊成一块浅色斑
-  rect(g, left, top, JUNCTION_SIZE, 1, C.stoneSeam, 0.55);
-  rect(g, left, top + JUNCTION_SIZE - 1, JUNCTION_SIZE, 1, C.stoneSeam, 0.55);
+  rect(g, left, top, JUNCTION_SIZE, 1, U.terrazzoSeam, 0.55);
+  rect(g, left, top + JUNCTION_SIZE - 1, JUNCTION_SIZE, 1, U.terrazzoSeam, 0.55);
 }
 
 /** 一枚路面箭头：4 像素的三角头 + 一根短尾杆，朝向由单位方向逐像素取整 */
@@ -304,7 +424,7 @@ function paintArrow(g: Graphics, arrow: RoadArrow): void {
     Math.round(backY + ny * wing),
     Math.round(backX - nx * wing),
     Math.round(backY - ny * wing),
-  ]).fill({ color: C.dirtRut, alpha: 0.42 });
+  ]).fill({ color: U.guideArrow, alpha: 0.42 });
   // 尾杆：2px 宽的短线，让方向读起来是「一条路」而不是一个点
   const tailX = Math.round(arrow.x - arrow.dirX * 12);
   const tailY = Math.round(arrow.y - arrow.dirY * 12);
@@ -312,7 +432,7 @@ function paintArrow(g: Graphics, arrow: RoadArrow): void {
   const y = Math.min(tailY, backY);
   const w = Math.abs(backX - tailX) + 2;
   const h = Math.abs(backY - tailY) + 2;
-  rect(g, x, y, w, h, C.dirtRut, 0.24);
+  rect(g, x, y, w, h, U.guideArrow, 0.24);
 }
 
 /**
@@ -324,8 +444,10 @@ function paintArrow(g: Graphics, arrow: RoadArrow): void {
 export function paintRoadDressing(g: Graphics): void {
   const plan = roadDressingPlan();
   for (const tile of plan.junctions) paintJunction(g, tile);
+  // 井盖/积水/裂纹压在拼花之上、标线之下：先有路面细节，再压交通标线
+  for (const patch of plan.patches) paintPatch(g, patch);
   for (const stripe of plan.crossings) {
-    rect(g, stripe.x, stripe.y, stripe.w, stripe.h, C.stoneLight, 0.3);
+    rect(g, stripe.x, stripe.y, stripe.w, stripe.h, U.zebraWhite, 0.3);
   }
   for (const arrow of plan.arrows) paintArrow(g, arrow);
 }

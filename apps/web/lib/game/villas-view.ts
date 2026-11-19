@@ -25,23 +25,31 @@ const CJK_FONT =
 
 const C = {
   outline: VENUE_OUTLINE,
-  brick: 0x8f4a3c,
-  brickLight: 0xb3604c,
-  brickDark: 0x5f2f26,
-  timber: 0x7b5336,
-  timberLight: 0xa2744e,
-  timberDark: 0x4e3422,
-  clubWall: 0x2f364e,
-  clubTrim: 0xf472b6,
+  /** 清水混凝土院墙（原砖红）：courtyard 的现代 Loft 围合 */
+  brick: 0x8c939e,
+  brickLight: 0xb4b8bf,
+  brickDark: 0x5a606e,
+  /** 防腐木甲板：偏冷的中性木，不是胡桃木 */
+  timber: 0x7d6a52,
+  timberLight: 0xa08a6c,
+  timberDark: 0x54473a,
+  /** 夜店：哑光钢板外壳 + 粉紫霓虹 */
+  clubWall: 0x2f3540,
+  clubTrim: 0xf06595,
   garageWall: 0x3b4459,
-  garageTrim: 0x38bdf8,
-  stallRoof: 0xc94f3a,
-  stallStripe: 0xf6eedb,
-  plaster: 0xd9c9b0,
-  roof: 0x2f374c,
-  roofLight: 0x49536e,
+  garageTrim: 0x00f5d4,
+  /** 美式金属快餐拖车（原日式红白条纹） */
+  stallRoof: 0x6b7480,
+  stallStripe: 0xd9e6ef,
+  plaster: 0xb4b8bf,
+  roof: 0x3a4150,
+  roofLight: 0x4e5768,
   gateIron: 0x2f3439,
   gateIronLight: 0x5b636b,
+  /** 玻璃幕墙与结构钢 */
+  glass: 0x3f5a78,
+  glassLight: 0x6f96bd,
+  steel: 0x6b7480,
   plaqueFree: 0xfff6e0,
   plaqueOwned: 0x23293b,
   plaqueMine: 0x2e271d,
@@ -366,16 +374,22 @@ export class VillasView {
       return;
     }
     if (spec.kind === 'stall') {
-      // 日式红白条纹屋台顶棚 + 暖黄灯笼
+      // 美式金属快餐拖车：金属车身 + 折叠遮雨棚 + 暖黄灯泡串
       hg.rect(0, -h, w, h).fill(C.timberDark);
-      hg.rect(2, -h + 2, w - 4, h - 4).fill(C.timber);
+      hg.rect(2, -h + 2, w - 4, h - 4).fill(C.stallRoof);
+      // 车身腰线：冷白铝条，把金属车身压出一道工业分割
+      hg.rect(2, -h + Math.round(h * 0.55), w - 4, 2).fill(C.stallStripe);
+      // 折叠遮雨棚：金属灰与冷白交替，棚沿留一道折痕影
       for (let sx = 0; sx < w; sx += 16) {
         const stripeW = Math.min(16, w - sx);
         hg.rect(sx, -h - 8, stripeW, 11).fill((sx / 16) % 2 === 0 ? C.stallRoof : C.stallStripe);
+        hg.rect(sx, -h - 1, stripeW, 1).fill(C.steel);
       }
+      // 暖黄灯泡串：裸灯泡，不带纸罩
       for (const lx of [18, w / 2, w - 18]) {
-        hg.rect(lx - 4, -h + 4, 8, 10).fill(C.stallRoof);
-        hg.rect(lx - 2, -h + 6, 4, 6).fill(C.coin);
+        hg.rect(lx - 1, -h + 1, 2, 3).fill(C.goldDark);
+        hg.rect(lx - 3, -h + 4, 6, 4).fill(C.gold);
+        hg.rect(lx - 1, -h + 5, 2, 2).fill(C.coin);
       }
       if (this.winter) hg.rect(0, -h - 9, w, 3).fill(C.snow);
       return;
@@ -384,10 +398,15 @@ export class VillasView {
     const wallMain = spec.kind === 'lodge' ? C.timber : C.brick;
     hg.rect(0, -h, w, h).fill(wallDark);
     hg.rect(2, -h + 2, w - 4, h - 4).fill(wallMain);
-    for (let i = 0; i < 4 && 10 + i * 44 + 28 < w; i += 1) {
-      hg.rect(10 + i * 44, -h + 10, 28, 18).fill(C.roofLight);
-      hg.rect(10 + i * 44, -h + 10, 28, 3).fill(C.goldDark);
-    }
+    // 整面落地玻璃幕墙：lodge 是临水全景窗，courtyard 是钢构玻璃花房
+    const paneTop = -h + 10;
+    const paneH = Math.max(12, h - 20);
+    hg.rect(6, paneTop, w - 12, paneH).fill(C.glass);
+    for (let px = 6; px < w - 12; px += 26) hg.rect(px, paneTop, 1, paneH).fill(C.steel);
+    // 玻璃高光：2:1 斜向反光，两段阶梯而不是一条直线
+    hg.rect(10, paneTop + 2, 14, 1).fill(C.glassLight);
+    hg.rect(13, paneTop + 3, 10, 1).fill(C.glassLight);
+    // 平屋顶 + 女儿墙压顶：现代 Loft 的收口，不做斜檐瓦顶
     hg.rect(0, -h - 8, w, 10).fill(C.roof);
     hg.rect(0, -h - 8, w, 3).fill(C.roofLight);
     if (this.winter) hg.rect(0, -h - 9, w, 3).fill(C.snow);
