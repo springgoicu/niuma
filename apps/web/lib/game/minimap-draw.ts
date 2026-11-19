@@ -4,6 +4,7 @@ import {
   CLINIC_RECT,
   DISTRICTS,
   ISLAND,
+  VIEW_RADIUS,
   VILLA_SPECS,
   WORLD_CENTER,
   WORLD_LAYOUT,
@@ -32,8 +33,6 @@ import { MINIMAP_COLORS as M } from './terrain-palette';
 
 /** 画布边长（CSS 像素），组件与绘制共用 */
 export const MINIMAP_SIZE = 168;
-/** 画布正好覆盖 AOI 视野半径，地形与玩家共用同一套世界变换（与 shared-types 的 VIEW_RADIUS 同步） */
-const VIEW_RADIUS = 1000;
 const SCALE = MINIMAP_SIZE / (VIEW_RADIUS * 2);
 
 /** 2D 上下文：主线程是 CanvasRenderingContext2D，渲染线程是 Offscreen 版本 */

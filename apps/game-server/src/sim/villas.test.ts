@@ -103,4 +103,56 @@ describe('VillaRuntime 8 处分阶房产与 1.5x 收购', () => {
     expect(snap.villas).toHaveLength(8);
     expect(snap.villas[2]?.pending).toBe(VILLA_SPECS[2]!.income);
   });
+
+  it('事件驱动房主进出与改名只在真实变化时通知，按分递增才推送 pending', () => {
+    const { world, runtime } = setup();
+    const spec = VILLA_SPECS[0]!;
+    const owner = world.create('房主甲', DEFAULT_APPEARANCE.cow, 11, spec.gate.x, spec.gate.y)!;
+    owner.deviceId = 'dddd000011112222';
+    owner.coins = spec.price;
+    const guest = world.create('路人乙', DEFAULT_APPEARANCE.cow, 12, 0, 0)!;
+    guest.deviceId = 'eeee000011112222';
+
+    expect(runtime.ownsAny(owner.deviceId)).toBe(false);
+    expect(runtime.buy(owner, spec.id, 10_000)).toBe(true);
+    expect(runtime.ownsAny(owner.deviceId)).toBe(true);
+    expect(runtime.ownsAny(guest.deviceId)).toBe(false);
+
+    // 公共快照对所有人隐藏 mine / pending
+    const pub = runtime.publicSnapshot();
+    expect(pub.villas[0]?.owned).toBe(true);
+    expect(pub.villas[0]?.mine).toBe(false);
+    expect(pub.villas[0]?.pending).toBe(0);
+
+    // 路人进出/改名返回 false，不触发房主广播
+    expect(runtime.onOwnerLeave(guest)).toBe(false);
+    expect(runtime.onOwnerRename(guest)).toBe(false);
+
+    // 房主改名 & 离园 & 重连均精确触发
+    owner.name = '包租婆';
+    expect(runtime.onOwnerRename(owner)).toBe(true);
+    expect(runtime.record(spec.id)?.ownerName).toBe('包租婆');
+    expect(runtime.onOwnerLeave(owner)).toBe(true);
+    expect(runtime.record(spec.id)?.ownerId).toBe(0);
+
+    const rejoined = world.create('包租婆新', DEFAULT_APPEARANCE.cow, 13, 0, 0)!;
+    rejoined.deviceId = owner.deviceId;
+    expect(runtime.onOwnerJoin(rejoined)).toBe(true);
+    expect(runtime.record(spec.id)?.ownerId).toBe(rejoined.id);
+    expect(runtime.record(spec.id)?.ownerName).toBe('包租婆新');
+
+    // collectPendingUpdates：同分钟内第二次调用不会重复推送
+    const pushed: number[] = [];
+    const t1 = 10_000 + VILLA_INCOME_INTERVAL_MS;
+    runtime.collectPendingUpdates([rejoined, guest], t1, (p, packet) => {
+      pushed.push(packet.villas[0]?.pending ?? -1);
+      expect(p.id).toBe(rejoined.id);
+    });
+    expect(pushed).toEqual([spec.income]);
+
+    runtime.collectPendingUpdates([rejoined, guest], t1 + 5_000, () => {
+      pushed.push(-999);
+    });
+    expect(pushed).toEqual([spec.income]);
+  });
 });

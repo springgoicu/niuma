@@ -1,60 +1,41 @@
 # AGENTS.md
 
-面向在本仓库里写代码的 AI 助手与人类协作者的协作约定。
+面向 AI 助手与工程师的《牛马 NIOMA》工程协作规范。
 
-## 提交前必须更新版本工报
+## 开发命令与环境（npm workspaces）
 
-`apps/web/data/release-notes.json` 是首页「版本工报」的唯一事实源，随代码一起发布。
-**每次 `git commit` 之前都要追加一条记录**，让玩家知道这次发版改了什么。
+- 运行全量检查（Node ≥ 20，Windows PowerShell 5.1 请用 `; if ($?) { ... }` 串联，勿用 `&&`）：
+  - `npm run typecheck` — 四包全量类型检查
+  - `npm run test` — Vitest 全仓单元与 React 组件渲染测试（`apps/**` 与 `packages/**` 下 `*.test.{ts,tsx}`）
+  - `npm run build` — 生成像素图集并构建 Next.js 生产包（含 `.gz` 预压缩）
+  - `npm run assets` — 按 `packages/pixel-assets/src/layout.ts` 重新生成角色精灵图集与品牌图
+  - `npm run bench` — 200 机器人服务端压测（需先启动服务器）
+  - `npm run changelog:check` — 提交前校验 `apps/web/data/release-notes.json`
 
-流程：
+## 单仓结构边界
 
-1. 读本次要提交的改动（`git diff --cached`；没有暂存内容时用 `git diff`），按**玩家可感知的结果**归纳。
-2. 在 `entries` 数组最前面插入一条记录：
+- `packages/shared-types` — 前后端与 Worker 唯一同构契约（类型、OpCode、二进制编解码、世界布局、`collision.ts`）；**严禁引入 Pixi、React、DOM 或 Node 专属 API**。
+- `packages/pixel-assets` — 零原生依赖的程序化 64×64 像素图集生成器（列号只追加，不可移动 `0..33` 既有列）。
+- `apps/game-server` — Node.js `ws` + 20Hz 权威世界服务器；`apps/web` — Next.js 15 App Router + Dedicated Worker `OffscreenCanvas` 渲染客户端。
 
-```json
-{
-  "id": "2026-11-12-1",
-  "date": "2026-11-12",
-  "title": "一句话版本标题",
-  "changes": [{ "kind": "feat", "text": "一句面向玩家的改动说明" }]
-}
-```
+## 性能、零 GC 与实时同步铁律
 
-3. 一条提交对应一条记录；同一天的第 N 条把 id 序号写成 N（如 `2026-11-12-2`）。
-4. 每条记录最多 6 条改动，一条改动只说一个结果，不写实现过程。
-5. 运行 `pnpm changelog:check`，通过后再提交。版本记录与代码放进同一次提交。
+1. **热路径零 GC（Zero-GC）**：
+   - 服务端 20Hz（`TICK_MS = 50`：`runTick`、`refreshView`、`villas`、`resolveMotionInto`）与客户端 60fps 渲染循环（`tick`、`tickBubbles`、`SortLayer.update`、`LightmapLayer.render`、`villas-view`、`minimap-draw`）禁止每帧/每 Tick 新建对象、闭包、数组或拼接字符串；统一复用 SoA `TypedArray`、静态缓冲区与原始字段脏检查。
+2. **变更驱动同步（Event-Driven Sync）**：
+   - 状态广播严禁无差别每秒向全员轮询重发未变数据（如房产收益/在线态只在真实变更或在线房主待领收益跨分钟时定向下发，旁观者共享同一份预编码快照）。
+3. **时间口径唯一**：
+   - 服务端玩法与冷却一律用 `clock.now()`；客户端倒计时与跨日判定一律用 `serverNow()` / `serverDateKey()`，禁止裸用 `Date.now()` / `new Date()`（仅面板返回键守卫、重连退避与日志除外）。
+4. **渲染与视觉硬约束**：
+   - 全局光源上限 `MAX_LIGHTS = 96`（`apps/web/lib/game/lighting/light-registry.ts`），常驻场所光保持预算区间；
+   - 角色/建筑像素绘法严禁纯黑 `0x000000` 与中性死灰，描边统一走有色深靛（`VENUE_OUTLINE = 0x2a3142`）；参考内置 Skill `.codebuddy/skills/pixel-venue-polish/SKILL.md`。
 
-纯内部重构、依赖升级、文档整理合并成一条「内部整理」即可，不必逐文件罗列。
+## 协议与落盘边界
 
-### 内容红线（只做记录过滤）
+- **二进制协议**：OpCode 只追加不复用，废弃号永久保留作墓碑；新增 `C2S_*` 上行包必须在 `apps/game-server/src/net/guard.ts` 注册并保证 `TABLE_SIZE` 覆盖最高编号。
+- **共享运行态落盘**：`world-state.json`（v5）仅落盘 `boss`、8 处房产 `villas`、`wallets` 与 `profiles`（点赞）；会话、聊天、考勤、外观及瞬态玩法仅存进程内存与浏览器 `localStorage`。
 
-只写玩家打开网页或进入园区后能感知的变化。以下内容一律不写：
+## 文档与提交流程
 
-- 文件名、类名、函数名、目录路径
-- 内网 / 公网 IP、域名、URL、端口
-- 账号、邮箱、手机号、身份证号等个人信息
-- 密钥、token、密码、连接串与任何环境变量值
-- 服务器拓扑、部署路径、运维细节
-
-### 字段约定
-
-| 字段 | 规则 |
-|---|---|
-| `id` | `YYYY-MM-DD-N`，日期 + 当日序号，全文件唯一 |
-| `date` | 真实日历日期 `YYYY-MM-DD`，必须与 id 的日期前缀一致 |
-| `title` | 一句话版本标题，≤ 60 字，单行 |
-| `changes[].kind` | `feat` / `fix` / `perf` / `ui` / `docs` / `chore` |
-| `changes[].text` | 一句面向玩家的中文，≤ 80 字，单行 |
-
-`entries` 按时间倒序，最新在前；最多保留 50 条，超出时先归档更早的记录。
-
-## 其他约定
-
-- 遵守 README 的架构约束，尤其是**落盘范围**：只有园区共享运行态（老板血量与回满点、擂台局号与上局名次、
-  匿名设备的赞与名次）写进 `world-state.json`（ADR-0081）；会话、聊天、考勤、外观仍只在进程内存与浏览器
-  `localStorage` 里。加新状态前先确认它属于「共享运行态」还是「本人会话」。
-- **时间口径以服务端为准**：服务端用 `clock.now()`，客户端用 `serverNow()` / `serverDateKey()`（服务器时钟 + 园区时区）。
-  不要用 `Date.now()` / `new Date()` 判定倒计时、「今天」、跨日回满、签到与节日；`local-date.ts` 只留给纯本机交互
-  （面板返回键守卫、重连退避、日志）这类不影响玩法与口径的场合。
-- 不修改历史 ADR；新的关键决策按 `docs/adr/` 现有格式新增。
+- 当前唯一活跃主规划：[`docs/nioma-pixel-overhaul-masterplan.md`](docs/nioma-pixel-overhaul-masterplan.md)；不修改历史 `docs/adr/*`，新重大决策按现有格式新增 ADR。
+- 仅在准备 `git commit` 时，按**玩家可感知结果**（单行中文 ≤ 80 字，严禁出现文件名/函数名/IP/URL/密钥等内部信息）向 `apps/web/data/release-notes.json` 的 `entries` 头部追加一条更新，并通过 `npm run changelog:check` 后同次提交；日常迭代调试不频繁改写该文件。

@@ -239,8 +239,11 @@ export function startGameServer(config: ServerConfig) {
   const moderation = loadModerationFilter(config.moderation.lexiconPath);
   // 频道历史只活在进程内（ADR-0039）：跟着世界一起启动、一起丢弃
   const chatHistory = new ChatHistory(config.chatHistory.capacity, config.chatHistory.ttlMs);
-  /** 街头互动发币按人按目标的独立冷却，避免同目标连刷 */
-  const streetCooldowns = new Map<string, number>();
+  /** 街头互动发币按人按目标的独立冷却，整数打包编码避免字符串拼接 GC */
+  const streetCooldowns = new Map<number, number>();
+  const COOLDOWN_STRIDE = 1_048_576;
+  const COOLDOWN_KIND_STRIDE = COOLDOWN_STRIDE * COOLDOWN_STRIDE;
+  const COOLDOWN_KIND = { pvp: 1, npckd: 2, wave: 3 } as const;
   let nextWsId = 1;
   let tickCount = 0;
   let lastSampleAt = 0;
@@ -353,10 +356,15 @@ export function startGameServer(config: ServerConfig) {
     setDynamicSolids(villas.lockedSolids());
   }
 
-  function broadcastVilla(): void {
+  function broadcastVilla(now = clock.now()): void {
+    const publicPacket = encodeVillaState(villas.publicSnapshot());
     for (const player of world.players.values()) {
       if (player.wsId === 0) continue;
-      transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, clock.now())));
+      if (villas.ownsAny(player.deviceId)) {
+        transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, now)));
+      } else {
+        transport.send(player.wsId, publicPacket);
+      }
     }
   }
 
@@ -368,13 +376,13 @@ export function startGameServer(config: ServerConfig) {
 
   /** 街头互动发币按人按目标的冷却检查（到点即放行并续写冷却戳） */
   function takeStreetCooldown(
-    kind: string,
+    kind: keyof typeof COOLDOWN_KIND,
     actorId: number,
     targetId: number,
     cooldownMs: number,
     now: number,
   ): boolean {
-    const key = `${kind}:${actorId}:${targetId}`;
+    const key = COOLDOWN_KIND[kind] * COOLDOWN_KIND_STRIDE + actorId * COOLDOWN_STRIDE + targetId;
     const until = streetCooldowns.get(key) ?? 0;
     if (now < until) return false;
     streetCooldowns.set(key, now + cooldownMs);
@@ -382,10 +390,10 @@ export function startGameServer(config: ServerConfig) {
   }
 
   function clearPlayerCooldowns(playerId: number): void {
-    const asActor = `:${playerId}:`;
-    const asTarget = `:${playerId}`;
     for (const key of streetCooldowns.keys()) {
-      if (key.includes(asActor) || key.endsWith(asTarget)) streetCooldowns.delete(key);
+      const targetId = key % COOLDOWN_STRIDE;
+      const actorId = Math.floor(key / COOLDOWN_STRIDE) % COOLDOWN_STRIDE;
+      if (actorId === playerId || targetId === playerId) streetCooldowns.delete(key);
     }
   }
 
@@ -586,7 +594,9 @@ export function startGameServer(config: ServerConfig) {
   function broadcastSeats(changes: readonly SeatStateEntry[]): void {
     if (changes.length === 0) return;
     const packet = encodeSeatState(changes);
-    for (const other of world.players.values()) transport.send(other.wsId, packet);
+    for (const other of world.players.values()) {
+      if (other.wsId !== 0) transport.send(other.wsId, packet);
+    }
   }
 
   /**
@@ -681,9 +691,13 @@ export function startGameServer(config: ServerConfig) {
     // 悬赏状态与当前事件横幅的入场补发：晚进来的人也要看到今天的进度与正在进行的活动
     quests.push(player, now);
     worldEvents.sendTo(player, now);
-    // 热区建筑入场补发：房产牌匾与锁门动态碰撞
-    transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, now)));
-    applyVillaLocks();
+    // 热区建筑入场补发：房产牌匾与在线灯变更推送（非房主仅收一条）
+    if (villas.onOwnerJoin(player)) {
+      broadcastVilla(now);
+      state?.markDirty();
+    } else {
+      transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, now)));
+    }
     // 入场补发老板当前血量：新玩家不必等到下一次有人出招才知道血条位置。
     // 这里不调 syncDay，跨日重置只由 Tick 广播，避免入场者把 reset 事件吞掉。
     ws.send(encodeBoss({ hp: world.boss.hp, attackerId: 0, died: false, reset: false }));
@@ -701,7 +715,7 @@ export function startGameServer(config: ServerConfig) {
       now,
       true,
     );
-    refreshView(player, world, grid, transport);
+    refreshView(player, world, grid, transport, now);
     // 必须在 refreshView 之后：这时双方的 known 才补齐，播报才发得到「看得见他的人」
     announceEnter(player, world, transport);
     console.log(`[game] + ${player.name}#${player.id} online=${world.humans}`);
@@ -950,6 +964,10 @@ export function startGameServer(config: ServerConfig) {
         player.name = result.name;
         // 名字进了入场资料的不变部分：不失效缓存，之后进入视野的人会看到旧名字
         player.markSpawnDirty();
+        if (villas.onOwnerRename(player)) {
+          broadcastVilla(now);
+          state?.markDirty();
+        }
       }
       // 即便没变化也回给自己：客户端据此把本地乐观值对齐成服务端裁决后的名字
       const packet = encodeNameBroadcast(player.id, player.name);
@@ -1257,7 +1275,7 @@ export function startGameServer(config: ServerConfig) {
           return;
         }
         if (villas.collect(player, request.villa, now) > 0) {
-          broadcastVilla();
+          transport.send(player.wsId, encodeVillaState(villas.snapshotFor(player, now)));
           state?.markDirty();
         } else {
           sendInteractReject(player, INTERACT_ACTION.VillaCollect, INTERACT_REASON.NoIncome);
@@ -1337,7 +1355,7 @@ export function startGameServer(config: ServerConfig) {
     const releasedWindow = apartment.leave(player.id);
     player.roomId = 0;
     if (releasedWindow) broadcastApartmentPeek();
-    broadcastVilla();
+    if (villas.onOwnerLeave(player)) broadcastVilla(clock.now());
     // 钱包记录离开时刻，容量淘汰按它排序；同时把最后一次变动带进落盘窗口
     wallets.touch(player.wallet, clock.now());
     state?.markDirty();
@@ -1568,13 +1586,12 @@ export function startGameServer(config: ServerConfig) {
       state?.markDirty();
     }
 
-    // 房产：房主改名 / 上线要让牌匾跟着换字；每秒对齐一次可收币数
-    if (villas.refreshOwners(world.players.values())) {
-      broadcastVilla();
-      state?.markDirty();
-    } else if (now - lastVillaBroadcastAt >= 1000) {
+    // 房产收益：仅当在线房主待领币跨越整分钟发生变化时定向推送给房主本人
+    if (now - lastVillaBroadcastAt >= 1000) {
       lastVillaBroadcastAt = now;
-      broadcastVilla();
+      villas.collectPendingUpdates(world.players.values(), now, (owner, packet) => {
+        transport.send(owner.wsId, encodeVillaState(packet));
+      });
     }
 
     // 钱包容量淘汰：每分钟一次，在线与托管中的记录不淘汰
@@ -1617,7 +1634,7 @@ export function startGameServer(config: ServerConfig) {
     // Buff 到期清理（ADR-0085）：条目上限 5，单遍扫描；只有真的过期才重算乘子
     for (const player of world.players.values()) pruneBuffs(player, now);
 
-    const result = runTick(world, grid, transport, tickCount);
+    const result = runTick(world, grid, transport, tickCount, now);
     tickSampler.push(result.duration);
 
     // 共享运行态落盘（ADR-0081）：只在指纹变化时打脏标记，

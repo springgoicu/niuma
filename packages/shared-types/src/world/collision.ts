@@ -37,6 +37,7 @@ const GRID_COUNT = Math.ceil(WORLD_WIDTH / GRID_SIZE);
 
 type Blocker =
   | { readonly kind: 'circle'; readonly x: number; readonly y: number; readonly r: number }
+  | { readonly kind: 'rect'; readonly minX: number; readonly minY: number; readonly maxX: number; readonly maxY: number }
   | {
       readonly kind: 'segment';
       readonly x1: number;
@@ -75,18 +76,16 @@ for (const planter of WORLD_LAYOUT.planters) {
 for (const solid of WORLD_LAYOUT.solids) {
   const { x, y, w, h } = solid;
   blockers.push({
-    kind: 'polygon',
-    points: [
-      [x, y],
-      [x + w, y],
-      [x + w, y + h],
-      [x, y + h],
-    ],
+    kind: 'rect',
+    minX: x,
+    minY: y,
+    maxX: x + w,
+    maxY: y + h,
   });
 }
 // 三湖不再注册为碰撞体：全岛水域可涉水（ADR-0030 / ADR-0047）。海仍由 isOnLand 兜底。
 
-const cells = new Map<number, number[]>();
+const tempCells = new Map<number, number[]>();
 
 function cellKey(cx: number, cy: number): number {
   return cy * GRID_COUNT + cx;
@@ -100,9 +99,9 @@ function addToCells(index: number, bounds: WorldRect): void {
   for (let cy = minCy; cy <= maxCy; cy += 1) {
     for (let cx = minCx; cx <= maxCx; cx += 1) {
       const key = cellKey(cx, cy);
-      const list = cells.get(key);
+      const list = tempCells.get(key);
       if (list) list.push(index);
-      else cells.set(key, [index]);
+      else tempCells.set(key, [index]);
     }
   }
 }
@@ -110,6 +109,14 @@ function addToCells(index: number, bounds: WorldRect): void {
 function blockerBounds(blocker: Blocker): WorldRect {
   if (blocker.kind === 'circle') {
     return { x: blocker.x - blocker.r, y: blocker.y - blocker.r, w: blocker.r * 2, h: blocker.r * 2 };
+  }
+  if (blocker.kind === 'rect') {
+    return {
+      x: blocker.minX,
+      y: blocker.minY,
+      w: blocker.maxX - blocker.minX,
+      h: blocker.maxY - blocker.minY,
+    };
   }
   if (blocker.kind === 'polygon') return polygonBounds(blocker.points);
   const minX = Math.min(blocker.x1, blocker.x2) - blocker.r;
@@ -120,6 +127,13 @@ function blockerBounds(blocker: Blocker): WorldRect {
 }
 
 blockers.forEach((blocker, index) => addToCells(index, blockerBounds(blocker)));
+
+/** 扁平定长桶表：把 Map<cellKey, number[]> 压成 O(1) 下标访问 + Int32Array，消灭热路径哈希查找 */
+const cellGrid: Array<Int32Array | undefined> = new Array(GRID_COUNT * GRID_COUNT);
+for (const [key, list] of tempCells) {
+  cellGrid[key] = Int32Array.from(list);
+}
+tempCells.clear();
 
 const seen = new Int32Array(blockers.length);
 const candidates: number[] = [];
@@ -138,10 +152,12 @@ function gather(x: number, y: number, radius: number): readonly number[] {
   const minCy = Math.max(0, Math.floor((y - radius) / GRID_SIZE));
   const maxCy = Math.min(GRID_COUNT - 1, Math.floor((y + radius) / GRID_SIZE));
   for (let cy = minCy; cy <= maxCy; cy += 1) {
+    const rowOffset = cy * GRID_COUNT;
     for (let cx = minCx; cx <= maxCx; cx += 1) {
-      const list = cells.get(cellKey(cx, cy));
+      const list = cellGrid[rowOffset + cx];
       if (!list) continue;
-      for (const index of list) {
+      for (let i = 0; i < list.length; i += 1) {
+        const index = list[i]!;
         if (seen[index] === stamp) continue;
         seen[index] = stamp;
         candidates.push(index);
@@ -152,6 +168,16 @@ function gather(x: number, y: number, radius: number): readonly number[] {
 }
 
 function overlaps(blocker: Blocker, x: number, y: number, radius: number): boolean {
+  if (blocker.kind === 'rect') {
+    if (radius <= 0) {
+      return x >= blocker.minX && x < blocker.maxX && y >= blocker.minY && y < blocker.maxY;
+    }
+    const cx = x < blocker.minX ? blocker.minX : x > blocker.maxX ? blocker.maxX : x;
+    const cy = y < blocker.minY ? blocker.minY : y > blocker.maxY ? blocker.maxY : y;
+    const dx = x - cx;
+    const dy = y - cy;
+    return dx * dx + dy * dy < radius * radius;
+  }
   if (blocker.kind === 'circle') {
     const reach = blocker.r + radius;
     const dx = x - blocker.x;
@@ -170,21 +196,18 @@ function overlaps(blocker: Blocker, x: number, y: number, radius: number): boole
  * 动态障碍：豪宅锁门时的门栅。
  *
  * 静态布局是模块级常量，锁门却是运行期状态；把门栅塞进静态索引就得重建格子，
- * 而动态障碍至多两条（每栋一处），单独扫一遍比重建索引便宜得多。
- * 服务端裁决与客户端预测都在收到 `S2C_VILLA_STATE` 时调 `setDynamicSolids`，
- * 两边读到的是同一组矩形，预测不会与权威打架。
+ * 而动态障碍至多几道，单独 O(1) AABB 扫一遍比重建索引便宜得多。
  */
 let dynamicBlockers: Blocker[] = [];
 
 export function setDynamicSolids(rects: ReadonlyArray<WorldRect>): void {
+  if (rects.length === 0 && dynamicBlockers.length === 0) return;
   dynamicBlockers = rects.map((rect) => ({
-    kind: 'polygon' as const,
-    points: [
-      [rect.x, rect.y],
-      [rect.x + rect.w, rect.y],
-      [rect.x + rect.w, rect.y + rect.h],
-      [rect.x, rect.y + rect.h],
-    ] as Point[],
+    kind: 'rect' as const,
+    minX: rect.x,
+    minY: rect.y,
+    maxX: rect.x + rect.w,
+    maxY: rect.y + rect.h,
   }));
 }
 

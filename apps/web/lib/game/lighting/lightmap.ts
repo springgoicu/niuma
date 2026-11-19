@@ -69,6 +69,14 @@ export class LightmapLayer {
   private worldH = 0;
   /** RT 像素 / 世界纹素 */
   private rtPerWorld = 1;
+  /** 复用清屏参数：避免夜间每帧分配 rgba 4 元组与 render 选项对象 */
+  private readonly clearColor: [number, number, number, number] = [1, 1, 1, 1];
+  private readonly renderOptions: {
+    container: Container;
+    target: RenderTexture;
+    clear: true;
+    clearColor: [number, number, number, number];
+  };
 
   /** 调试用：最近一帧提交的光源数 */
   visibleCount = 0;
@@ -90,6 +98,12 @@ export class LightmapLayer {
       addressMode: 'clamp-to-edge',
     });
     this.lightTexture = bakeLightTexture(renderer);
+    this.renderOptions = {
+      container: this.lightRoot,
+      target: this.rt,
+      clear: true,
+      clearColor: this.clearColor,
+    };
 
     this.ambient = new Sprite(this.rt);
     this.ambient.anchor.set(0, 0);
@@ -219,18 +233,10 @@ export class LightmapLayer {
     this.container.visible = true;
 
     const ambient = ambientMultiplierOf(tone);
-    this.renderer.render({
-      container: this.lightRoot,
-      target: this.rt,
-      clear: true,
-      // 清屏必须不透明：Multiply 才是纯乘算，不会把主场景 alpha 混进来
-      clearColor: [
-        ((ambient >> 16) & 0xff) / 255,
-        ((ambient >> 8) & 0xff) / 255,
-        (ambient & 0xff) / 255,
-        1,
-      ],
-    });
+    this.clearColor[0] = ((ambient >> 16) & 0xff) / 255;
+    this.clearColor[1] = ((ambient >> 8) & 0xff) / 255;
+    this.clearColor[2] = (ambient & 0xff) / 255;
+    this.renderer.render(this.renderOptions);
   }
 
   private sampleTone(nowMs: number): LightTone {

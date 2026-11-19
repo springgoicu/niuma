@@ -26,7 +26,8 @@
 - **彻底摘除赌博与内卷数值**：全量删除 `dice-hall` / `dice-ledger` / `ring`（含服务端 `sim/` 与客户端 14 个 UI/渲染/测试文件），废除 `atkSpeedLv` / `workEffLv` / `critLv` / `armorLv` 属性升级（`STAT_SKUS = []`，服务端 `upgradeStat()` 恒返 `false` 且拒绝 `SHOP_KIND.Stat`，发泄冷却锁死 `600ms` 基础 / `420ms` 冰美式，老板固定 `15%` 暴击）；`world-state.json` 升级至 **`WORLD_STATE_VERSION = 5`**（剔除 `ring`/`dice` 字段，无缝兼容读取 v1–v4 旧档，支持最多 16 处房产）。
 - **上线纯粹街头与 NPC 经济闭环**：实装 `ECONOMY_REWARD` 与 `WALLET_REASON.NpcReward (33)` / `WALLET_REASON.VillaBuyout (32)`——PVP 击倒 `+20 币`（同目标 60s 冷却）、击倒普通 NPC 同事 `+30 币`（45s 冷却 + AOI 惊呼聊天泡）、对 NPC 按 `Q` 挥手打招呼 `+15 币`（60s 冷却 + 双向挥手动作 + 问候泡，`director.reactToWave`）、踢老板 `4..8` 币（击杀 `500` 币）。
 - **全图 8 处分阶房产与 1.5× 溢价竞购上线**：`VILLA_SPECS` 扩展为 `id: 0..7`（覆盖 `T1`–`T4`、含西北「霓虹娱乐街」3 处新地标与东北半岛「沉思畔茶院」），服务端 `VillaRuntime.buyResult` 支持无主原价购买与被他人占用时 **1.5× 溢价强买**（自动向在线/离线原房主退还 **1.2× 本金 + 未结算摇钱树收益**并全服大喇叭播报）；配套东/东北新支路让全部 **18 处** `NAV_TARGETS` 路网与 A* 100% 可达。
-- **零 GC 渲染、小地图与 NiomaOS 95 UI**：`villas-view.ts` 采用 6 原始字段差分缓存（Zero-GC）与深靛描边 `VENUE_OUTLINE = 0x2a3142`（零 `#000000`），提供 5 套差异化建筑外观（`courtyard / club / garage / stall / lodge`）；`minimap-draw.ts` 与 `WorldSnapshot.villas` 实现小地图 3 态 5×5 像素房屋Pin（零每帧分配）；`venue-palette.ts` 与 `venue-lights.ts` 重塑西北霓虹街区并保持 **`venueLights().length === 20`**（预算严格控制在 `MAX_LIGHTS = 96` 内）；`VillaDialog.tsx`、`CoinShopDialog.tsx`（2 页签）与 `globals.css`（`.pixel-panel / .pixel-btn / .pixel-tag`）完成 NiomaOS 95 升级；`Hero.tsx` 修正为 `'1000 px aoi'`。
+- **零 GC 渲染、小地图与 NiomaOS 95 UI**：`villas-view.ts` 采用 6 原始字段差分缓存（Zero-GC）与深靛描边 `VENUE_OUTLINE = 0x2a3142`（零 `#000000`），提供 5 套差异化建筑外观（`courtyard / club / garage / stall / lodge`）；`minimap-draw.ts`（共用共享 `VIEW_RADIUS`）与 `WorldSnapshot.villas` 实现小地图 3 态 5×5 像素房屋 Pin（零每帧分配）；`venue-palette.ts` 与 `venue-lights.ts` 重塑西北霓虹街区并保持 **`venueLights().length === 20`**（预算严格控制在 `MAX_LIGHTS = 96` 内）；`VillaDialog.tsx`、`CoinShopDialog.tsx`（2 页签）与 `globals.css`（`.pixel-panel / .pixel-btn / .pixel-tag`）完成 NiomaOS 95 升级；`Hero.tsx` 修正为 `'1000 px aoi'`。
+- **引擎、碰撞与工程全链路性能优化**：`collision.ts` 将静/动态矩形碰撞从 4 顶点多边形降为 O(1) AABB（`kind: 'rect'`）并用 4096 槽扁平 `Int32Array` 网格替换 `Map` 查找；`VillaRuntime` + `server.ts` 将房产同步改造为**事件驱动 + 在线房主按分增量推送 + 旁观者共享 `publicSnapshot()`**（消灭 1Hz 全员重发与 20Hz 全扫描），街头防刷冷却改用零字符串整数打包键，`refreshView` / `runTick` 统一传服务端 `clock.now()`；客户端 `LightmapLayer.render()` 与 `renderer.drawGoldAura()` 实现每帧零临时数组/选项对象分配；`vitest.config.ts` 统一纳管全部 `.test.tsx` React 组件测试，精简 `AGENTS.md` 并清理冗余历史计划/日志/缓存文件与孤儿组件。
 
 ### 1.2 仓库不可违背的 6 条架构红线
 1. **权威在服与落盘边界（ADR-0081 / ADR-0104）**：
@@ -261,7 +262,7 @@ flowchart LR
 
 ### 7.3 客户端零 GC 与硬件级性能铁律
 - **Dedicated Worker + `OffscreenCanvas` + `SharedArrayBuffer`**：React 主线程绝不参与帧循环；小地图与 HUD 通过低频 `worldSnapshot()` 快照通信。
-- **Zero-GC 渲染缓存纪律**：禁止在 60FPS `tick` 或 1Hz 广播回调中无差别重建 `Text`、对象字面量或字符串；沿用 `villas-view.ts` 的原始字段脏检查模式（`lastOwned / lastMine / lastLocked / lastOnline / lastOwnerName / lastPending`）与 `minimap-draw.ts` 的无分配绘制。
+- **Zero-GC 渲染缓存纪律**：禁止在 60FPS `tick` 或低频广播回调中无差别重建 `Text`、对象字面量或字符串；沿用 `villas-view.ts` 的原始字段脏检查模式、`LightmapLayer.render()` 预分配 `clearColor` / `renderOptions`、`drawGoldAura()` 空集短路及 `minimap-draw.ts` 的无分配绘制；服务端碰撞（`collision.ts`）采用扁平 `Int32Array` 桶与 O(1) `rect` AABB，房产广播采用 `publicSnapshot()` + `collectPendingUpdates` 事件驱动推送。
 - **动态画质与光源硬预算 `MAX_LIGHTS = 96`（`light-registry.ts:45`）**：静态建筑、夜市霓虹与 8 处房产招牌灯当前合计固定 **`20` 盏常驻场所光**（满足 `lighting.test.ts` 的 `18..22` 区间），为二期动态警灯、车灯留出充足合批余量。
 
 ---
@@ -297,7 +298,7 @@ flowchart LR
 ### 9.2 分阶段实施路线图（进度实时状态）
 | 阶段 | 状态 | 核心工作内容 | 验收标准 |
 |---|---|---|---|
-| **Phase 0–1 基础地基** | **✅ 已完成** | 删除骰桌与擂台全部前后端/UI/测试；废除四维属性升级与玩法加成；`world-state` 升至 v5；上线街头 PVP + NPC（`Q` 挥手/`E` 击倒）赚金；8 处分阶房产与 `1.5×` 溢价强买（`VillaTrade` + 大喇叭 + 离线退款）；Zero-GC 牌匾与小地图 Houses Pin；NE 沉思半岛与 SE 摸鱼湖支路使 18 导览点全通；Warm NiomaOS 95 `VillaDialog` 与 `Hero` `1000 px aoi` | `npm run typecheck`、`npm run test`、`npm run build` 全量通过 |
+| **Phase 0–1 基础与性能地基** | **✅ 已完成** | 删除骰桌与擂台全部前后端/UI/测试及孤儿组件；废除四维属性升级与玩法加成；`world-state` 升至 v5；上线街头 PVP + NPC（`Q`/`E`）赚金（零字符串冷却键）；8 处房产与 `1.5×` 溢价强买（事件驱动增量同步 + 大喇叭 + 离线退款）；`collision.ts` 扁平网格与 AABB 优化；Zero-GC 牌匾、光图与小地图 Houses Pin；NE/SE 支路使 18 导览点全通；Warm NiomaOS 95 `VillaDialog` 与 `Hero` `1000 px aoi`；精简 `AGENTS.md` 与工程测试全域纳管 `.test.tsx` | `npm run typecheck`、`npm run test`、`npm run build` 全量通过 |
 | **Phase 2 二期资产与协议扩表** | 待执行 | `shared-types` 扩 `0x60–0x6c` 与 `guard.ts` `TABLE_SIZE = 0x70`；`pixel-assets` 补齐 `34..52` 列、NPC 配件、载具与宠物贴图 | `npm run assets`、`proportions.test.ts`、`protocol.test.ts` 全通 |
 | **Phase 3 二期 GTA 状态机与特种 NPC** | 待执行 | 实现 `wanted.ts`、`vehicles.ts`、`ghost.ts`、`fishing.ts`、`turf.ts`、`gigs.ts`、扩展特种 NPC、房产标语/三档换肤；`view.ts` 入场全态同步与 `ExtraState` SoA TypedArray | 状态机单测全通；`BENCH_BOTS=60 BENCH_MS=12000 npm run bench` 性能健康 |
 | **Phase 4 全站 UI 终极打磨与发布** | 待执行 | 首页可交互试玩台、`WantedStarsHUD.tsx`、三态 `ActionBar.tsx`、`?crt=1` 与 8-bit 音效；`browser` 双端实机验收；更新 `release-notes.json` | `npm run build`、`npm run changelog:check`、全仓 `npm run test` 100% 通过 |

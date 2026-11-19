@@ -32,3 +32,9 @@ apps/game-server/data/
 # Lumio 发布工程：只保留在本机，不入库
 apps/lumio/
 apps/web/lib/host.ts
+
+# 本地 IDE 配置与调试日志
+.idea/
+*.iml
+*.log
+dev.log

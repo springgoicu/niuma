@@ -46,13 +46,19 @@ function pushSync(player: Player, id: number, x: number, y: number, state: numbe
  * 另一个关键点：`dirty` 只在三元组变化时由 `applyMove` 置位。坐着不动的玩家
  * 一个条目都不产生，整个 Tick 只多一次布尔判断。
  */
-export function runTick(world: World, grid: SpatialGrid, transport: Transport, tick: number): TickResult {
+export function runTick(
+  world: World,
+  grid: SpatialGrid,
+  transport: Transport,
+  tick: number,
+  now = Date.now(),
+): TickResult {
   const started = performance.now();
   let packets = 0;
   let entries = 0;
 
   for (const player of world.players.values()) {
-    if (player.needsViewRefresh) refreshView(player, world, grid, transport);
+    if (player.needsViewRefresh) refreshView(player, world, grid, transport, now);
     player.syncCount = 0;
   }
 

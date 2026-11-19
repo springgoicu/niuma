@@ -59,8 +59,23 @@ export type VillaBuyOutcome =
  */
 export class VillaRuntime {
   private readonly records = new Map<number, VillaRecord>();
+  private readonly onlineScratch = new Map<string, Player>();
+  private readonly ownerDevices = new Set<string>();
+  private readonly lastPendingByDevice = new Map<string, number>();
 
   constructor(private readonly ports: VillaPorts) {}
+
+  private rebuildOwnerDevices(): void {
+    this.ownerDevices.clear();
+    for (const record of this.records.values()) {
+      if (record.ownerDeviceId) this.ownerDevices.add(record.ownerDeviceId);
+    }
+  }
+
+  /** 是否名下拥有至少一处房产（O(1) Set lookup） */
+  ownsAny(deviceId: string): boolean {
+    return deviceId !== '' && this.ownerDevices.has(deviceId);
+  }
 
   record(id: number): VillaRecord | undefined {
     return this.records.get(id);
@@ -111,6 +126,9 @@ export class VillaRuntime {
       locked: false,
       lastCollectAt: now,
     });
+    if (prevOwnerDeviceId) this.lastPendingByDevice.delete(prevOwnerDeviceId);
+    this.lastPendingByDevice.delete(player.deviceId);
+    this.rebuildOwnerDevices();
     return { ok: true, spec, price, buyout, refund, prevOwnerName, prevOwnerDeviceId };
   }
 
@@ -136,6 +154,7 @@ export class VillaRuntime {
     const pending = villaPendingIncome(record.lastCollectAt, now, spec.income);
     if (pending <= 0) return 0;
     record.lastCollectAt = now;
+    this.lastPendingByDevice.delete(player.deviceId);
     this.ports.grant(player, pending, WALLET_REASON.VillaIncome);
     return pending;
   }
@@ -150,6 +169,34 @@ export class VillaRuntime {
       if (solid) out.push({ x: solid.x, y: solid.y, w: solid.w, h: solid.h });
     }
     return out;
+  }
+
+  /** 公共观光快照：所有旁观者共享同一份 `mine=false / pending=0` 结果，一次编码广播多人 */
+  publicSnapshot(): VillaStatePacket {
+    const villas: VillaPacket[] = VILLA_SPECS.map((spec) => {
+      const record = this.records.get(spec.id);
+      if (!record) {
+        return {
+          id: spec.id,
+          ownerId: 0,
+          ownerName: '',
+          locked: false,
+          owned: false,
+          mine: false,
+          pending: 0,
+        };
+      }
+      return {
+        id: spec.id,
+        ownerId: record.ownerId,
+        ownerName: record.ownerName,
+        locked: record.locked,
+        owned: true,
+        mine: false,
+        pending: 0,
+      };
+    });
+    return { villas };
   }
 
   /** 下行快照：房主自己看得到可收币数，其他人读到 0 */
@@ -189,33 +236,104 @@ export class VillaRuntime {
 
   restore(state: VillaSaveState | undefined, now = 0): void {
     this.records.clear();
-    if (!state) return;
-    for (const record of state.villas) {
-      if (!record || !Number.isFinite(record.id)) continue;
-      if (!VILLA_SPECS.some((spec) => spec.id === record.id)) continue;
-      this.records.set(record.id, {
-        id: record.id,
-        ownerDeviceId: typeof record.ownerDeviceId === 'string' ? record.ownerDeviceId : '',
-        ownerName: typeof record.ownerName === 'string' ? record.ownerName.slice(0, 24) : '',
-        ownerId: 0,
-        locked: record.locked === true,
-        lastCollectAt: Number.isFinite(record.lastCollectAt) ? Math.floor(record.lastCollectAt) : now,
-      });
+    this.lastPendingByDevice.clear();
+    if (state) {
+      for (const record of state.villas) {
+        if (!record || !Number.isFinite(record.id)) continue;
+        if (!VILLA_SPECS.some((spec) => spec.id === record.id)) continue;
+        this.records.set(record.id, {
+          id: record.id,
+          ownerDeviceId: typeof record.ownerDeviceId === 'string' ? record.ownerDeviceId : '',
+          ownerName: typeof record.ownerName === 'string' ? record.ownerName.slice(0, 24) : '',
+          ownerId: 0,
+          locked: record.locked === true,
+          lastCollectAt: Number.isFinite(record.lastCollectAt) ? Math.floor(record.lastCollectAt) : now,
+        });
+      }
+    }
+    this.rebuildOwnerDevices();
+  }
+
+  /** 事件驱动：房主上线只扫至多 8 条记录，O(1) 返回是否改变了在线指示灯或房主名 */
+  onOwnerJoin(player: Player): boolean {
+    if (!this.ownsAny(player.deviceId)) return false;
+    this.lastPendingByDevice.delete(player.deviceId);
+    let changed = false;
+    for (const record of this.records.values()) {
+      if (record.ownerDeviceId !== player.deviceId) continue;
+      if (record.ownerId !== player.id || record.ownerName !== player.name) {
+        record.ownerId = player.id;
+        record.ownerName = player.name;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /** 事件驱动：房主改名同步牌匾昵称 */
+  onOwnerRename(player: Player): boolean {
+    if (!this.ownsAny(player.deviceId)) return false;
+    let changed = false;
+    for (const record of this.records.values()) {
+      if (record.ownerDeviceId !== player.deviceId) continue;
+      if (record.ownerName !== player.name) {
+        record.ownerName = player.name;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /** 事件驱动：房主离园置零在线标志并清掉个人 pending 缓存 */
+  onOwnerLeave(player: Player): boolean {
+    if (!this.ownsAny(player.deviceId)) return false;
+    this.lastPendingByDevice.delete(player.deviceId);
+    let changed = false;
+    for (const record of this.records.values()) {
+      if (record.ownerId !== player.id) continue;
+      record.ownerId = 0;
+      changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * 仅当在线房主名下的摇钱树待领总额跨越整分钟变化时定向推送给该房主本人；
+   * 非房主零遍历、稳态零广播、零临时对象。
+   */
+  collectPendingUpdates(
+    players: Iterable<Player>,
+    now: number,
+    notify: (owner: Player, packet: VillaStatePacket) => void,
+  ): void {
+    if (this.records.size === 0 || this.ownerDevices.size === 0) return;
+    for (const player of players) {
+      if (player.wsId === 0 || !this.ownerDevices.has(player.deviceId)) continue;
+      let total = 0;
+      for (const spec of VILLA_SPECS) {
+        const record = this.records.get(spec.id);
+        if (record && record.ownerDeviceId === player.deviceId) {
+          total += Math.min(0xffff, villaPendingIncome(record.lastCollectAt, now, spec.income));
+        }
+      }
+      if (this.lastPendingByDevice.get(player.deviceId) === total) continue;
+      this.lastPendingByDevice.set(player.deviceId, total);
+      notify(player, this.snapshotFor(player, now));
     }
   }
 
   /**
-   * 在线房主的名字与实体 id 跟着人走：
-   * 改名后牌匾换字，重连 / 离线后 ownerId 归零（牌匾仍显示旧名字）。
+   * 兼容批量对齐入口：复用 onlineScratch，零记录时直接 O(1) 早退。
    */
   refreshOwners(players: Iterable<Player>): boolean {
-    const online = new Map<string, Player>();
+    if (this.records.size === 0) return false;
+    this.onlineScratch.clear();
     for (const player of players) {
-      if (player.deviceId) online.set(player.deviceId, player);
+      if (player.deviceId) this.onlineScratch.set(player.deviceId, player);
     }
     let changed = false;
     for (const record of this.records.values()) {
-      const player = online.get(record.ownerDeviceId);
+      const player = this.onlineScratch.get(record.ownerDeviceId);
       const nextId = player ? player.id : 0;
       const nextName = player ? player.name : record.ownerName;
       if (record.ownerId !== nextId || record.ownerName !== nextName) {
@@ -224,6 +342,7 @@ export class VillaRuntime {
         changed = true;
       }
     }
+    this.onlineScratch.clear();
     return changed;
   }
 }

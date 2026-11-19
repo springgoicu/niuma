@@ -40,10 +40,10 @@ function withinView(a: Player, b: Player): boolean {
  * 在线秒数必须现算：它每秒变化，写进 `spawnBody` 会让后进入视野的人看到旧值。
  * 这段逻辑只在视野重算时执行，不在 20Hz Tick 热路径。
  */
-function spawnPacketOf(player: Player): Uint8Array {
+function spawnPacketOf(player: Player, now = Date.now()): Uint8Array {
   const writer = player.spawnWriter;
   writer.reset();
-  const onlineSec = player.joinedAt > 0 ? Math.max(0, Math.floor((Date.now() - player.joinedAt) / 1000)) : 0;
+  const onlineSec = player.joinedAt > 0 ? Math.max(0, Math.floor((now - player.joinedAt) / 1000)) : 0;
   encodeSpawnInto(
     writer,
     player.id,
@@ -71,7 +71,13 @@ function sendDespawn(transport: Transport, wsId: number, id: number, reason: num
  * 可见性是对称的，所以新增/移除必须同时修正双方的 known 集合，
  * 否则会出现「我看得见他、他看不见我」的幽灵实体。
  */
-export function refreshView(player: Player, world: World, grid: SpatialGrid, transport: Transport): void {
+export function refreshView(
+  player: Player,
+  world: World,
+  grid: SpatialGrid,
+  transport: Transport,
+  now = Date.now(),
+): void {
   player.needsViewRefresh = false;
   nearScratch.clear();
   grid.queryNear(player.x, player.y, VIEW_RADIUS, nearScratch);
@@ -109,12 +115,12 @@ export function refreshView(player: Player, world: World, grid: SpatialGrid, tra
     const other = world.get(id);
     if (!other) continue;
     player.known.add(id);
-    if (player.wsId !== 0) transport.send(player.wsId, spawnPacketOf(other));
+    if (player.wsId !== 0) transport.send(player.wsId, spawnPacketOf(other, now));
     if (!other.known.has(player.id)) {
       other.known.add(player.id);
       // 对方的 known 也要补齐，但它没有连接时不必为它编码入场包
       if (other.wsId !== 0) {
-        selfPacket ??= spawnPacketOf(player);
+        selfPacket ??= spawnPacketOf(player, now);
         transport.send(other.wsId, selfPacket);
       }
     }

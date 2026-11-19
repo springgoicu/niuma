@@ -1607,11 +1607,20 @@ export class GameRenderer {
    *
    * 一个 Graphics 重画全层：同时戴着的人个位数，比每人备一个 Sprite 更省。
    */
+  private goldAuraDrawn = false;
+
   private drawGoldAura(now: number): void {
     const gfx = this.goldAura;
+    if (this.goldHelmets.size === 0) {
+      if (this.goldAuraDrawn) {
+        gfx.clear();
+        this.goldAuraDrawn = false;
+      }
+      return;
+    }
     gfx.clear();
-    if (this.goldHelmets.size === 0) return;
     const pulse = 0.55 + 0.45 * Math.abs(Math.sin(now / 420));
+    let drawn = false;
     for (const id of this.goldHelmets) {
       const view = this.views.get(id);
       if (!view || !view.isShown) continue;
@@ -1619,7 +1628,9 @@ export class GameRenderer {
       const y = Math.round(view.root.position.y);
       gfx.ellipse(x, y + 2, 17, 6).fill({ color: 0xf5c451, alpha: 0.12 * pulse });
       gfx.ellipse(x, y + 2, 11, 4).fill({ color: 0xfff3c4, alpha: 0.2 * pulse });
+      drawn = true;
     }
+    this.goldAuraDrawn = drawn;
   }
 
   /** 红包雨：按事件种子铺 25 个红包；`null` 表示事件结束、整层收起（ADR-0088） */

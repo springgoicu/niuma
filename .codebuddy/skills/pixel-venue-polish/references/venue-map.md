@@ -14,12 +14,11 @@
 | 小黑屋 | 同上（`fillFloorConcrete`） | 共用 | `JAIL` `campus.ts:309`、`JAIL_ANCHOR:316` | `InteriorArt.lights:1050` | 无 |
 | 中央广场 | `terrain.ts` `addPlaza()` `:453` + `welcome.ts` + `props.ts` | `TerrainView` / `WelcomeView` | `PLAZA_CENTER` `layout.ts:221`、`PLAZA_RADIUS:220` | `propLights`（路灯/售货机/咖啡机） | `TerrainView.update` `terrain.ts:842` |
 | 上香祭坛 | `shrine.ts` | `ShrineView` | `SHRINE_ALTAR` `layout.ts:343` | 2 盏 `shrine.ts:70-87` | `update` `:129`（青烟 + 光晕） |
-| 茶台 | `tea-station.ts` | `TeaStationView` | `TEA_STATION` `layout.ts:360` | 无 | `update:81`（蒸汽三缕） |
-| 摸鱼大赌场 | `dice-hall-view.ts` | `DiceHallView` | `DICE_HALL` `dice-hall.ts:16`、`DICE_HALL_CENTER:19` | 无 LightSpec | 无 |
-| 绩效八角笼 | `ring.ts` + `ring-art.ts` | `RingView` | `RING_ARENA` `ring.ts:18`、`RING_BENCHES:93` | 无 | `update:252`（领奖台/彩带） |
+| 茶台（街头商店） | `tea-station.ts` | `TeaStationView` | `TEA_STATION` `layout.ts:360` | 无 | `update:81`（蒸汽三缕） |
+| 霓虹娱乐街 | `venue-art.ts`（`paintNeonStripApron`）+ `venue-palette.ts` | `VenueArt` / `VenueFx` | `NEON_STRIP_PLAZA` `districts.ts` | `venue-lights.ts` 霓虹光 | `update(now)` 霓虹呼吸 |
 | 牛马诊所 | `clinic-view.ts` | `ClinicView` | `CLINIC_RECT` `layout.ts:1581`、`CLINIC_BEDS:1592` | 无 | `update(now):328`（救护车灯 + 爱心） |
 | 牛马公寓 | `apartment-view.ts` | `ApartmentView` | `APARTMENT` `apartment.ts:17`、`APARTMENT_DOOR:40` | 无 | 无 |
-| 两栋小院 | `villas-view.ts` | `VillasView` | `VILLA_SPECS` `villas.ts:71` | 无 | 无 |
+| 8 处分阶房产 | `villas-view.ts` | `VillasView` | `VILLA_SPECS` `villas.ts`（`id: 0..7`，5 套外观） | `venue-lights.ts` 门前光 | Zero-GC 6 字段脏检牌匾 |
 | 公园 | `park.ts` | `ParkView` | `AMUSEMENT_PARK` `park.ts:26` | 2 盏 `park.ts:417-427` | 无 |
 | 湖畔 | `terrain.ts` `addLake()` `:596` | `TerrainView` | `LAKES` `layout.ts:781` | 无 | `waterFrame` + `WaterFx` |
 | 发泄区 | `boss.ts` + `boss-art.ts` | `BossView` | `BOSS_ARENA`（`boss.ts:72` 使用） | 无 | `update:184` |
@@ -45,7 +44,7 @@
 
 | floor | 绘制函数 | 当前使用者 |
 |---|---|---|
-| `wood` | `fillFloorWood` `:851` | 工作区、会议室、赌场、两栋小院 |
+| `wood` | `fillFloorWood` `:851` | 工作区、会议室、小院木屋 |
 | `tile` | `fillFloorTile` `:864`（兜底） | 卫生间 |
 | `carpet` | `fillFloorCarpet` `:876` | 宿舍区 |
 | `cinema` | `fillFloorCinema` `:890` | 家庭影音室 |
