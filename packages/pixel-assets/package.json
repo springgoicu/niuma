@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "generate": "bun scripts/generate.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "generate": "tsx scripts/generate.ts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.0",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2"
   }
 }

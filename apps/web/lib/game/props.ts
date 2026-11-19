@@ -22,6 +22,7 @@ import { BENCH_ART, seatArtFor } from './seat-art';
 import { bake } from './terrain-textures';
 import { paintRoadDressing, roadPostPlan } from './road-dressing';
 import { buildStreetDecor } from './street-decor-art';
+import { SpatialCuller } from './spatial-cull';
 import type { DepthSink } from './sort-layer';
 import { VENUE_COLORS, darken, lighten, type VenueColors } from './venue-palette';
 import { codeLinePhase, focusPulse } from './venue-motion';
@@ -1062,14 +1063,6 @@ function fillBuildingFloor(g: Graphics, building: BuildingSpec): void {
   else fillFloorTile(g, building.rect);
 }
 
-interface Cullable {
-  sprite: Sprite;
-  x: number;
-  y: number;
-  padX: number;
-  padY: number;
-}
-
 interface DeskSprite {
   sprite: Sprite;
   idle: Texture;
@@ -1088,7 +1081,7 @@ interface DeskSprite {
 export class PropsView {
   /** 地面层：木地板、瓷砖、铺装与墙体，位于地形之上、y 排序层之下 */
   readonly base = new Container();
-  private readonly cullables: Cullable[] = [];
+  private readonly culler = new SpatialCuller();
   /** 与 WORLD_LAYOUT.desks 同下标：seat.desk 直接索引 */
   private readonly desks: DeskSprite[] = [];
   private readonly textures: Texture[] = [];
@@ -1237,7 +1230,7 @@ export class PropsView {
         occupied: false,
         phase: 0,
       });
-      this.cullables.push({ sprite, x: desk.x, y: bottom, padX: art.frame.w / 2 + 4, padY: art.frame.h });
+      this.culler.add(sprite, desk.x, bottom, art.frame.w / 2 + 4, art.frame.h);
     }
 
     // 专注光：一枚 92×36 的硬边椭圆环，冷蓝白、居中锚点，默认不可见。
@@ -1281,14 +1274,14 @@ export class PropsView {
       sprite.position.set(seat.x, seat.y + art.sink);
       // 座椅排在入座者脚底 y 之下：角色坐上去 / 躺下去时家具在身后
       depth.add(seat.y - 1, sprite);
-      this.cullables.push({
+      this.culler.add(
         sprite,
-        x: seat.x,
-        y: seat.y,
-        padX: art.frame.w / 2 + 4,
+        seat.x,
+        seat.y,
+        art.frame.w / 2 + 4,
         // 精灵顶边 = 锚点 + sink - 帧高；多出来的 sink 不该再算进裁剪余量
-        padY: art.frame.h - art.sink,
-      });
+        art.frame.h - art.sink,
+      );
     }
 
     for (const prop of WORLD_LAYOUT.props) this.addProp(depth, renderer, prop);
@@ -1304,7 +1297,7 @@ export class PropsView {
             sprite.anchor.set(0.5, 1);
             sprite.position.set(x, y);
             depth.add(y, sprite);
-            this.cullables.push({ sprite, x, y, padX, padY });
+            this.culler.add(sprite, x, y, padX, padY);
           },
           keepTexture: (texture) => this.textures.push(texture),
         },
@@ -1350,7 +1343,7 @@ export class PropsView {
       sprite.anchor.set(0.5, 1);
       sprite.position.set(post.x, post.y);
       depth.add(post.y, sprite);
-      this.cullables.push({ sprite, x: post.x, y: post.y, padX: 12, padY: 30 });
+      this.culler.add(sprite, post.x, post.y, 12, 30);
     }
   }
 
@@ -1376,14 +1369,14 @@ export class PropsView {
       glow.anchor.set(0.5, 1);
       glow.position.set(prop.x, prop.y - 1);
       depth.add(prop.y - 0.5, glow);
-      this.cullables.push({ sprite: glow, x: prop.x, y: prop.y, padX: 20, padY: 22 });
+      this.culler.add(glow, prop.x, prop.y, 20, 22);
     }
     const texture = this.propTexture(renderer, prop);
     const sprite = new Sprite(texture);
     sprite.anchor.set(0.5, 1);
     sprite.position.set(prop.x, prop.y);
     depth.add(prop.y, sprite);
-    this.cullables.push({ sprite, x: prop.x, y: prop.y, padX: size.w / 2 + 2, padY: size.h + 2 });
+    this.culler.add(sprite, prop.x, prop.y, size.w / 2 + 2, size.h + 2);
   }
 
   /**
@@ -1444,16 +1437,13 @@ export class PropsView {
     focus.alpha = focusPulse(desk.seed, nowMs);
   }
 
-  /** 视口裁剪：与地形同一套规则，离屏的桌椅与装饰不参与绘制 */
+  /** 视口裁剪：委托 512px 分块空间裁剪器 */
   cull(minX: number, minY: number, maxX: number, maxY: number): void {
-    for (const entry of this.cullables) {
-      const top = entry.y - entry.padY;
-      entry.sprite.renderable =
-        entry.x + entry.padX >= minX && entry.x - entry.padX <= maxX && entry.y >= minY && top <= maxY;
-    }
+    this.culler.cull(minX, minY, maxX, maxY);
   }
 
   destroy(): void {
+    this.culler.clear();
     this.base.destroy({ children: true });
     for (const texture of this.textures) texture.destroy(true);
     this.textures.length = 0;

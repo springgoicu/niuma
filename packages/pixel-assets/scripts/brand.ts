@@ -1,12 +1,14 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { encodePng } from '../src/png';
 import { LOGO_SIZE, LOGO_TILE_HEX, drawLogo, logoRgba, type LogoFrame } from '../src/logo';
 
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 /** 产物落在 public/brand：与 public/sprites 同级，不会被 generate.ts 的 rm -rf sprites 波及 */
-const OUT_DIR = resolve(import.meta.dir, '../../../apps/web/public/brand');
+const OUT_DIR = resolve(SCRIPT_DIR, '../../../apps/web/public/brand');
 /** 校对图不进 public、不打进包，只给人眼验收用 */
-const PROOF_DIR = resolve(import.meta.dir, '../.proof');
+const PROOF_DIR = resolve(SCRIPT_DIR, '../.proof');
 
 /** 标签页三级图标 + 导航 48（含眨眼帧）+ iOS 主屏 + PWA 安装图标 */
 const ICON_SIZES = [16, 32, 48] as const;

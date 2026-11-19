@@ -442,6 +442,21 @@
   .animate-stamp-in {
     animation: stamp-in 260ms var(--ease-out-expo);
   }
+
+  /* 搬砖任务敲击命中：字母弹出反馈 */
+  .animate-key-pop {
+    animation: key-pop 140ms var(--ease-out-expo);
+  }
+
+  /* 搬砖任务敲错：横向短促抖动提示 */
+  .animate-miss-shake {
+    animation: miss-shake 220ms ease-out;
+  }
+
+  /* 每日悬赏可领取：呼吸微光边框 */
+  .animate-bounty-ready {
+    animation: bounty-ready 2s ease-in-out infinite;
+  }
 }
 
 @keyframes marquee {
@@ -623,6 +638,47 @@
   to {
     transform: rotate(12deg) scale(1);
     opacity: 1;
+  }
+}
+
+@keyframes key-pop {
+  0% {
+    transform: scale(0.88) translateY(2px);
+  }
+  55% {
+    transform: scale(1.12) translateY(-1px);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes miss-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  45% {
+    transform: translateX(4px);
+  }
+  70% {
+    transform: translateX(-2px);
+  }
+  88% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes bounty-ready {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 196, 81, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px 0 rgba(245, 196, 81, 0.25);
   }
 }
 

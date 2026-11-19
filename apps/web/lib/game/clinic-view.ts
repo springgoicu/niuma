@@ -55,6 +55,8 @@ interface CarView {
   flags: number;
   x: number;
   y: number;
+  targetX: number;
+  targetY: number;
 }
 
 /** 一辆 64×48 的白色像素救护车：车身红十字 + 车顶红蓝警灯（400ms 交替） */
@@ -100,7 +102,7 @@ function paintAmbulance(): CarView {
   blue.circle(7, -30, 3).fill(BEACON_BLUE);
   root.addChild(housing, red, blue);
   root.position.set(0, 0);
-  return { root, red, blue, state: AMBULANCE_STATE.Idle, flags: 0, x: 0, y: 0 };
+  return { root, red, blue, state: AMBULANCE_STATE.Idle, flags: 0, x: 0, y: 0, targetX: 0, targetY: 0 };
 }
 
 /**
@@ -307,6 +309,16 @@ export class ClinicView {
       rect(g, spot.x + 32, spot.y - 27, 2, 54, C.bay);
       rect(g, spot.x - 2, spot.y - 10, 4, 20, C.bay);
       rect(g, spot.x - 8, spot.y - 2, 16, 4, C.bay);
+      // 车位南沿出入导向标识
+      const cy = spot.y + 30;
+      rect(g, spot.x - 8, cy, 16, 2, C.bay);
+      rect(g, spot.x - 4, cy + 2, 8, 2, C.bay);
+    }
+    // 西门分诊门槛警示垫：标识人行急救通道
+    const gateX = CLINIC_RECT.x;
+    const gateY = CLINIC_ACCESS_PAVING.y + 6;
+    for (let i = 0; i < 4; i += 1) {
+      rect(g, gateX + 2, gateY + i * 12, 8, 6, i % 2 === 0 ? C.steel : C.floorAlt);
     }
     // 站内落点用一圈淡蓝标记，救护车到这里把人交给病床
     const drop = new Graphics();
@@ -321,6 +333,8 @@ export class ClinicView {
     const spot = CLINIC_AMBULANCE_SPOTS[id - 1]!;
     car.x = spot.x;
     car.y = spot.y;
+    car.targetX = spot.x;
+    car.targetY = spot.y;
     car.root.position.set(spot.x, spot.y);
     this.overlay.addChild(car.root);
     this.cars.set(id, car);
@@ -342,18 +356,24 @@ export class ClinicView {
     return container;
   }
 
-  /** 救护车同步：停靠时也要能接收，位置直接吸附到定量坐标 */
+  /** 救护车同步：记录目标坐标并在 update 里平滑插值，消除低频包卡顿；大跨度传送仍直接吸附 */
   setAmbulance(packet: AmbulancePacket): void {
     if (!this.cars.has(packet.id)) this.createCar(packet.id);
     const car = this.cars.get(packet.id);
     if (!car) return;
     car.state = packet.state;
     car.flags = packet.flags;
-    // 车头朝行进方向：协议不单独下发朝向，用相邻两次定量坐标的横向位移推断
-    if (Math.abs(packet.x - car.x) > 0.5) car.root.scale.x = packet.x < car.x ? -1 : 1;
-    car.x = packet.x;
-    car.y = packet.y;
-    car.root.position.set(Math.round(packet.x), Math.round(packet.y));
+    // 车头朝行进方向：协议不单独下发朝向，用目标坐标的横向位移推断
+    if (Math.abs(packet.x - car.targetX) > 0.5) car.root.scale.x = packet.x < car.targetX ? -1 : 1;
+    const dx = packet.x - car.x;
+    const dy = packet.y - car.y;
+    car.targetX = packet.x;
+    car.targetY = packet.y;
+    if (dx * dx + dy * dy > 220 * 220) {
+      car.x = packet.x;
+      car.y = packet.y;
+      car.root.position.set(Math.round(packet.x), Math.round(packet.y));
+    }
   }
 
   /** 伤员状态：治疗中让护士头顶冒爱心，结束后收掉 */
@@ -362,14 +382,27 @@ export class ClinicView {
     else this.treating.delete(packet.entityId);
   }
 
-  update(now: number, anchorAt: (id: number) => { x: number; y: number } | null): void {
+  update(now: number, anchorAt: (id: number) => { x: number; y: number } | null, dtMs = 16.6): void {
     const phase = beaconPhase(now);
+    const blend = 1 - Math.exp(-Math.max(1, dtMs) / 95);
     for (const car of this.cars.values()) {
       const active = car.state !== AMBULANCE_STATE.Idle;
       car.red.alpha = active && phase === 0 ? 1 : BEACON_OFF_ALPHA;
       car.blue.alpha = active && phase === 1 ? 1 : BEACON_OFF_ALPHA;
       // 警灯亮起的车顶给整车上一点高光，远看能分清「出警」与「停泊」
       car.root.alpha = active && (car.flags & AMBULANCE_FLAG_SIREN) !== 0 ? 1 : 0.94;
+      const dx = car.targetX - car.x;
+      const dy = car.targetY - car.y;
+      if (Math.abs(dx) > 0.4 || Math.abs(dy) > 0.4) {
+        car.x += dx * blend;
+        car.y += dy * blend;
+      } else {
+        car.x = car.targetX;
+        car.y = car.targetY;
+      }
+      // 行驶 / 出警时的整数纹素底盘微振（0 / -1），熄火停泊稳在地面
+      const bounce = active && Math.sin(now / 70) > 0.3 ? -1 : 0;
+      car.root.position.set(Math.round(car.x), Math.round(car.y) + bounce);
     }
 
     // 红十字挂在护士实体上（ADR-0109）：她巡游、接人、守床时帽顶都跟着人走。
@@ -382,14 +415,16 @@ export class ClinicView {
       if (anchor) cap.position.set(Math.round(anchor.x), Math.round(anchor.y - 60));
     }
 
-    // 爱心挂到正在被治疗的伤员头顶：上床 / 下床 tween 期间也跟着他，不留在空床位
+    // 爱心挂到正在被治疗的伤员头顶：上床 / 下床 tween 期间也跟着他，整数纹素呼吸漂浮
     let slot = 0;
     for (const id of this.treating) {
       if (slot >= this.hearts.length) break;
       const heart = this.hearts[slot]!;
       const anchor = anchorAt(id);
       heart.visible = anchor !== null;
-      if (anchor) heart.position.set(Math.round(anchor.x), Math.round(anchor.y - 66 + Math.sin(now / 260)));
+      if (anchor) {
+        heart.position.set(Math.round(anchor.x), Math.round(anchor.y - 66 + Math.sin(now / 260) * 2));
+      }
       slot += 1;
     }
     for (; slot < this.hearts.length; slot += 1) this.hearts[slot]!.visible = false;

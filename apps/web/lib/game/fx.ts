@@ -235,6 +235,28 @@ export class GroundFx {
     particle.active = true;
   }
 
+  /** 跳跃落地 / 受击震落双侧尘：向脚边左右对称散开，读出着陆分量 */
+  spawnJumpDust(x: number, y: number): void {
+    const sx = Math.round(x);
+    const sy = Math.round(y);
+    for (const dir of [-1, 1] as const) {
+      const particle = this.particles[this.next]!;
+      this.next = (this.next + 1) % this.particles.length;
+      const shape = this.dustTextures[this.cursor % this.dustTextures.length]!;
+      this.cursor += 1;
+      particle.sprite.texture = shape;
+      particle.sprite.position.set(sx + dir * 4, sy);
+      particle.sprite.alpha = 0.72;
+      particle.sprite.scale.set(1);
+      particle.sprite.visible = true;
+      particle.vx = dir * 0.018;
+      particle.vy = -0.012;
+      particle.age = 0;
+      particle.life = DUST_LIFE;
+      particle.active = true;
+    }
+  }
+
   /**
    * 雪地脚印：与扬尘同一条触地通路，只是留在原地慢慢淡掉。
    * `flip` 由调用方按左右脚交替给出，镜像只翻 3px 的整数纹理，不会糊边。

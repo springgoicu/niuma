@@ -1,14 +1,14 @@
 import {
   DIRECTION,
   MOVE_SPEED,
+  PLAYER_RADIUS,
   POSE,
-  TICK_MS,
-  resolveWalkInto,
   type Direction,
-  type MotionTarget,
 } from '@niuma/shared-types';
+import { findPath } from '../nav/path';
 import type { Player } from '../sim/world';
 import type { NpcConfig } from './config';
+import { stepAlongPath, type WalkStepResult } from './path-walk';
 import type { Rng } from './rng';
 import { pickWaypoint, type NpcSpot } from './spots';
 
@@ -51,6 +51,11 @@ export interface EscortTask {
   /** 拖行时目标在保安身后的方向（单位向量） */
   towX: number;
   towY: number;
+  /** 最近产生有效位移的时刻与位置，用于追击/拖行停滞重算 */
+  lastProgressAt?: number;
+  lastProgressX?: number;
+  lastProgressY?: number;
+  dragReplanned?: boolean;
 }
 
 /**
@@ -95,10 +100,13 @@ export interface NpcAgent {
   stuckCount: number;
   /** 下一次邻居感知的时刻（social 消费） */
   nextSocialAt: number;
+  /** 巡逻寻路航点列与当前游标；undefined 表示尚未规划（兼容测试直接改 target） */
+  path?: NpcSpot[];
+  pathIndex?: number;
+  /** 让路冷却截止时刻：避免两个 NPC 迎面交替暂停乒乓死锁 */
+  yieldCooldownUntil?: number;
 }
 
-/** 每次推进的时长：与服务器 Tick 同一口径，NPC 不另跑一套时间 */
-const DT_SEC = TICK_MS / 1000;
 const STUCK_CHECK_MS = 600;
 const STUCK_MIN_PX = 6;
 const STUCK_TURN_AT = 2;
@@ -109,7 +117,7 @@ const LOOK_MIN_MS = 800;
 const LOOK_MAX_MS = 2_500;
 const WAVE_MS = 900;
 
-const MOTION: MotionTarget = { x: 0, y: 0 };
+const WALK_STEP: WalkStepResult = { index: 0, movedX: 0, movedY: 0, blocked: false };
 
 /** 由位移向量取四向朝向；零点沿用上一个朝向 */
 export function directionOf(dx: number, dy: number, fallback: Direction = DIRECTION.Down): Direction {
@@ -183,8 +191,25 @@ export function faceToward(agent: NpcAgent, point: NpcSpot, now: number): void {
   agent.lookAt = now + LOOK_MIN_MS;
 }
 
+function planAgentPath(agent: NpcAgent): void {
+  const from = { x: agent.player.x, y: agent.player.y };
+  const route = findPath(from, agent.target, PLAYER_RADIUS, { avoidClinicInterior: true });
+  if (!route || route.length === 0) {
+    agent.path = [{ x: agent.target.x, y: agent.target.y }];
+    agent.pathIndex = 0;
+    return;
+  }
+  const start = route[0]!;
+  const skipFirst =
+    route.length > 1 && Math.hypot(start.x - from.x, start.y - from.y) <= 2;
+  agent.path = skipFirst ? route.slice(1) : route;
+  agent.pathIndex = 0;
+}
+
 function enterPause(agent: NpcAgent, rng: Rng, config: NpcConfig, now: number): void {
   agent.phase = 'pause';
+  agent.path = undefined;
+  agent.pathIndex = 0;
   agent.pauseMs = pickPauseMs(rng, config);
   agent.pauseUntil = now + agent.pauseMs;
   agent.lookAt = now + rng.int(LOOK_MIN_MS, LOOK_MAX_MS);
@@ -195,6 +220,7 @@ function enterPause(agent: NpcAgent, rng: Rng, config: NpcConfig, now: number): 
 function enterWalk(agent: NpcAgent, rng: Rng, now: number): void {
   agent.phase = 'walk';
   agent.target = pickWaypoint(rng, { x: agent.player.x, y: agent.player.y });
+  planAgentPath(agent);
   agent.lastProgressAt = now;
   agent.lastProgressX = agent.player.x;
   agent.lastProgressY = agent.player.y;
@@ -243,40 +269,36 @@ export function updateAgent(agent: NpcAgent, rng: Rng, config: NpcConfig, now: n
   }
 
   if (agent.phase === 'walk') {
-    const dx = agent.target.x - player.x;
-    const dy = agent.target.y - player.y;
-    const distance = Math.hypot(dx, dy);
-    const step = agent.speed * DT_SEC;
+    if (!agent.path || agent.path.length === 0) {
+      planAgentPath(agent);
+    }
+    const path = agent.path!;
+    const result = stepAlongPath(player, path, agent.pathIndex ?? 0, agent.speed, true, WALK_STEP);
+    agent.pathIndex = result.index;
 
-    if (distance <= step) {
-      // 到达：贴到采样点（该点已由 isBlocked 保证可站立）
-      player.x = agent.target.x;
-      player.y = agent.target.y;
+    if (result.index >= path.length) {
       enterPause(agent, rng, config, now);
       return;
     }
 
-    const unitX = dx / distance;
-    const unitY = dy / distance;
-    // 与服务端移动包同一个求解器：4px 子步 + 单轴滑动，不穿墙也不卡死
-    // 护士站门禁同样生效：采样点已排除站内，走到门口只会被夹住，不会钻进去
-    resolveWalkInto(MOTION, player.x, player.y, player.x + unitX * step, player.y + unitY * step);
-    player.x = MOTION.x;
-    player.y = MOTION.y;
-
     const wave = agent.waveUntil > 0;
-    player.applyState(directionOf(unitX, unitY, player.direction), POSE.Walk, true, false, false, wave);
+    const hasMoved = result.movedX !== 0 || result.movedY !== 0;
+    const faceDx = hasMoved ? result.movedX : agent.target.x - player.x;
+    const faceDy = hasMoved ? result.movedY : agent.target.y - player.y;
+    player.applyState(directionOf(faceDx, faceDy, player.direction), POSE.Walk, true, false, false, wave);
     player.markDirtyIfChanged();
 
     if (now - agent.lastProgressAt >= STUCK_CHECK_MS) {
-      const movedX = player.x - agent.lastProgressX;
-      const movedY = player.y - agent.lastProgressY;
-      if (movedX * movedX + movedY * movedY < STUCK_MIN_PX * STUCK_MIN_PX) {
+      const movedSinceCheckX = player.x - agent.lastProgressX;
+      const movedSinceCheckY = player.y - agent.lastProgressY;
+      if (movedSinceCheckX * movedSinceCheckX + movedSinceCheckY * movedSinceCheckY < STUCK_MIN_PX * STUCK_MIN_PX) {
         agent.stuckCount += 1;
         if (agent.stuckCount >= STUCK_REST_AT) {
           // 连续五次挪不动：原地歇一会儿再重选，绝不传送
           agent.stuckCount = 0;
-          player.applyState(directionOf(movedX, movedY, player.direction), POSE.Idle, false);
+          agent.path = undefined;
+          agent.pathIndex = 0;
+          player.applyState(directionOf(movedSinceCheckX, movedSinceCheckY, player.direction), POSE.Idle, false);
           player.markDirtyIfChanged();
           agent.phase = 'pause';
           agent.pauseMs = rng.int(REST_MIN_MS, REST_MAX_MS);
@@ -285,6 +307,9 @@ export function updateAgent(agent: NpcAgent, rng: Rng, config: NpcConfig, now: n
         } else if (agent.stuckCount >= STUCK_TURN_AT) {
           // 换一个落点：撞到树或墙角时不必等满五次
           agent.target = pickWaypoint(rng, { x: player.x, y: player.y });
+          planAgentPath(agent);
+        } else if (agent.stuckCount === 1) {
+          planAgentPath(agent);
         }
       } else {
         agent.stuckCount = 0;

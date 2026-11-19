@@ -52,6 +52,7 @@ export function WorkGrindOverlay({
   const [tick, setTick] = useState(0);
   const [streak, setStreak] = useState<{ key: number; amount: number } | null>(null);
   const [shake, setShake] = useState(0);
+  const [hitPulse, setHitPulse] = useState(0);
   const claimedRef = useRef(0);
   const rafRef = useRef(0);
   const intermissionUntil = useRef(0);
@@ -70,6 +71,8 @@ export function WorkGrindOverlay({
     claimedRef.current = 0;
     intermissionUntil.current = 0;
     setStreak(null);
+    setShake(0);
+    setHitPulse(0);
     setTick((value) => value + 1);
   }, []);
 
@@ -158,6 +161,7 @@ export function WorkGrindOverlay({
       event.stopPropagation();
       const verdict = typeWorkKey(round, event.key, performance.now());
       if (verdict === 'miss') setShake((value) => value + 1);
+      else if (verdict === 'hit') setHitPulse((value) => value + 1);
       setTick((value) => value + 1);
     };
     window.addEventListener('keydown', onKeyDown, { capture: true });
@@ -173,12 +177,17 @@ export function WorkGrindOverlay({
   const current = round?.sequence[round.index] ?? '';
   const next = round?.sequence[round.index + 1] ?? '';
   const tier = comboMilestone(round?.combo ?? 0);
+  const completedCount = round?.index ?? 0;
+  const totalCount = round?.sequence.length ?? 0;
+  const roundDone = totalCount > 0 && completedCount >= totalCount;
   const borderTone =
-    tier >= 3
-      ? 'border-[#f5c451]'
-      : tier >= 2
-        ? 'border-[#7cf5b0]'
-        : 'border-white/15';
+    roundDone
+      ? 'border-[#7cf5b0]'
+      : tier >= 3
+        ? 'border-[#f5c451]'
+        : tier >= 2
+          ? 'border-[#7cf5b0]'
+          : 'border-white/15';
 
   return (
     <div
@@ -186,8 +195,10 @@ export function WorkGrindOverlay({
       data-tick={tick}
     >
       <div
-        className={`pointer-events-auto w-full max-w-[560px] rounded-xl border-2 ${borderTone} bg-[#0b1020]/92 px-4 py-3 font-mono shadow-[0_0_28px_rgba(124,245,176,0.14)] backdrop-blur-sm transition-[border-color] duration-200`}
-        style={{ transform: shake % 2 === 0 ? undefined : 'translateX(1px)' }}
+        key={`panel-${shake}`}
+        className={`pointer-events-auto w-full max-w-[560px] rounded-xl border-2 ${borderTone} ${
+          shake > 0 ? 'animate-miss-shake' : 'animate-board-in'
+        } bg-[#0b1020]/92 px-4 py-3 font-mono shadow-[0_0_28px_rgba(124,245,176,0.14)] backdrop-blur-sm transition-[border-color] duration-200`}
       >
         {/* 顶栏：标题 + 连击 + 8 秒进度 */}
         <div className="flex items-center justify-between text-[11px] tracking-wider text-[#9aa7c7]">
@@ -195,9 +206,14 @@ export function WorkGrindOverlay({
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#7cf5b0]" />
             OVERTIME.EXE
           </span>
-          <span className={tier > 0 ? 'text-[#f5c451]' : 'text-[#9aa7c7]'}>
+          <span
+            key={`combo-${hitPulse}`}
+            className={`inline-block ${hitPulse > 0 && tier > 0 ? 'animate-key-pop' : ''} ${
+              tier >= 3 ? 'font-bold text-[#f5c451]' : tier > 0 ? 'text-[#f5c451]' : 'text-[#9aa7c7]'
+            }`}
+          >
             连击 ×{round?.combo ?? 0}
-            {tier >= 2 ? ' · 手感不错' : ''}
+            {tier >= 3 ? ' · 手感火热' : tier >= 2 ? ' · 手感不错' : ''}
           </span>
           <span ref={clockRef}>{(remaining / 1000).toFixed(1)}s</span>
         </div>
@@ -211,12 +227,24 @@ export function WorkGrindOverlay({
 
         {/* 中部：伪代码行 + 当前目标字母 */}
         <div className="mt-3 rounded-lg bg-black/40 px-3 py-2 text-[11px] leading-5 text-[#5c6b8a]">
-          <div>
-            <span className="text-[#7cf5b0]">$</span> niuma worker --overtime --release
+          <div className="flex items-center justify-between gap-2">
+            <span>
+              <span className="text-[#7cf5b0]">$</span> niuma worker --overtime --release
+            </span>
+            <span className="text-[10px] text-[#7cf5b0]/80">
+              {completedCount}/{totalCount}
+            </span>
           </div>
           <div className="mt-1 flex items-center gap-3">
-            <span className="text-[#9aa7c7]">敲下高亮字母：</span>
-            <span className="text-2xl font-bold tracking-[0.2em] text-[#f5c451] drop-shadow-[0_0_8px_rgba(245,196,81,0.55)]">
+            <span className="text-[#9aa7c7]">{roundDone ? '本轮完成：' : '敲下高亮字母：'}</span>
+            <span
+              key={`key-${completedCount}-${roundDone ? 'done' : 'live'}`}
+              className={`animate-key-pop inline-flex min-w-8 items-center justify-center rounded border px-1.5 py-0.5 text-2xl font-bold tracking-[0.15em] ${
+                roundDone
+                  ? 'border-[#7cf5b0]/60 bg-[#7cf5b0]/15 text-[#7cf5b0] drop-shadow-[0_0_8px_rgba(124,245,176,0.55)]'
+                  : 'border-[#f5c451]/40 bg-[#f5c451]/10 text-[#f5c451] drop-shadow-[0_0_8px_rgba(245,196,81,0.55)]'
+              }`}
+            >
               {current || '✓'}
             </span>
             <span className="text-base tracking-[0.3em] text-white/25">{next}</span>

@@ -232,8 +232,16 @@ class EntityView {
   private lastWadingY = Number.NaN;
   /** 跳跃弧线的抬升纹素（0 或负值）：本体与昵称同步抬高，阴影留在地面 */
   private jumpLift = 0;
+  private prevJumpLift = 0;
   /** 坐在座位上时整体上移的纹素（ADR-0032）：阴影与水线留在地面，昵称同步抬高 */
   private seatLift = 0;
+  /** 发泄前倾位移与受击震动反馈（只作用于渲染容器，不碰权威坐标与阴影） */
+  private lungeX = 0;
+  private lungeY = 0;
+  private hitUntil = 0;
+  private hitDuration = 170;
+  private hitDirX = 0;
+  private hitDirY = 0;
   bubbleUntil = 0;
   private lastColumn = -1;
   /** 上一次的可见状态：只在翻转时才改 `renderable` */
@@ -298,6 +306,7 @@ class EntityView {
     shadows: Texture[],
     wadingTexture: Texture,
     private readonly onFootfall: (x: number, y: number, wading: boolean) => void,
+    private readonly onJumpLand: (x: number, y: number, wading: boolean) => void,
     role = 0,
   ) {
     this.isGuard = role === ENTITY_ROLE_GUARD;
@@ -516,7 +525,7 @@ class EntityView {
   /** 微动效：整数纹素起伏 + 阴影形态切换（换 texture，不做浮点缩放） */
   applyMotion(motion: PonyMotion): void {
     this.body.setBob(motion.bobTexels);
-    this.setShadow(motion.shadow);
+    if (this.jumpLift === 0) this.setShadow(motion.shadow);
   }
 
   /** 合十作揖的下俯量（ADR-0061）：与呼吸起伏分开记，两者互不覆盖 */
@@ -524,18 +533,68 @@ class EntityView {
     this.body.setBow(bowTexels);
   }
 
+  /** 发泄头槌等动作的纯表现层前倾位移（整数纹素，受击震动期间由震动叠加） */
+  applyNudge(dx: number, dy: number): void {
+    if (this.lungeX === dx && this.lungeY === dy) return;
+    this.lungeX = dx;
+    this.lungeY = dy;
+    if (this.hitUntil === 0) this.body.setNudge(dx, dy);
+  }
+
+  /** 受击震退 + 瞬时高光染红：纯视觉反馈，不影响权威位置与其它实体 */
+  triggerHitReact(fromX: number, fromY: number, now: number, durationMs = 170): void {
+    const dx = this.root.position.x - fromX;
+    const dy = this.root.position.y - fromY;
+    const len = Math.hypot(dx, dy);
+    if (len > 0.5) {
+      this.hitDirX = dx / len;
+      this.hitDirY = dy / len;
+    } else {
+      this.hitDirX = 0;
+      this.hitDirY = 1;
+    }
+    this.hitDuration = Math.max(80, durationMs);
+    this.hitUntil = now + this.hitDuration;
+    this.tickReact(now);
+  }
+
+  /** 推进受击震动与染红；返回 true 表示仍在持续，false 表示已归位可移出活跃集 */
+  tickReact(now: number): boolean {
+    if (this.hitUntil === 0) return false;
+    const remMs = this.hitUntil - now;
+    if (remMs <= 0) {
+      this.hitUntil = 0;
+      this.body.setHitFlash(false);
+      this.body.setNudge(this.lungeX, this.lungeY);
+      return false;
+    }
+    const rem = remMs / this.hitDuration;
+    const recoil = rem * 3;
+    const shudder = (Math.floor(now / 36) & 1) === 0 ? 1 : -1;
+    this.body.setHitFlash(rem > 0.35);
+    this.body.setNudge(
+      this.lungeX + Math.round(this.hitDirX * recoil) + (rem > 0.45 ? shudder : 0),
+      this.lungeY + Math.round(this.hitDirY * recoil),
+    );
+    return true;
+  }
+
   /**
    * 跳跃弧线：本体与昵称一起抬高，接触阴影留在地面。
-   * 抬升量已经是整数纹素，这里不再做任何浮点缩放（ADR-0013）。
+   * 抬升量已经是整数纹素，不再覆写呼吸起伏槽位，落地瞬间补一次双侧扬尘/水花（ADR-0013）。
    */
   applyJump(liftTexels: number, shadow: number): void {
     const lift = Math.round(liftTexels);
+    if (this.prevJumpLift < 0 && lift === 0) {
+      this.onJumpLand(this.root.position.x, this.root.position.y, this.wadingShown);
+    }
+    this.prevJumpLift = lift;
     if (lift !== this.jumpLift) {
       this.jumpLift = lift;
-      this.body.setBob(lift);
+      this.body.setJumpLift(lift);
       this.labels.position.y = this.root.position.y + lift - this.seatLift;
     }
-    this.setShadow(shadow);
+    if (lift < 0) this.setShadow(shadow);
   }
 
   /** 阴影换纹理而不是缩放：三档形态预烘焙，来回切不会出现亚像素毛边 */
@@ -836,6 +895,8 @@ export class GameRenderer {
   private readonly views = new Map<number, EntityView>();
   /** 只有保安加入：逐帧更新警灯，避免遍历全部实体 */
   private readonly beacons = new Set<EntityView>();
+  /** 只有处于受击震动中的实体加入：平时为空，零帧开销 */
+  private readonly reactingViews = new Set<EntityView>();
   private atlas!: Atlas;
   private terrain?: TerrainView;
   private props?: PropsView;
@@ -1342,6 +1403,10 @@ export class GameRenderer {
           }
         }
       },
+      (x, y, wading) => {
+        if (wading) this.waterFx?.spawn(x, y, true);
+        else this.fx?.spawnJumpDust(x, y);
+      },
       role,
     );
     
@@ -1406,6 +1471,7 @@ export class GameRenderer {
       this.views.delete(id);
       this.goldHelmets.delete(id);
       this.beacons.delete(view);
+      this.reactingViews.delete(view);
       this.clinic?.removeNurse(id);
       this.p2pFx.drop(id);
       this.windowPeek?.drop(id);
@@ -1502,6 +1568,19 @@ export class GameRenderer {
     this.views.get(id)?.applyJump(liftTexels, shadow);
   }
 
+  /** 动作微移（如发泄前倾 / 回弹）：纯视觉整数纹素，不改碰撞坐标 */
+  setActionNudge(id: number, dx: number, dy: number): void {
+    this.views.get(id)?.applyNudge(dx, dy);
+  }
+
+  /** 受击反馈：从施力点方向震退几像素 + 瞬时高光闪烁 */
+  triggerHitReact(id: number, fromX: number, fromY: number, durationMs = 170): void {
+    const view = this.views.get(id);
+    if (!view || !view.isShown) return;
+    view.triggerHitReact(fromX, fromY, performance.now(), durationMs);
+    this.reactingViews.add(view);
+  }
+
   setAppearance(id: number, appearance: CharacterAppearance): void {
     this.views.get(id)?.setAppearance(appearance);
     // 换帽子立刻换光环：戴上皇冠的人不该继续踩着金光，摘掉则相反
@@ -1555,7 +1634,7 @@ export class GameRenderer {
     const pulse = 0.55 + 0.45 * Math.abs(Math.sin(now / 420));
     for (const id of this.goldHelmets) {
       const view = this.views.get(id);
-      if (!view) continue;
+      if (!view || !view.isShown) continue;
       const x = Math.round(view.root.position.x);
       const y = Math.round(view.root.position.y);
       gfx.ellipse(x, y + 2, 17, 6).fill({ color: 0xf5c451, alpha: 0.12 * pulse });
@@ -1812,7 +1891,12 @@ export class GameRenderer {
   tickBubbles(dtMs: number): void {
     const now = performance.now();
     // 救护车警灯、护士帽红十字与伤员爱心共用同一条帧时钟，400ms 相位不额外维护状态
-    this.clinic?.update(now, this.clinicAnchor);
+    this.clinic?.update(now, this.clinicAnchor, dtMs);
+
+    // 受击震动与瞬时染红（只在发生碰撞时存在元素，平时零遍历开销）
+    for (const view of this.reactingViews) {
+      if (!view.tickReact(now)) this.reactingViews.delete(view);
+    }
 
     // 活跃气泡通常 0–3 个，复用一块数组：原来每帧新建数组 + 每个气泡一个
     // `{id, view, bubbleUntil}` 对象 + 一次 sort，哪怕一个气泡都没有。
@@ -1878,8 +1962,8 @@ export class GameRenderer {
     this.winterArt?.update(now);
     // 节日彩旗两帧飘动 + 30s 一次亮核采样（ADR-0063）
     this.festival?.update(now);
-    // 场所微动效：落叶 / 水光 / 霓虹，全部由绝对时间算，掉帧也不跑偏
-    this.venueFx?.update(now);
+    // 场所微动效：落叶 / 水光 / 霓虹，离屏跳过计算
+    this.venueFx?.update(now, this.cameraBounds ?? undefined);
     // 室内状态美术：工位代码行两帧 + 专注光呼吸、隔间门 / 吊灯 / 暖光、发泄室警戒光。
     // `?interior=0` 时整层停在这里：屏幕停在亮屏的静止帧，房间退回改前的样子
     if (this.interiorFx) {

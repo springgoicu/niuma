@@ -37,6 +37,7 @@ import {
 } from './decals';
 import { isOutdoorGround } from './ground';
 import { seeded } from './seeded';
+import { SpatialCuller } from './spatial-cull';
 import type { DepthSink } from './sort-layer';
 import {
   EDGE_STYLE,
@@ -169,14 +170,6 @@ export interface TerrainOptions {
   winter?: boolean;
 }
 
-interface Cullable {
-  sprite: Sprite;
-  x: number;
-  y: number;
-  padX: number;
-  padY: number;
-}
-
 interface CanopyEntry {
   sprite: Sprite;
   /** 世界坐标下的树冠盒 */
@@ -218,7 +211,7 @@ export class TerrainView {
   readonly decals = new Container();
   private readonly textures: TerrainTextures;
   private readonly surfaces: WaterSurface[] = [];
-  private readonly cullables: Cullable[] = [];
+  private readonly culler = new SpatialCuller();
   private readonly canopies: CanopyEntry[] = [];
   private readonly canopyGrid = new Map<number, CanopyEntry[]>();
   private readonly litCanopies = new Set<CanopyEntry>();
@@ -362,7 +355,7 @@ export class TerrainView {
       sprite.tint = tree.depth === 0 ? BORDER_NEAR_TINT : BORDER_FAR_TINT;
       (tree.depth === 0 ? near : far).addChild(sprite);
       // 树冠向上长到 108px、向两边各探 36px，裁剪范围要覆盖到
-      this.cullables.push({ sprite, x: tree.x, y: tree.y, padX: 36, padY: 112 });
+      this.culler.add(sprite, tree.x, tree.y, 36, 112);
     }
     // 先远后近：近排永远压在远排之上
     this.base.addChild(far, near);
@@ -626,6 +619,20 @@ export class TerrainView {
     const shore = new Graphics();
     shore.poly(flat).stroke({ width: LAKE_SHORE * 2, color: C.sand, join: 'round' });
     shore.poly(flat).stroke({ width: 4, color: C.sandLight, join: 'round' });
+    if (!this.options.flat) {
+      const rand = seeded(0x63a9 + Math.round(lake.rect.x) * 13 + Math.round(lake.rect.y));
+      const shoreRing = offsetContour(
+        lake.points.map(([x, y]) => ({ x, y })),
+        Math.round(LAKE_SHORE * 0.62),
+      );
+      for (const point of resampleContour(shoreRing, 32)) {
+        if (rand() > 0.55) continue;
+        const px = Math.round(point.x + (rand() - 0.5) * 6);
+        const py = Math.round(point.y + (rand() - 0.5) * 6);
+        const tint = this.winter ? (rand() > 0.5 ? W.snowLight : W.iceEdge) : rand() > 0.45 ? C.sandLight : C.sand;
+        shore.rect(px, py, 2 + Math.floor(rand() * 2), 2).fill({ color: tint, alpha: 0.72 });
+      }
+    }
     this.base.addChild(shore);
 
     const water = this.addWaterSurface(lake.rect, 'x', 3);
@@ -716,7 +723,7 @@ export class TerrainView {
     // 碎石与芦苇按脚底 y 进深度层：人走过去时前后关系才对
     if (this.depth) this.depth.add(py, sprite);
     else this.base.addChild(sprite);
-    this.cullables.push({ sprite, x: px, y: py, padX: 12, padY: 26 });
+    this.culler.add(sprite, px, py, 12, 26);
   }
 
   /**
@@ -730,7 +737,7 @@ export class TerrainView {
     shadow.position.set(Math.round(x), Math.round(y) - 1);
     // 取 y - 0.5 而不是 y：同位置的影子压在本体之下，又不会掉到更靠上的物件后面
     this.depth.add(y - 0.5, shadow);
-    this.cullables.push({ sprite: shadow, x, y, padX: 32, padY: 14 });
+    this.culler.add(shadow, x, y, 32, 14);
   }
 
   /**
@@ -787,7 +794,7 @@ export class TerrainView {
       sprite.position.set(placement.x, placement.y);
       if (placement.flip) sprite.scale.x = -1;
       this.decals.addChild(sprite);
-      this.cullables.push({ sprite, x: placement.x, y: placement.y, padX: 10, padY: 20 });
+      this.culler.add(sprite, placement.x, placement.y, 10, 20);
     }
   }
 
@@ -819,8 +826,8 @@ export class TerrainView {
       // 遮挡只把树冠 alpha 压到 0.85，树干保持不透明（ADR-0013）。
       const canopy = this.treeSprite(depth, parts.canopy, tree.x, tree.y);
       // 树冠向上长到 108px、向两边各探 36px，裁剪范围要覆盖到
-      this.cullables.push({ sprite: trunk, x: tree.x, y: tree.y, padX: 36, padY: 112 });
-      this.cullables.push({ sprite: canopy, x: tree.x, y: tree.y, padX: 36, padY: 112 });
+      this.culler.add(trunk, tree.x, tree.y, 36, 112);
+      this.culler.add(canopy, tree.x, tree.y, 36, 112);
       this.trackCanopy(canopy, tree.x, tree.y);
     }
   }
@@ -857,7 +864,7 @@ export class TerrainView {
       sprite.anchor.set(0.5, 1);
       sprite.position.set(planter.x, planter.y);
       depth.add(planter.y, sprite);
-      this.cullables.push({ sprite, x: planter.x, y: planter.y, padX: 16, padY: 36 });
+      this.culler.add(sprite, planter.x, planter.y, 16, 36);
     }
   }
 
@@ -927,19 +934,13 @@ export class TerrainView {
     for (const entry of this.nextLit) this.litCanopies.add(entry);
   }
 
-  /** 视口裁剪：贴花与树不进画面就翻 renderable，排序与绘制都省掉 */
+  /** 视口裁剪：委托 512px 分块空间裁剪器 */
   cull(minX: number, minY: number, maxX: number, maxY: number): void {
-    for (const entry of this.cullables) {
-      const top = entry.y - entry.padY;
-      entry.sprite.renderable =
-        entry.x + entry.padX >= minX &&
-        entry.x - entry.padX <= maxX &&
-        entry.y >= minY &&
-        top <= maxY;
-    }
+    this.culler.cull(minX, minY, maxX, maxY);
   }
 
   destroy(): void {
+    this.culler.clear();
     this.base.destroy({ children: true });
     this.edge.destroy({ children: true });
     this.decals.destroy({ children: true });

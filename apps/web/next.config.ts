@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { NextConfig } from 'next';
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 
 /**
  * 部署版本号：由 Jenkins 在构建前注入（git sha + 构建号）。
@@ -80,4 +81,13 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/**
+ * 开发服务器与生产构建分目录（`.next-dev` vs `.next`）：
+ * 同时跑 `next dev` 与 `next build` 时不再互相覆盖 routes-manifest 与 chunks。
+ */
+export default function createNextConfig(phase: string): NextConfig {
+  return {
+    ...nextConfig,
+    distDir: phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next',
+  };
+}

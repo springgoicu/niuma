@@ -1,16 +1,26 @@
-import { PLAYER_RADIUS, WORLD_BOUNDS, isBlocked } from '@niuma/shared-types';
+import {
+  PLAYER_RADIUS,
+  WORLD_BOUNDS,
+  dynamicBlockerCount,
+  isBlocked,
+  isInClinicInterior,
+} from '@niuma/shared-types';
 
 /**
  * 共享寻路：保安押送与救护车出警复用同一份导航能力（ADR-0115）。
  *
- * 24px 网格 + 8 邻接（禁止切角）+ 视线简化。地图是静态的，可行走格按半径缓存；
- * 单次 BFS 约 2.8 万格，毫秒级。障碍半径决定可通行净宽：用 `PLAYER_RADIUS` 建网格
- * 时，门洞净宽（≥ 38px，见 door-clearance.test）足以让车与保安同时通过。
+ * 24px 网格 + 8 邻接（禁止切角）+ 视线简化。地图静态底图按半径与门禁模式缓存；
+ * 单次 BFS 复用预分配工作数组（零 GC），并在存在动态门栅时实时叠加动态障碍判定。
  */
 
 export interface NavPoint {
   x: number;
   y: number;
+}
+
+export interface FindPathOptions {
+  /** 为 true 时把护士站内部视作不可行走（供无法进站的步行 NPC / 保安使用） */
+  avoidClinicInterior?: boolean;
 }
 
 const CELL = 24;
@@ -32,33 +42,53 @@ const NEIGHBORS: ReadonlyArray<readonly [number, number]> = [
   [-1, -1],
 ];
 
-/** 按半径缓存可走网格：不同 clearance 各建一张，静态地图只算一次 */
-const grids = new Map<number, Uint8Array>();
+/** 按 (半径 + 是否排除急救站内) 缓存纯静态可走网格：不包含动态门栅 */
+const grids = new Map<string, Uint8Array>();
 
-function buildGrid(radius: number): Uint8Array {
+/** 预分配 BFS 工作数组：帧内多次寻路不产生大块 TypedArray 分配 */
+const seenStamp = new Uint32Array(CELL_COUNT);
+const previous = new Int32Array(CELL_COUNT);
+const queue = new Int32Array(CELL_COUNT);
+let bfsStamp = 0;
+
+function gridKey(radius: number, avoidClinic: boolean): string {
+  return `${radius}:${avoidClinic ? 1 : 0}`;
+}
+
+function isPointBlocked(x: number, y: number, radius: number, avoidClinic: boolean): boolean {
+  if (isBlocked(x, y, radius, true)) return true;
+  return avoidClinic && isInClinicInterior(x, y);
+}
+
+function buildGrid(radius: number, avoidClinic: boolean): Uint8Array {
   const cells = new Uint8Array(CELL_COUNT);
   for (let cy = 0; cy < ROWS; cy += 1) {
     for (let cx = 0; cx < COLS; cx += 1) {
       const x = ORIGIN_X + cx * CELL + CELL / 2;
       const y = ORIGIN_Y + cy * CELL + CELL / 2;
-      cells[cy * COLS + cx] = isBlocked(x, y, radius) ? 0 : 1;
+      const blocked = isBlocked(x, y, radius, false) || (avoidClinic && isInClinicInterior(x, y));
+      cells[cy * COLS + cx] = blocked ? 0 : 1;
     }
   }
   return cells;
 }
 
-function ensureGrid(radius: number): Uint8Array {
-  let cells = grids.get(radius);
+function ensureGrid(radius: number, avoidClinic = false): Uint8Array {
+  const key = gridKey(radius, avoidClinic);
+  let cells = grids.get(key);
   if (!cells) {
-    cells = buildGrid(radius);
-    grids.set(radius, cells);
+    cells = buildGrid(radius, avoidClinic);
+    grids.set(key, cells);
   }
   return cells;
 }
 
 /** 预热：在启动时把 28k 格跑完，避免第一次寻路在一个 Tick 里现算 */
-export function warmNavGrid(radius: number = PLAYER_RADIUS): void {
-  ensureGrid(radius);
+export function warmNavGrid(
+  radius: number = PLAYER_RADIUS,
+  options?: FindPathOptions,
+): void {
+  ensureGrid(radius, options?.avoidClinicInterior === true);
 }
 
 function indexOf(cx: number, cy: number): number {
@@ -73,8 +103,17 @@ function centerY(cy: number): number {
   return ORIGIN_Y + cy * CELL + CELL / 2;
 }
 
-function isWalkable(cx: number, cy: number, cells: Uint8Array): boolean {
-  return cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS && cells[indexOf(cx, cy)] === 1;
+function isWalkable(
+  cx: number,
+  cy: number,
+  cells: Uint8Array,
+  radius: number,
+  hasDynamic: boolean,
+): boolean {
+  if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) return false;
+  if (cells[indexOf(cx, cy)] !== 1) return false;
+  if (hasDynamic && isBlocked(centerX(cx), centerY(cy), radius, true)) return false;
+  return true;
 }
 
 /**
@@ -83,22 +122,28 @@ function isWalkable(cx: number, cy: number, cells: Uint8Array): boolean {
  * 起点/终点贴在墙边或落在一个被半径判死的角落时，向外扩张最多 4 格（96px）
  * 找可走格；找不到就返回 null，由调用方放弃任务，绝不把实体塞进墙里。
  */
-function nearestCell(x: number, y: number, cells: Uint8Array): { cx: number; cy: number } | null {
+function nearestCell(
+  x: number,
+  y: number,
+  cells: Uint8Array,
+  radius: number,
+  hasDynamic: boolean,
+): { cx: number; cy: number } | null {
   const baseX = Math.min(COLS - 1, Math.max(0, Math.floor((x - ORIGIN_X) / CELL)));
   const baseY = Math.min(ROWS - 1, Math.max(0, Math.floor((y - ORIGIN_Y) / CELL)));
-  if (isWalkable(baseX, baseY, cells)) return { cx: baseX, cy: baseY };
+  if (isWalkable(baseX, baseY, cells, radius, hasDynamic)) return { cx: baseX, cy: baseY };
 
-  for (let radius = 1; radius <= 4; radius += 1) {
+  for (let ring = 1; ring <= 4; ring += 1) {
     let bestDistance = Number.POSITIVE_INFINITY;
     let bestX = -1;
     let bestY = -1;
-    for (let dy = -radius; dy <= radius; dy += 1) {
-      for (let dx = -radius; dx <= radius; dx += 1) {
+    for (let dy = -ring; dy <= ring; dy += 1) {
+      for (let dx = -ring; dx <= ring; dx += 1) {
         // 只扫外圈，内圈上一轮已经看过
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
         const cx = baseX + dx;
         const cy = baseY + dy;
-        if (!isWalkable(cx, cy, cells)) continue;
+        if (!isWalkable(cx, cy, cells, radius, hasDynamic)) continue;
         const d2 = (centerX(cx) - x) ** 2 + (centerY(cy) - y) ** 2;
         if (d2 < bestDistance) {
           bestDistance = d2;
@@ -113,12 +158,19 @@ function nearestCell(x: number, y: number, cells: Uint8Array): { cx: number; cy:
 }
 
 /** 4px 采样视线：平滑后的捷径不能穿墙，也不能擦着墙角过 */
-function lineClear(ax: number, ay: number, bx: number, by: number, radius: number): boolean {
+function lineClear(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  radius: number,
+  avoidClinic: boolean,
+): boolean {
   const distance = Math.hypot(bx - ax, by - ay);
   const steps = Math.max(1, Math.ceil(distance / 4));
   for (let i = 0; i <= steps; i += 1) {
     const t = i / steps;
-    if (isBlocked(ax + (bx - ax) * t, ay + (by - ay) * t, radius)) return false;
+    if (isPointBlocked(ax + (bx - ax) * t, ay + (by - ay) * t, radius, avoidClinic)) return false;
   }
   return true;
 }
@@ -127,13 +179,16 @@ function lineClear(ax: number, ay: number, bx: number, by: number, radius: numbe
  * 视线简化：从当前点尽量往后连，保留拐点。
  * 只减点、不改可达性；被墙挡住的捷径会被 `lineClear` 拒绝。
  */
-function simplify(points: NavPoint[], radius: number): NavPoint[] {
+function simplify(points: NavPoint[], radius: number, avoidClinic: boolean): NavPoint[] {
   if (points.length <= 2) return points;
   const out = [points[0]!];
   let index = 0;
   while (index < points.length - 1) {
     let next = points.length - 1;
-    while (next > index + 1 && !lineClear(points[index]!.x, points[index]!.y, points[next]!.x, points[next]!.y, radius)) {
+    while (
+      next > index + 1 &&
+      !lineClear(points[index]!.x, points[index]!.y, points[next]!.x, points[next]!.y, radius, avoidClinic)
+    ) {
       next -= 1;
     }
     out.push(points[next]!);
@@ -150,38 +205,53 @@ export function findPath(
   from: NavPoint,
   to: NavPoint,
   radius: number = PLAYER_RADIUS,
+  options?: FindPathOptions,
 ): NavPoint[] | null {
-  const cells = ensureGrid(radius);
-  const start = nearestCell(from.x, from.y, cells);
-  const goal = nearestCell(to.x, to.y, cells);
+  const avoidClinic = options?.avoidClinicInterior === true && !isInClinicInterior(from.x, from.y);
+  const hasDynamic = dynamicBlockerCount() > 0;
+  const cells = ensureGrid(radius, avoidClinic);
+  const start = nearestCell(from.x, from.y, cells, radius, hasDynamic);
+  const goal = nearestCell(to.x, to.y, cells, radius, hasDynamic);
   if (!start || !goal) return null;
 
   const startIndex = indexOf(start.cx, start.cy);
   const goalIndex = indexOf(goal.cx, goal.cy);
-  const previous = new Int32Array(CELL_COUNT).fill(-2);
-  const queue = new Int32Array(CELL_COUNT);
+
+  bfsStamp += 1;
+  if (bfsStamp >= 0xfffffffe) {
+    seenStamp.fill(0);
+    bfsStamp = 1;
+  }
+  const stamp = bfsStamp;
+
   let head = 0;
   let tail = 0;
+  seenStamp[startIndex] = stamp;
   previous[startIndex] = -1;
   queue[tail] = startIndex;
   tail += 1;
 
-  while (head < tail && previous[goalIndex] === -2) {
+  while (head < tail && seenStamp[goalIndex] !== stamp) {
     const current = queue[head]!;
     head += 1;
     const cx = current % COLS;
     const cy = Math.floor(current / COLS);
-    const cellsNow = cells;
     for (const [dx, dy] of NEIGHBORS) {
       const nx = cx + dx;
       const ny = cy + dy;
-      if (!isWalkable(nx, ny, cellsNow)) continue;
+      if (!isWalkable(nx, ny, cells, radius, hasDynamic)) continue;
       // 斜向不允许切角：两个正邻都必须可走
-      if (dx !== 0 && dy !== 0 && (!isWalkable(cx + dx, cy, cellsNow) || !isWalkable(cx, cy + dy, cellsNow))) {
+      if (
+        dx !== 0 &&
+        dy !== 0 &&
+        (!isWalkable(cx + dx, cy, cells, radius, hasDynamic) ||
+          !isWalkable(cx, cy + dy, cells, radius, hasDynamic))
+      ) {
         continue;
       }
       const next = indexOf(nx, ny);
-      if (previous[next] !== -2) continue;
+      if (seenStamp[next] === stamp) continue;
+      seenStamp[next] = stamp;
       previous[next] = current;
       queue[tail] = next;
       tail += 1;
@@ -189,7 +259,7 @@ export function findPath(
     }
   }
 
-  if (previous[goalIndex] === -2) return null;
+  if (seenStamp[goalIndex] !== stamp) return null;
 
   const reversed: NavPoint[] = [];
   let cursor = goalIndex;
@@ -205,10 +275,10 @@ export function findPath(
   // 但坐标本身在墙里（被挤出 / 目标卡在装饰物上）时保留最近的可行走格，
   // 否则最后一段会从墙里穿出来，围观者能看到实体“穿墙”。
   const raw = reversed;
-  if (!isBlocked(from.x, from.y, radius)) raw[0] = { x: from.x, y: from.y };
-  if (!isBlocked(to.x, to.y, radius)) raw[raw.length - 1] = { x: to.x, y: to.y };
+  if (!isPointBlocked(from.x, from.y, radius, avoidClinic)) raw[0] = { x: from.x, y: from.y };
+  if (!isPointBlocked(to.x, to.y, radius, avoidClinic)) raw[raw.length - 1] = { x: to.x, y: to.y };
   if (raw.length === 1) raw.push({ x: raw[0]!.x, y: raw[0]!.y });
-  return simplify(raw, radius);
+  return simplify(raw, radius, avoidClinic);
 }
 
 /**
@@ -220,8 +290,9 @@ export function nearestFreePoint(
   y: number,
   radius: number = PLAYER_RADIUS,
 ): NavPoint | null {
-  const cells = ensureGrid(radius);
-  if (!isBlocked(x, y, radius)) return { x, y };
-  const cell = nearestCell(x, y, cells);
+  const hasDynamic = dynamicBlockerCount() > 0;
+  const cells = ensureGrid(radius, false);
+  if (!isBlocked(x, y, radius, true)) return { x, y };
+  const cell = nearestCell(x, y, cells, radius, hasDynamic);
   return cell ? { x: centerX(cell.cx), y: centerY(cell.cy) } : null;
 }

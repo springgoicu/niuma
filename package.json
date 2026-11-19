@@ -2,24 +2,26 @@
   "name": "niuma",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@10.33.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=20.11"
   },
   "scripts": {
-    "dev": "pnpm run assets && turbo run dev --parallel",
-    "build": "pnpm run assets && turbo run build",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "assets": "pnpm --filter @niuma/pixel-assets run generate",
-    "bench": "pnpm --filter @niuma/game-server run bench",
-    "server": "pnpm --filter @niuma/game-server run dev",
-    "changelog:check": "pnpm --filter @niuma/web run changelog:check"
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run assets && npm run build --workspace=apps/web",
+    "start": "node scripts/start.mjs",
+    "lint": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/game-server",
+    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/game-server && npm run typecheck --workspace=packages/shared-types",
+    "assets": "npm run generate --workspace=packages/pixel-assets",
+    "server": "npm run dev --workspace=apps/game-server",
+    "changelog:check": "npm run changelog:check --workspace=apps/web"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
-    "bun": "^1.4.4",
-    "turbo": "^2.3.3",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2"
   }
 }

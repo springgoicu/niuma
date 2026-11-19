@@ -742,9 +742,23 @@ export class VenueFx {
     this.container.addChild(this.neon);
   }
 
-  /** 每帧推进：纯函数给值，这里只写属性 */
-  update(nowMs: number): void {
+  /** 每帧推进：离屏粒子跳过波形计算并隐藏，同屏内才写属性 */
+  update(
+    nowMs: number,
+    bounds?: { minX: number; minY: number; maxX: number; maxY: number },
+  ): void {
+    const pad = 48;
+    const minX = bounds ? bounds.minX - pad : Number.NEGATIVE_INFINITY;
+    const maxX = bounds ? bounds.maxX + pad : Number.POSITIVE_INFINITY;
+    const minY = bounds ? bounds.minY - pad : Number.NEGATIVE_INFINITY;
+    const maxY = bounds ? bounds.maxY + pad : Number.POSITIVE_INFINITY;
+
     for (const leaf of this.leaves) {
+      const inView = leaf.x >= minX && leaf.x <= maxX && leaf.y >= minY && leaf.y <= maxY;
+      if (!inView) {
+        leaf.sprite.visible = false;
+        continue;
+      }
       leaf.sprite.visible = true;
       leaf.sprite.x = leaf.x + leafX(leaf.seed, nowMs, leaf.span);
       leaf.sprite.y = leaf.y + leafY(leaf.seed, nowMs, 7);
@@ -752,10 +766,24 @@ export class VenueFx {
       leaf.sprite.rotation = bannerSway(leaf.seed, nowMs) * 0.35;
     }
     for (const glint of this.glints) {
+      const gx = glint.sprite.position.x;
+      const gy = glint.sprite.position.y;
+      const inView = gx >= minX && gx <= maxX && gy >= minY && gy <= maxY;
+      if (!inView) {
+        glint.sprite.visible = false;
+        continue;
+      }
+      glint.sprite.visible = true;
       glint.sprite.alpha = 0.18 + waterGlint(glint.seed, nowMs) * 0.62;
       glint.sprite.scale.x = 0.7 + waterGlint(glint.seed + 13, nowMs) * 0.6;
     }
-    this.neon.alpha = 0.35 + neonPulse(7, nowMs) * 0.5;
+    const nx = this.neon.position.x;
+    const ny = this.neon.position.y;
+    const neonInView = nx >= minX && nx <= maxX && ny >= minY && ny <= maxY;
+    this.neon.visible = neonInView;
+    if (neonInView) {
+      this.neon.alpha = 0.35 + neonPulse(7, nowMs) * 0.5;
+    }
   }
 
   destroy(): void {

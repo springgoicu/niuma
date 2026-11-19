@@ -11,6 +11,7 @@ const NOW = 1_700_000_000_000;
 interface Harness {
   world: World;
   agent: NpcAgent;
+  human: NonNullable<ReturnType<World['create']>>;
   context: NpcSocialContext;
 }
 
@@ -27,7 +28,7 @@ function makeHarness(seed = 1, humanDistance = 60): Harness {
     rng: createRng(seed),
   };
   const agent = createAgent(createRng(seed), npc, 0.8, DEFAULT_NPC_CONFIG, NOW);
-  return { world, agent, context };
+  return { world, agent, human, context };
 }
 
 describe('对视与让路', () => {
@@ -43,9 +44,10 @@ describe('对视与让路', () => {
   });
 
   it('迎面撞上时停下让路，姿态回到站立', () => {
-    const { agent, context } = makeHarness(3);
+    const { agent, human, context } = makeHarness(3);
     agent.phase = 'walk';
-    agent.player.applyState(DIRECTION.Left, POSE.Walk, true);
+    agent.player.applyState(DIRECTION.Right, POSE.Walk, true);
+    human.applyState(DIRECTION.Left, POSE.Walk, true);
 
     let yielded = false;
     for (let index = 0; index < 60; index += 1) {

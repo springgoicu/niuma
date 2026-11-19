@@ -130,7 +130,7 @@ import { toSnapshotPatch } from './snapshot';
 import { ACTIVITY_TTL_MS } from './activity-feed';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { HINT, resolveVisibleHint } from './hint-copy';
-import { buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
+import { BLINK_COLUMN, buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
 import { seatLift } from './seat-art';
 import { NEVER_SENT, shouldSendMove, type MoveSample } from './move-send';
 import { Ecs, Local, Motion, POSE, Position } from './ecs';
@@ -180,7 +180,15 @@ import {
 import { DEFAULT_DANMAKU_PREFS, type DanmakuPrefs } from './danmaku-prefs';
 import { serverDateKey } from './server-date';
 import { applyClockSample, serverNow, serverTzOffsetMin } from './server-clock';
-import { BOW_DURATION_MS, bowTexelsAt, jumpLiftTexels, jumpShadowFor } from './pony-motion';
+import {
+  BOW_DURATION_MS,
+  bowTexelsAt,
+  jumpLiftTexels,
+  jumpShadowFor,
+  ponyMotion,
+  ponyPoseNameOf,
+  ventLungeTexels,
+} from './pony-motion';
 import { Navigator } from './navigator';
 import { planRoute } from './nav-route';
 import { GameRenderer } from './renderer';
@@ -693,6 +701,8 @@ export class GameSession {
   private readonly sample: RemoteSample = { x: 0, y: 0, state: 0 };
   /** 位移解算输出槽：与服务端共用同一个零分配变体 */
   private readonly motion: MotionTarget = { x: 0, y: 0 };
+  /** 发泄前倾位移输出槽：帧循环复用，不产生短命对象 */
+  private readonly lungeOffset = { x: 0, y: 0 };
   /** 收到同步包的本地时刻：一条包里的所有条目共用一个时间戳，避免逐条读时钟 */
   private syncAt = 0;
 
@@ -1314,6 +1324,7 @@ export class GameSession {
   private sitAt(seat: SeatInstance, snap = true): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
+    this.clearPray();
     this.localSeat = seat.id;
     this.entitySeat.set(this.localId, seat.id);
     // snap=false 只认座位与姿态：位置交给服务端的逐拍过渡（急救上床 / 下床）
@@ -1342,6 +1353,7 @@ export class GameSession {
     const eid = this.ecs.get(this.localId);
     const hadSeat = this.localSeat !== 0;
     const posed = eid !== 0 && (Motion.pose[eid] === POSE.Sit || Motion.pose[eid] === POSE.Lie);
+    this.clearPray();
     this.localSeat = 0;
     this.entitySeat.delete(this.localId);
     this.seatIntent = false;
@@ -1890,6 +1902,7 @@ export class GameSession {
         this.standUp();
         return;
       case 'jump':
+        this.clearPray();
         // 坐 / 躺先起身再跳：跳跃是位移动作，躺着原地起跳读不懂。
         // 行走中直接起跳：pose 与 moving 都不动，跳跃帧播完自然接回走路循环。
         this.standUp();
@@ -1903,6 +1916,7 @@ export class GameSession {
         // 与服务端同一把尺子：本地先挡一道，连点不会白发包（ADR-0051）。
         // 冷却随攻速等级与冰美式变化（ADR-0085），读共享函数而不是写死常量。
         if (this.elapsed < this.ventAt) return;
+        this.clearPray();
         this.ventAt =
           this.elapsed +
           effectiveVentCooldownMs(
@@ -1932,6 +1946,7 @@ export class GameSession {
       case 'wave':
         // 打招呼只在站定时触发：图集没有行走挥手帧，套到脚步上就是滑步
         if (Motion.pose[eid] === POSE.Walk || Motion.moving[eid] === 1) return;
+        this.clearPray();
         this.startOverlay(eid, 'wave');
         Motion.moving[eid] = 0;
         this.reportActivity(ACTIVITY_KIND.Wave);
@@ -1946,6 +1961,7 @@ export class GameSession {
   }
 
   private sitGround(eid: number): void {
+    this.clearPray();
     this.setLocalPose(eid, POSE.Sit);
     // 切姿势会打断叠加动作
     this.clearOverlays(eid);
@@ -1955,6 +1971,7 @@ export class GameSession {
   }
 
   private lieGround(eid: number): void {
+    this.clearPray();
     this.setLocalPose(eid, POSE.Lie);
     this.clearOverlays(eid);
     Motion.moving[eid] = 0;
@@ -2203,6 +2220,13 @@ export class GameSession {
     this.renderer.grantAura(this.localId, INCENSE_AURA_MS);
   }
 
+  /** 中途移动、受击或切换姿势时收起未播完的作揖下俯，不把俯身带进走路 / 倒地帧 */
+  private clearPray(): void {
+    if (this.prayAt < 0) return;
+    this.prayAt = -1;
+    if (this.localId) this.renderer.setBow(this.localId, 0);
+  }
+
   /** 作揖包络：只在 900ms 窗口内逐帧写下沉量，窗口结束补一次归零 */
   private updatePray(): void {
     if (this.prayAt < 0) return;
@@ -2422,6 +2446,7 @@ export class GameSession {
   private teleportLocal(point: { x: number; y: number }): void {
     const eid = this.ecs.get(this.localId);
     if (!eid) return;
+    this.clearPray();
     this.cancelNavigation();
     Position.x[eid] = point.x;
     Position.y[eid] = point.y;
@@ -2618,6 +2643,10 @@ export class GameSession {
     });
     this.renderer.showBubble(packet.targetId, pickVentVictimLine(packet.targetId));
     this.renderer.setStun(packet.targetId, VENT_STUN_MS);
+    const attackerEid = this.ecs.get(packet.attackerId);
+    const hitFromX = attackerEid ? Position.x[attackerEid]! : x;
+    const hitFromY = attackerEid ? Position.y[attackerEid]! : y - 16;
+    this.renderer.triggerHitReact(packet.targetId, hitFromX, hitFromY, 180);
     if (packet.ringHit) {
       this.renderer.showRingDamage(packet.targetId, packet.eliminated === true);
     } else if (packet.attackerId === this.localId) {
@@ -2629,6 +2658,7 @@ export class GameSession {
     if (!targetEid) return;
 
     if (packet.targetId === this.localId) {
+      this.clearPray();
       // 本人直接采用权威坐标：这一步是「无抖动拉回」的全部秘密
       Position.x[targetEid] = x;
       Position.y[targetEid] = y;
@@ -2716,6 +2746,7 @@ export class GameSession {
 
     switch (packet.state) {
       case PATIENT_STATE.Incapacitated:
+        this.clearPray();
         this.stunUntil = this.elapsed + 60000;
         // 从这一刻起位置全交服务端：上车、拖行、上床都不能靠本地预测
         this.patientLocked = true;
@@ -2727,6 +2758,7 @@ export class GameSession {
         this.renderer.showBubble(this.localId, '眼冒金星… 等救护车');
         return;
       case PATIENT_STATE.Treating:
+        this.clearPray();
         this.stunUntil = this.elapsed + 60000;
         this.patientLocked = true;
         this.ventLockUntil = 0;
@@ -2795,8 +2827,12 @@ export class GameSession {
     if (effect === PLAYER_EFFECT.Slip) {
       this.renderer.setStun(targetId, durationMs);
       this.renderer.showBubble(targetId, '滑倒了！');
-      if (eid) this.emitAudio({ kind: 'slip', x, y });
+      if (eid) {
+        this.emitAudio({ kind: 'slip', x, y });
+        this.renderer.triggerHitReact(targetId, x, y - 16, 170);
+      }
       if (targetId === this.localId) {
+        this.clearPray();
         // 与服务端同一条硬直口径：躺 2 秒，座位同时释放
         this.stunUntil = Math.max(this.stunUntil, this.elapsed + durationMs);
         this.ventLockUntil = 0;
@@ -2832,6 +2868,7 @@ export class GameSession {
   }
 
   private beginEscort(): void {
+    this.clearPray();
     this.escortLocked = true;
     this.cancelNavigation();
     this.ventLockUntil = 0;
@@ -3032,9 +3069,8 @@ export class GameSession {
       Motion.direction[eid] = directionFromVector(vx, vy, Motion.direction[eid] as Direction);
       // 顶在围栏上时原地踏步会露馅：没有实际位移就当站定
       if (advanced) {
-        // 走动打断发泄与打招呼（都没有行走帧）；跳跃是位移动作，不能在这里清位，
-        // 否则「边走边跳」按下即被自己掐掉。出招窗口内已被 `frozen` 挡住位移，
-        // 所以这条不会把刚按下的发泄掐掉
+        // 走动打断发泄、打招呼与上香作揖：走路帧不混叠其它动作
+        this.clearPray();
         Motion.vent[eid] = 0;
         Motion.wave[eid] = 0;
         if (Motion.pose[eid] !== POSE.Walk) {
@@ -3120,28 +3156,55 @@ export class GameSession {
     }
 
     if (!this.renderer.updateEntity(netId, Position.x[eid]!, Position.y[eid]!)) return;
-
-    this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
-    this.syncSeatLift(netId, eid);
-    // 跳跃弧线：图集只负责姿势与 5 纹素腾空，剩下的落差与阴影由客户端叠
-    const jumping = Motion.jump[eid] === 1;
-    const lift = jumping
-      ? jumpLiftTexels(this.elapsed - Motion.jumpSince[eid]!, this.overlays.jumpMs)
-      : 0;
-    this.renderer.setJump(netId, lift, jumpShadowFor(lift));
+    this.applyEntityAnimation(netId, eid);
   }
 
   /** 本地玩家永远在画面中心，不做可见性判定 */
   private commitLocalView(eid: number): void {
     const netId = this.ecs.netOf[eid]!;
     this.renderer.updateLocalEntity(netId, Position.x[eid]!, Position.y[eid]!);
-    this.renderer.setPose(netId, Motion.direction[eid]!, this.columnFor(netId, eid));
-    this.syncSeatLift(netId, eid);
+    this.applyEntityAnimation(netId, eid);
+  }
+
+  /** 同步实体的帧动画、微呼吸/眨眼、入座抬升、跳跃弧线与发泄前倾（本地与远端同口径） */
+  private applyEntityAnimation(netId: number, eid: number): void {
+    const pose = Motion.pose[eid]! as Pose;
     const jumping = Motion.jump[eid] === 1;
+    const venting = Motion.vent[eid] === 1;
+    const waving = Motion.wave[eid] === 1;
+    const motion = ponyMotion(ponyPoseNameOf(pose), this.elapsed, netId);
+
+    const canBlink =
+      !jumping &&
+      !venting &&
+      !waving &&
+      pose === POSE.Idle &&
+      Motion.moving[eid] === 0 &&
+      motion.blinking &&
+      !(netId === this.localId && this.prayAt >= 0);
+
+    const column = canBlink ? BLINK_COLUMN : this.columnFor(netId, eid);
+    this.renderer.setPose(netId, Motion.direction[eid]!, column);
+    this.syncSeatLift(netId, eid);
+    this.renderer.setMotion(netId, motion);
+
+    // 跳跃弧线：图集只负责姿势与 5 纹素腾空，剩下的落差与阴影由客户端叠
     const lift = jumping
       ? jumpLiftTexels(this.elapsed - Motion.jumpSince[eid]!, this.overlays.jumpMs)
       : 0;
     this.renderer.setJump(netId, lift, jumpShadowFor(lift));
+
+    if (venting) {
+      ventLungeTexels(
+        this.elapsed - Motion.ventSince[eid]!,
+        this.overlays.ventMs,
+        Motion.direction[eid]!,
+        this.lungeOffset,
+      );
+      this.renderer.setActionNudge(netId, this.lungeOffset.x, this.lungeOffset.y);
+    } else {
+      this.renderer.setActionNudge(netId, 0, 0);
+    }
   }
 
   /**

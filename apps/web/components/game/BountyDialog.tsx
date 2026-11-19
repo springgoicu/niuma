@@ -41,7 +41,7 @@ export function BountyDialog({ onClaim, onClose }: BountyDialogProps) {
         className="pointer-events-auto absolute inset-0 cursor-default bg-[#0b1020]/55"
         onClick={onClose}
       />
-      <section className="pointer-events-auto relative m-3 flex w-[min(420px,92vw)] flex-col overflow-hidden rounded-xl border-2 border-[#7cf5b0]/50 bg-[#0b1020]/96 shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
+      <section className="animate-board-in pointer-events-auto relative m-3 flex w-[min(420px,92vw)] flex-col overflow-hidden rounded-xl border-2 border-[#7cf5b0]/50 bg-[#0b1020]/96 shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
         <header className="flex items-start justify-between border-b border-white/10 px-4 py-3">
           <div>
             <h2 className="text-base font-bold tracking-wide text-[#f2f5ff]">今日悬赏</h2>
@@ -63,20 +63,24 @@ export function BountyDialog({ onClaim, onClose }: BountyDialogProps) {
             const def = findQuestDef(entry.id);
             if (!def) return null;
             const done = entry.progress >= entry.target;
+            const claimable = !entry.claimed && done;
             const ratio = Math.min(1, entry.progress / Math.max(1, entry.target));
             return (
               <article
                 key={entry.id}
-                className={`rounded-lg border px-3 py-2 transition-colors ${
+                className={`rounded-lg border px-3 py-2 transition-[border-color,background-color,box-shadow] duration-200 ${
                   entry.claimed
                     ? 'border-[#f5c451]/40 bg-[#f5c451]/5'
-                    : done
-                      ? 'border-[#7cf5b0]/50 bg-[#7cf5b0]/5'
+                    : claimable
+                      ? 'animate-bounty-ready border-[#7cf5b0]/60 bg-[#7cf5b0]/10'
                       : 'border-white/10 bg-white/[0.02]'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-lg" aria-hidden="true">
+                  <span
+                    className={`text-lg transition-transform duration-200 ${claimable ? 'scale-110' : ''}`}
+                    aria-hidden="true"
+                  >
                     {QUEST_ICON[entry.id] ?? '📌'}
                   </span>
                   <div className="min-w-0 flex-1">
@@ -90,13 +94,13 @@ export function BountyDialog({ onClaim, onClose }: BountyDialogProps) {
                   </div>
                   <button
                     type="button"
-                    disabled={entry.claimed || !done}
+                    disabled={!claimable}
                     onClick={() => onClaim(entry.id)}
-                    className={`shrink-0 rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    className={`shrink-0 rounded-md border px-2.5 py-1 text-xs font-semibold transition-[transform,colors] duration-150 ${
                       entry.claimed
                         ? 'cursor-default border-[#f5c451]/40 text-[#f5c451]'
-                        : done
-                          ? 'cursor-pointer border-[#f5c451] bg-[#f5c451]/15 text-[#f5c451] hover:bg-[#f5c451]/25'
+                        : claimable
+                          ? 'cursor-pointer border-[#f5c451] bg-[#f5c451]/15 text-[#f5c451] hover:bg-[#f5c451]/25 active:scale-95'
                           : 'cursor-not-allowed border-white/10 text-[#5c6b8a]'
                     }`}
                   >
@@ -105,7 +109,9 @@ export function BountyDialog({ onClaim, onClose }: BountyDialogProps) {
                 </div>
                 <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
                   <div
-                    className={`h-full rounded-full ${entry.claimed ? 'bg-[#f5c451]' : 'bg-[#7cf5b0]'}`}
+                    className={`h-full rounded-full transition-[width] duration-300 ease-out ${
+                      entry.claimed ? 'bg-[#f5c451]' : 'bg-[#7cf5b0]'
+                    }`}
                     style={{ width: `${Math.round(ratio * 100)}%` }}
                   />
                 </div>
@@ -119,10 +125,10 @@ export function BountyDialog({ onClaim, onClose }: BountyDialogProps) {
             type="button"
             disabled={ready.length === 0}
             onClick={() => ready.forEach((entry) => onClaim(entry.id))}
-            className={`w-full rounded-md border-2 px-3 py-2 text-sm font-bold tracking-wide transition-colors ${
+            className={`w-full rounded-md border-2 px-3 py-2 text-sm font-bold tracking-wide transition-[transform,colors] duration-150 ${
               ready.length === 0
                 ? 'cursor-not-allowed border-white/10 text-[#5c6b8a]'
-                : 'cursor-pointer border-[#f5c451] bg-[#f5c451]/15 text-[#f5c451] hover:bg-[#f5c451]/25'
+                : 'animate-bounty-ready cursor-pointer border-[#f5c451] bg-[#f5c451]/15 text-[#f5c451] hover:bg-[#f5c451]/25 active:scale-[0.98]'
             }`}
           >
             {ready.length === 0 ? '没有可领取的悬赏' : `一键领取全部（${ready.length}）`}

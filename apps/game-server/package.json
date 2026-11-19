@@ -4,19 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "bench": "bun src/bench/bots.ts",
-    "lexicon:check": "bun scripts/check-lexicon.ts",
-    "lexicon:import": "bun scripts/import-lexicon.ts"
+    "bench": "tsx src/bench/bots.ts",
+    "lexicon:check": "tsx scripts/check-lexicon.ts",
+    "lexicon:import": "tsx scripts/import-lexicon.ts"
   },
   "dependencies": {
-    "@niuma/shared-types": "workspace:*"
+    "@niuma/shared-types": "*",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.0",
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2"
   }
 }

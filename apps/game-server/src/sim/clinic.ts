@@ -7,6 +7,7 @@ import {
   CLINIC_ACCESS_PAVING,
   CLINIC_BED_SEAT_IDS,
   CLINIC_BEDS,
+  CLINIC_COUNTER,
   CLINIC_DROP,
   CLINIC_NURSE_LANE_X,
   CLINIC_NURSE_LANE_Y,
@@ -308,7 +309,7 @@ export class AmbulanceManager {
   /** 与 `nurses` 同步下标的站位号：某个护士没生成出来也不会把别人放错位 */
   private readonly nurseSpots: number[] = [];
   private readonly nurseNextWave = [0, 0];
-  private nurseWaveUntil = 0;
+  private readonly nurseWaveUntil = [0, 0];
   /** 每名护士一组值守进度；护士被创飞 / 昏迷时整条清掉 */
   private readonly nurseDuty = new Map<number, NurseDuty>();
   /** 正在挪床 / 下床的实体：把坐标变化摊到多个 Tick */
@@ -656,19 +657,35 @@ export class AmbulanceManager {
 
     // 目标掉线：立刻放空返航（断线清理还会再调一次 onDisconnect，幂等）
     if (car.targetId !== 0 && !patient) {
-      car.targetId = 0;
-      car.state = AMBULANCE_STATE.Returning;
-      car.phaseAt = now;
-      car.leg = 0;
+      this.enterReturning(car, now);
       return;
     }
 
     if (car.state === AMBULANCE_STATE.Returning) {
-      const arrived = this.moveCar(car, this.spotX(car), this.spotY(car), now);
-      if (arrived || now - car.phaseAt >= UNSTUCK_MS) {
-        const safe = nearestFreePoint(this.spotX(car), this.spotY(car));
-        car.x = safe?.x ?? this.spotX(car);
-        car.y = safe?.y ?? this.spotY(car);
+      if (car.leg === 0) {
+        const arrived = this.advanceRoute(car, AMBULANCE_ROAD_GATE.x, AMBULANCE_ROAD_GATE.y, now);
+        const stalled = now - car.lastProgressAt >= NAV_STALL_MS;
+        if (arrived || stalled || now - car.phaseAt >= UNSTUCK_MS) {
+          car.leg = 1;
+          car.phaseAt = now;
+          car.lastProgressAt = now;
+          this.clearRoute(car);
+        }
+        return;
+      }
+      if (car.leg === 1) {
+        this.advanceLeg(car, AMBULANCE_EAST_GATE.x, AMBULANCE_EAST_GATE.y, 2, now);
+        return;
+      }
+      const spotX = this.spotX(car);
+      const spotY = this.spotY(car);
+      const arrived = this.advanceRoute(car, spotX, spotY, now);
+      const dist = Math.hypot(spotX - car.x, spotY - car.y);
+      const stalled = now - car.lastProgressAt >= NAV_STALL_MS;
+      if (arrived || dist <= 8 || stalled || now - car.phaseAt >= UNSTUCK_MS) {
+        const safe = nearestFreePoint(spotX, spotY);
+        car.x = safe?.x ?? spotX;
+        car.y = safe?.y ?? spotY;
         car.state = AMBULANCE_STATE.Idle;
         car.targetId = 0;
         car.leg = 0;
@@ -679,9 +696,7 @@ export class AmbulanceManager {
 
     if (car.state === AMBULANCE_STATE.Dispatched) {
       if (!patient) {
-        car.state = AMBULANCE_STATE.Returning;
-        car.phaseAt = now;
-        car.leg = 0;
+        this.enterReturning(car, now);
         return;
       }
 
@@ -739,9 +754,7 @@ export class AmbulanceManager {
 
     // Transporting：把伤员挂在车尾，沿主路 → 东侧空地 → 站内落点送回
     if (!patient) {
-      car.state = AMBULANCE_STATE.Returning;
-      car.phaseAt = now;
-      car.leg = 0;
+      this.enterReturning(car, now);
       return;
     }
     this.attachPatient(car, patient);
@@ -795,6 +808,17 @@ export class AmbulanceManager {
     car.routeIndex = 0;
     car.routeGoalX = 0;
     car.routeGoalY = 0;
+  }
+
+  private enterReturning(car: Ambulance, now: number): void {
+    car.targetId = 0;
+    car.handover = 0;
+    car.handoverAt = 0;
+    car.state = AMBULANCE_STATE.Returning;
+    car.phaseAt = now;
+    car.lastProgressAt = now;
+    car.leg = rectContains(CLINIC_REGION_RECT, car.x, car.y) ? 2 : 0;
+    this.clearRoute(car);
   }
 
   /**
@@ -884,12 +908,23 @@ export class AmbulanceManager {
       this.admitDirect(car, patient, now);
       return;
     }
+    const pickupPoint = { x: patient.x + 22, y: patient.y };
     const duty = this.nurseDuty.get(nurse.id)!;
     duty.phase = 'pickup';
     duty.patientId = patient.id;
     // 现在就挑床：护送途中床被抢就在落点地面治疗（`liftPatient` 会重验一次）
     duty.seatId = this.freeBedId();
-    duty.path = [{ x: patient.x + 22, y: patient.y }];
+    // 站在柜台后或床区北侧时先走东侧走廊，避免直线斜穿柜台 / 病床实心体
+    duty.path =
+      nurse.y <= CLINIC_COUNTER.y
+        ? [
+            { x: CLINIC_NURSE_LANE_X, y: nurse.y },
+            { x: CLINIC_NURSE_LANE_X, y: CLINIC_NURSE_LANE_Y },
+            pickupPoint,
+          ]
+        : nurse.y < CLINIC_BEDS[0]!.y + CLINIC_BEDS[0]!.h
+          ? [{ x: CLINIC_NURSE_LANE_X, y: CLINIC_NURSE_LANE_Y }, pickupPoint]
+          : [pickupPoint];
     duty.index = 0;
     duty.phaseAt = now;
     duty.pauseUntil = 0;
@@ -943,12 +978,7 @@ export class AmbulanceManager {
     }
     this.beginTreatment(patient, seat?.id ?? 0, now);
 
-    car.targetId = 0;
-    car.handover = 0;
-    car.handoverAt = 0;
-    car.state = AMBULANCE_STATE.Returning;
-    car.phaseAt = now;
-    car.leg = 0;
+    this.enterReturning(car, now);
   }
 
   /**
@@ -976,12 +1006,7 @@ export class AmbulanceManager {
    * 所以这里必须自己清 `targetId`，否则下一拍车会把伤员重新挂回车尾。
    */
   private startEscort(car: Ambulance, nurse: Player, duty: NurseDuty, patient: Player, now: number): void {
-    car.handover = 0;
-    car.handoverAt = 0;
-    car.targetId = 0;
-    car.state = AMBULANCE_STATE.Returning;
-    car.phaseAt = now;
-    car.leg = 0;
+    this.enterReturning(car, now);
     patient.carriedBy = 0;
 
     duty.phaseAt = now;
@@ -996,23 +1021,28 @@ export class AmbulanceManager {
     }
     const side = clinicBedSide(CLINIC_BED_SEAT_IDS.indexOf(duty.seatId));
     duty.phase = 'escort';
-    duty.path = [{ x: side.x, y: side.y }];
+    // 先沿护理走廊向东到位，再南下入床侧：既避开 1 号床碰撞体，也保证护送轨迹轴对齐
+    duty.path = [
+      { x: side.x, y: CLINIC_NURSE_LANE_Y },
+      { x: side.x, y: side.y },
+    ];
   }
 
   /**
    * 护送：伤员以躺姿跟在护士身后 22px。
    *
-   * 写法与 `attachPatient` 一致——每 Tick 直接写坐标并更新网格，客户端拿到的
-   * 就是连续位移；朝向即行进方向，所以「身后」不会左右乱跳。
+   * 经 `resolveMotionInto` 求解后落位，拐角或贴床时不把伤员挤进实心体；
+   * 朝向即行进方向，所以「身后」不会左右乱跳。
    */
   private dragPatient(nurse: Player, patient: Player): void {
     const gap = 22;
     const direction = nurse.direction;
-    const x =
+    const targetX =
       direction === DIRECTION.Left ? nurse.x + gap : direction === DIRECTION.Right ? nurse.x - gap : nurse.x;
-    const y = direction === DIRECTION.Up ? nurse.y + gap : direction === DIRECTION.Down ? nurse.y - gap : nurse.y;
-    patient.x = clampWorldX(x);
-    patient.y = clampWorldY(y);
+    const targetY = direction === DIRECTION.Up ? nurse.y + gap : direction === DIRECTION.Down ? nurse.y - gap : nurse.y;
+    resolveMotionInto(MOTION, nurse.x, nurse.y, targetX, targetY);
+    patient.x = clampWorldX(MOTION.x);
+    patient.y = clampWorldY(MOTION.y);
     if (patient.pose !== POSE.Lie || patient.direction !== direction) {
       patient.applyState(direction, POSE.Lie, false);
     }
@@ -1109,7 +1139,7 @@ export class AmbulanceManager {
         : dy > 0
           ? DIRECTION.Down
           : DIRECTION.Up;
-    nurse.applyState(direction, POSE.Walk, false);
+    nurse.applyState(direction, POSE.Walk, true);
     nurse.markDirtyIfChanged();
     this.grid.update(nurse.id, nurse.x, nurse.y);
     duty.lastProgressAt = now;
@@ -1198,8 +1228,8 @@ export class AmbulanceManager {
           this.cancelDuty(nurse.id, now);
           return;
         }
-        // 伤员挂在车尾、这一拍刚被 attachPatient 摆好，目标点跟着他走
-        const point = duty.path[0]!;
+        // 伤员挂在车尾、这一拍刚被 attachPatient 摆好，末段目标点跟着他走
+        const point = duty.path[duty.path.length - 1]!;
         point.x = patient.x + 22;
         point.y = patient.y;
         const reached = this.walkPath(nurse, duty, now);
@@ -1388,7 +1418,7 @@ export class AmbulanceManager {
     player.y = MOTION.y;
     const direction =
       Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? DIRECTION.Right : DIRECTION.Left) : dy > 0 ? DIRECTION.Down : DIRECTION.Up;
-    player.applyState(direction, POSE.Walk, false);
+    player.applyState(direction, POSE.Walk, true);
     player.markDirtyIfChanged();
     this.grid.update(player.id, player.x, player.y);
     discharge.lastProgressAt = now;
@@ -1515,10 +1545,7 @@ export class AmbulanceManager {
 
     for (const car of this.cars) {
       if (car.targetId !== playerId) continue;
-      car.targetId = 0;
-      car.state = AMBULANCE_STATE.Returning;
-      car.phaseAt = now;
-      car.leg = 0;
+      this.enterReturning(car, now);
     }
 
     // 实体离场不会再走状态切换包：补一条 None，客户端才能清掉星星 / 盾牌与护士爱心
@@ -1551,26 +1578,22 @@ export class AmbulanceManager {
       const duty = this.nurseDuty.get(nurse.id);
       if (duty) this.advanceDuty(nurse, duty, i, now);
     }
-    if (now >= this.nurseWaveUntil) {
-      for (const nurse of this.nurses) {
-        if (nurse.incapacitated) continue;
-        if (!nurse.wave) continue;
-        // state 只在 applyState 里重打包：只改字段不发包，远端永远看不到挥手
-        nurse.applyState(nurse.direction, nurse.pose, false);
-        nurse.dirty = true;
-      }
-    }
     for (let i = 0; i < this.nurses.length; i += 1) {
-      if (now < this.nurseNextWave[i]!) continue;
       const nurse = this.nurses[i]!;
       if (nurse.incapacitated) continue;
+      if (nurse.wave && now >= this.nurseWaveUntil[i]!) {
+        // state 只在 applyState 里重打包：只改字段不发包，远端永远看不到挥手
+        nurse.applyState(nurse.direction, nurse.pose, nurse.moving);
+        nurse.dirty = true;
+      }
+      if (now < this.nurseNextWave[i]!) continue;
       // 只在驻足时挥手：走着挥手会让人以为她在打摩斯密码
       if (this.nurseDuty.get(nurse.id)?.phase !== 'post') continue;
       nurse.applyState(nurse.direction, nurse.pose, false, false, false, true);
       nurse.dirty = true;
       // 6~10 秒随机再来一次妖艳挥手
       this.nurseNextWave[i] = now + 6000 + Math.random() * 4000;
-      this.nurseWaveUntil = now + 900;
+      this.nurseWaveUntil[i] = now + 900;
     }
   }
 

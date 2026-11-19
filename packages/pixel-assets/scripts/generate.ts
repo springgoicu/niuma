@@ -1,5 +1,6 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { encodePng } from '../src/png';
 import { drawFrame, landmarksOf, type FrameSpec, type SpeciesName } from '../src/quadruped';
 import { LAYERS, SLOT_TABLE, type LayerName } from '../src/palette';
@@ -24,11 +25,12 @@ import {
 } from '../src/layout';
 import { writeBrandAssets } from './brand';
 
-const OUT_DIR = resolve(import.meta.dir, '../../../apps/web/public/sprites');
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const OUT_DIR = resolve(SCRIPT_DIR, '../../../apps/web/public/sprites');
 /** 校对图落点：不进 public、不打进包，只给人眼验收用 */
-const PROOF_DIR = resolve(import.meta.dir, '../.proof');
+const PROOF_DIR = resolve(SCRIPT_DIR, '../.proof');
 /** 布局契约的落点：SSR 的 CSS mask 与客户端切片都读这一份，避免两边各写死一遍列数 */
-const LAYOUT_TS = resolve(import.meta.dir, '../../../apps/web/lib/game/sprite-layout.generated.ts');
+const LAYOUT_TS = resolve(SCRIPT_DIR, '../../../apps/web/lib/game/sprite-layout.generated.ts');
 
 const SPECIES: SpeciesName[] = ['cow', 'horse'];
 const EXTRA_COUNT: Record<SpeciesName, number> = { cow: 4, horse: 3 };
@@ -452,7 +454,7 @@ export const SPRITE_LAYOUT = ${JSON.stringify(
 
 export type SpritePoseName = keyof typeof SPRITE_LAYOUT.clips;
 `;
-  await mkdir(resolve(import.meta.dir, '../../../apps/web/lib/game'), { recursive: true });
+  await mkdir(resolve(SCRIPT_DIR, '../../../apps/web/lib/game'), { recursive: true });
   await writeFile(LAYOUT_TS, body);
 }
 

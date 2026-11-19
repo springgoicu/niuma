@@ -1,18 +1,22 @@
 import {
   PLAYER_RADIUS,
+  RING_ARENA,
+  VILLA_SPECS,
   WORLD_BOUNDS,
   findFreePoint,
   isBlocked,
   isInClinicInterior,
+  isInVillaYard,
+  rectContains,
+  rectExpanded,
 } from '@niuma/shared-types';
 import type { Rng } from './rng';
 
 /**
  * NPC 的落点采样：整座岛随机漫游。
  *
- * 旧版按「广场 / 工作区 / 宿舍…」分区域，NPC 一辈子只在几个圆里转；
- * 现在直接在 `WORLD_BOUNDS`（岛包围盒）里均匀取点，用 `isBlocked` 过掉海与障碍。
- * 真正的绕障仍交给 `resolveMotionInto` 与 brain 的卡住恢复，不在这里造导航网格。
+ * 直接在 `WORLD_BOUNDS`（岛包围盒）里均匀取点，用 `isBlocked` 与场所禁入区
+ * 过掉海、障碍、护士站、擂台围栏与豪宅院子，再交由 `brain` 沿寻路网格绕障。
  */
 export interface NpcSpot {
   x: number;
@@ -25,6 +29,13 @@ const RETRY_COUNT = 24;
 const MIN_WALK_PX = 240;
 /** 出生点之间至少拉开 160px，避免 5 个人叠在一格 */
 const MIN_SPAWN_GAP = 160;
+const RING_EXCLUSION = rectExpanded(RING_ARENA, PLAYER_RADIUS);
+
+function isExcludedNpcSpot(x: number, y: number): boolean {
+  if (isInClinicInterior(x, y)) return true;
+  if (rectContains(RING_EXCLUSION, x, y)) return true;
+  return VILLA_SPECS.some((spec) => isInVillaYard(spec, x, y));
+}
 
 function sampleIslandPoint(rng: Rng): NpcSpot {
   const { x, y, w, h } = WORLD_BOUNDS;
@@ -41,8 +52,7 @@ export function pickWaypoint(rng: Rng, from?: NpcSpot, minWalkPx = MIN_WALK_PX):
   for (let attempt = 0; attempt < RETRY_COUNT; attempt += 1) {
     const point = sampleIslandPoint(rng);
     if (isBlocked(point.x, point.y, PLAYER_RADIUS)) continue;
-    // 护士站只收救护车送来的伤员（ADR-0107）：采样点也要排掉站内，免得 NPC 反复撞门
-    if (isInClinicInterior(point.x, point.y)) continue;
+    if (isExcludedNpcSpot(point.x, point.y)) continue;
     if (from && attempt < RETRY_COUNT - 4) {
       const dx = point.x - from.x;
       const dy = point.y - from.y;
@@ -64,7 +74,7 @@ export function pickSpawnPoint(rng: Rng, occupied: readonly NpcSpot[] = []): Npc
   for (let attempt = 0; attempt < RETRY_COUNT; attempt += 1) {
     const point = sampleIslandPoint(rng);
     if (isBlocked(point.x, point.y, PLAYER_RADIUS)) continue;
-    if (isInClinicInterior(point.x, point.y)) continue;
+    if (isExcludedNpcSpot(point.x, point.y)) continue;
     const tooClose = occupied.some((other) => {
       const dx = other.x - point.x;
       const dy = other.y - point.y;

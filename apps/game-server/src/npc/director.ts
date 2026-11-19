@@ -63,10 +63,12 @@ export interface NpcDirectorOptions {
   grid: SpatialGrid;
   transport: Transport;
   config: NpcConfig;
+  now?: () => number;
 }
 
 export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
   const { world, grid, config } = options;
+  const getNow = options.now ?? Date.now;
   const rng = createRng(config.seed);
   const agents = new Map<number, NpcAgent>();
   let guardCount = 0;
@@ -137,7 +139,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
   }
 
   function cancelEscort(targetId: number): void {
-    const now = Date.now();
+    const now = getNow();
     for (const agent of agents.values()) {
       if (agent.escort?.targetId !== targetId) continue;
       finishEscort(agent, now, 600);
@@ -197,7 +199,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
   }
 
   function cancelFollow(targetId: number): void {
-    const now = Date.now();
+    const now = getNow();
     for (const agent of agents.values()) {
       if (agent.follow?.targetId !== targetId) continue;
       finishFollow(agent, now);
@@ -254,7 +256,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
   function spawn(): void {
     // count <= 0 是完整回滚开关：普通同事与保安一起关闭
     if (!config.enabled || config.count <= 0 || agents.size > 0) return;
-    const now = Date.now();
+    const now = getNow();
     const workers = Math.max(0, config.count);
     const roster = buildNpcRoster(rng, { workers, guards: GUARD_COUNT }, { speed: config.speed, now });
     const placed: NpcSpot[] = [];

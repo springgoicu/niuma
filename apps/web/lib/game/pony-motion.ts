@@ -1,5 +1,7 @@
 'use client';
 
+import { POSE, VENT_FACING } from '@niuma/shared-types';
+
 /**
  * 角色微动效：纯函数，不依赖 Pixi、不持有状态。
  *
@@ -20,6 +22,20 @@ export interface PonyMotion {
   /** 阴影形态：0 宽扁 / 1 常态 / 2 窄高 */
   shadow: 0 | 1 | 2;
   blinking: boolean;
+}
+
+/** 线协议姿态枚举 → 微动效姿态名：零分配映射 */
+export function ponyPoseNameOf(pose: number): PonyPoseName {
+  switch (pose) {
+    case POSE.Walk:
+      return 'walk';
+    case POSE.Sit:
+      return 'sit';
+    case POSE.Lie:
+      return 'lie';
+    default:
+      return 'idle';
+  }
 }
 
 /** 待机呼吸周期：比真呼吸略快，观感才有「活着」的错觉 */
@@ -127,4 +143,32 @@ export function bowTexelsAt(elapsedMs: number): number {
   const t = elapsedMs / BOW_DURATION_MS;
   const envelope = t < 0.45 ? t / 0.45 : (1 - t) / 0.55;
   return Math.max(0, Math.min(BOW_DEPTH, Math.round(envelope * BOW_DEPTH)));
+}
+
+/**
+ * 发泄头槌的纯表现层前倾位移（整数纹素，写入复用槽位 `out`）：
+ * 起手蓄力后仰 -1 texel → 爆发前冲 +2 texels → 收招回弹 +1 texel → 归零。
+ * 只推视觉容器，不碰权威位置与阴影（ADR-0005）。
+ */
+export function ventLungeTexels(
+  phaseMs: number,
+  durationMs: number,
+  direction: number,
+  out: { x: number; y: number },
+): void {
+  if (!Number.isFinite(phaseMs) || phaseMs < 0 || durationMs <= 0 || phaseMs >= durationMs) {
+    out.x = 0;
+    out.y = 0;
+    return;
+  }
+  const t = phaseMs / durationMs;
+  const step = t < 0.22 ? -1 : t < 0.58 ? 2 : t < 0.85 ? 1 : 0;
+  if (step === 0) {
+    out.x = 0;
+    out.y = 0;
+    return;
+  }
+  const facing = VENT_FACING[direction] ?? VENT_FACING[0]!;
+  out.x = facing.x * step || 0;
+  out.y = facing.y * step || 0;
 }

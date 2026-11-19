@@ -199,6 +199,9 @@ export class Detention implements VentHitObserver {
    */
   onVentHit(attacker: Player, victim: Player, now: number): void {
     if (attacker.isNpc || attacker.wsId === 0) return;
+    if (attacker.id === victim.id) return;
+    if (attacker.incapacitated || now < attacker.stunUntil || attacker.roomId !== 0) return;
+    if (this.world.ring.has(attacker.id)) return;
     // 已在押送流程里的人不再累计：避免刚放出来就立刻被第二张单子带走
     if (this.cases.has(attacker.id)) return;
 
@@ -243,6 +246,11 @@ export class Detention implements VentHitObserver {
       // 擂台赛期间保安不执法（ADR-0075）：不判定，并丢掉已有的循环计数，
       // 免得场内的坐站动作攒进下一轮观察窗、下场后立刻被翻旧账
       if (this.world.ring.has(player.id)) {
+        this.watches.delete(player.id);
+        continue;
+      }
+      // 昏迷、硬直或窗口探头期间不计入坐站骚扰（被抓/被放倒时躺站转换不是故意刷动作）
+      if (player.incapacitated || player.roomId !== 0 || now < player.stunUntil) {
         this.watches.delete(player.id);
         continue;
       }
@@ -541,7 +549,7 @@ export class Detention implements VentHitObserver {
   private hasWitness(player: Player): boolean {
     const rangeSq = DETENTION.WITNESS_RANGE_PX * DETENTION.WITNESS_RANGE_PX;
     for (const other of this.world.players.values()) {
-      if (other.id === player.id) continue;
+      if (other.id === player.id || other.roomId !== 0) continue;
       const dx = other.x - player.x;
       const dy = other.y - player.y;
       if (dx * dx + dy * dy <= rangeSq) return true;

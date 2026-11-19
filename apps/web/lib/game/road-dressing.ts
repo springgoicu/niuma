@@ -277,6 +277,11 @@ function paintJunction(g: Graphics, tile: JunctionTile): void {
   if (!tile.arms[1]) rect(g, left + r, top, 2, JUNCTION_SIZE, C.plazaCurb);
   if (!tile.arms[2]) rect(g, left, top + r, JUNCTION_SIZE, 2, C.plazaCurb);
   if (!tile.arms[3]) rect(g, left, top, 2, JUNCTION_SIZE, C.plazaCurb);
+  // 转角铆钉石块：只压在双面无路缘的外角，强化路口收边清晰度
+  if (!tile.arms[0] && !tile.arms[3]) rect(g, left + 1, top + 1, 2, 2, C.stoneSeam);
+  if (!tile.arms[0] && !tile.arms[1]) rect(g, left + r - 1, top + 1, 2, 2, C.stoneSeam);
+  if (!tile.arms[2] && !tile.arms[3]) rect(g, left + 1, top + r - 1, 2, 2, C.stoneSeam);
+  if (!tile.arms[2] && !tile.arms[1]) rect(g, left + r - 1, top + r - 1, 2, 2, C.stoneSeam);
   // 外沿 1px 深缝：路缘石才有厚度，不会糊成一块浅色斑
   rect(g, left, top, JUNCTION_SIZE, 1, C.stoneSeam, 0.55);
   rect(g, left, top + JUNCTION_SIZE - 1, JUNCTION_SIZE, 1, C.stoneSeam, 0.55);

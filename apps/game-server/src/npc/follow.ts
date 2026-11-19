@@ -1,14 +1,9 @@
-import {
-  GUARD_FOLLOW_STOP_PX,
-  POSE,
-  TICK_MS,
-  resolveWalkInto,
-  type MotionTarget,
-} from '@niuma/shared-types';
+import { GUARD_FOLLOW_STOP_PX, POSE } from '@niuma/shared-types';
 import type { World } from '../sim/world';
 import { directionOf, type FollowTask, type NpcAgent } from './brain';
 import { findEscortPath } from './escort-path';
 import { chaseSpeed } from './escort';
+import { stepAlongPath, type WalkStepResult } from './path-walk';
 
 /**
  * 保安盯梢（ADR-0085，雇佣保安卡）。
@@ -23,8 +18,7 @@ import { chaseSpeed } from './escort';
  */
 const REPLAN_MS = 400;
 const REPLAN_PX = 48;
-const DT_SEC = TICK_MS / 1000;
-const MOTION: MotionTarget = { x: 0, y: 0 };
+const WALK_STEP: WalkStepResult = { index: 0, movedX: 0, movedY: 0, blocked: false };
 
 /** 推进一帧盯梢；返回 'done' 表示任务结束（到期或目标消失） */
 export function stepFollow(
@@ -67,7 +61,9 @@ export function stepFollow(
     task.replanAt = now + REPLAN_MS;
   }
 
-  walk(agent, task, chaseSpeed(agent.speed));
+  if (walk(agent, task, chaseSpeed(agent.speed))) {
+    task.replanAt = 0;
+  }
 
   // 走完这一段后已经贴身：站定面向目标，等下一帧的距离判定维持住
   if (Math.hypot(guard.x - target.x, guard.y - target.y) <= GUARD_FOLLOW_STOP_PX) {
@@ -109,38 +105,16 @@ function needReplan(task: FollowTask, x: number, y: number, now: number): boolea
  * 与押送共用同一套 `resolveMotionInto` 子步 + 单轴滑动：撞墙不穿模，
  * 被挤住就等下一次重算，绝不传送。
  */
-function walk(agent: NpcAgent, task: FollowTask, speed: number): void {
+function walk(agent: NpcAgent, task: FollowTask, speed: number): boolean {
   const guard = agent.player;
-  let remaining = speed * DT_SEC;
-  let movedX = 0;
-  let movedY = 0;
+  const result = stepAlongPath(guard, task.path, task.index, speed, false, WALK_STEP);
+  task.index = result.index;
 
-  while (remaining > 0 && task.index < task.path.length) {
-    const point = task.path[task.index]!;
-    const dx = point.x - guard.x;
-    const dy = point.y - guard.y;
-    const segment = Math.hypot(dx, dy);
-    if (segment <= 1e-3) {
-      task.index += 1;
-      continue;
-    }
-    const step = Math.min(remaining, segment);
-    resolveWalkInto(MOTION, guard.x, guard.y, guard.x + (dx / segment) * step, guard.y + (dy / segment) * step);
-    const realX = MOTION.x - guard.x;
-    const realY = MOTION.y - guard.y;
-    guard.x = MOTION.x;
-    guard.y = MOTION.y;
-    movedX += realX;
-    movedY += realY;
-    remaining -= step;
-    if (step >= segment - 0.01) task.index += 1;
-    else if (Math.hypot(realX, realY) < 0.5) break;
-  }
-
-  if (movedX !== 0 || movedY !== 0) {
-    guard.applyState(directionOf(movedX, movedY, guard.direction), POSE.Walk, true);
+  if (result.movedX !== 0 || result.movedY !== 0) {
+    guard.applyState(directionOf(result.movedX, result.movedY, guard.direction), POSE.Walk, true);
   } else {
     guard.applyState(guard.direction, POSE.Idle, false);
   }
   guard.markDirtyIfChanged();
+  return result.blocked;
 }

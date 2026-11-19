@@ -31,7 +31,7 @@ function nearestKnown(context: NpcSocialContext, self: Player): Player | null {
   // known 不含自己，且与观察者对称：天然就是「附近有谁」的超集
   for (const id of self.known) {
     const other = context.world.get(id);
-    if (!other) continue;
+    if (!other || other.roomId !== 0) continue;
     const dx = other.x - self.x;
     const dy = other.y - self.y;
     const distanceSq = dx * dx + dy * dy;
@@ -76,8 +76,14 @@ export function updateSocial(agent: NpcAgent, context: NpcSocialContext, now: nu
     if (distanceSq <= YIELD_RADIUS * YIELD_RADIUS && context.rng.chance(WAVE_CHANCE)) {
       startWave(agent, now);
     }
-  } else if (distanceSq <= YIELD_RADIUS * YIELD_RADIUS && context.rng.chance(YIELD_CHANCE)) {
-    // 迎面走来：先停下让路，再看向对方；过一秒继续自己的路
+  } else if (
+    neighbor.moving &&
+    distanceSq <= YIELD_RADIUS * YIELD_RADIUS &&
+    (!agent.yieldCooldownUntil || now >= agent.yieldCooldownUntil) &&
+    context.rng.chance(YIELD_CHANCE)
+  ) {
+    // 迎面走来：先停下让路，再看向对方；设冷却避免双方交替卡在原地让路
+    agent.yieldCooldownUntil = now + 3500;
     yieldTo(agent, neighbor, now);
   }
 }

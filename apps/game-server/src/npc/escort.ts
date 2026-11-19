@@ -4,8 +4,6 @@ import {
   JAIL_DOOR_PAVING,
   MOVE_SPEED,
   POSE,
-  TICK_MS,
-  resolveMotionInto,
   resolveWalkInto,
   type MotionTarget,
 } from '@niuma/shared-types';
@@ -13,6 +11,7 @@ import type { Player, World } from '../sim/world';
 import { DETENTION, type EscortAbortReason, type EscortEvent } from '../sim/detention';
 import { directionOf, type NpcAgent, type EscortTask } from './brain';
 import { findEscortPath } from './escort-path';
+import { stepAlongPath, type WalkStepResult } from './path-walk';
 
 /**
  * 保安押送：`sim/detention` 只管「派给谁 / 抓到没有 / 送到了没有」，
@@ -48,8 +47,8 @@ export const ESCORT = {
   DRAG_TIMEOUT_MAX_MS: 60_000,
 } as const;
 
-const DT_SEC = TICK_MS / 1000;
 const MOTION: MotionTarget = { x: 0, y: 0 };
+const WALK_STEP: WalkStepResult = { index: 0, movedX: 0, movedY: 0, blocked: false };
 
 /**
  * 追击速度的唯一出口：便于单测，也避免两处各写一个倍率。
@@ -129,6 +128,16 @@ export function stepEscort(
   // 否则拖行写「保安身后 22px」与挂车尾写「车尾 26px」会互相拉扯。
   if (target.incapacitated) return abort(guard, task, now, 'target_down');
 
+  if (task.lastProgressAt === undefined) {
+    task.lastProgressAt = now;
+    task.lastProgressX = guard.x;
+    task.lastProgressY = guard.y;
+  } else if (Math.hypot(guard.x - (task.lastProgressX ?? guard.x), guard.y - (task.lastProgressY ?? guard.y)) >= 2) {
+    task.lastProgressAt = now;
+    task.lastProgressX = guard.x;
+    task.lastProgressY = guard.y;
+  }
+
   if (task.stage === 'hold') {
     faceToward(agent, target);
     if (now < task.stageUntil) return null;
@@ -154,6 +163,11 @@ export function stepEscort(
     }
 
     walkPath(agent, task, chaseSpeed(agent.speed));
+    if (Math.hypot(guard.x - (task.lastProgressX ?? guard.x), guard.y - (task.lastProgressY ?? guard.y)) >= 2) {
+      task.lastProgressAt = now;
+      task.lastProgressX = guard.x;
+      task.lastProgressY = guard.y;
+    }
 
     if (distance(guard, target) <= ESCORT.GRAB_RANGE_PX) {
       grab(agent, task, target, now);
@@ -162,12 +176,28 @@ export function stepEscort(
     return null;
   }
 
-  // 拖行：路线一次性算好（保安不可能被目标卡住），走到松手点就结束
+  // 拖行：沿着算好的路径走，中途遇动态门栅或墙角停滞则尝试重算一次，再卡死就中止放人
   const moved = walkPath(agent, task, agent.speed * ESCORT.DRAG_SPEED_FACTOR);
   if (moved.x !== 0 || moved.y !== 0) {
     const length = Math.hypot(moved.x, moved.y);
     task.towX = moved.x / length;
     task.towY = moved.y / length;
+    if (Math.hypot(guard.x - (task.lastProgressX ?? guard.x), guard.y - (task.lastProgressY ?? guard.y)) >= 2) {
+      task.lastProgressAt = now;
+      task.lastProgressX = guard.x;
+      task.lastProgressY = guard.y;
+    }
+  } else if (now - task.lastProgressAt >= 800 && !task.dragReplanned) {
+    task.dragReplanned = true;
+    task.lastProgressAt = now;
+    const prevStartedAt = task.startedAt;
+    const prevDeadline = task.dragDeadlineAt;
+    beginDrag(agent, task, now);
+    if (task.path.length === 0) return abort(guard, task, now, 'stuck');
+    task.startedAt = prevStartedAt;
+    if (prevDeadline > 0) task.dragDeadlineAt = Math.min(prevDeadline, task.dragDeadlineAt);
+  } else if (task.dragReplanned && now - task.lastProgressAt >= 1200) {
+    return abort(guard, task, now, 'stuck');
   }
   placeTargetBehind(guard, task, target, now);
   // 拖行期间逐帧续期：保安被创飞或路线卡住时，被押者最多 5 秒就能自己站起来，
@@ -240,6 +270,9 @@ function beginDrag(agent: NpcAgent, task: EscortTask, now: number): void {
   // 漏掉这一行时每 Tick 都会重新进入 hold 重算路线，保安与被押者会一直原地不动。
   task.stage = 'drag';
   task.startedAt = now;
+  task.lastProgressAt = now;
+  task.lastProgressX = guard.x;
+  task.lastProgressY = guard.y;
   const vector = DIRECTION_VECTOR[guard.direction] ?? DIRECTION_VECTOR[DIRECTION.Down]!;
   task.towX = vector.x;
   task.towY = vector.y;
@@ -256,11 +289,12 @@ function measurePath(from: { x: number; y: number }, path: ReadonlyArray<{ x: nu
   return total;
 }
 
-/** 追击重算：路线走完先等 throttle，目标位移超过 48px 才值得再算一次 */
+/** 追击重算：路线走完、停滞或目标位移超过 48px 时按 400ms 节流重算 */
 function needReplan(task: EscortTask, target: Player, now: number): boolean {
   if (now < task.replanAt) return false;
   if (task.index >= task.path.length && task.path.length > 0) return true;
   if (task.path.length === 0) return true;
+  if (task.lastProgressAt !== undefined && now - task.lastProgressAt >= ESCORT.REPLAN_MS) return true;
   return Math.hypot(target.x - task.lastTargetX, target.y - task.lastTargetY) > ESCORT.REPLAN_PX;
 }
 
@@ -272,56 +306,23 @@ function needReplan(task: EscortTask, target: Player, now: number): boolean {
  */
 function walkPath(agent: NpcAgent, task: EscortTask, speed: number): { x: number; y: number } {
   const guard = agent.player;
-  let remaining = speed * DT_SEC;
-  let movedX = 0;
-  let movedY = 0;
+  const result = stepAlongPath(guard, task.path, task.index, speed, false, WALK_STEP);
+  task.index = result.index;
 
-  while (remaining > 0 && task.index < task.path.length) {
-    const point = task.path[task.index]!;
-    const dx = point.x - guard.x;
-    const dy = point.y - guard.y;
-    const segment = Math.hypot(dx, dy);
-    if (segment <= 1e-3) {
-      task.index += 1;
-      continue;
-    }
-
-    const step = Math.min(remaining, segment);
-    const targetX = guard.x + (dx / segment) * step;
-    const targetY = guard.y + (dy / segment) * step;
-    resolveWalkInto(MOTION, guard.x, guard.y, targetX, targetY);
-    const realX = MOTION.x - guard.x;
-    const realY = MOTION.y - guard.y;
-    const realLength = Math.hypot(realX, realY);
-
-    guard.x = MOTION.x;
-    guard.y = MOTION.y;
-    movedX += realX;
-    movedY += realY;
-    remaining -= step;
-
-    if (step >= segment - 0.01) {
-      task.index += 1;
-    } else if (realLength < 0.5) {
-      // 被墙角卡住：本帧到此为止，追击会在 400ms 后重算，拖行由 15s 超时兜底
-      break;
-    }
-  }
-
-  if (movedX !== 0 || movedY !== 0) {
-    const direction = directionOf(movedX, movedY, guard.direction);
+  if (result.movedX !== 0 || result.movedY !== 0) {
+    const direction = directionOf(result.movedX, result.movedY, guard.direction);
     guard.applyState(direction, POSE.Walk, true);
   } else {
     guard.applyState(guard.direction, POSE.Idle, false);
   }
   guard.markDirtyIfChanged();
-  return { x: movedX, y: movedY };
+  return { x: result.movedX, y: result.movedY };
 }
 
-/** 被拖者始终在保安身后 22px；落点走与保安移动相同的碰撞求解，拐角处不会写进墙里 */
+/** 被拖者始终在保安身后 22px；落点走与保安移动相同的碰撞与门禁求解，拐角处不会写进墙或站内 */
 function placeTargetBehind(guard: Player, task: EscortTask, target: Player, now: number): void {
   // 从保安脚下起步求解：被挡时会被截停在墙边，宁可贴住保安也不产生非法坐标
-  resolveMotionInto(
+  resolveWalkInto(
     MOTION,
     guard.x,
     guard.y,

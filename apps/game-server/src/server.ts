@@ -1,4 +1,5 @@
-import type { ServerWebSocket } from 'bun';
+import { createServer } from 'node:http';
+import { WebSocketServer, type WebSocket } from 'ws';
 import {
   ACTION,
   BOARD_METRIC_ALL,
@@ -171,6 +172,8 @@ interface SocketData {
   moveCount: number;
 }
 
+type GameWebSocket = WebSocket & { data: SocketData };
+
 const MOVE_SCRATCH = { id: 0, x: 0, y: 0, state: 0 };
 /**
  * 状态广播的节流窗口。状态变更会发给视野内所有人，
@@ -335,7 +338,7 @@ export function startGameServer(config: ServerConfig) {
 
   const grid = new SpatialGrid();
   const seats = new SeatRegistry();
-  const sockets = new Map<number, ServerWebSocket<SocketData>>();
+  const sockets = new Map<number, GameWebSocket>();
   const tickSampler = new RingSampler(1200);
   const moveSampler = new RingSampler(1200);
   const egress = new EgressMeter();
@@ -583,6 +586,7 @@ export function startGameServer(config: ServerConfig) {
     grid,
     transport,
     config: config.npc,
+    now: () => clock.now(),
   });
   const npcSampler = new RingSampler(1200);
   npcs.spawn();
@@ -717,7 +721,7 @@ export function startGameServer(config: ServerConfig) {
   }
 
   /** 真正入场：建实体、回 WELCOME、结算首帧视野。排队者放行时复用的就是这条路径 */
-  function admit(ws: ServerWebSocket<SocketData>, payload: HelloPayload): void {
+  function admit(ws: GameWebSocket, payload: HelloPayload): void {
     if (ws.data.playerId !== 0) return;
     const now = clock.now();
     // 续算：把入场时刻往前挪，在岗时长跨重连接着算（ADR-0060）。
@@ -835,13 +839,13 @@ export function startGameServer(config: ServerConfig) {
     console.log(`[game] + ${player.name}#${player.id} online=${world.humans}`);
   }
 
-  function rejectWaiter(ws: ServerWebSocket<SocketData>, reason: number): void {
+  function rejectWaiter(ws: GameWebSocket, reason: number): void {
     const socket = ws;
     socket.send(encodeQueueRejected(reason));
     socket.close(1013, reason === QUEUE_REJECT_REASON.QueueFull ? 'queue full' : 'queue timeout');
   }
 
-  function handleHello(ws: ServerWebSocket<SocketData>, data: Uint8Array): void {
+  function handleHello(ws: GameWebSocket, data: Uint8Array): void {
     if (ws.data.playerId !== 0) return;
     const hello = decodeHello(data);
     // 昵称由客户端预检先挡一道，这里只是权威兜底：伪造 HELLO 也进不来违规名字
@@ -901,7 +905,7 @@ export function startGameServer(config: ServerConfig) {
     rejectWaiter(ws, decision.reason);
   }
 
-  function dispatch(ws: ServerWebSocket<SocketData>, data: Uint8Array, now: number): void {
+  function dispatch(ws: GameWebSocket, data: Uint8Array, now: number): void {
     const op = readOpCode(data);
     if (op === OpCode.C2S_HELLO) {
       handleHello(ws, data);
@@ -1552,7 +1556,7 @@ export function startGameServer(config: ServerConfig) {
     }
   }
 
-  function handleClose(ws: ServerWebSocket<SocketData>): void {
+  function handleClose(ws: GameWebSocket): void {
     sockets.delete(ws.data.wsId);
     // 出队必须发生在世界清理之前：排队者的 playerId 还是 0，早退会把位次永久占住
     if (admission.drop(ws.data.wsId)) {
@@ -1603,126 +1607,164 @@ export function startGameServer(config: ServerConfig) {
     console.log(`[game] - ${label} online=${world.humans}`);
   }
 
-  const server = Bun.serve<SocketData>({
-    port: config.port,
-    hostname: config.hostname,
-    fetch(req, bunServer) {
-      const url = new URL(req.url);
-      if (url.pathname === '/ws') {
-        // 必须在 upgrade 之前拒绝：升级完成后再 close 已经算一次「连接成功」，
-        // 攻击者能据此确认服务端活着，也白占了一个 wsId 与一条 socket。
-        if (!originAllowed(req.headers.get('origin'))) {
-          abuseClosed += 1;
-          logAbuse('ws-origin');
-          return new Response('forbidden origin', { status: 403 });
-        }
-        const wsId = nextWsId;
-        nextWsId += 1;
-        const now = clock.now();
-        const upgraded = bunServer.upgrade(req, {
-          data: {
-            wsId,
-            playerId: 0,
-            openedAt: now,
-            msgWindowStart: now,
-            msgCount: 0,
-            moveWindowStart: now,
-            moveCount: 0,
-          },
-        });
-        return upgraded ? undefined : new Response('websocket upgrade failed', { status: 400 });
-      }
-      if (url.pathname === '/health') {
-        return Response.json(
-          {
-            ok: true,
-            // 园区自述身份：选园页用它确认「连的确实是这一座」
-            parkId: config.parkId,
-            parkName: config.parkName,
-            // online 只算真人：NPC 数量单独放在 npcs，口径永不合并
-            online: world.humans,
-            npcs: world.npcCount,
-            npc: {
-              count: npcs.count,
-              guards: npcs.guardCount,
-              // 只展示同事自身的推进耗时；tickMs 仍是包含它的真实总耗时
-              updateMs: {
-                avg: Number(npcSampler.average().toFixed(3)),
-                p95: Number(npcSampler.percentile(0.95).toFixed(3)),
-              },
-            },
-            tick: tickCount,
-            tickMs: {
-              avg: Number(tickSampler.average().toFixed(3)),
-              p50: Number(tickSampler.percentile(0.5).toFixed(3)),
-              p95: Number(tickSampler.percentile(0.95).toFixed(3)),
-              max: Number(tickSampler.max().toFixed(3)),
-            },
-            egressKbps: Number(egress.kbps().toFixed(2)),
-            admission: admission.snapshot(world.humans),
-            clampedMoves: moveSampler.count,
-            gridBuckets: grid.bucketCount,
-            uptimeSec: Math.round(process.uptime()),
-          },
-          { headers: { 'access-control-allow-origin': '*' } },
-        );
-      }
-      return new Response('niuma game server\n', {
-        headers: { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*' },
-      });
-    },
-    websocket: {
-      maxPayloadLength: MAX_PACKET_BYTES,
-      perMessageDeflate: false,
-      open(ws) {
-        sockets.set(ws.data.wsId, ws);
-      },
-      message(ws, message) {
-        const now = clock.now();
-        if (now - ws.data.msgWindowStart > 1000) {
-          ws.data.msgWindowStart = now;
-          ws.data.msgCount = 0;
-        }
-        ws.data.msgCount += 1;
-        if (ws.data.msgCount > config.maxMessagesPerSecond) return;
-        if (typeof message === 'string') return;
-        const data = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
-        if (data.byteLength === 0) return;
-
-        // ---- 长度闸门：一次数组索引，判定「这个包配不配进 dispatch」----
-        const verdict = checkPacket(data[0]!, data);
-        if (verdict === PACKET_UNKNOWN) {
-          // 不认识的 opcode 只丢不断：可能是新旧客户端混跑时的未来包
-          abuseDropped += 1;
-          return;
-        }
-        if (verdict === PACKET_MALFORMED) {
-          // 截断包/长度不自洽：不抛异常、不进 try/catch、不打堆栈，直接断开。
-          // 这种包正常客户端一个字节都不会发，发它的只可能是扫描器或外挂。
-          abuseDropped += 1;
-          abuseClosed += 1;
-          logAbuse('malformed');
-          ws.close(1008, 'malformed_packet');
-          return;
-        }
-
-        try {
-          dispatch(ws, data, now);
-        } catch (error) {
-          // 兜底：闸门放行但 decoder 仍抛了（说明闸门和协议的假设不一致）。
-          // 同样只计数不打堆栈，否则攻击者可以让这里变成日志放大器。
-          abuseDropped += 1;
-          logAbuse('dispatch-error');
-          if (process.env.GAME_DEBUG_PACKETS === '1') {
-            console.error('[game] dropped malformed packet', error);
-          }
-        }
-      },
-      close(ws) {
-        handleClose(ws);
-      },
-    },
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_PACKET_BYTES,
+    perMessageDeflate: false,
   });
+
+  wss.on('connection', (rawWs) => {
+    const ws = rawWs as GameWebSocket;
+    sockets.set(ws.data.wsId, ws);
+
+    ws.on('message', (message, isBinary) => {
+      const now = clock.now();
+      if (now - ws.data.msgWindowStart > 1000) {
+        ws.data.msgWindowStart = now;
+        ws.data.msgCount = 0;
+      }
+      ws.data.msgCount += 1;
+      if (ws.data.msgCount > config.maxMessagesPerSecond) return;
+      if (!isBinary) return;
+
+      let data: Uint8Array;
+      if (Buffer.isBuffer(message)) {
+        data = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+      } else if (message instanceof ArrayBuffer) {
+        data = new Uint8Array(message);
+      } else if (Array.isArray(message)) {
+        const joined = Buffer.concat(message);
+        data = new Uint8Array(joined.buffer, joined.byteOffset, joined.byteLength);
+      } else {
+        return;
+      }
+      if (data.byteLength === 0) return;
+
+      // ---- 长度闸门：一次数组索引，判定「这个包配不配进 dispatch」----
+      const verdict = checkPacket(data[0]!, data);
+      if (verdict === PACKET_UNKNOWN) {
+        // 不认识的 opcode 只丢不断：可能是新旧客户端混跑时的未来包
+        abuseDropped += 1;
+        return;
+      }
+      if (verdict === PACKET_MALFORMED) {
+        // 截断包/长度不自洽：不抛异常、不进 try/catch、不打堆栈，直接断开。
+        // 这种包正常客户端一个字节都不会发，发它的只可能是扫描器或外挂。
+        abuseDropped += 1;
+        abuseClosed += 1;
+        logAbuse('malformed');
+        ws.close(1008, 'malformed_packet');
+        return;
+      }
+
+      try {
+        dispatch(ws, data, now);
+      } catch (error) {
+        // 兜底：闸门放行但 decoder 仍抛了（说明闸门和协议的假设不一致）。
+        // 同样只计数不打堆栈，否则攻击者可以让这里变成日志放大器。
+        abuseDropped += 1;
+        logAbuse('dispatch-error');
+        if (process.env.GAME_DEBUG_PACKETS === '1') {
+          console.error('[game] dropped malformed packet', error);
+        }
+      }
+    });
+
+    ws.on('close', () => {
+      handleClose(ws);
+    });
+
+    ws.on('error', () => {
+      // error 后会紧接着触发 close；这里兜底防 Node 未捕获异常崩溃
+    });
+  });
+
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    if (url.pathname === '/health') {
+      const payload = JSON.stringify({
+        ok: true,
+        // 园区自述身份：选园页用它确认「连的确实是这一座」
+        parkId: config.parkId,
+        parkName: config.parkName,
+        // online 只算真人：NPC 数量单独放在 npcs，口径永不合并
+        online: world.humans,
+        npcs: world.npcCount,
+        npc: {
+          count: npcs.count,
+          guards: npcs.guardCount,
+          // 只展示同事自身的推进耗时；tickMs 仍是包含它的真实总耗时
+          updateMs: {
+            avg: Number(npcSampler.average().toFixed(3)),
+            p95: Number(npcSampler.percentile(0.95).toFixed(3)),
+          },
+        },
+        tick: tickCount,
+        tickMs: {
+          avg: Number(tickSampler.average().toFixed(3)),
+          p50: Number(tickSampler.percentile(0.5).toFixed(3)),
+          p95: Number(tickSampler.percentile(0.95).toFixed(3)),
+          max: Number(tickSampler.max().toFixed(3)),
+        },
+        egressKbps: Number(egress.kbps().toFixed(2)),
+        admission: admission.snapshot(world.humans),
+        clampedMoves: moveSampler.count,
+        gridBuckets: grid.bucketCount,
+        uptimeSec: Math.round(process.uptime()),
+      });
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'access-control-allow-origin': '*',
+      });
+      res.end(payload);
+      return;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'text/plain; charset=utf-8',
+      'access-control-allow-origin': '*',
+    });
+    res.end('niuma game server\n');
+  });
+
+  server.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    if (url.pathname !== '/ws') {
+      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    // 必须在 upgrade 之前拒绝：升级完成后再 close 已经算一次「连接成功」，
+    // 攻击者能据此确认服务端活着，也白占了一个 wsId 与一条 socket。
+    const originHeader = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+    if (!originAllowed(originHeader)) {
+      abuseClosed += 1;
+      logAbuse('ws-origin');
+      socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nforbidden origin');
+      socket.destroy();
+      return;
+    }
+
+    const wsId = nextWsId;
+    nextWsId += 1;
+    const now = clock.now();
+    wss.handleUpgrade(req, socket, head, (rawWs) => {
+      const ws = rawWs as GameWebSocket;
+      ws.data = {
+        wsId,
+        playerId: 0,
+        openedAt: now,
+        msgWindowStart: now,
+        msgCount: 0,
+        moveWindowStart: now,
+        moveCount: 0,
+      };
+      wss.emit('connection', ws, req);
+    });
+  });
+
+  server.listen(config.port, config.hostname);
 
   const timer = setInterval(() => {
     tickCount += 1;
@@ -1881,7 +1923,11 @@ export function startGameServer(config: ServerConfig) {
     // 退出路径必须同步落盘：共享运行态不能等下一次 debounce 窗口
     state?.flushSync();
     state?.dispose();
-    server.stop(true);
+    for (const client of wss.clients) {
+      client.terminate();
+    }
+    wss.close();
+    server.close();
   };
 
   return { server, stop, world, grid, admission, stats: () => ({ tickSampler, moveSampler }) };

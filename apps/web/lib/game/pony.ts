@@ -177,11 +177,15 @@ export class PonyRenderer {
   private entries: LayerEntry[] = [];
   private frameIndex = 0;
   private token = 0;
-  /** 呼吸 / 行走起伏（≤ 0）与座位抬升（≥ 0）分开记，合成后落在一个整数 y 上 */
+  /** 呼吸 / 行走起伏（≤ 0）、跳跃抬升（≤ 0）、座位抬升（≥ 0）、作揖下俯（≥ 0）与动作微移分开记，合成后落在一个整数 (x, y) 上 */
   private bobTexels = 0;
+  private jumpTexels = 0;
   private seatLiftTexels = 0;
   /** 作揖下俯（≥ 0，向下沉 0–2 纹素）：与起伏 / 抬升分开记，互不覆盖 */
   private bowTexels = 0;
+  private nudgeX = 0;
+  private nudgeY = 0;
+  private hitFlash = false;
   private appearanceValue: CharacterAppearance;
   private builtKey = '';
 
@@ -211,6 +215,14 @@ export class PonyRenderer {
     this.applyOffset();
   }
 
+  /** 跳跃窗口的抬升纹素：独立槽位，不再与呼吸起伏互相冲刷 */
+  setJumpLift(liftTexels: number): void {
+    const next = Math.min(0, Math.round(liftTexels));
+    if (this.jumpTexels === next) return;
+    this.jumpTexels = next;
+    this.applyOffset();
+  }
+
   /**
    * 坐在座位上时整体上移，让臀底落在座面顶面（ADR-0032）。
    * 阴影挂在 container 之外，所以只抬身体，不抬阴影——人不会「飞起来」。
@@ -234,8 +246,28 @@ export class PonyRenderer {
     this.applyOffset();
   }
 
+  /** 动作微移（发泄前倾 / 受击颤动）：只推视觉容器整数纹素，阴影与权威位置留在地面 */
+  setNudge(dx: number, dy: number): void {
+    const nx = Math.round(dx);
+    const ny = Math.round(dy);
+    if (this.nudgeX === nx && this.nudgeY === ny) return;
+    this.nudgeX = nx;
+    this.nudgeY = ny;
+    this.applyOffset();
+  }
+
+  /** 受击瞬间的高亮染红：只在状态翻转时改容器 tint，零开销 */
+  setHitFlash(active: boolean): void {
+    if (this.hitFlash === active) return;
+    this.hitFlash = active;
+    this.container.tint = active ? 0xffb8b8 : 0xffffff;
+  }
+
   private applyOffset(): void {
-    const y = this.bobTexels - this.seatLiftTexels + this.bowTexels;
+    const baseBob = this.jumpTexels < 0 ? this.jumpTexels : this.bobTexels;
+    const x = this.nudgeX;
+    const y = baseBob - this.seatLiftTexels + this.bowTexels + this.nudgeY;
+    if (this.container.x !== x) this.container.x = x;
     if (this.container.y !== y) this.container.y = y;
   }
 

@@ -194,7 +194,12 @@ export function dynamicBlockerCount(): number {
 }
 
 /** 该点是否与地形相交；非有限坐标视为被挡，避免 NaN 污染权威状态 */
-export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS): boolean {
+export function isBlocked(
+  x: number,
+  y: number,
+  radius: number = PLAYER_RADIUS,
+  includeDynamic = true,
+): boolean {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return true;
   // 矩形边界即墙：先判陆地，再查家具与树。湖面可涉水，不再进障碍列表（ADR-0030 / ADR-0064）
   if (!isOnLand(x, y, radius)) return true;
@@ -202,8 +207,10 @@ export function isBlocked(x: number, y: number, radius: number = PLAYER_RADIUS):
   for (const index of list) {
     if (overlaps(blockers[index]!, x, y, radius)) return true;
   }
-  for (const blocker of dynamicBlockers) {
-    if (overlaps(blocker, x, y, radius)) return true;
+  if (includeDynamic) {
+    for (const blocker of dynamicBlockers) {
+      if (overlaps(blocker, x, y, radius)) return true;
+    }
   }
   return false;
 }

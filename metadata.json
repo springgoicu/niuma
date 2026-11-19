@@ -1,0 +1,6 @@
+{
+  "name": "牛马 — 多人像素风工位社交游戏",
+  "description": "多人像素风工位社交游戏：选一头牛或一匹马，走进工位、打字聊天、坐下躺平。20Hz 权威同步，WebGPU/WebGL2 渲染。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

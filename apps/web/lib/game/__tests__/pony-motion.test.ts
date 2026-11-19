@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'bun:test';
+import { DIRECTION, POSE } from '@niuma/shared-types';
 import {
   JUMP_LIFT_PEAK,
   PONY_POSES,
   jumpLiftTexels,
   jumpShadowFor,
   ponyMotion,
+  ponyPoseNameOf,
+  ventLungeTexels,
   type PonyPoseName,
 } from '../pony-motion';
 
@@ -98,6 +101,25 @@ describe('角色微动效', () => {
     };
     const phases = new Set([1, 2, 3, 4, 5, 6].map(phaseOf));
     expect(phases.size).toBeGreaterThan(1);
+  });
+
+  it('线协议姿态枚举准确映射到微动效姿态名', () => {
+    expect(ponyPoseNameOf(POSE.Idle)).toBe('idle');
+    expect(ponyPoseNameOf(POSE.Walk)).toBe('walk');
+    expect(ponyPoseNameOf(POSE.Sit)).toBe('sit');
+    expect(ponyPoseNameOf(POSE.Lie)).toBe('lie');
+  });
+
+  it('发泄前倾沿朝向走蓄力-前冲-回弹三段整数纹素', () => {
+    const out = { x: 99, y: 99 };
+    ventLungeTexels(40, 440, DIRECTION.Right, out);
+    expect(out).toEqual({ x: -1, y: 0 });
+    ventLungeTexels(180, 440, DIRECTION.Right, out);
+    expect(out).toEqual({ x: 2, y: 0 });
+    ventLungeTexels(320, 440, DIRECTION.Up, out);
+    expect(out).toEqual({ x: 0, y: -1 });
+    ventLungeTexels(440, 440, DIRECTION.Down, out);
+    expect(out).toEqual({ x: 0, y: 0 });
   });
 });
 
