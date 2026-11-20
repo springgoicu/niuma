@@ -34,3 +34,5 @@ export * from './world/villas';
 export * from './world/apartment';
 export * from './world/hotspots';
 export * from './world/seat-gate';
+export * from './world/gta-landmarks';
+export * from './world/vehicles';

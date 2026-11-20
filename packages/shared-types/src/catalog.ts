@@ -43,6 +43,9 @@ export const HEADWEAR_IDS = [
   // ADR-0088：黄金安全帽 / 皇冠（只许追加，旧档字节值语义不变）
   'golden_helmet',
   'crown',
+  // Stage 1：秃头假发 / 外卖头盔（只许追加）
+  'balding_wig',
+  'delivery_helmet',
 ] as const;
 export const EYEWEAR_IDS = [
   'none',

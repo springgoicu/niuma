@@ -1,10 +1,14 @@
 import {
+  GHOST_MODE,
+  GHOST_SPEED_MUL,
+  ISLAND_SAND,
   MOVE_SPEED,
   P2P_DUEL_IFRAME_MS,
   POSE,
   clampWorldX,
   clampWorldY,
   dequantizeCoord,
+  isOnLand,
   resolveWalkInto,
   seatById,
   seatPose,
@@ -101,8 +105,8 @@ export function applyMove(
     return RESULT;
   }
 
-  // 昏迷 / 拖拽 / 病床治疗期间：位置与姿态全由急救管理器接管，客户端任何输入都不采信
-  if (player.incapacitated) {
+  // 昏迷 / 拖拽 / 病床治疗 / 街头倒地期间：位置与姿态不采信客户端上报
+  if (player.incapacitated || player.ghostMode === GHOST_MODE.Flatline || now < player.fallUntil) {
     player.applyState(player.direction, POSE.Lie, false);
     player.markDirtyIfChanged();
     return RESULT;
@@ -110,6 +114,18 @@ export function applyMove(
 
   const state = unpackState(packet.state);
   const pose = sanitizePose(state.pose);
+
+  // 驾车状态：保存操控方向与意图终点，位置与物理碰撞全权由 VehicleRuntime 在 20Hz Tick 里积分
+  if (player.vehicleId > 0) {
+    player.driveTargetX = dequantizeCoord(packet.x);
+    player.driveTargetY = dequantizeCoord(packet.y);
+    player.driveTargetAt = now;
+    player.lastMoveAt = now;
+    player.applyState(state.direction, POSE.Sit, false);
+    player.markDirtyIfChanged();
+    RESULT.accepted = true;
+    return RESULT;
+  }
 
   if (player.seat !== 0) {
     // 座位上该是坐还是躺由座位种类决定：床位收 Lie，其余收 Sit；上报其它姿态即起身
@@ -133,20 +149,31 @@ export function applyMove(
   const distance = Math.sqrt(dx * dx + dy * dy);
 
   const elapsed = Math.min(MAX_WINDOW_MS, Math.max(MIN_WINDOW_MS, now - player.lastMoveAt));
+  // 幽灵出窍态享受 1.25× 漂移穿墙（仍受陆地岛界兜底约束，不可漂进深海）
+  const ghostMul = player.ghostMode === GHOST_MODE.Ghost ? GHOST_SPEED_MUL : 1;
   // 移速乘子由 Buff 缓存提供（冰美式 1.15 / 降薪贴 0.8）；
   // 这里只读标量，避免在 20Hz 路径上遍历 activeBuffs
-  const allowed = ((MOVE_SPEED * player.speedMul * elapsed) / 1000) * TOLERANCE + SLACK_PX;
+  const allowed = ((MOVE_SPEED * player.speedMul * ghostMul * elapsed) / 1000) * TOLERANCE + SLACK_PX;
   const clamped = distance > allowed && distance > 0;
   const scale = clamped ? allowed / distance : 1;
 
   // 先按时间窗截断，再交给地形求解：碰撞只负责「能不能走过去」，不负责限速
   const nextX = clampWorldX(player.x + dx * scale);
   const nextY = clampWorldY(player.y + dy * scale);
-  // 护士站门禁叠在求解里（ADR-0107）：只挡站外跨进站内，治好的伤员仍能走出来
-  resolveWalkInto(MOTION, player.x, player.y, nextX, nextY);
-
-  player.x = MOTION.x;
-  player.y = MOTION.y;
+  if (player.ghostMode === GHOST_MODE.Ghost) {
+    if (isOnLand(nextX, nextY, ISLAND_SAND)) {
+      player.x = nextX;
+      player.y = nextY;
+    } else if (isOnLand(nextX, player.y, ISLAND_SAND)) {
+      player.x = nextX;
+    } else if (isOnLand(player.x, nextY, ISLAND_SAND)) {
+      player.y = nextY;
+    }
+  } else {
+    resolveWalkInto(MOTION, player.x, player.y, nextX, nextY);
+    player.x = MOTION.x;
+    player.y = MOTION.y;
+  }
   player.lastMoveAt = now;
 
   // 行走中不接打招呼：图集没有行走挥手帧，套上去就是脚在滑。

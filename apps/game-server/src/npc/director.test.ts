@@ -28,15 +28,15 @@ function setup(count = 2, seed = 1) {
 }
 
 describe('NPC 生成', () => {
-  it('默认生成 2 位同事 + 3 位保安：不占真人名额，全部进入空间索引', () => {
+  it('默认生成 2 位同事 + 4 位保安：不占真人名额，全部进入空间索引', () => {
     const { world, grid, director } = setup();
     director.spawn();
-    expect(director.count).toBe(5);
-    expect(director.guardCount).toBe(3);
-    expect(world.npcCount).toBe(5);
+    expect(director.count).toBe(6);
+    expect(director.guardCount).toBe(4);
+    expect(world.npcCount).toBe(6);
     expect(world.humans).toBe(0);
-    expect(world.size).toBe(5);
-    expect(grid.size).toBe(5);
+    expect(world.size).toBe(6);
+    expect(grid.size).toBe(6);
     for (const player of world.players.values()) {
       expect(player.isNpc).toBe(true);
       expect(player.wsId).toBe(0);
@@ -56,14 +56,14 @@ describe('NPC 生成', () => {
     const { world, director } = setup(2);
     director.spawn();
     director.spawn();
-    expect(world.npcCount).toBe(5);
+    expect(world.npcCount).toBe(6);
   });
 
-  it('数量按配置生效，保安固定 3 位，且每人都有合法名字与考勤', () => {
+  it('数量按配置生效，保安固定 4 位，且每人都有合法名字与考勤', () => {
     const { world, director } = setup(6, 9);
     director.spawn();
-    expect(world.npcCount).toBe(9);
-    expect(director.guardCount).toBe(3);
+    expect(world.npcCount).toBe(10);
+    expect(director.guardCount).toBe(4);
     for (const player of world.players.values()) {
       expect(player.name.length).toBeGreaterThan(0);
       expect(player.career.firstJoinDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);

@@ -1,6 +1,6 @@
 'use client';
 
-import { POSE, VENT_FACING } from '@niuma/shared-types';
+import { GHOST_MODE, POSE, VENT_FACING } from '@niuma/shared-types';
 
 /**
  * 角色微动效：纯函数，不依赖 Pixi、不持有状态。
@@ -171,4 +171,16 @@ export function ventLungeTexels(
   const facing = VENT_FACING[direction] ?? VENT_FACING[0]!;
   out.x = facing.x * step || 0;
   out.y = facing.y * step || 0;
+}
+
+/** 幽灵形态半透明脉冲：平躺/活体返回 1，穿墙幽灵返回 0.34..0.62 呼吸透明度 */
+export function ghostAlpha(ghostMode: number, elapsedMs: number): number {
+  if (ghostMode !== GHOST_MODE.Ghost) return 1;
+  return 0.48 + 0.14 * Math.sin(elapsedMs / 240);
+}
+
+/** 幽灵形态漂浮抬高（整数纹素）：恒返回 0、-2 或 -3，不做亚像素插值 */
+export function ghostLiftTexels(ghostMode: number, elapsedMs: number): number {
+  if (ghostMode !== GHOST_MODE.Ghost) return 0;
+  return -2 - Math.round((Math.sin(elapsedMs / 320) + 1) * 0.5);
 }

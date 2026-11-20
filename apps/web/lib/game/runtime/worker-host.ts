@@ -123,6 +123,8 @@ export function runWorkerHost(scope: WorkerScope): void {
         onBossReset: () => post({ t: 'bossReset' }),
         onBoardOpen: () => post({ t: 'boardOpen' }),
         onBulletinOpen: () => post({ t: 'bulletinOpen' }),
+        onDirectoryOpen: () => post({ t: 'directoryOpen' }),
+        onActivity: (event) => post({ t: 'activity', event }),
         onBoard: (packet) => post({ t: 'board', packet }),
         onLike: (packet) => post({ t: 'like', packet }),
         onWallet: (packet) => post({ t: 'wallet', packet }),
@@ -149,6 +151,14 @@ export function runWorkerHost(scope: WorkerScope): void {
         onWorldEvent: (packet) => post({ t: 'worldEvent', packet }),
         onEventClaim: (packet) => post({ t: 'eventClaim', packet }),
         onBossShock: (packet) => post({ t: 'bossShock', packet }),
+        onEstateBoardOpen: () => post({ t: 'estateOpen' }),
+        onWanted: (packet) => post({ t: 'wanted', packet }),
+        onVehicleState: (packet) => post({ t: 'vehicleState', packet }),
+        onGhost: (packet) => post({ t: 'ghost', packet }),
+        onFishing: (packet) => post({ t: 'fishing', packet }),
+        onTurf: (packet) => post({ t: 'turf', packet }),
+        onGig: (packet) => post({ t: 'gig', packet }),
+        onFall: (packet) => post({ t: 'fall', packet }),
         onClock: (sample) => {
           const now = performance.now();
           if (clockForwardTz === sample.tzOffsetMin && now - clockForwardAt < CLOCK_FORWARD_MS) {
@@ -282,6 +292,27 @@ export function runWorkerHost(scope: WorkerScope): void {
         return;
       case 'claimEvent':
         session?.claimEvent(message.index);
+        return;
+      case 'vehicleAction':
+        session?.vehicleAction(message.request);
+        return;
+      case 'clearStar':
+        session?.clearStar(message.request);
+        return;
+      case 'cpr':
+        session?.cpr(message.request);
+        return;
+      case 'fishingAction':
+        session?.fishingAction(message.request);
+        return;
+      case 'graffiti':
+        session?.graffiti(message.request);
+        return;
+      case 'gigAction':
+        session?.gigAction(message.request);
+        return;
+      case 'villaCustomize':
+        session?.villaCustomize(message.request);
         return;
       case 'navigate':
         session?.navigateTo(message.id);

@@ -107,6 +107,30 @@ export const WALLET_REASON = {
   VillaBuyout: 32,
   /** 街头 NPC 互动赏金（击倒同事 NPC / 挥手打招呼） */
   NpcReward: 33,
+  /** 零工外卖快递完成赏金 */
+  GigDelivery: 34,
+  /** 零工保安协助悬赏 */
+  GigPatrol: 35,
+  /** 钓鱼卖鱼收入 */
+  FishingSell: 36,
+  /** 街头涂鸦占领赏金 */
+  TurfSpray: 37,
+  /** 地盘每分钟挂机分红 */
+  TurfDividend: 38,
+  /** 抓捕通缉犯赏金 */
+  BountyClaim: 39,
+  /** 街头好心 CPR 救治奖励 */
+  CprRescue: 40,
+  /** 付费消星（换装亭 / 公用电话贿赂） */
+  ClearStarSpend: 41,
+  /** 公用电话内线消星后领取返利/补偿或黑客开销 */
+  BribeSpend: 42,
+  /** 平底锅反击保安小费 */
+  PanCounter: 43,
+  /** 查岗经理抓包摸鱼罚款 */
+  ManagerFine: 44,
+  /** 撞倒外卖小哥捡漏 */
+  DeliveryDrop: 45,
 } as const;
 export type WalletReason = (typeof WALLET_REASON)[keyof typeof WALLET_REASON];
 
@@ -145,6 +169,18 @@ export const WALLET_REASON_LABEL: Record<number, string> = {
   [WALLET_REASON.InspectionBonus]: '查岗全勤',
   [WALLET_REASON.VillaBuyout]: '房产溢价补偿',
   [WALLET_REASON.NpcReward]: 'NPC 互动赏金',
+  [WALLET_REASON.GigDelivery]: '跑腿外卖赏金',
+  [WALLET_REASON.GigPatrol]: '兼职协助巡逻',
+  [WALLET_REASON.FishingSell]: '摸鱼钓货变现',
+  [WALLET_REASON.TurfSpray]: '街头涂鸦占壁',
+  [WALLET_REASON.TurfDividend]: '街区涂鸦分红',
+  [WALLET_REASON.BountyClaim]: '悬赏捉拿通缉犯',
+  [WALLET_REASON.CprRescue]: '街头急救酬谢',
+  [WALLET_REASON.ClearStarSpend]: '街头火速洗白',
+  [WALLET_REASON.BribeSpend]: '内线公话疏通',
+  [WALLET_REASON.PanCounter]: '平底锅反震赏金',
+  [WALLET_REASON.ManagerFine]: '巡逻经理罚款',
+  [WALLET_REASON.DeliveryDrop]: '街头拾取外卖',
 };
 
 /** 固定收益：一处定义，服务端发币与商店文案共用 */
@@ -157,6 +193,22 @@ export const ECONOMY_REWARD = {
   NpcWave: 15,
   BossKill: 500,
   Quest: 40,
+  /** 零工送外卖 */
+  GigDelivery: 55,
+  /** 零工协助抓捕通缉/巡逻 */
+  GigPatrol: 45,
+  /** 涂鸦抢壁首占 */
+  TurfSpray: 35,
+  /** 街头 CPR 救醒倒地/幽灵玩家 */
+  CprRescue: 35,
+  /** 平底锅反击保安成功 */
+  PanCounter: 20,
+  /** 每★通缉悬赏基数 */
+  BountyPerStar: 40,
+  /** 换装亭消星费用 */
+  ClearStarBoothCost: 60,
+  /** 公用电话内线消星费用 */
+  ClearStarPayphoneCost: 90,
 } as const;
 
 export interface StatSku {
@@ -183,6 +235,11 @@ export const ITEM_EFFECT = {
   Poster: 'poster',
   Guard: 'guard',
   Shout: 'shout',
+  Stealth: 'stealth',
+  Box: 'box',
+  Spray: 'spray',
+  Pan: 'pan',
+  CoffeeHeal: 'coffee_heal',
 } as const;
 export type ItemEffect = (typeof ITEM_EFFECT)[keyof typeof ITEM_EFFECT];
 
@@ -285,6 +342,66 @@ export const ITEM_SKUS: readonly ItemSku[] = [
     effectMs: 15_000,
     target: ITEM_TARGET.Other,
   },
+  {
+    id: 10,
+    key: 'stealth_cape',
+    name: '摸鱼隐身斗篷',
+    blurb: '12 秒半透明匿迹，保安更难发现你的踪迹（攻击/上车现形）。',
+    price: 120,
+    effect: ITEM_EFFECT.Stealth,
+    effectMs: 12_000,
+    target: ITEM_TARGET.Self,
+  },
+  {
+    id: 11,
+    key: 'cardboard_box',
+    name: '工位纸箱伪装',
+    blurb: '钻进快递纸箱 25 秒，静止即可躲避巡逻视线（慢走 0.65 倍）。',
+    price: 80,
+    effect: ITEM_EFFECT.Box,
+    effectMs: 25_000,
+    target: ITEM_TARGET.Self,
+  },
+  {
+    id: 12,
+    key: 'spray_can',
+    name: '限定金漆喷罐',
+    blurb: '街头涂鸦战冷却立刻清零并附带亮闪入场特效。',
+    price: 45,
+    effect: ITEM_EFFECT.Spray,
+    effectMs: 0,
+    target: ITEM_TARGET.Self,
+  },
+  {
+    id: 13,
+    key: 'pan_counter',
+    name: '老板平底锅',
+    blurb: '30 秒内持锅戒备：下一次保安擒拿将被当场震晕 2 秒，反赚 20 摸鱼币！',
+    price: 140,
+    effect: ITEM_EFFECT.Pan,
+    effectMs: 30_000,
+    target: ITEM_TARGET.Self,
+  },
+  {
+    id: 14,
+    key: 'slip_sign',
+    name: '小心地滑假牌',
+    blurb: '在目标脚下甩出假警示牌，触发连环大滑跤并定身 2.8 秒。',
+    price: 90,
+    effect: ITEM_EFFECT.Slip,
+    effectMs: 2_800,
+    target: ITEM_TARGET.Other,
+  },
+  {
+    id: 15,
+    key: 'mengpo_coffee',
+    name: '孟婆续命咖啡',
+    blurb: '瞬间清除负面摸鱼贴/减速效果，并获得 20 秒 +12% 移速加成。',
+    price: 65,
+    effect: ITEM_EFFECT.CoffeeHeal,
+    effectMs: 20_000,
+    target: ITEM_TARGET.Self,
+  },
 ];
 
 export function findItemSku(key: string): ItemSku | undefined {
@@ -334,6 +451,9 @@ export const COSMETIC_SKUS: readonly CosmeticSku[] = [
   { id: 16, slot: 'eyes', key: 'gold_rim_glasses', name: '金丝眼镜', price: 320 },
   { id: 17, slot: 'neck', key: 'gold_chain', name: '大金链', price: 560 },
   { id: 18, slot: 'neck', key: 'red_scarf', name: '红围巾', price: 240 },
+  // ---- Stage 1：喜剧职场散件 ----
+  { id: 19, slot: 'head', key: 'balding_wig', name: '资深秃顶假发', price: 180 },
+  { id: 20, slot: 'head', key: 'delivery_helmet', name: '闪送黄色头盔', price: 220 },
 ];
 
 export function findCosmeticSkuById(id: number): CosmeticSku | undefined {

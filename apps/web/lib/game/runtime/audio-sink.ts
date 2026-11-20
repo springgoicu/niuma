@@ -30,5 +30,26 @@ export function applyAudioEvent(event: AudioEvent, listenerX: number, listenerY:
     case 'slip':
       sfx.playSlipSound(event.x, event.y);
       return;
+    case 'vehicle':
+      sfx.playGtaTone(event.horn ? 'horn' : 'vehicle', event.x, event.y);
+      return;
+    case 'siren':
+      sfx.playGtaTone('siren', event.x, event.y);
+      return;
+    case 'fish':
+      sfx.playGtaTone(event.bite ? 'fish_bite' : 'fish_cast', event.x, event.y);
+      return;
+    case 'spray':
+      sfx.playGtaTone('spray', event.x, event.y);
+      return;
+    case 'cpr':
+      sfx.playGtaTone('cpr', event.x, event.y);
+      return;
+    case 'wanted':
+      sfx.playGtaTone('wanted', event.x, event.y);
+      return;
+    case 'coffee':
+      sfx.playGtaTone('coffee', event.x, event.y);
+      return;
   }
 }

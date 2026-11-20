@@ -96,4 +96,18 @@ describe('入站包长度闸门', () => {
     expect(checkPacket(0x39, packet(0x39, 8))).toBe(PACKET_UNKNOWN);
     expect(checkPacket(0, new Uint8Array(0))).toBe(PACKET_UNKNOWN);
   });
+
+  it('GTA 扩展包（0x60..0x6d）定长与变长长度校验全部准确', () => {
+    expect(checkPacket(OpCode.C2S_FISHING, packet(OpCode.C2S_FISHING, 3))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_FISHING, packet(OpCode.C2S_FISHING, 2))).toBe(PACKET_MALFORMED);
+    expect(checkPacket(OpCode.C2S_VEHICLE_ACTION, packet(OpCode.C2S_VEHICLE_ACTION, 4))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_CLEAR_STAR, packet(OpCode.C2S_CLEAR_STAR, 3))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_CPR, packet(OpCode.C2S_CPR, 3))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_GRAFFITI, packet(OpCode.C2S_GRAFFITI, 2))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_GIG_ACTION, packet(OpCode.C2S_GIG_ACTION, 4))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_VILLA_CUSTOMIZE, packet(OpCode.C2S_VILLA_CUSTOMIZE, 10, 3, 6))).toBe(PACKET_OK);
+    expect(checkPacket(OpCode.C2S_VILLA_CUSTOMIZE, packet(OpCode.C2S_VILLA_CUSTOMIZE, 6, 3, 12))).toBe(
+      PACKET_MALFORMED,
+    );
+  });
 });

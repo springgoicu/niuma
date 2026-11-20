@@ -108,6 +108,13 @@ import {
   CLINIC_RECT,
 } from './clinic';
 import {
+  FISHING_PIERS,
+  GTA_EXCLUSION_RECTS,
+  GTA_LANDMARK_SOLIDS,
+  LOADING_DOCK,
+  SECURITY_GARAGE,
+} from './gta-landmarks';
+import {
   DISTRICTS,
   NAV_ARRIVALS,
   NAV_TARGETS,
@@ -161,15 +168,20 @@ export type { BuildingSpec, DeskInstance, PropInstance, RestroomStall, SeatInsta
 export {
   CLINIC_ACCESS_PAVING,
   CLINIC_BEDS,
+  CLINIC_COFFEE_SPOT,
   CLINIC_COUNTER,
   CLINIC_FENCE_SOLIDS,
+  CLINIC_NURSE_LANE_X,
+  CLINIC_NURSE_LANE_Y,
   CLINIC_RECT,
   CLINIC_REGION_RECT,
+  CLINIC_RESPAWN_POINT,
   CLINIC_SIGN,
   CLINIC_NURSE_SPOTS,
   CLINIC_AMBULANCE_SPOTS,
   CLINIC_DROP,
   CLINIC_VEHICLE_ENTRY,
+  clinicBedSide,
 } from './clinic';
 
 export {
@@ -506,6 +518,25 @@ const PATHS: PathShape[] = [
       [4780, 5290],
       [4830, 5120],
       [4850, 4980],
+    ],
+    32,
+  ),
+  // 13: 东北环岛飙车干线 — 游乐园南门 → 东主路西口（让开太湖石 (4534, 3960) 与花海）
+  buildPath(
+    [
+      [4096, 3080],
+      [4460, 3110],
+      [4460, 4096],
+    ],
+    34,
+  ),
+  // 14: 西北外环景观干线 — 霓虹街西端 → 企业楼西侧草脊 → 西主路（绕开百年枫王与墙体）
+  buildPath(
+    [
+      [2680, 2980],
+      [2520, 3140],
+      [2520, 3720],
+      [2640, 4030],
     ],
     32,
   ),
@@ -943,7 +974,7 @@ function isPlantable(x: number, y: number): boolean {
   ]) {
     if (rectContains(rectExpanded(paving, 30), x, y)) return false;
   }
-  for (const spec of VILLA_SPECS) if (rectContains(rectExpanded(spec.rect, 36), x, y)) return false;
+  for (const spec of VILLA_SPECS) if (rectContains(rectExpanded(spec.rect, 52), x, y)) return false;
   for (const spec of APARTMENT_SPECS) if (rectContains(rectExpanded(spec.rect, 60), x, y)) return false;
   if (rectContains(rectExpanded(APARTMENT_GARDEN, 12), x, y)) return false;
   for (const zone of BAMBOO_ZONES) if (rectContains(rectExpanded(zone, 24), x, y)) return false;
@@ -954,6 +985,7 @@ function isPlantable(x: number, y: number): boolean {
     if (distanceSqToPolygon(x, y, path.polygon) < 55 * 55) return false;
   }
   for (const field of FLOWER_FIELDS) if (rectContains(rectExpanded(field.rect, 40), x, y)) return false;
+  for (const area of GTA_EXCLUSION_RECTS) if (rectContains(rectExpanded(area, 36), x, y)) return false;
   for (const planter of PLANTERS) {
     const dx = planter.x - x;
     const dy = planter.y - y;
@@ -1018,6 +1050,7 @@ export const WORLD_LAYOUT: WorldLayout = {
     { kind: 'prop', ...BOSS_SOLID },
     ...CLINIC_SOLIDS,
     ...CLINIC_FENCE_SOLIDS,
+    ...GTA_LANDMARK_SOLIDS,
     ...VILLA_WALL_SOLIDS,
     ...APARTMENT_WALL_SOLIDS,
   ],
@@ -1037,6 +1070,9 @@ export const WORLD_LAYOUT: WorldLayout = {
     PARK_GATE_PAVING,
     CLINIC_RECT,
     CLINIC_ACCESS_PAVING,
+    LOADING_DOCK.rect,
+    SECURITY_GARAGE.rect,
+    ...FISHING_PIERS.map((pier) => pier.rect),
     ...VILLA_SPECS.map((spec) => spec.rect),
     ...APARTMENT_SPECS.map((spec) => spec.rect),
     ...DOOR_PAVING,

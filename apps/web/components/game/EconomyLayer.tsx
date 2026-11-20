@@ -28,8 +28,9 @@ export interface EconomyLayerProps {
   onP2PAction: (matchId: number, action: number) => void;
   /** 全服大喇叭：审核与扣道具都在服务端（ADR-0085） */
   onShout: (text: string) => void;
-  // ---- 热区建筑（ADR-0087）：上行只带意图，金额与资格由服务端复核 ----
+  /** 领地涂装/地产：主/副动作与个性装修 */
   onVilla: (villa: number, action: number) => void;
+  onVillaCustomize?: (villa: number, theme: number, tagline: string) => void;
 }
 
 /** 默认投入额：新玩家先看到 50，仍可在浮层里改成 0 / 10 / 200 或自定义 */
@@ -51,6 +52,7 @@ export function EconomyLayer({
   onP2PAction,
   onShout,
   onVilla,
+  onVillaCustomize,
 }: EconomyLayerProps) {
   const [challengeTarget, setChallengeTarget] = useState<{ id: number; name: string } | null>(null);
   const wallet = useGameUi((state) => state.wallet);
@@ -99,6 +101,7 @@ export function EconomyLayer({
           coins={wallet.coins}
           onClose={() => setVillaOpen(null)}
           onAction={onVilla}
+          onCustomize={onVillaCustomize}
         />
       )}
       <CoinPops />

@@ -66,6 +66,18 @@ export const ACTIVITY_KIND = {
   Wave: 27,
   /** 买下或溢价收购园区房产冠名权 */
   VillaTrade: 28,
+  /** 河边钓鱼出大货 */
+  FishingCatch: 29,
+  /** 园区特技驾驶 */
+  VehicleStunt: 30,
+  /** 街头通缉星级飙升 */
+  WantedPeak: 31,
+  /** 街头心肺复苏救人 */
+  CprRescue: 32,
+  /** 街头涂鸦占领墙面 */
+  TurfCapture: 33,
+  /** 完成街头零工配送/悬赏 */
+  GigComplete: 34,
 } as const;
 export type ActivityKind = (typeof ACTIVITY_KIND)[keyof typeof ACTIVITY_KIND];
 
@@ -108,6 +120,12 @@ export const ACTIVITY_TIER: ReadonlyMap<number, ActivityTier> = new Map<number, 
   [ACTIVITY_KIND.RingSeat, 'routine'],
   [ACTIVITY_KIND.Wave, 'routine'],
   [ACTIVITY_KIND.VillaTrade, 'dramatic'],
+  [ACTIVITY_KIND.FishingCatch, 'dramatic'],
+  [ACTIVITY_KIND.VehicleStunt, 'routine'],
+  [ACTIVITY_KIND.WantedPeak, 'dramatic'],
+  [ACTIVITY_KIND.CprRescue, 'dramatic'],
+  [ACTIVITY_KIND.TurfCapture, 'dramatic'],
+  [ACTIVITY_KIND.GigComplete, 'life'],
 ]);
 
 /** 允许客户端上报的编号：只能报纯观感事件，权威事件一律不接受伪造 */
@@ -128,6 +146,7 @@ export const ACTIVITY_REPORTABLE: ReadonlySet<number> = new Set<number>([
   ACTIVITY_KIND.TableSeat,
   ACTIVITY_KIND.RingSeat,
   ACTIVITY_KIND.Wave,
+  ACTIVITY_KIND.VehicleStunt,
 ]);
 
 /**
@@ -212,6 +231,18 @@ export function formatActivity(kind: number, params: ActivityTextParams): string
       return `${name} 打了个招呼`;
     case ACTIVITY_KIND.VillaTrade:
       return region ? `${name} 拿下了 ${region} 的冠名权` : `${name} 买下了一处园区地标`;
+    case ACTIVITY_KIND.FishingCatch:
+      return region ? `${name} 在${region}钓上了一条稀罕货` : `${name} 摸鱼钓上了罕见大货`;
+    case ACTIVITY_KIND.VehicleStunt:
+      return `${name} 踩下涡轮飙过园区环道`;
+    case ACTIVITY_KIND.WantedPeak:
+      return `${name} 被全园区保安拉响了最高通缉警报`;
+    case ACTIVITY_KIND.CprRescue:
+      return `${name} 在街头用 CPR 救醒了倒地的同事`;
+    case ACTIVITY_KIND.TurfCapture:
+      return region ? `${name} 在${region}留下了自己的街头涂鸦` : `${name} 占领了一面街头涂鸦墙`;
+    case ACTIVITY_KIND.GigComplete:
+      return `${name} 漂亮地完成了一单街头零工`;
     default:
       return null;
   }

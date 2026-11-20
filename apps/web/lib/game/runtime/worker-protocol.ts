@@ -37,10 +37,24 @@ import type {
   QuestStatePacket,
   WorkResultPacket,
   WorldEventPacket,
+  FishingStatePacket,
+  VehicleStatePacket,
+  WantedStatePacket,
+  GhostStatePacket,
+  FallEventPacket,
+  TurfStatePacket,
+  GigStatePacket,
+  FishingActionRequest,
+  VehicleActionRequest,
+  ClearStarRequest,
+  CprRequest,
+  GraffitiRequest,
+  GigActionRequest,
+  VillaCustomizeRequest,
 } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
-import type { ChatEntry, SessionStats } from '../session';
+import type { ActivityEvent, ChatEntry, SessionStats } from '../session';
 import type { ControlMessage, SnapshotPatch } from './control-channel';
 import type { AudioEvent, SessionProfile } from './engine-env';
 
@@ -112,6 +126,14 @@ export type MainToWorker =
   | { t: 'working'; active: boolean }
   | { t: 'claimQuest'; questId: number }
   | { t: 'claimEvent'; index: number }
+  /** GTA 新增主动操作 */
+  | { t: 'vehicleAction'; request: VehicleActionRequest }
+  | { t: 'clearStar'; request: ClearStarRequest }
+  | { t: 'cpr'; request: CprRequest }
+  | { t: 'fishingAction'; request: FishingActionRequest }
+  | { t: 'graffiti'; request: GraffitiRequest }
+  | { t: 'gigAction'; request: GigActionRequest }
+  | { t: 'villaCustomize'; request: VillaCustomizeRequest }
   | { t: 'navigate'; id: NavTargetId }
   /** 回中央广场：广场不是场所，上行只报一个意图，终点是出生点 */
   | { t: 'navigateHome' }
@@ -162,6 +184,19 @@ export type WorkerToMain =
   | { t: 'boardOpen' }
   /** 在放假告示板旁按 F / 点击牌面：主线程展开软木看板（ADR-0059） */
   | { t: 'bulletinOpen' }
+  /** 指路牌按 F：主线程展开园区导览卡 */
+  | { t: 'directoryOpen' }
+  /** 全园区交互播报（ADR-0112） */
+  | { t: 'activity'; event: ActivityEvent }
+  /** 地产总览公告牌按 F：主线程打开 8 处房产总览面板 */
+  | { t: 'estateOpen' }
+  | { t: 'wanted'; packet: WantedStatePacket }
+  | { t: 'vehicleState'; packet: VehicleStatePacket }
+  | { t: 'ghost'; packet: GhostStatePacket }
+  | { t: 'fishing'; packet: FishingStatePacket }
+  | { t: 'turf'; packet: TurfStatePacket }
+  | { t: 'gig'; packet: GigStatePacket }
+  | { t: 'fall'; packet: FallEventPacket }
   /**
    * 服务器时钟样本（ADR-0081）：Worker 侧 1Hz 收到 pong，转发到主线程时按 5s 节流，
    * 只传「此刻的服务器毫秒 + 园区时区」。两侧单调时钟基准不同，所以传绝对时刻而不是偏移。

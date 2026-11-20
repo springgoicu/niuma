@@ -3,6 +3,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import {
   VILLA_SPECS,
+  VILLA_THEME,
   VILLA_WALL_SOLIDS,
   villaBuyPrice,
   type VillaSpec,
@@ -70,6 +71,7 @@ const C = {
 
 interface PropertySlot {
   spec: VillaSpec;
+  houseAccent: Graphics;
   plaqueBg: Graphics;
   led: Graphics;
   lock: Graphics;
@@ -83,6 +85,8 @@ interface PropertySlot {
   lastOnline: boolean;
   lastOwnerName: string;
   lastPending: number;
+  lastTheme: number;
+  lastTagline: string;
 }
 
 export class VillasView {
@@ -109,7 +113,8 @@ export class VillasView {
       house.position.set(spec.house.x, spec.house.y + spec.house.h);
       const hg = new Graphics();
       this.paintPropertyHouse(hg, spec);
-      house.addChild(hg);
+      const houseAccent = new Graphics();
+      house.addChild(hg, houseAccent);
       depth.add(spec.house.y + spec.house.h, house);
       this.roots.push(house);
 
@@ -171,6 +176,7 @@ export class VillasView {
       this.texts.push(nameText, subText, badgeText);
       const slot: PropertySlot = {
         spec,
+        houseAccent,
         plaqueBg,
         led,
         lock,
@@ -184,8 +190,10 @@ export class VillasView {
         lastOnline: false,
         lastOwnerName: '',
         lastPending: -1,
+        lastTheme: 0,
+        lastTagline: '',
       };
-      this.redrawPlaque(slot, false, false, false, false, '', 0);
+      this.redrawPlaque(slot, false, false, false, false, '', 0, 0, '');
       this.slots[spec.id] = slot;
 
       depth.add(spec.gate.y, gateCont);
@@ -221,6 +229,8 @@ export class VillasView {
       const online = info.ownerId !== 0;
       const ownerName = info.ownerName;
       const pending = info.pending;
+      const theme = info.theme ?? 0;
+      const tagline = info.tagline ?? '';
 
       if (
         slot.lastOwned === owned &&
@@ -228,7 +238,9 @@ export class VillasView {
         slot.lastLocked === locked &&
         slot.lastOnline === online &&
         slot.lastOwnerName === ownerName &&
-        slot.lastPending === pending
+        slot.lastPending === pending &&
+        slot.lastTheme === theme &&
+        slot.lastTagline === tagline
       ) {
         continue;
       }
@@ -236,8 +248,27 @@ export class VillasView {
       if (slot.lastLocked !== locked) {
         this.drawGate(slot.gate, locked, slot.spec.kind);
       }
-      this.redrawPlaque(slot, owned, mine, locked, online, ownerName, pending);
+      if (slot.lastTheme !== theme || slot.lastOwned !== owned) {
+        this.drawHouseAccent(slot, owned ? theme : -1);
+      }
+      this.redrawPlaque(slot, owned, mine, locked, online, ownerName, pending, theme, tagline);
     }
+  }
+
+  private drawHouseAccent(slot: PropertySlot, theme: number): void {
+    const g = slot.houseAccent;
+    g.clear();
+    if (theme < 0) return;
+    const { w, h } = slot.spec.house;
+    const accent =
+      theme === VILLA_THEME.CyberNeon
+        ? 0xf06595
+        : theme === VILLA_THEME.EmeraldOasis
+          ? 0x4fbf85
+          : C.gold;
+    g.rect(4, -h + 4, w - 8, 3).fill(accent);
+    g.rect(4, -h + 4, 3, 14).fill(accent);
+    g.rect(w - 7, -h + 4, 3, 14).fill(accent);
   }
 
   setTextResolution(devicePxPerTexel: number): void {
@@ -261,6 +292,8 @@ export class VillasView {
     online: boolean,
     ownerName: string,
     pending: number,
+    theme: number,
+    tagline: string,
   ): void {
     slot.lastOwned = owned;
     slot.lastMine = mine;
@@ -268,10 +301,20 @@ export class VillasView {
     slot.lastOnline = online;
     slot.lastOwnerName = ownerName;
     slot.lastPending = pending;
+    slot.lastTheme = theme;
+    slot.lastTagline = tagline;
 
     const { plaqueBg, led, lock, spec, nameText, subText, badgeText } = slot;
     const bg = mine ? C.plaqueMine : owned ? C.plaqueOwned : C.plaqueFree;
-    const edge = mine ? C.plaqueEdgeMine : owned ? C.plaqueEdgeOwned : C.plaqueEdgeFree;
+    const themeEdge =
+      theme === VILLA_THEME.CyberNeon
+        ? 0xf06595
+        : theme === VILLA_THEME.EmeraldOasis
+          ? 0x4fbf85
+          : mine
+            ? C.plaqueEdgeMine
+            : C.plaqueEdgeOwned;
+    const edge = owned ? themeEdge : C.plaqueEdgeFree;
 
     plaqueBg.clear();
     plaqueBg.rect(-60, -58, 120, 38).fill(C.outline);
@@ -287,13 +330,13 @@ export class VillasView {
     } else if (mine) {
       nameText.style.fill = C.gold;
       subText.style.fill = C.inkLight;
-      subText.text = `我的产业 · ${ownerName ? ownerName.slice(0, 7) : '本人'}`;
+      subText.text = tagline ? tagline.slice(0, 11) : `我的 · ${ownerName ? ownerName.slice(0, 6) : '本人'}`;
       badgeText.style.fill = C.coin;
       badgeText.text = pending > 0 ? `+¥${pending} 可收` : `+${spec.income}/分 · ${locked ? '已锁门' : '开放'}`;
     } else {
-      nameText.style.fill = C.plaqueEdgeOwned;
+      nameText.style.fill = edge;
       subText.style.fill = C.inkLight;
-      subText.text = ownerName ? ownerName.slice(0, 9) : '神秘房主';
+      subText.text = tagline ? tagline.slice(0, 11) : ownerName ? ownerName.slice(0, 9) : '神秘房主';
       badgeText.style.fill = C.gold;
       badgeText.text = `收购 ¥${villaBuyPrice(spec, true)}`;
     }

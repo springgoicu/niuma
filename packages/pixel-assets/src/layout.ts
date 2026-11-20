@@ -11,7 +11,7 @@
  * 列数只增不改已有列号：CLIPS 的列区间与时长表是动画契约，一动全端跟着抖。
  */
 export const FRAME_SIZE = 64;
-export const COLUMNS = 34;
+export const COLUMNS = 53;
 export const ROWS = 4;
 
 /**
@@ -36,7 +36,14 @@ export type PoseName =
   | 'lieVent'
   | 'wave'
   | 'sitWave'
-  | 'lieWave';
+  | 'lieWave'
+  | 'slip'
+  | 'tumble'
+  | 'tornado'
+  | 'flatline'
+  | 'ghost'
+  | 'drive'
+  | 'cpr';
 
 export const DIRECTIONS = ['down', 'left', 'right', 'up'] as const;
 export type DirectionName = (typeof DIRECTIONS)[number];
@@ -100,6 +107,14 @@ export const CLIPS: Record<PoseName, ClipSpec> = {
   wave: { frames: [25, 26, 27], frameMs: [220, 220, 220], loopFrom: 0, loop: false },
   sitWave: { frames: [28, 29, 30], frameMs: [220, 220, 220], loopFrom: 0, loop: false },
   lieWave: { frames: [31, 32, 33], frameMs: [220, 220, 220], loopFrom: 0, loop: false },
+  // ---- Stage 1 GTA 搞笑物理、倒地/幽灵、驾车与 CPR（cols 34..52） ----
+  slip: { frames: [34, 35, 36], frameMs: [120, 180, 320], loopFrom: 2, loop: false },
+  tumble: { frames: [37, 38, 39, 40], frameMs: [110, 110, 120, 140], loopFrom: 0, loop: true },
+  tornado: { frames: [41, 42], frameMs: [90, 90], loopFrom: 0, loop: true },
+  flatline: { frames: [43, 44], frameMs: [480, 480], loopFrom: 0, loop: true },
+  ghost: { frames: [45, 46, 47], frameMs: [220, 220, 220], loopFrom: 0, loop: true },
+  drive: { frames: [48, 49], frameMs: [180, 180], loopFrom: 0, loop: true },
+  cpr: { frames: [50, 51, 52], frameMs: [150, 150, 150], loopFrom: 0, loop: true },
 };
 
 /** 列号 → 动作，供生成器反查；顺序与 CLIPS 的列区间必须一致 */
@@ -138,6 +153,25 @@ const COLUMN_POSES: PoseName[] = [
   'lieWave',
   'lieWave',
   'lieWave',
+  'slip',
+  'slip',
+  'slip',
+  'tumble',
+  'tumble',
+  'tumble',
+  'tumble',
+  'tornado',
+  'tornado',
+  'flatline',
+  'flatline',
+  'ghost',
+  'ghost',
+  'ghost',
+  'drive',
+  'drive',
+  'cpr',
+  'cpr',
+  'cpr',
 ];
 
 if (COLUMN_POSES.length !== COLUMNS) {

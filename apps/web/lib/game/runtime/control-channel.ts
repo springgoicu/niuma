@@ -64,6 +64,7 @@ export const KEY_BIT = {
   down: 1 << 1,
   left: 1 << 2,
   right: 1 << 3,
+  sprint: 1 << 4,
 } as const;
 
 export interface ViewportInfo {

@@ -70,6 +70,17 @@ import {
   WELCOME_SESSION_BYTES,
   WELCOME_SESSION_MAGIC,
   WORLD_EVENT_PACKET_BYTES,
+  FISHING_ACTION_BYTES,
+  FISHING_STATE_BYTES,
+  VEHICLE_ACTION_BYTES,
+  VEHICLE_ENTRY_BYTES,
+  CLEAR_STAR_BYTES,
+  WANTED_STATE_BYTES,
+  CPR_ACTION_BYTES,
+  GHOST_STATE_BYTES,
+  GRAFFITI_ACTION_BYTES,
+  GIG_ACTION_BYTES,
+  VILLA_TAGLINE_MAX_BYTES,
   type SyncFormat,
 } from './constants';
 import { bytesToDeviceId, deviceIdToBytes } from './device';
@@ -167,6 +178,22 @@ import type {
   ActivityReportPacket,
   VillaRequest,
   VillaStatePacket,
+  VillaCustomizeRequest,
+  FishingActionRequest,
+  FishingStatePacket,
+  VehicleActionRequest,
+  VehicleSnapshot,
+  VehicleStatePacket,
+  ClearStarRequest,
+  WantedStatePacket,
+  CprRequest,
+  GhostStatePacket,
+  FallEventPacket,
+  GraffitiRequest,
+  TurfEntry,
+  TurfStatePacket,
+  GigActionRequest,
+  GigStatePacket,
 } from './types';
 import { ACTIVITY_PACKET_BYTES, ACTIVITY_REPORT_BYTES, ACTIVITY_TEXT_MAX_BYTES } from './activity';
 import {
@@ -232,6 +259,21 @@ export class ByteWriter {
     return this;
   }
 
+  i16(value: number): this {
+    this.ensure(2);
+    const clamped = Math.max(-0x8000, Math.min(0x7fff, Math.round(value) || 0));
+    this.view.setInt16(this.offset, clamped, true);
+    this.offset += 2;
+    return this;
+  }
+
+  f32(value: number): this {
+    this.ensure(4);
+    this.view.setFloat32(this.offset, Number.isFinite(value) ? value : 0, true);
+    this.offset += 4;
+    return this;
+  }
+
   raw(src: Uint8Array): this {
     this.ensure(src.length);
     this.buf.set(src, this.offset);
@@ -289,6 +331,18 @@ export class ByteReader {
 
   u32(): number {
     const v = this.view.getUint32(this.offset, true);
+    this.offset += 4;
+    return v;
+  }
+
+  i16(): number {
+    const v = this.view.getInt16(this.offset, true);
+    this.offset += 2;
+    return v;
+  }
+
+  f32(): number {
+    const v = this.view.getFloat32(this.offset, true);
     this.offset += 4;
     return v;
   }
@@ -2494,22 +2548,51 @@ export function decodeVillaRequest(data: Uint8Array): VillaRequest {
   return { villa: reader.u8(), action: reader.u8() };
 }
 
+const VILLA_FLAG_CUSTOM = 1 << 3;
+
+export function truncateVillaTagline(tagline: string): string {
+  const cleaned = tagline.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  let out = '';
+  let chars = 0;
+  let bytes = 0;
+  for (const ch of cleaned) {
+    if (chars >= 12) break;
+    const size = textEncoder.encode(ch).length;
+    if (bytes + size > VILLA_TAGLINE_MAX_BYTES) break;
+    out += ch;
+    chars += 1;
+    bytes += size;
+  }
+  return out;
+}
+
 export function encodeVillaState(packet: VillaStatePacket): Uint8Array {
   const villas = packet.villas.slice(0, 0xff);
   let size = 2;
   // 无主房产的 ownerName 就是空串：不能套昵称兜底，否则牌匾会把「待售」写成「无名牛马」
   const names = villas.map((villa) => (villa.ownerName.trim() === '' ? '' : truncateName(villa.ownerName)));
-  for (const name of names) size += 7 + textEncoder.encode(name).length;
+  const tags = villas.map((villa) => (villa.tagline ? truncateVillaTagline(villa.tagline) : ''));
+  villas.forEach((villa, index) => {
+    const nameBytes = textEncoder.encode(names[index]!);
+    const theme = Math.max(0, Math.min(0xff, Math.floor(villa.theme ?? 0)));
+    const tag = tags[index]!;
+    const hasCustom = theme > 0 || tag.length > 0;
+    size += 7 + nameBytes.length + (hasCustom ? 2 + textEncoder.encode(tag).length : 0);
+  });
   const writer = new ByteWriter(size);
   writer.u8(OpCode.S2C_VILLA_STATE).u8(villas.length);
   villas.forEach((villa, index) => {
     const name = names[index]!;
     const bytes = textEncoder.encode(name);
+    const theme = Math.max(0, Math.min(0xff, Math.floor(villa.theme ?? 0)));
+    const tag = tags[index]!;
+    const hasCustom = theme > 0 || tag.length > 0;
     let flags = 0;
     if (villa.locked) flags |= 1;
-    // bit1 = 已有房主（离线也算），bit2 = 收包人就是房主（按设备号）
+    // bit1 = 已有房主（离线也算），bit2 = 收包人就是房主（按设备号），bit3 = 自定义主题或灯牌宣言
     if (villa.owned) flags |= 1 << 1;
     if (villa.mine) flags |= 1 << 2;
+    if (hasCustom) flags |= VILLA_FLAG_CUSTOM;
     writer
       .u8(villa.id & 0xff)
       .u16(Math.max(0, villa.ownerId) & 0xffff)
@@ -2517,6 +2600,10 @@ export function encodeVillaState(packet: VillaStatePacket): Uint8Array {
       .u16(Math.min(0xffff, Math.max(0, Math.floor(villa.pending))))
       .u8(bytes.length)
       .raw(bytes);
+    if (hasCustom) {
+      const tagBytes = textEncoder.encode(tag);
+      writer.u8(theme).u8(tagBytes.length).raw(tagBytes);
+    }
   });
   return writer.finish();
 }
@@ -2534,7 +2621,14 @@ export function decodeVillaState(data: Uint8Array): VillaStatePacket {
     const pending = reader.u16();
     const nameLength = reader.u8();
     const ownerName = nameLength <= reader.remaining ? reader.utf8(nameLength) : '';
-    villas.push({
+    let theme: number | undefined;
+    let tagline: string | undefined;
+    if ((flags & VILLA_FLAG_CUSTOM) !== 0 && reader.remaining >= 2) {
+      theme = reader.u8();
+      const tagLen = reader.u8();
+      tagline = tagLen <= reader.remaining ? reader.utf8(tagLen) : '';
+    }
+    const entry = {
       id,
       ownerId,
       ownerName,
@@ -2542,7 +2636,10 @@ export function decodeVillaState(data: Uint8Array): VillaStatePacket {
       owned: (flags & (1 << 1)) !== 0,
       mine: (flags & (1 << 2)) !== 0,
       pending,
-    });
+      ...(theme !== undefined ? { theme } : {}),
+      ...(tagline !== undefined ? { tagline } : {}),
+    };
+    villas.push(entry);
   }
   return { villas };
 }
@@ -2817,4 +2914,326 @@ export function decodeInteractReject(data: Uint8Array): InteractRejectPacket {
   const reader = new ByteReader(data);
   if (reader.u8() !== OpCode.S2C_INTERACT_REJECT) throw new Error('not an interact reject packet');
   return { action: reader.u8(), reason: reader.u8() };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2-4 像素职场 GTA 二进制包编解码（0x60..0x6d）
+// ---------------------------------------------------------------------------
+
+export function encodeFishingAction(req: FishingActionRequest): Uint8Array {
+  return new ByteWriter(FISHING_ACTION_BYTES)
+    .u8(OpCode.C2S_FISHING)
+    .u8(req.action & 0xff)
+    .u8(req.spotId & 0xff)
+    .finish();
+}
+
+export function decodeFishingAction(data: Uint8Array): FishingActionRequest {
+  if (data.byteLength < FISHING_ACTION_BYTES) {
+    throw new Error(`fishing action must be >= ${FISHING_ACTION_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_FISHING) throw new Error('not a fishing action packet');
+  return { action: reader.u8(), spotId: reader.u8() };
+}
+
+export function encodeFishingState(pkt: FishingStatePacket): Uint8Array {
+  return new ByteWriter(FISHING_STATE_BYTES)
+    .u8(OpCode.S2C_FISHING_STATE)
+    .u16(pkt.id & 0xffff)
+    .u8(pkt.state & 0xff)
+    .u8(pkt.spotId & 0xff)
+    .u32(Math.max(0, Math.floor(pkt.biteAtMs)) >>> 0)
+    .u8(pkt.rewardKind & 0xff)
+    .finish();
+}
+
+export function decodeFishingState(data: Uint8Array): FishingStatePacket {
+  if (data.byteLength < FISHING_STATE_BYTES) {
+    throw new Error(`fishing state must be >= ${FISHING_STATE_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_FISHING_STATE) throw new Error('not a fishing state packet');
+  return {
+    id: reader.u16(),
+    state: reader.u8(),
+    spotId: reader.u8(),
+    biteAtMs: reader.u32(),
+    rewardKind: reader.u8(),
+  };
+}
+
+export function encodeVehicleAction(req: VehicleActionRequest): Uint8Array {
+  return new ByteWriter(VEHICLE_ACTION_BYTES)
+    .u8(OpCode.C2S_VEHICLE_ACTION)
+    .u8(req.action & 0xff)
+    .u16(req.vehicleId & 0xffff)
+    .finish();
+}
+
+export function decodeVehicleAction(data: Uint8Array): VehicleActionRequest {
+  if (data.byteLength < VEHICLE_ACTION_BYTES) {
+    throw new Error(`vehicle action must be >= ${VEHICLE_ACTION_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_VEHICLE_ACTION) throw new Error('not a vehicle action packet');
+  return { action: reader.u8(), vehicleId: reader.u16() };
+}
+
+export function encodeVehicleState(packet: VehicleStatePacket): Uint8Array {
+  const list = packet.vehicles.slice(0, 0xff);
+  const writer = new ByteWriter(2 + list.length * VEHICLE_ENTRY_BYTES);
+  writer.u8(OpCode.S2C_VEHICLE_STATE).u8(list.length);
+  for (let i = 0; i < list.length; i += 1) {
+    const v = list[i]!;
+    writer
+      .u16(v.vehicleId & 0xffff)
+      .u8(v.kind & 0xff)
+      .u16(v.driverId & 0xffff)
+      .f32(v.x)
+      .f32(v.y)
+      .i16(v.vx)
+      .i16(v.vy)
+      .u8(v.dir & 0xff)
+      .u8(v.flags & 0xff);
+  }
+  return writer.finish();
+}
+
+export function decodeVehicleState(data: Uint8Array): VehicleStatePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_VEHICLE_STATE) throw new Error('not a vehicle state packet');
+  const count = reader.u8();
+  const vehicles: VehicleSnapshot[] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < VEHICLE_ENTRY_BYTES) break;
+    vehicles.push({
+      vehicleId: reader.u16(),
+      kind: reader.u8(),
+      driverId: reader.u16(),
+      x: reader.f32(),
+      y: reader.f32(),
+      vx: reader.i16(),
+      vy: reader.i16(),
+      dir: reader.u8(),
+      flags: reader.u8(),
+    });
+  }
+  return { vehicles };
+}
+
+export function encodeClearStar(req: ClearStarRequest): Uint8Array {
+  return new ByteWriter(CLEAR_STAR_BYTES)
+    .u8(OpCode.C2S_CLEAR_STAR)
+    .u8(req.method & 0xff)
+    .u8(req.param & 0xff)
+    .finish();
+}
+
+export function decodeClearStar(data: Uint8Array): ClearStarRequest {
+  if (data.byteLength < CLEAR_STAR_BYTES) {
+    throw new Error(`clear star packet must be >= ${CLEAR_STAR_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_CLEAR_STAR) throw new Error('not a clear star packet');
+  return { method: reader.u8(), param: reader.u8() };
+}
+
+export function encodeWantedState(pkt: WantedStatePacket): Uint8Array {
+  return new ByteWriter(WANTED_STATE_BYTES)
+    .u8(OpCode.S2C_WANTED_STATE)
+    .u16(pkt.id & 0xffff)
+    .u8(pkt.stars & 0xff)
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(pkt.bounty))) & 0xffff)
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(pkt.clearCdSec))) & 0xffff)
+    .finish();
+}
+
+export function decodeWantedState(data: Uint8Array): WantedStatePacket {
+  if (data.byteLength < WANTED_STATE_BYTES) {
+    throw new Error(`wanted state must be >= ${WANTED_STATE_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_WANTED_STATE) throw new Error('not a wanted state packet');
+  return {
+    id: reader.u16(),
+    stars: reader.u8(),
+    bounty: reader.u16(),
+    clearCdSec: reader.u16(),
+  };
+}
+
+export function encodeCprRequest(req: CprRequest): Uint8Array {
+  return new ByteWriter(CPR_ACTION_BYTES)
+    .u8(OpCode.C2S_CPR)
+    .u16(req.targetId & 0xffff)
+    .finish();
+}
+
+export function decodeCprRequest(data: Uint8Array): CprRequest {
+  if (data.byteLength < CPR_ACTION_BYTES) {
+    throw new Error(`cpr packet must be >= ${CPR_ACTION_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_CPR) throw new Error('not a cpr packet');
+  return { targetId: reader.u16() };
+}
+
+export function encodeGhostState(pkt: GhostStatePacket): Uint8Array {
+  return new ByteWriter(GHOST_STATE_BYTES)
+    .u8(OpCode.S2C_GHOST_STATE)
+    .u16(pkt.id & 0xffff)
+    .u8(pkt.mode & 0xff)
+    .u8(pkt.cprProgress & 0xff)
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(pkt.leftMs))) & 0xffff)
+    .finish();
+}
+
+export function decodeGhostState(data: Uint8Array): GhostStatePacket {
+  if (data.byteLength < GHOST_STATE_BYTES) {
+    throw new Error(`ghost state must be >= ${GHOST_STATE_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_GHOST_STATE) throw new Error('not a ghost state packet');
+  return {
+    id: reader.u16(),
+    mode: reader.u8(),
+    cprProgress: reader.u8(),
+    leftMs: reader.u16(),
+  };
+}
+
+export function encodeFallEvent(pkt: FallEventPacket): Uint8Array {
+  return new ByteWriter(6)
+    .u8(OpCode.S2C_FALL_EVENT)
+    .u8(pkt.kind & 0xff)
+    .u16(pkt.targetId & 0xffff)
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(pkt.durationMs))) & 0xffff)
+    .finish();
+}
+
+export function decodeFallEvent(data: Uint8Array): FallEventPacket {
+  if (data.byteLength < 6) throw new Error('fall event packet too short');
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_FALL_EVENT) throw new Error('not a fall event packet');
+  return {
+    kind: reader.u8(),
+    targetId: reader.u16(),
+    durationMs: reader.u16(),
+  };
+}
+
+export function encodeGraffitiRequest(req: GraffitiRequest): Uint8Array {
+  return new ByteWriter(GRAFFITI_ACTION_BYTES)
+    .u8(OpCode.C2S_GRAFFITI)
+    .u8(req.wallId & 0xff)
+    .finish();
+}
+
+export function decodeGraffitiRequest(data: Uint8Array): GraffitiRequest {
+  if (data.byteLength < GRAFFITI_ACTION_BYTES) {
+    throw new Error(`graffiti packet must be >= ${GRAFFITI_ACTION_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_GRAFFITI) throw new Error('not a graffiti packet');
+  return { wallId: reader.u8() };
+}
+
+export function encodeTurfState(pkt: TurfStatePacket): Uint8Array {
+  const walls = pkt.walls.slice(0, 0xff);
+  const names = walls.map((w) => (w.ownerName.trim() === '' ? '' : truncateName(w.ownerName)));
+  let size = 2;
+  for (const name of names) size += 4 + textEncoder.encode(name).length;
+  const writer = new ByteWriter(size);
+  writer.u8(OpCode.S2C_TURF_STATE).u8(walls.length);
+  for (let i = 0; i < walls.length; i += 1) {
+    const w = walls[i]!;
+    const bytes = textEncoder.encode(names[i]!);
+    writer.u8(w.wallId & 0xff).u16(w.ownerId & 0xffff).u8(bytes.length).raw(bytes);
+  }
+  return writer.finish();
+}
+
+export function decodeTurfState(data: Uint8Array): TurfStatePacket {
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_TURF_STATE) throw new Error('not a turf state packet');
+  const count = reader.u8();
+  const walls: TurfEntry[] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (reader.remaining < 4) break;
+    const wallId = reader.u8();
+    const ownerId = reader.u16();
+    const len = reader.u8();
+    const ownerName = len <= reader.remaining ? reader.utf8(len) : '';
+    walls.push({ wallId, ownerId, ownerName });
+  }
+  return { walls };
+}
+
+export function encodeGigAction(req: GigActionRequest): Uint8Array {
+  return new ByteWriter(GIG_ACTION_BYTES)
+    .u8(OpCode.C2S_GIG_ACTION)
+    .u8(req.action & 0xff)
+    .u16(req.targetId & 0xffff)
+    .finish();
+}
+
+export function decodeGigAction(data: Uint8Array): GigActionRequest {
+  if (data.byteLength < GIG_ACTION_BYTES) {
+    throw new Error(`gig action must be >= ${GIG_ACTION_BYTES} bytes`);
+  }
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_GIG_ACTION) throw new Error('not a gig action packet');
+  return { action: reader.u8(), targetId: reader.u16() };
+}
+
+export function encodeGigState(pkt: GigStatePacket): Uint8Array {
+  return new ByteWriter(13)
+    .u8(OpCode.S2C_GIG_STATE)
+    .u8(pkt.kind & 0xff)
+    .u8(pkt.state & 0xff)
+    .u16(quantizeCoord(pkt.targetX))
+    .u16(quantizeCoord(pkt.targetY))
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(pkt.reward))) & 0xffff)
+    .u16(Math.max(0, Math.min(0xffff, Math.floor(pkt.timeLeftSec))) & 0xffff)
+    .u16(pkt.targetId & 0xffff)
+    .finish();
+}
+
+export function decodeGigState(data: Uint8Array): GigStatePacket {
+  if (data.byteLength < 13) throw new Error('gig state packet too short');
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.S2C_GIG_STATE) throw new Error('not a gig state packet');
+  return {
+    kind: reader.u8(),
+    state: reader.u8(),
+    targetX: dequantizeCoord(reader.u16()),
+    targetY: dequantizeCoord(reader.u16()),
+    reward: reader.u16(),
+    timeLeftSec: reader.u16(),
+    targetId: reader.u16(),
+  };
+}
+
+export function encodeVillaCustomize(req: VillaCustomizeRequest): Uint8Array {
+  const tag = truncateVillaTagline(req.tagline ?? '');
+  const bytes = textEncoder.encode(tag);
+  return new ByteWriter(4 + bytes.length)
+    .u8(OpCode.C2S_VILLA_CUSTOMIZE)
+    .u8(req.villa & 0xff)
+    .u8(req.theme & 0xff)
+    .u8(bytes.length)
+    .raw(bytes)
+    .finish();
+}
+
+export function decodeVillaCustomize(data: Uint8Array): VillaCustomizeRequest {
+  if (data.byteLength < 4) throw new Error('villa customize packet too short');
+  const reader = new ByteReader(data);
+  if (reader.u8() !== OpCode.C2S_VILLA_CUSTOMIZE) throw new Error('not a villa customize packet');
+  const villa = reader.u8();
+  const theme = reader.u8();
+  const len = reader.u8();
+  const tagline = len <= reader.remaining ? reader.utf8(len) : '';
+  return { villa, theme, tagline };
 }

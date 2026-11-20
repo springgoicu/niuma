@@ -238,15 +238,15 @@ export const STREET_ANCHORS: ReadonlyArray<{ kind: StreetDecorKind; x: number; y
   { kind: 'postbox', x: 3788, y: 3548, variant: 0 },
   // 企业区前庭南侧：消防栓贴着草地，让开 200×200 的铺装
   { kind: 'hydrant', x: 3572, y: 3768, variant: 0 },
-  // 服务广场北缘草坪：消防栓守着北部支路
-  { kind: 'hydrant', x: 4500, y: 3400, variant: 0 },
+  // 服务广场北缘草坪：消防栓守着北部支路（避开东北环岛干线路肩）
+  { kind: 'hydrant', x: 4510, y: 3390, variant: 0 },
   // 急救站东侧外缘：备用垃圾桶守着东岸步道
   { kind: 'bin', x: 5480, y: 3880, variant: 1 },
   // 游乐大街西段南缘：邮筒
   { kind: 'postbox', x: 3060, y: 3120, variant: 1 },
-  // 生活大街西端：邮筒与垃圾桶成对
+  // 生活大街西端：邮筒与垃圾桶成对（避开路缘树冠）
   { kind: 'postbox', x: 3140, y: 5180, variant: 0 },
-  { kind: 'bin', x: 2996, y: 5410, variant: 0 },
+  { kind: 'bin', x: 3046, y: 5352, variant: 0 },
   // 景观区西带（涟漪湖北岸）：消防栓
   { kind: 'hydrant', x: 2700, y: 4550, variant: 1 },
   // 南主路东侧：垃圾桶守着出口

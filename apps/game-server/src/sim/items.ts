@@ -1,5 +1,6 @@
 import {
   BUFF,
+  FALL_KIND,
   ITEM_EFFECT,
   ITEM_REJECT,
   ITEM_TARGET,
@@ -12,24 +13,21 @@ import {
 } from '@niuma/shared-types';
 import type { EconomyService } from '../economy/service';
 import type { NpcDirector } from '../npc/director';
-import { consumeShield, grantShield, markTrickHit, setBuff, trickGuarded } from './buffs';
+import { clearBuff, consumeShield, grantShield, markTrickHit, setBuff, trickGuarded } from './buffs';
 import { broadcastPlayerEffect } from './effects';
+import type { FallsRuntime } from './falls';
+import type { TurfRuntime } from './turf';
 import type { Player, World } from './world';
 import type { Transport } from './view';
 
-/**
- * 道具结算的唯一入口（ADR-0085）。
- *
- * 网络层只负责「解码 → 调用这里 → 回拒绝包」，所有规则收在本文件：
- * 目标合法性、距离、座位免伤、整蛊保护、护盾吸收、库存扣减与退币。
- * 新增第 8、9 件道具时只改 SKU 表与下面这个 switch，不碰 `server.ts`。
- */
 export interface ItemRuntime {
   world: World;
   transport: Transport;
   economy: EconomyService;
   /** NPC 门面：只有雇佣保安卡用到，测试可以传 null */
   npcs: NpcDirector | null;
+  falls?: FallsRuntime | null;
+  turf?: TurfRuntime | null;
 }
 
 /**
@@ -132,14 +130,46 @@ function applyItem(
     case ITEM_EFFECT.Slip: {
       // 护盾优先：挡住了就不挂滑倒，也不占整蛊保护
       if (bufferedBlocked(target, now)) return broadcast(true);
-      target.applyState(target.direction, POSE.Lie, false);
-      target.stunUntil = Math.max(target.stunUntil, now + durationMs);
-      target.markDirtyIfChanged();
+      if (runtime.falls) {
+        runtime.falls.triggerFall(target, FALL_KIND.Slip, durationMs, now, world, transport);
+      } else {
+        target.applyState(target.direction, POSE.Lie, false);
+        target.stunUntil = Math.max(target.stunUntil, now + durationMs);
+        target.markDirtyIfChanged();
+      }
       setBuff(target, BUFF.Slip, now + durationMs, now);
       markTrickHit(target, now);
       broadcast();
       return;
     }
+
+    case ITEM_EFFECT.Stealth:
+      setBuff(target, BUFF.Stealth, now + durationMs, now);
+      broadcast();
+      return;
+
+    case ITEM_EFFECT.Box:
+      setBuff(target, BUFF.Box, now + durationMs, now);
+      broadcast();
+      return;
+
+    case ITEM_EFFECT.Spray:
+      runtime.turf?.armSprayBoost(actor.id);
+      broadcast();
+      return;
+
+    case ITEM_EFFECT.Pan:
+      setBuff(target, BUFF.Pan, now + durationMs, now);
+      broadcast();
+      return;
+
+    case ITEM_EFFECT.CoffeeHeal:
+      clearBuff(target, BUFF.Poster, now);
+      clearBuff(target, BUFF.Slip, now);
+      target.fallUntil = 0;
+      setBuff(target, BUFF.CoffeeHeal, now + durationMs, now);
+      broadcast();
+      return;
 
     case ITEM_EFFECT.Poster: {
       if (bufferedBlocked(target, now)) return broadcast(true);
@@ -194,6 +224,16 @@ function effectOf(effect: string): number | null {
       return PLAYER_EFFECT.Poster;
     case ITEM_EFFECT.Guard:
       return PLAYER_EFFECT.Guard;
+    case ITEM_EFFECT.Stealth:
+      return PLAYER_EFFECT.Stealth;
+    case ITEM_EFFECT.Box:
+      return PLAYER_EFFECT.Box;
+    case ITEM_EFFECT.Spray:
+      return PLAYER_EFFECT.Spray;
+    case ITEM_EFFECT.Pan:
+      return PLAYER_EFFECT.Pan;
+    case ITEM_EFFECT.CoffeeHeal:
+      return PLAYER_EFFECT.CoffeeHeal;
     default:
       return null;
   }

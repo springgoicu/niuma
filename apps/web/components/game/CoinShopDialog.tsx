@@ -137,7 +137,14 @@ export function CoinShopDialog({ onBuy, onUse, onShout }: CoinShopDialogProps) {
                     <div className="min-w-0">
                       <p className="text-[13px] font-semibold text-mist-100">{sku.name}</p>
                       <p className="text-[11px] leading-snug text-mist-400">
-                        槽位 {sku.slot} · 买下后可在捏人界面直接佩戴
+                        {sku.slot === 'head'
+                          ? '头饰槽'
+                          : sku.slot === 'eyes'
+                            ? '眼部槽'
+                            : sku.slot === 'neck'
+                              ? '颈部槽'
+                              : '发型槽'}{' '}
+                        · 买下后可在捏人界面直接佩戴
                       </p>
                     </div>
                     <button

@@ -10,8 +10,11 @@ import {
 import {
   BOSS,
   BOSS_MAX_HP,
+  ENTITY_ROLE_BOSS_STEAMROLLER,
   ENTITY_ROLE_GUARD,
   ENTITY_ROLE_NURSE,
+  ENTITY_ROLE_PET,
+  ENTITY_ROLE_ROBO_DOG,
   ISLAND,
   PATIENT_STATE,
   WORLD_LAYOUT,
@@ -21,14 +24,19 @@ import {
   workDeskIndexOfSeat,
   type AmbulancePacket,
   type CharacterAppearance,
+  type FishingStatePacket,
+  type GigStatePacket,
   type P2PDuelStatePacket,
   type P2PShowdownPacket,
   type PatientStatusPacket,
   type ApartmentPeekEntry,
+  type TurfStatePacket,
+  type VehicleStatePacket,
   type VillaStatePacket,
   type BossShockPacket,
 } from '@niuma/shared-types';
 import { ClinicView } from './clinic-view';
+import { GtaWorldView } from './gta-world-view';
 import { WorldEventFx } from './world-event-fx';
 import { loadAtlas, type Atlas } from './atlas';
 import { BossView } from './boss';
@@ -271,6 +279,10 @@ class EntityView {
   private beaconBlue: Graphics | null = null;
   /** 工伤保护盾：绿色盾牌 + 白十字，懒创建，只有被治愈过的人才有 */
   private shield: Graphics | null = null;
+  /** 通缉星级徽章（1★~5★）：仅在星数变化时重绘，零 GC */
+  private wantedBadge: Graphics | null = null;
+  private lastWantedStars = 0;
+  private lastGhostAlpha = 1;
 
   /** 切换头顶的绿色十字盾牌（ADR-0084）；星星由 StunStars 单独管理 */
   setShield(visible: boolean): void {
@@ -293,6 +305,41 @@ class EntityView {
     if (this.shield) this.shield.visible = false;
   }
 
+  /** 通缉星徽章：头顶 1~5 颗脉冲像素星 */
+  setWantedStars(stars: number): void {
+    const clamped = Math.max(0, Math.min(5, Math.floor(stars)));
+    if (clamped === this.lastWantedStars) return;
+    this.lastWantedStars = clamped;
+    if (clamped === 0) {
+      if (this.wantedBadge) this.wantedBadge.visible = false;
+      return;
+    }
+    if (!this.wantedBadge) {
+      this.wantedBadge = new Graphics();
+      this.labels.addChild(this.wantedBadge);
+    }
+    const g = this.wantedBadge;
+    g.clear();
+    const totalW = clamped * 8;
+    const startX = -Math.round(totalW / 2);
+    const py = this.nameBottom - this.label.height - 16;
+    g.rect(startX - 2, py - 2, totalW + 4, 9).fill(0x2a3142);
+    const fill = clamped >= 4 ? 0xe05252 : 0xf2c879;
+    for (let i = 0; i < clamped; i += 1) {
+      const sx = startX + i * 8;
+      g.rect(sx + 1, py, 5, 5).fill(fill);
+      g.rect(sx + 2, py - 1, 3, 7).fill(fill);
+    }
+    g.visible = true;
+  }
+
+  /** 幽灵半透明切换：只在变化时改 alpha */
+  setGhostAlpha(alpha: number): void {
+    if (Math.abs(alpha - this.lastGhostAlpha) < 0.02) return;
+    this.lastGhostAlpha = alpha;
+    this.root.alpha = alpha;
+  }
+
   constructor(
     private readonly atlas: Atlas,
     name: string,
@@ -305,7 +352,7 @@ class EntityView {
     private readonly onJumpLand: (x: number, y: number, wading: boolean) => void,
     role = 0,
   ) {
-    this.isGuard = role === ENTITY_ROLE_GUARD;
+    this.isGuard = role === ENTITY_ROLE_GUARD || role === ENTITY_ROLE_ROBO_DOG;
     this.textResolution = devicePxPerTexel;
     // 接触阴影先入容器：它永远压在所有角色图层之下。
     // 阴影是 root 的直接子节点，角色本体的起伏只作用在 body.container 上，
@@ -918,6 +965,8 @@ export class GameRenderer {
   private plaques?: PlaqueView;
   /** 园区 8 处分阶房产：建筑、牌匾与收益道具 */
   private villas?: VillasView;
+  /** GTA 全岛新增地标 / 载具 / 涂鸦墙 / 钓鱼台 / 零工信标层 */
+  private gtaWorld?: GtaWorldView;
   /** 牛马公寓：只有外立面，室内与家具随 ADR-0098 下线 */
   private apartment?: ApartmentView;
   /** 公寓窗口探头：占用窗口里的头与亮灯，画在排序层之上 */
@@ -1243,6 +1292,8 @@ export class GameRenderer {
     // 园区建筑（ADR-0087）：8 处分阶房产、牛马公寓外立面。
     this.villas = new VillasView(this.season.winter, this.metrics.devicePxPerTexel);
     this.villas.build(this.sortLayer, this.props.base);
+    this.gtaWorld = new GtaWorldView(this.season.winter, this.metrics.devicePxPerTexel);
+    this.gtaWorld.build(this.sortLayer, this.props.base);
     this.apartment = new ApartmentView(this.season.winter, this.metrics.devicePxPerTexel);
     this.apartment.build(this.sortLayer, this.props.base);
 
@@ -1291,6 +1342,7 @@ export class GameRenderer {
 
     // 护士站的救护车与护士帽红十字：动态物体，压在同层角色之上，避免车头被身体啃掉
     if (this.clinic) this.world.addChild(this.clinic.overlay);
+    if (this.gtaWorld) this.world.addChild(this.gtaWorld.overlay);
 
     // 仪式反馈压在 y 排序层之后：金色飘字从头顶升起，不能被树冠或角色吃掉
     this.ritual = new RitualFx(this.app.renderer, this.metrics.devicePxPerTexel);
@@ -1724,6 +1776,30 @@ export class GameRenderer {
     this.villas?.setState(packet);
   }
 
+  setVehicles(packet: VehicleStatePacket): void {
+    this.gtaWorld?.setVehicles(packet);
+  }
+
+  setTurf(packet: TurfStatePacket): void {
+    this.gtaWorld?.setTurf(packet);
+  }
+
+  setFishing(packet: FishingStatePacket): void {
+    this.gtaWorld?.setFishing(packet);
+  }
+
+  setGig(packet: GigStatePacket): void {
+    this.gtaWorld?.setGig(packet);
+  }
+
+  setEntityWanted(id: number, stars: number): void {
+    this.views.get(id)?.setWantedStars(stars);
+  }
+
+  setEntityGhost(id: number, alpha: number): void {
+    this.views.get(id)?.setGhostAlpha(alpha);
+  }
+
   /**
    * 公寓窗口占用快照（ADR-0098）：全量覆盖。
    *
@@ -1861,6 +1937,7 @@ export class GameRenderer {
     const now = performance.now();
     // 救护车警灯、护士帽红十字与伤员爱心共用同一条帧时钟，400ms 相位不额外维护状态
     this.clinic?.update(now, this.clinicAnchor, dtMs);
+    this.gtaWorld?.update(now, dtMs);
 
     // 受击震动与瞬时染红（只在发生碰撞时存在元素，平时零遍历开销）
     for (const view of this.reactingViews) {
@@ -2096,6 +2173,7 @@ export class GameRenderer {
     this.park?.setTextResolution(next.devicePxPerTexel);
     this.boss?.setTextResolution(next.devicePxPerTexel);
     this.villas?.setTextResolution(next.devicePxPerTexel);
+    this.gtaWorld?.setTextResolution(next.devicePxPerTexel);
     this.apartment?.setTextResolution(next.devicePxPerTexel);
   }
 
@@ -2228,6 +2306,7 @@ export class GameRenderer {
     this.boss?.destroy();
     this.plaques?.destroy();
     this.villas?.destroy();
+    this.gtaWorld?.destroy();
     this.apartment?.destroy();
     this.windowPeek?.destroy();
     this.park?.destroy();

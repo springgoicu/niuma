@@ -292,6 +292,34 @@ export const OpCode = {
    * 取服务端权威位置，`sub` 只作展示细分，不影响判定。
    */
   C2S_ACTIVITY: 0x5f,
+  /** 钓鱼上行动作：cast / reel / cancel */
+  C2S_FISHING: 0x60,
+  /** 钓鱼状态同步（进入视野补发 + 实时推送） */
+  S2C_FISHING_STATE: 0x61,
+  /** 全园区载具位置与状态广播 */
+  S2C_VEHICLE_STATE: 0x62,
+  /** 载具上下车 / 喇叭 / 涡轮加速 */
+  C2S_VEHICLE_ACTION: 0x63,
+  /** 通缉星级 / 赏金同步 */
+  S2C_WANTED_STATE: 0x64,
+  /** 街头倒地 / 灵魂出窍态同步 */
+  S2C_GHOST_STATE: 0x65,
+  /** 换装亭 / 公用电话消星与自首 */
+  C2S_CLEAR_STAR: 0x66,
+  /** 涂鸦墙占领归属广播 */
+  S2C_TURF_STATE: 0x67,
+  /** 街头零工任务状态推送 */
+  S2C_GIG_STATE: 0x68,
+  /** 街头心肺复苏救援 */
+  C2S_CPR: 0x69,
+  /** 滑倒 / 翻滚 / 老板龙卷风搞笑倒地演出 */
+  S2C_FALL_EVENT: 0x6a,
+  /** 涂鸦抢壁上行 */
+  C2S_GRAFFITI: 0x6b,
+  /** 街头零工接取 / 交付 / 放弃 */
+  C2S_GIG_ACTION: 0x6c,
+  /** 房产自定义灯牌与主题色 */
+  C2S_VILLA_CUSTOMIZE: 0x6d,
 } as const;
 
 /**
@@ -308,6 +336,14 @@ export const INTERACT_ACTION = {
   QuestClaim: 8,
   EventClaim: 9,
   Apartment: 10,
+  Fishing: 12,
+  Vehicle: 13,
+  ClearStar: 14,
+  Graffiti: 15,
+  Gig: 16,
+  Cpr: 17,
+  VillaCustomize: 18,
+  ClinicCoffee: 19,
   /** 未知 / 未识别的互动动作，客户端给通用兜底文案 */
   Unknown: 255,
 } as const;
@@ -591,10 +627,27 @@ export interface VillaPacket {
   mine: boolean;
   /** 摇钱树当前可收币数（只有房主看得出准确值，其他人读到 0） */
   pending: number;
+  /** 主题色编号：0 暖阳金 / 1 霓虹粉 / 2 翡翠森 */
+  theme?: number;
+  /** 自定义灯牌宣言（最多 12 字） */
+  tagline?: string;
 }
 
 export interface VillaStatePacket {
   villas: VillaPacket[];
+}
+
+export const VILLA_THEME = {
+  WarmGold: 0,
+  CyberNeon: 1,
+  EmeraldOasis: 2,
+} as const;
+export type VillaTheme = (typeof VILLA_THEME)[keyof typeof VILLA_THEME];
+
+export interface VillaCustomizeRequest {
+  villa: number;
+  theme: number;
+  tagline: string;
 }
 
 /** 公寓操作：0 进屋探头 / 1 出门；2 曾用于户型升级，随 ADR-0098 下线且不复用 */
@@ -800,3 +853,178 @@ export const DEFAULT_APPEARANCE: Record<Species, CharacterAppearance> = {
     },
   },
 };
+
+// ---------------------------------------------------------------------------
+// Phase 2-4 像素职场 GTA 扩展包定义
+// ---------------------------------------------------------------------------
+
+export const FISHING_ACTION = {
+  Cast: 0,
+  Reel: 1,
+  Cancel: 2,
+} as const;
+
+export const FISHING_STATE = {
+  Idle: 0,
+  Waiting: 1,
+  Biting: 2,
+  Caught: 3,
+  Missed: 4,
+} as const;
+
+export const FISH_LOOT_KIND = {
+  None: 0,
+  SlimeCarp: 1,
+  CyberCrab: 2,
+  GoldKoi: 3,
+  OldKeyboard: 4,
+  BossMug: 5,
+} as const;
+
+export interface FishingActionRequest {
+  action: number;
+  spotId: number;
+}
+
+export interface FishingStatePacket {
+  id: number;
+  state: number;
+  spotId: number;
+  biteAtMs: number;
+  rewardKind: number;
+}
+
+export const VEHICLE_KIND = {
+  Scooter: 0,
+  Forklift: 1,
+  PatrolCart: 2,
+  BossConvertible: 3,
+} as const;
+
+export const VEHICLE_ACTION = {
+  Enter: 0,
+  Exit: 1,
+  Horn: 2,
+  Boost: 3,
+} as const;
+
+export const VEHICLE_FLAG_BOOST = 1;
+export const VEHICLE_FLAG_HORN = 1 << 1;
+export const VEHICLE_FLAG_SIREN = 1 << 2;
+
+export interface VehicleActionRequest {
+  action: number;
+  vehicleId: number;
+}
+
+export interface VehicleSnapshot {
+  vehicleId: number;
+  kind: number;
+  driverId: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  dir: number;
+  flags: number;
+}
+
+export interface VehicleStatePacket {
+  vehicles: VehicleSnapshot[];
+}
+
+export const CLEAR_STAR_METHOD = {
+  Booth: 0,
+  Payphone: 1,
+  Surrender: 2,
+} as const;
+
+export interface ClearStarRequest {
+  method: number;
+  param: number;
+}
+
+export interface WantedStatePacket {
+  id: number;
+  stars: number;
+  bounty: number;
+  clearCdSec: number;
+}
+
+export const GHOST_MODE = {
+  Alive: 0,
+  Flatline: 1,
+  Ghost: 2,
+} as const;
+
+export interface CprRequest {
+  targetId: number;
+}
+
+export interface GhostStatePacket {
+  id: number;
+  mode: number;
+  cprProgress: number;
+  leftMs: number;
+}
+
+export const FALL_KIND = {
+  Slip: 0,
+  Tumble: 1,
+  Tornado: 2,
+} as const;
+
+export interface FallEventPacket {
+  kind: number;
+  targetId: number;
+  durationMs: number;
+}
+
+export interface GraffitiRequest {
+  wallId: number;
+}
+
+export interface TurfEntry {
+  wallId: number;
+  ownerId: number;
+  ownerName: string;
+}
+
+export interface TurfStatePacket {
+  walls: TurfEntry[];
+}
+
+export const GIG_KIND = {
+  None: 0,
+  Delivery: 1,
+  PatrolAssist: 2,
+  VIPRide: 3,
+} as const;
+
+export const GIG_STATE = {
+  None: 0,
+  Active: 1,
+  Completed: 2,
+  Failed: 3,
+} as const;
+
+export const GIG_ACTION = {
+  Accept: 0,
+  Complete: 1,
+  Abandon: 2,
+} as const;
+
+export interface GigActionRequest {
+  action: number;
+  targetId: number;
+}
+
+export interface GigStatePacket {
+  kind: number;
+  state: number;
+  targetX: number;
+  targetY: number;
+  reward: number;
+  timeLeftSec: number;
+  targetId: number;
+}

@@ -1,4 +1,5 @@
 import {
+  BUFF,
   DIRECTION,
   JAIL_ANCHOR,
   JAIL_DOOR_PAVING,
@@ -25,10 +26,10 @@ export const ESCORT = {
   CHASE_SPEED_FACTOR: 1.3,
   /** 拖行速度：0.85 倍基础速度 */
   DRAG_SPEED_FACTOR: 0.85,
-  /** 抓取距离：目标进入这个半径就伸脚 */
+  /** 抓取距离：目标进入这个半径就伸手 */
   GRAB_RANGE_PX: 26,
-  /** 按肩停顿：先站住 0.6s，再开始拖 */
-  GRAB_HOLD_MS: 600,
+  /** 当场制服演出时长：2.2 秒戏剧性抓捕定格，之后直接传送小黑屋（告别 60 秒枯燥长途拖行） */
+  GRAB_HOLD_MS: 2_200,
   /** 被拖者在保安身后的距离 */
   TOW_OFFSET_PX: 22,
   /** 追击超过这个时间还没摸到人：证据不足，放人 */
@@ -114,8 +115,8 @@ export function stepEscort(
     if (now >= deadline) return abort(guard, task, now, 'timeout');
   }
 
-  // 被发泄踹倒：任务保留，躺到硬直结束；与 updateAgent 一样先站起来再继续
-  if (now < guard.stunUntil) return null;
+  // 被发泄 / 平底锅 / 宠物咬脚震晕：任务保留，躺到硬直结束；与 updateAgent 一样先站起来再继续
+  if (now < guard.stunUntil || now < guard.panStunUntil) return null;
   if (guard.pose === POSE.Lie) {
     guard.applyState(guard.direction, POSE.Idle, false);
     guard.markDirtyIfChanged();
@@ -140,14 +141,17 @@ export function stepEscort(
 
   if (task.stage === 'hold') {
     faceToward(agent, target);
+    target.stunUntil = now + DETENTION.DRAG_LOCK_MS;
     if (now < task.stageUntil) return null;
-    beginDrag(agent, task, now);
-    if (task.path.length === 0) return abort(guard, task, now, 'stuck');
-    return null;
+    // 2.2s 抓捕演出完成，直接带回小黑屋（替代冗长的 60s 拖行）
+    return { kind: 'arrive', guardId: guard.id, targetId: target.id, now };
   }
 
   if (task.stage === 'chase') {
     if (distance(guard, target) <= ESCORT.GRAB_RANGE_PX) {
+      if ((target.activeBuffs.get(BUFF.Pan) ?? 0) > now) {
+        return abort(guard, task, now, 'pan_counter');
+      }
       grab(agent, task, target, now);
       return { kind: 'grab', guardId: guard.id, targetId: target.id, now };
     }
@@ -170,6 +174,9 @@ export function stepEscort(
     }
 
     if (distance(guard, target) <= ESCORT.GRAB_RANGE_PX) {
+      if ((target.activeBuffs.get(BUFF.Pan) ?? 0) > now) {
+        return abort(guard, task, now, 'pan_counter');
+      }
       grab(agent, task, target, now);
       return { kind: 'grab', guardId: guard.id, targetId: target.id, now };
     }

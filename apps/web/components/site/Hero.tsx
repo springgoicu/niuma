@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowDown, ArrowRight, Play } from 'lucide-react';
 import { CharacterSprite, footPad } from './CharacterSprite';
+import { HeroLiveStatus } from './HeroLiveStatus';
 import { SPECIES, type SpeciesProfile } from './species';
 
 /** HUD 条只留三个能在窄屏并排站住的数：口径都出自下方技术底牌，没有新增 */
@@ -149,6 +150,7 @@ export function Hero() {
               ▌
             </span>
           </p>
+          <HeroLiveStatus />
         </div>
 
         {/* HUD：桌面摄像机的 boot 日志收成一条状态带，机身还在，假面板不在了 */}

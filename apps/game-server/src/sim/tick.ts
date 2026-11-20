@@ -52,13 +52,14 @@ export function runTick(
   transport: Transport,
   tick: number,
   now = Date.now(),
+  onEnterView?: (viewer: Player, target: Player) => void,
 ): TickResult {
   const started = performance.now();
   let packets = 0;
   let entries = 0;
 
   for (const player of world.players.values()) {
-    if (player.needsViewRefresh) refreshView(player, world, grid, transport, now);
+    if (player.needsViewRefresh) refreshView(player, world, grid, transport, now, onEnterView);
     player.syncCount = 0;
   }
 

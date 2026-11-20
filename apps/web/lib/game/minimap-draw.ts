@@ -57,6 +57,14 @@ export interface MinimapFrame {
   events?: ReadonlyArray<MinimapEvent>;
   /** 8 处房产归属态：直接绘制三态屋标（我的 / 他人 / 待售） */
   villas?: ReadonlyArray<VillaPacket>;
+  /** 载具小地图点（x, y, occupied） */
+  vehicles?: ReadonlyArray<{ x: number; y: number; occupied: boolean }>;
+  /** 高星通缉嫌疑人坐标 */
+  wanted?: ReadonlyArray<{ x: number; y: number; stars: number }>;
+  /** 零工交付目标坐标 */
+  gigTarget?: { x: number; y: number } | null;
+  /** 涂鸦领地归属点（ownerId=0 无主） */
+  turf?: ReadonlyArray<{ x: number; y: number; owned: boolean }>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -402,9 +410,10 @@ export function drawMiniMap(ctx: MiniMapContext, frame: MinimapFrame): void {
   const camY = frame.y;
   drawTerrain(ctx, camX, camY);
 
-  // 核心场所地标 + 8 处房产三态屋标
+  // 核心场所地标 + 8 处房产三态屋标 + 街头涂鸦/载具/零工/通缉
   for (const mark of MINIMAP_VENUE_MARKS) drawMark(ctx, mark, camX, camY, 2);
   drawVillaPins(ctx, frame.villas, camX, camY);
+  drawGtaOverlays(ctx, frame, camX, camY);
 
   // 事件层压在场所图标之上、玩家点之下：玩家永远是最上层
   if (frame.events && frame.events.length > 0) drawEvents(ctx, frame.events, camX, camY);
@@ -457,5 +466,60 @@ function drawVillaPins(
     ctx.fillStyle = fill;
     ctx.fillRect(px - 1, py - 1, 3, 3);
     ctx.fillRect(px, py - 3, 1, 1);
+  }
+}
+
+function drawGtaOverlays(
+  ctx: MiniMapContext,
+  frame: MinimapFrame,
+  camX: number,
+  camY: number,
+): void {
+  const turf = frame.turf;
+  if (turf) {
+    for (let i = 0; i < turf.length; i += 1) {
+      const t = turf[i]!;
+      const px = screenX(t.x, camX);
+      const py = screenY(t.y, camY);
+      if (px < -2 || py < -2 || px > MINIMAP_SIZE + 2 || py > MINIMAP_SIZE + 2) continue;
+      ctx.fillStyle = t.owned ? '#f2c879' : '#64748b';
+      ctx.fillRect(px - 1, py - 1, 2, 2);
+    }
+  }
+
+  const vehicles = frame.vehicles;
+  if (vehicles) {
+    for (let i = 0; i < vehicles.length; i += 1) {
+      const v = vehicles[i]!;
+      const px = screenX(v.x, camX);
+      const py = screenY(v.y, camY);
+      if (px < -3 || py < -3 || px > MINIMAP_SIZE + 3 || py > MINIMAP_SIZE + 3) continue;
+      ctx.fillStyle = '#2a3142';
+      ctx.fillRect(px - 2, py - 2, 4, 4);
+      ctx.fillStyle = v.occupied ? '#ffd166' : '#4fe3c1';
+      ctx.fillRect(px - 1, py - 1, 2, 2);
+    }
+  }
+
+  const wanted = frame.wanted;
+  if (wanted) {
+    for (let i = 0; i < wanted.length; i += 1) {
+      const w = wanted[i]!;
+      if (w.stars <= 0) continue;
+      const px = screenX(w.x, camX);
+      const py = screenY(w.y, camY);
+      if (px < -4 || py < -4 || px > MINIMAP_SIZE + 4 || py > MINIMAP_SIZE + 4) continue;
+      ctx.fillStyle = '#2a3142';
+      ctx.fillRect(px - 3, py - 3, 6, 6);
+      ctx.fillStyle = '#e05252';
+      ctx.fillRect(px - 2, py - 2, 4, 4);
+    }
+  }
+
+  const gig = frame.gigTarget;
+  if (gig) {
+    const marker = projectEventMarker(screenX(gig.x, camX), screenY(gig.y, camY));
+    ctx.fillStyle = '#ffb703';
+    ctx.fillRect(marker.px - 2, marker.py - 2, 5, 5);
   }
 }

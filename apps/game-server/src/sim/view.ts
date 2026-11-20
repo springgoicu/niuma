@@ -77,6 +77,7 @@ export function refreshView(
   grid: SpatialGrid,
   transport: Transport,
   now = Date.now(),
+  onEnterView?: (viewer: Player, target: Player) => void,
 ): void {
   player.needsViewRefresh = false;
   nearScratch.clear();
@@ -115,13 +116,17 @@ export function refreshView(
     const other = world.get(id);
     if (!other) continue;
     player.known.add(id);
-    if (player.wsId !== 0) transport.send(player.wsId, spawnPacketOf(other, now));
+    if (player.wsId !== 0) {
+      transport.send(player.wsId, spawnPacketOf(other, now));
+      onEnterView?.(player, other);
+    }
     if (!other.known.has(player.id)) {
       other.known.add(player.id);
       // 对方的 known 也要补齐，但它没有连接时不必为它编码入场包
       if (other.wsId !== 0) {
         selfPacket ??= spawnPacketOf(player, now);
         transport.send(other.wsId, selfPacket);
+        onEnterView?.(other, player);
       }
     }
   }

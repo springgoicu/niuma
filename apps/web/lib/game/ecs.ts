@@ -29,6 +29,20 @@ export const Motion = {
 };
 export const Local = { flag: new Uint8Array(CAPACITY) };
 
+/** GTA 扩展状态组件：全部定长 TypedArray，帧循环零分配 */
+export const GtaState = {
+  role: new Uint8Array(CAPACITY),
+  wantedStars: new Uint8Array(CAPACITY),
+  wantedBounty: new Uint16Array(CAPACITY),
+  ghostMode: new Uint8Array(CAPACITY),
+  ghostUntil: new Float64Array(CAPACITY),
+  fishingState: new Uint8Array(CAPACITY),
+  vehicleId: new Uint16Array(CAPACITY),
+  /** 0=无；1=滑倒(Slip)；2=翻滚(Tumble)；3=龙卷飞(Tornado) */
+  fallKind: new Uint8Array(CAPACITY),
+  fallUntil: new Float64Array(CAPACITY),
+};
+
 export const POSE = { Idle: 0, Walk: 1, Sit: 2, Lie: 3 } as const;
 
 export class Ecs {
@@ -46,6 +60,7 @@ export class Ecs {
     const eid = addEntity(this.world);
     addComponent(this.world, eid, Position);
     addComponent(this.world, eid, Motion);
+    addComponent(this.world, eid, GtaState);
     Position.x[eid] = x;
     Position.y[eid] = y;
     Motion.direction[eid] = 0;
@@ -58,6 +73,15 @@ export class Ecs {
     Motion.jumpSince[eid] = 0;
     Motion.wave[eid] = 0;
     Motion.waveSince[eid] = 0;
+    GtaState.role[eid] = 0;
+    GtaState.wantedStars[eid] = 0;
+    GtaState.wantedBounty[eid] = 0;
+    GtaState.ghostMode[eid] = 0;
+    GtaState.ghostUntil[eid] = 0;
+    GtaState.fishingState[eid] = 0;
+    GtaState.vehicleId[eid] = 0;
+    GtaState.fallKind[eid] = 0;
+    GtaState.fallUntil[eid] = 0;
     Local.flag[eid] = 0;
     this.netOf[eid] = netId;
     this.remote.reset(eid);
@@ -80,6 +104,15 @@ export class Ecs {
     this.remote.reset(eid);
     this.netOf[eid] = 0;
     Local.flag[eid] = 0;
+    GtaState.role[eid] = 0;
+    GtaState.wantedStars[eid] = 0;
+    GtaState.wantedBounty[eid] = 0;
+    GtaState.ghostMode[eid] = 0;
+    GtaState.ghostUntil[eid] = 0;
+    GtaState.fishingState[eid] = 0;
+    GtaState.vehicleId[eid] = 0;
+    GtaState.fallKind[eid] = 0;
+    GtaState.fallUntil[eid] = 0;
     removeEntity(this.world, eid);
   }
 

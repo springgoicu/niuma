@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import {
   AMBULANCE_PACKET_BYTES,
+  BUFF,
   CLINIC_ACCESS_PAVING,
   CLINIC_BED_SEAT_IDS,
   CLINIC_BEDS,
+  CLINIC_COFFEE_SPOT,
   CLINIC_DROP,
   CLINIC_NURSE_SPOTS,
   CLINIC_RECT,
@@ -241,11 +243,10 @@ describe('NPC 进入救护链（ADR-0106）', () => {
 
     expect(restored).toHaveLength(1);
     expect(restored[0]!.id).toBe(npc.id);
-    // ADR-0117：康复点在站外铺装，交还巡逻时人已走出站体（不再停在床尾）
+    // 开放式急诊室：治好后下床即放开控制并发护盾，不再强行脚本缓步送出站外
     const at = restored[0]!;
-    expect(Math.hypot(at.x - SPOT.x, at.y - SPOT.y)).toBeGreaterThan(60);
-    expect(isInClinicInterior(at.x, at.y)).toBe(false);
-    expect(at.x).toBeLessThan(CLINIC_RECT.x);
+    expect(Math.hypot(at.x - SPOT.x, at.y - SPOT.y)).toBeGreaterThan(40);
+    expect(npc.seat).toBe(0);
     expect(npc.incapacitated).toBe(false);
     expect(npc.patientState).toBe(PATIENT_STATE.Shielded);
   });
@@ -323,18 +324,20 @@ describe('两张床都满时的站内地面治疗（ADR-0107）', () => {
     expect(Math.hypot(treatPos!.x - CLINIC_DROP.x, treatPos!.y - CLINIC_DROP.y)).toBeLessThan(48);
     expect(isInClinicInterior(treatPos!.x, treatPos!.y)).toBe(true);
 
-    // ADR-0117：治好不再停在落点，而是由系统逐帧护送出站；发护盾时人已在站外
+    // 开放式急诊室：治好后下床即就地放开操作控制并授予护盾，患者可自行从西门走出去
     expect(victim.patientState).toBe(PATIENT_STATE.Shielded);
     expect(victim.incapacitated).toBe(false);
     expect(victim.seat).toBe(0);
-    expect(isInClinicInterior(victim.x, victim.y)).toBe(false);
-    expect(victim.x).toBeLessThan(CLINIC_RECT.x);
 
-    // 出去以后门禁重新生效：同一把尺只挡向内
+    // 站内可从开放西门自由进出（不再只挡进不挡出）
     const motion: MotionTarget = { x: 0, y: 0 };
-    resolveWalkInto(motion, victim.x, victim.y, victim.x + 12, victim.y);
+    const gateY = CLINIC_ACCESS_PAVING.y + CLINIC_ACCESS_PAVING.h / 2;
+    resolveWalkInto(motion, CLINIC_RECT.x + 12, gateY, CLINIC_RECT.x - 16, gateY);
     expect(isInClinicInterior(motion.x, motion.y)).toBe(false);
-    expect(motion.x).toBeLessThanOrEqual(CLINIC_RECT.x);
+    expect(motion.x).toBeLessThan(CLINIC_RECT.x);
+    resolveWalkInto(motion, CLINIC_RECT.x - 12, gateY, CLINIC_RECT.x + 16, gateY);
+    expect(isInClinicInterior(motion.x, motion.y)).toBe(true);
+    expect(motion.x).toBeGreaterThan(CLINIC_RECT.x);
   });
 });
 
@@ -393,8 +396,10 @@ describe('护士值守与护送交接（ADR-0109）', () => {
     expect(draggedToBed).toBe(true);
     expect(closestNurse).toBeLessThan(28);
     expect(victim.patientState).toBe(PATIENT_STATE.Shielded);
-    // ADR-0117：逐帧出院在发护盾前已完成，此刻人在站外；且出院本身也已计入 worst < 60
-    expect(isInClinicInterior(victim.x, victim.y)).toBe(false);
+    expect(victim.incapacitated).toBe(false);
+    expect(victim.seat).toBe(0);
+    // 开放式急诊室：治好后就地站在床旁放开控制，不再强行慢走送出站外
+    expect(victim.x).toBeGreaterThan(CLINIC_DROP.x);
   });
 
   it('两名护士都在昏迷时退回直接入床，救护链不卡死', () => {
@@ -500,13 +505,13 @@ describe('康复者逐帧出院（ADR-0117）', () => {
 
     expect(shieldedAt).not.toBeNull();
     expect(worst).toBeLessThan(60);
-    // 护盾是在人走到站外之后才发的：发护盾那一刻人已不在站内
-    expect(isInClinicInterior(shieldedAt!.x, shieldedAt!.y)).toBe(false);
-    expect(shieldedAt!.x).toBeLessThan(CLINIC_RECT.x);
+    // 开放式急诊室：下床后就地恢复控制并授予护盾，无需缓步移出站外
+    expect(shieldedAt!.x).toBeGreaterThan(CLINIC_DROP.x);
     expect(victim.incapacitated).toBe(false);
+    expect(victim.seat).toBe(0);
   });
 
-  it('NPC 治好后逐帧走出急救站，交还巡逻时人已在站外', () => {
+  it('NPC 治好后床旁即刻解锁并交还巡逻', () => {
     const h = setup();
     const npc = h.world.createNpc('同事', DEFAULT_APPEARANCE.cow, SPOT.x, SPOT.y, '', 0)!;
     h.grid.insert(npc.id, npc.x, npc.y);
@@ -537,8 +542,8 @@ describe('康复者逐帧出院（ADR-0117）', () => {
 
     expect(restored).toHaveLength(1);
     expect(worst).toBeLessThan(60);
-    expect(isInClinicInterior(restored[0]!.x, restored[0]!.y)).toBe(false);
-    expect(restored[0]!.x).toBeLessThan(CLINIC_RECT.x);
+    expect(npc.incapacitated).toBe(false);
+    expect(npc.seat).toBe(0);
     expect(npc.patientState).toBe(PATIENT_STATE.Shielded);
   });
 });
@@ -546,11 +551,17 @@ describe('康复者逐帧出院（ADR-0117）', () => {
 describe('排队出警与开服清场（ADR-0114）', () => {
   /** 急救站柜台背后的开阔点：与 ADR-0092 用例同址，救护车会走南侧通道口进站 */
   const SPOT = { x: CLINIC_RECT.x + 40, y: CLINIC_RECT.y + 150 };
+  const FAR = JAIL_ANCHOR;
 
-  /** 站内一起打倒三名 NPC：前两名各占一辆车，第三名只能排队 */
+  /** 前两名放在远端园区占满两辆高速救护车，第三名在站内等待救援 */
   function downThree(h: Harness, attacker: Player, at: number): Player[] {
-    const victims = [0, 1, 2].map((index) => {
-      const npc = h.world.createNpc(`同事${index}`, DEFAULT_APPEARANCE.cow, SPOT.x + index * 6, SPOT.y, '', 0)!;
+    const coords = [
+      { x: FAR.x, y: FAR.y },
+      { x: FAR.x + 12, y: FAR.y },
+      { x: SPOT.x + 12, y: SPOT.y },
+    ];
+    const victims = coords.map((coord, index) => {
+      const npc = h.world.createNpc(`同事${index}`, DEFAULT_APPEARANCE.cow, coord.x, coord.y, '', 0)!;
       h.grid.insert(npc.id, npc.x, npc.y);
       return npc;
     });
@@ -573,7 +584,7 @@ describe('排队出警与开服清场（ADR-0114）', () => {
     const victims = downThree(h, attacker, downAt);
     expect(victims[2]!.incapacitated).toBe(true);
 
-    // 6.5 秒：真人兜底的 6 秒口径已经过了，NPC 必须还在队列里等车
+    // 6.5 秒：两辆车都在奔赴远端，真人 6 秒口径已过，排队的 NPC 必须还在昏迷等车
     for (let now = downAt; now <= downAt + 6_500; now += TICK_MS) {
       h.manager.update(now, tick(now));
     }
@@ -582,7 +593,7 @@ describe('排队出警与开服清场（ADR-0114）', () => {
     expect(restored).toHaveLength(0);
 
     // 空车一回来就接走：第三名照样走完救护链，不会烂在地上
-    for (let elapsed = 6_500; elapsed <= 70_000 && restored.length < 3; elapsed += TICK_MS) {
+    for (let elapsed = 6_500; elapsed <= 90_000 && restored.length < 3; elapsed += TICK_MS) {
       const now = downAt + elapsed;
       h.manager.update(now, tick(now));
     }
@@ -742,4 +753,57 @@ describe('救护车跨场所出警（ADR-0115）', () => {
       expect(victim.patientState).toBe(PATIENT_STATE.Shielded);
     });
   }
+});
+
+describe('开放式急诊站优化玩法（孟婆续命咖啡 / CPR 撤销接警）', () => {
+  it('急诊大厅免费续命咖啡：清除降薪贴并付与 CoffeeHeal 加速，遵守 45 秒冷却', () => {
+    const packets: Uint8Array[] = [];
+    const world = new World();
+    const grid = new SpatialGrid();
+    const seats = new SeatRegistry();
+    const manager = new AmbulanceManager({
+      world,
+      grid,
+      transport: {
+        send(_wsId, data) {
+          packets.push(data);
+        },
+      },
+      seats,
+      broadcastSeats: () => {},
+      now: 0,
+    });
+    const player = world.create('游客', DEFAULT_APPEARANCE.cow, 77, CLINIC_COFFEE_SPOT.x, CLINIC_COFFEE_SPOT.y)!;
+    grid.insert(player.id, player.x, player.y);
+    player.activeBuffs.set(BUFF.Poster, 100_000);
+
+    const now = 10_000;
+    const ok = manager.serveCoffee(player, now, { send(_wsId, data) { packets.push(data); } });
+    expect(ok).toBe(true);
+    expect(player.activeBuffs.has(BUFF.Poster)).toBe(false);
+    expect((player.activeBuffs.get(BUFF.CoffeeHeal) ?? 0) > now).toBe(true);
+    expect(packets.length).toBeGreaterThanOrEqual(2);
+
+    // 冷却期内不允许重复白嫖
+    const again = manager.serveCoffee(player, now + 5_000, { send() {} });
+    expect(again).toBe(false);
+  });
+
+  it('cancelPatient 可即时中止队列或车上的伤员救助流程', () => {
+    const h = setup();
+    const attacker = h.world.create('甲', DEFAULT_APPEARANCE.cow, 11, CLINIC_RECT.x + 60, CLINIC_RECT.y + 150)!;
+    const victim = h.world.create('乙', DEFAULT_APPEARANCE.cow, 12, CLINIC_RECT.x + 40, CLINIC_RECT.y + 150)!;
+    h.grid.insert(attacker.id, attacker.x, attacker.y);
+    h.grid.insert(victim.id, victim.x, victim.y);
+    for (let i = 0; i < 3; i += 1) h.manager.observeHit(attacker, victim, 1_000);
+    h.manager.update(1_050, 21);
+    expect(victim.incapacitated).toBe(true);
+
+    const cancelled = h.manager.cancelPatient(victim.id, 1_100);
+    expect(cancelled).toBe(true);
+    expect(victim.incapacitated).toBe(false);
+    expect(victim.carriedBy).toBe(0);
+    expect(victim.patientState).toBe(PATIENT_STATE.None);
+    expect(victim.seat).toBe(0);
+  });
 });

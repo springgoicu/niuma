@@ -3,8 +3,15 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  ClearStarRequest,
+  CprRequest,
+  FishingActionRequest,
+  GigActionRequest,
+  GraffitiRequest,
   NavTargetId,
   ResumeState,
+  VehicleActionRequest,
+  VillaCustomizeRequest,
 } from '@niuma/shared-types';
 import { requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
@@ -284,6 +291,34 @@ export class MainThreadGameClient implements GameClient {
 
   claimEvent(index: number): void {
     this.session?.claimEvent(index);
+  }
+
+  vehicleAction(request: VehicleActionRequest): void {
+    this.session?.vehicleAction(request);
+  }
+
+  clearStar(request: ClearStarRequest): void {
+    this.session?.clearStar(request);
+  }
+
+  cpr(request: CprRequest): void {
+    this.session?.cpr(request);
+  }
+
+  fishingAction(request: FishingActionRequest): void {
+    this.session?.fishingAction(request);
+  }
+
+  graffiti(request: GraffitiRequest): void {
+    this.session?.graffiti(request);
+  }
+
+  gigAction(request: GigActionRequest): void {
+    this.session?.gigAction(request);
+  }
+
+  villaCustomize(request: VillaCustomizeRequest): void {
+    this.session?.villaCustomize(request);
   }
 
   navigateTo(id: NavTargetId): void {

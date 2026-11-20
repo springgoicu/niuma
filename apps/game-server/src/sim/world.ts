@@ -4,6 +4,8 @@ import {
   DEFAULT_APPEARANCE,
   DIRECTION,
   EMPTY_CAREER,
+  FISHING_STATE,
+  GHOST_MODE,
   MAX_ENTITIES,
   MAX_ENTITY_ID,
   PATIENT_STATE,
@@ -288,6 +290,27 @@ export class Player {
   /** 当前占用座位的护理阶段：0 无 / 2 治疗中（供 Tick 状态广播去重） */
   patientState: PatientState = PATIENT_STATE.None;
   patientUntil = 0;
+  /** Phase 2-4 GTA 瞬态玩法字段（全内存态，reset 清零） */
+  wantedStars = 0;
+  wantedExpiresAt = 0;
+  wantedBounty = 0;
+  clearStarCdUntil = 0;
+  ghostMode: number = GHOST_MODE.Alive;
+  flatlineUntil = 0;
+  cprProgress = 0;
+  cprRescuerId = 0;
+  vehicleId = 0;
+  driveTargetX = 0;
+  driveTargetY = 0;
+  driveTargetAt = 0;
+  fishingState: number = FISHING_STATE.Idle;
+  fishingSpotId = 0;
+  fishingBiteAt = 0;
+  fallKind = 0;
+  fallUntil = 0;
+  clinicCoffeeCdUntil = 0;
+  /** NPC 专用：被平底锅/宠物咬脚震晕截止时刻 */
+  panStunUntil = 0;
   /** 当前占用的座位 id，0 表示站立或地面坐 */
   seat = 0;
   /**
@@ -435,6 +458,25 @@ export class Player {
     this.carriedBy = 0;
     this.patientState = 0;
     this.patientUntil = 0;
+    this.wantedStars = 0;
+    this.wantedExpiresAt = 0;
+    this.wantedBounty = 0;
+    this.clearStarCdUntil = 0;
+    this.ghostMode = GHOST_MODE.Alive;
+    this.flatlineUntil = 0;
+    this.cprProgress = 0;
+    this.cprRescuerId = 0;
+    this.vehicleId = 0;
+    this.driveTargetX = 0;
+    this.driveTargetY = 0;
+    this.driveTargetAt = 0;
+    this.fishingState = FISHING_STATE.Idle;
+    this.fishingSpotId = 0;
+    this.fishingBiteAt = 0;
+    this.fallKind = 0;
+    this.fallUntil = 0;
+    this.clinicCoffeeCdUntil = 0;
+    this.panStunUntil = 0;
     this.spawnBodyCache = null;
     this.known.clear();
   }

@@ -1,5 +1,5 @@
 import { ACTION_CODE, keyBit, type ActionKey } from './input';
-import type { ControlWriter } from './runtime/control-channel';
+import { KEY_BIT, type ControlWriter } from './runtime/control-channel';
 
 /** 页面滚动键：浏览器默认行为会让画面跳一下，按下就吞掉 */
 const BLOCKED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
@@ -31,11 +31,22 @@ function actionForKey(code: string): ActionKey | null {
       return 'vent';
     case 'KeyF':
       return 'interact';
+    case 'KeyQ':
+      return 'vehicle';
+    case 'KeyH':
+      return 'cpr';
+    case 'KeyG':
+      return 'gig';
     case 'Space':
       return 'jump';
     default:
       return null;
   }
+}
+
+function movementOrSprintBit(code: string): number {
+  if (code === 'ShiftLeft' || code === 'ShiftRight') return KEY_BIT.sprint;
+  return keyBit(code);
 }
 
 /**
@@ -73,7 +84,7 @@ export class KeyboardInput {
       if (BLOCKED.has(event.code)) event.preventDefault();
       // Ctrl/Cmd/Alt 组合交给浏览器（撤销、搜索等），不当动作键
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const bit = keyBit(event.code);
+      const bit = movementOrSprintBit(event.code);
       if (bit !== 0) this.setMask(this.mask | bit);
       // 重复 keydown 只维护掩码，不重复派发动作：按住 E 不应该无限重播发泄
       if (event.repeat) return;
@@ -82,7 +93,7 @@ export class KeyboardInput {
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      const bit = keyBit(event.code);
+      const bit = movementOrSprintBit(event.code);
       if (bit !== 0) this.setMask(this.mask & ~bit);
     };
 

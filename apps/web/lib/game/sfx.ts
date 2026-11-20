@@ -561,6 +561,124 @@ class SfxPlayer {
     this.warned = true;
     console.warn(`[sfx] ${message}`, error ?? '');
   }
+
+  /** GTA 8-bit 合成音效（载具 / 警笛 / 钓鱼 / 涂鸦 / CPR / 通缉 / 咖啡），严格复用 Voice 池 */
+  playGtaTone(
+    kind: 'vehicle' | 'horn' | 'siren' | 'fish_cast' | 'fish_bite' | 'spray' | 'cpr' | 'wanted' | 'coffee',
+    sourceX: number,
+    sourceY: number,
+  ): void {
+    if (this.muted || typeof window === 'undefined') return;
+    const dx = sourceX - this.listenerX;
+    const dy = sourceY - this.listenerY;
+    const distanceGain = attenuationFor(dx, dy);
+    if (distanceGain <= 0) return;
+
+    const ctx = this.ensureContext();
+    if (!ctx || !this.master) return;
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+
+    const now = ctx.currentTime;
+    const voice = this.acquire(now);
+    if (!voice) return;
+
+    this.prepare(voice, now, panFor(dx));
+    voice.filter.type = 'lowpass';
+    voice.filter.frequency.setValueAtTime(1800, now);
+    voice.filter.Q.setValueAtTime(1, now);
+    voice.lfoDepth.gain.setValueAtTime(0, now);
+    const amp = voice.amp.gain;
+
+    switch (kind) {
+      case 'vehicle':
+        voice.body.type = 'sawtooth';
+        voice.body.frequency.setValueAtTime(110, now);
+        voice.body.frequency.linearRampToValueAtTime(185, now + 0.18);
+        voice.bodyGain.gain.setValueAtTime(0.8, now);
+        voice.subGain.gain.setValueAtTime(0, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.45 * distanceGain), now + 0.03);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.24);
+        voice.endAt = now + 0.26;
+        break;
+      case 'horn':
+        voice.body.type = 'square';
+        voice.sub.type = 'square';
+        voice.body.frequency.setValueAtTime(440, now);
+        voice.sub.frequency.setValueAtTime(554, now);
+        voice.bodyGain.gain.setValueAtTime(0.65, now);
+        voice.subGain.gain.setValueAtTime(0.5, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.48 * distanceGain), now + 0.02);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.18);
+        voice.endAt = now + 0.2;
+        break;
+      case 'siren':
+        voice.body.type = 'square';
+        voice.body.frequency.setValueAtTime(620, now);
+        voice.body.frequency.linearRampToValueAtTime(880, now + 0.14);
+        voice.body.frequency.linearRampToValueAtTime(620, now + 0.28);
+        voice.bodyGain.gain.setValueAtTime(0.7, now);
+        voice.subGain.gain.setValueAtTime(0, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.42 * distanceGain), now + 0.03);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.3);
+        voice.endAt = now + 0.32;
+        break;
+      case 'fish_cast':
+        voice.body.type = 'sine';
+        voice.body.frequency.setValueAtTime(520, now);
+        voice.body.frequency.linearRampToValueAtTime(240, now + 0.16);
+        voice.bodyGain.gain.setValueAtTime(0.7, now);
+        voice.subGain.gain.setValueAtTime(0, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.4 * distanceGain), now + 0.02);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.2);
+        voice.endAt = now + 0.22;
+        break;
+      case 'fish_bite':
+        voice.body.type = 'triangle';
+        voice.body.frequency.setValueAtTime(780, now);
+        voice.body.frequency.setValueAtTime(1040, now + 0.08);
+        voice.bodyGain.gain.setValueAtTime(0.85, now);
+        voice.subGain.gain.setValueAtTime(0, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.55 * distanceGain), now + 0.015);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.22);
+        voice.endAt = now + 0.24;
+        break;
+      case 'spray':
+        voice.filter.type = 'highpass';
+        voice.filter.frequency.setValueAtTime(1700, now);
+        voice.body.type = 'sawtooth';
+        voice.body.frequency.setValueAtTime(2200, now);
+        voice.bodyGain.gain.setValueAtTime(0.55, now);
+        voice.subGain.gain.setValueAtTime(0, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.35 * distanceGain), now + 0.02);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.28);
+        voice.endAt = now + 0.3;
+        break;
+      case 'cpr':
+        voice.body.type = 'sine';
+        voice.body.frequency.setValueAtTime(880, now);
+        voice.body.frequency.exponentialRampToValueAtTime(340, now + 0.16);
+        voice.bodyGain.gain.setValueAtTime(0.8, now);
+        voice.subGain.gain.setValueAtTime(0, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.5 * distanceGain), now + 0.02);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.19);
+        voice.endAt = now + 0.21;
+        break;
+      case 'wanted':
+        voice.body.type = 'square';
+        voice.body.frequency.setValueAtTime(480, now);
+        voice.body.frequency.setValueAtTime(720, now + 0.09);
+        voice.bodyGain.gain.setValueAtTime(0.7, now);
+        voice.subGain.gain.setValueAtTime(0, now);
+        amp.exponentialRampToValueAtTime(Math.max(0.0002, 0.46 * distanceGain), now + 0.02);
+        amp.exponentialRampToValueAtTime(0.0001, now + 0.24);
+        voice.endAt = now + 0.26;
+        break;
+      case 'coffee':
+        this.cooler(voice, now, distanceGain);
+        return;
+    }
+    amp.linearRampToValueAtTime(0, voice.endAt);
+  }
 }
 
 export const sfx = new SfxPlayer();

@@ -15,6 +15,17 @@
 import { WORK_DESK_RANGE, workDeskHotspotId } from '../work';
 import { APARTMENT_SPECS } from './apartment';
 import { WORKSTATIONS } from './campus';
+import { CLINIC_COFFEE_SPOT } from './clinic';
+import {
+  BOSS_VAULT,
+  CHANGING_BOOTHS,
+  ESTATE_BOARD,
+  FISHING_PIERS,
+  GRAFFITI_WALLS,
+  LOADING_DOCK,
+  PAYPHONES,
+  SECURITY_GARAGE,
+} from './gta-landmarks';
 import { BULLETIN_BOARD, SHRINE_ALTAR, TEA_STATION, WELCOME_LANDMARKS } from './layout';
 import { VILLA_GATE_RANGE, VILLA_SPECS, VILLA_TREE_RANGE, type VillaSpec } from './villas';
 
@@ -31,7 +42,16 @@ export type HotspotKind =
   | 'villaTree'
   | 'apartmentDoor'
   /** 工位（ADR-0088）：坐着按 F 开始加班搬砖 */
-  | 'workDesk';
+  | 'workDesk'
+  | 'clinicCoffee'
+  | 'changingBooth'
+  | 'estateBoard'
+  | 'bossVault'
+  | 'loadingDock'
+  | 'securityGarage'
+  | 'payphone'
+  | 'fishingPier'
+  | 'graffitiWall';
 
 export interface HotspotDef {
   readonly id: string;
@@ -138,6 +158,87 @@ export const WORLD_HOTSPOTS: readonly HotspotDef[] = [
       label: 'apartment',
     }),
   ),
+  // ---- Phase 2-4 GTA 全岛新增互动地标 ----
+  {
+    id: 'clinic-coffee',
+    kind: 'clinicCoffee',
+    x: CLINIC_COFFEE_SPOT.x,
+    y: CLINIC_COFFEE_SPOT.y,
+    radius: 64,
+    label: 'clinicCoffee',
+  },
+  ...CHANGING_BOOTHS.map(
+    (booth): HotspotDef => ({
+      id: booth.id,
+      kind: 'changingBooth',
+      x: booth.hotspot.x,
+      y: booth.hotspot.y,
+      radius: booth.hotspot.radius,
+      label: 'changingBooth',
+    }),
+  ),
+  {
+    id: ESTATE_BOARD.id,
+    kind: 'estateBoard',
+    x: ESTATE_BOARD.hotspot.x,
+    y: ESTATE_BOARD.hotspot.y,
+    radius: ESTATE_BOARD.hotspot.radius,
+    label: 'estateBoard',
+  },
+  {
+    id: BOSS_VAULT.id,
+    kind: 'bossVault',
+    x: BOSS_VAULT.hotspot.x,
+    y: BOSS_VAULT.hotspot.y,
+    radius: BOSS_VAULT.hotspot.radius,
+    label: 'bossVault',
+  },
+  {
+    id: LOADING_DOCK.id,
+    kind: 'loadingDock',
+    x: LOADING_DOCK.hotspot.x,
+    y: LOADING_DOCK.hotspot.y,
+    radius: LOADING_DOCK.hotspot.radius,
+    label: 'loadingDock',
+  },
+  {
+    id: SECURITY_GARAGE.id,
+    kind: 'securityGarage',
+    x: SECURITY_GARAGE.hotspot.x,
+    y: SECURITY_GARAGE.hotspot.y,
+    radius: SECURITY_GARAGE.hotspot.radius,
+    label: 'securityGarage',
+  },
+  ...PAYPHONES.map(
+    (phone): HotspotDef => ({
+      id: phone.id,
+      kind: 'payphone',
+      x: phone.x,
+      y: phone.y,
+      radius: phone.radius,
+      label: 'payphone',
+    }),
+  ),
+  ...FISHING_PIERS.map(
+    (pier): HotspotDef => ({
+      id: `fishing-pier-${pier.id}`,
+      kind: 'fishingPier',
+      x: pier.castSpot.x,
+      y: pier.castSpot.y,
+      radius: pier.radius,
+      label: 'fishingPier',
+    }),
+  ),
+  ...GRAFFITI_WALLS.map(
+    (wall): HotspotDef => ({
+      id: `graffiti-wall-${wall.wallId}`,
+      kind: 'graffitiWall',
+      x: wall.x,
+      y: wall.y + 12,
+      radius: wall.radius,
+      label: 'graffitiWall',
+    }),
+  ),
 ];
 
 /** 楼栋门口热区 id：客户端提示与服务端校验共用同一份拼法 */
@@ -152,10 +253,19 @@ export const HOTSPOT_INDEX: ReadonlyMap<string, HotspotDef> = new Map(
 
 /**
  * 客户端提示优先级（与改造前的顺序一致，新建筑插在设施之前）：
- * 告示板 → 牛马榜 → 供案 → 茶台 → 赌桌 → 八角笼 → 长椅 → 豪宅 → 公寓。
+ * 告示板 → 换装/电话/急救咖啡/零工/钓鱼/涂鸦/地产牌/金库 → 牛马榜 → 供案 → 茶台 → 工位 → 豪宅 → 公寓。
  */
 export const HOTSPOT_PRIORITY: readonly HotspotKind[] = [
   'bulletin',
+  'clinicCoffee',
+  'changingBooth',
+  'payphone',
+  'fishingPier',
+  'graffitiWall',
+  'loadingDock',
+  'securityGarage',
+  'bossVault',
+  'estateBoard',
   'board',
   'shrine',
   'tea',

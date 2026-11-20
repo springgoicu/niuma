@@ -31,6 +31,22 @@ export const SYSTEM_NOTICE_KIND = {
   ApartmentFull: 8,
   /** 押送员被创倒送医：押送当场作废，只发给被放走的本人（ADR-0113） */
   EscortBroken: 9,
+  /** 护士站免费领孟婆咖啡 */
+  ClinicCoffee: 10,
+  /** 换装亭消星成功 */
+  ClearStarBooth: 11,
+  /** 公用电话贿赂消星成功 */
+  ClearStarPayphone: 12,
+  /** 幽灵倒计时结束传送急救站 */
+  GhostExpired: 13,
+  /** 街头重伤倒地/幽灵提示 */
+  FlatlineDown: 14,
+  /** 平底锅反击保安成功 */
+  PanCounter: 15,
+  /** 被巡逻经理抓包摸鱼扣钱 */
+  ManagerFine: 16,
+  /** 街头涂鸦墙挂机分红 */
+  TurfDividend: 17,
 } as const;
 
 export type SystemNoticeKind = (typeof SYSTEM_NOTICE_KIND)[keyof typeof SYSTEM_NOTICE_KIND];
@@ -68,6 +84,22 @@ const TEMPLATES: Readonly<Record<number, NoticeTemplate>> = {
   [SYSTEM_NOTICE_KIND.ApartmentFull]: () => '这栋楼的窗口都住满了，换一栋试试。',
   [SYSTEM_NOTICE_KIND.EscortBroken]: () =>
     '押送中断：保安被送去急救了，这次先放你一马。',
+  [SYSTEM_NOTICE_KIND.ClinicCoffee]: () =>
+    '在急诊台顺了杯孟婆续命咖啡，浑身打工人之力回来了。',
+  [SYSTEM_NOTICE_KIND.ClearStarBooth]: () =>
+    '换装亭火速变装成功！附近巡逻保安已失去你的目标。',
+  [SYSTEM_NOTICE_KIND.ClearStarPayphone]: () =>
+    '拨通街头神秘内线电话，你的通缉记录已被顺手抹平。',
+  [SYSTEM_NOTICE_KIND.GhostExpired]: () =>
+    '无人救援倒计时结束，灵魂已自动飘回急救站复苏。',
+  [SYSTEM_NOTICE_KIND.FlatlineDown]: () =>
+    '你倒在了街头！等好心同事按 F 做 CPR 救起，或按 E 灵魂出窍溜进墙内。',
+  [SYSTEM_NOTICE_KIND.PanCounter]: () =>
+    '「哐当！」平底锅直接把保安震晕 2 秒，还从他口袋震出 20 摸鱼币！',
+  [SYSTEM_NOTICE_KIND.ManagerFine]: ({ name }) =>
+    name ? `${name} 摸鱼被巡逻经理当场抓包，扣了一笔绩效！` : '摸鱼被巡逻经理抓包，当场扣了一笔绩效！',
+  [SYSTEM_NOTICE_KIND.TurfDividend]: () =>
+    '你占领的涂鸦墙为你寄来了一笔街区过路小费！',
 };
 
 /**

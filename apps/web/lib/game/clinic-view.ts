@@ -7,6 +7,7 @@ import {
   CLINIC_ACCESS_PAVING,
   CLINIC_AMBULANCE_SPOTS,
   CLINIC_BEDS,
+  CLINIC_COFFEE_SPOT,
   CLINIC_COUNTER,
   CLINIC_DROP,
   CLINIC_FENCE_SOLIDS,
@@ -19,6 +20,7 @@ import {
 } from '@niuma/shared-types';
 import { BEACON_BLUE, BEACON_OFF_ALPHA, BEACON_RED, beaconPhase } from './police-beacon';
 import { WINTER_COLORS } from './terrain-palette';
+import { VENUE_OUTLINE } from './venue-palette';
 import type { DepthSink } from './sort-layer';
 
 const C = {
@@ -63,7 +65,7 @@ interface CarView {
 function paintAmbulance(): CarView {
   const root = new Container();
   const shadow = new Graphics();
-  shadow.ellipse(0, 21, 30, 6).fill({ color: 0x000000, alpha: 0.22 });
+  shadow.ellipse(0, 21, 30, 6).fill({ color: VENUE_OUTLINE, alpha: 0.24 });
   root.addChild(shadow);
 
   const body = new Graphics();
@@ -151,10 +153,37 @@ export class ClinicView {
     this.paintFence(depth, base);
     this.paintBeds(base);
     this.paintCounter(depth);
+    this.paintCoffeeBar(depth, base);
     this.paintSign(base);
     this.paintBays(base);
     this.createCar(1);
     this.createCar(2);
+  }
+
+  /** 急诊大厅「孟婆续命咖啡」吧台：开放式西门一进门即可白嫖提神，清除负面贴纸 */
+  private paintCoffeeBar(depth: DepthSink, base: Container): void {
+    const { x, y } = CLINIC_COFFEE_SPOT;
+    const pad = new Graphics();
+    pad.circle(x, y, 22).fill({ color: 0xf2c879, alpha: 0.14 });
+    pad.circle(x, y, 22).stroke({ color: 0xe09f3e, width: 1.2, alpha: 0.45 });
+    base.addChild(pad);
+
+    const root = new Container();
+    root.position.set(x, y);
+    const g = new Graphics();
+    // 咖啡吧台底座 + 不锈钢台面
+    rect(g, -22, -22, 44, 22, VENUE_OUTLINE);
+    rect(g, -20, -20, 40, 18, 0x8a6446);
+    rect(g, -24, -24, 48, 5, VENUE_OUTLINE);
+    rect(g, -23, -23, 46, 3, 0xe8dfcf);
+    // 意式咖啡机 + 双杯热气像素点
+    rect(g, -10, -35, 20, 12, VENUE_OUTLINE);
+    rect(g, -8, -33, 16, 8, 0xd93b45);
+    rect(g, -6, -31, 12, 4, 0xf2c879);
+    rect(g, 8, -28, 6, 5, 0xf7fbfd);
+    rect(g, 10, -33, 2, 3, 0xffe08a);
+    root.addChild(g);
+    depth.add(y, root);
   }
 
   private paintFloor(base: Container): void {

@@ -43,9 +43,10 @@ const EXTRA_COUNT: Record<SpeciesName, number> = { cow: 4, horse: 3 };
  * v10（ADR-0084）：头饰追加护士帽，`cos/` 再多 4 张 PNG；旧缓存没有该键必须失效。
  * v11（ADR-0088）：头饰 +2 / 眼镜 +2 / 颈饰 +2，`cos/` 再多 24 张 PNG；
  * 同轮新增 `fx/aura-gold.png`（脚底金光的参考稿），旧 manifest 缺这些键必须失效。
- * 这些列的内容变了，缓存中的旧图集必须失效——版本号与列号是同一份契约。
+ * v12（Stage 1）：动画帧扩展至 53 列（新增 slip / tumble / tornado / flatline / ghost / drive / cpr），
+ * 配件追加 2 款搞怪头饰（balding_wig / delivery_helmet），必须失效重建清单。
  */
-const ATLAS_VERSION = 11;
+const ATLAS_VERSION = 12;
 
 interface RenderOptions {
   tail: number;

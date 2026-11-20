@@ -38,6 +38,13 @@ import {
   decodeShout,
   decodeTipRequest,
   decodeUseItem,
+  decodeFishingAction,
+  decodeVehicleAction,
+  decodeClearStar,
+  decodeCprRequest,
+  decodeGraffitiRequest,
+  decodeGigAction,
+  decodeVillaCustomize,
   encodeAppearanceBroadcast,
   encodeBoard,
   encodeCareerBroadcast,
@@ -58,8 +65,11 @@ import {
   encodeLoudspeaker,
   encodeSystemNotice,
   ACTIVITY_KIND,
+  BUFF,
   DANMAKU_MODE,
   ENTITY_ROLE_PLAYER,
+  FALL_KIND,
+  GHOST_MODE,
   decodeActivityReport,
   formatSystemNotice,
   SYSTEM_NOTICE_KIND,
@@ -117,9 +127,17 @@ import { ChatHistory, type ChatPage } from './sim/history';
 import { loadModerationFilter } from './sim/moderation';
 import { resolveRename } from './sim/name';
 import { createNpcDirector, warmEscortGrid } from './npc';
+import { SpecialNpcRuntime } from './npc/special';
 import { ActivityHub } from './sim/activity';
 import { AmbulanceManager } from './sim/clinic';
 import { Detention } from './sim/detention';
+import { FallsRuntime } from './sim/falls';
+import { FishingRuntime } from './sim/fishing';
+import { GhostRuntime } from './sim/ghost';
+import { GigRuntime } from './sim/gigs';
+import { TurfRuntime } from './sim/turf';
+import { VehicleRuntime } from './sim/vehicles';
+import { WantedRuntime } from './sim/wanted';
 import { announceEnter, announceLeave } from './sim/notice';
 import { applyMove } from './sim/movement';
 import { VillaRuntime } from './sim/villas';
@@ -480,25 +498,6 @@ export function startGameServer(config: ServerConfig) {
    * 小黑屋执法：只在有保安时启用；没有保安就没有人能押送，判定只会永远排队。
    * 没有任何计时器——押到反省点就放人，屋子保留为普通空房。
    */
-  const detention =
-    config.jail.enabled && npcs.guardCount > 0
-      ? new Detention({
-          world,
-          grid,
-          transport,
-          escort: { dispatch: npcs.dispatchEscort, cancel: npcs.cancelEscort },
-          releaseSeat: (player) => broadcastSeats(seats.release(player)),
-          activity,
-        })
-      : null;
-  npcs.setEscortListener((event) => detention?.handleEscort(event));
-
-  /**
-   * 急救调度器（ADR-0084）：两辆救护车、两名固定护士与两张病床。
-   *
-   * 与执法共用发泄命中端口：`resolveVents` 一次出招只回调一次，
-   * 两个观察者各自决定要不要计入自己的状态机。
-   */
   const clinic = new AmbulanceManager({
     world,
     grid,
@@ -508,21 +507,134 @@ export function startGameServer(config: ServerConfig) {
     now: clock.now(),
     activity,
   });
-  // 急救链只认识实体（ADR-0106）：NPC 的康复续接通过窄端口交还 npc 层；
-  // 位置已由 clinic 写在床尾，npc 层不再需要倒地点（ADR-0109）
   clinic.setNpcRecovery({ restore: (playerId, now) => npcs.restore(playerId, now) });
-  // 开服清场（ADR-0114）：站内只留护士与正在治疗的伤员，其余实体一次性移到西门外。
-  // 与 npc 层创建顺序绑定：先注入续接端口，清出去的 NPC 才能就地重新锚定行为态。
   const evicted = clinic.evictIntruders(clock.now());
   if (evicted > 0) console.log(`[clinic] startup sweep evicted=${evicted}`);
+
+  // ---- Phase 2-4 像素职场 GTA 运行时子系统 ----
+  const falls = new FallsRuntime();
+  let wantedRef: WantedRuntime | null = null;
+  const detention =
+    config.jail.enabled && npcs.guardCount > 0
+      ? new Detention({
+          world,
+          grid,
+          transport,
+          escort: { dispatch: npcs.dispatchEscort, cancel: npcs.cancelEscort },
+          releaseSeat: (player) => broadcastSeats(seats.release(player)),
+          activity,
+          onPanCounter: (guard, victim, at) => {
+            economy.grantCoins(victim, ECONOMY_REWARD.PanCounter, WALLET_REASON.PanCounter);
+            falls.triggerFall(guard, FALL_KIND.Slip, 2_000, at, world, transport);
+            const msg = formatSystemNotice(SYSTEM_NOTICE_KIND.PanCounter);
+            if (msg && victim.wsId !== 0) {
+              transport.send(
+                victim.wsId,
+                encodeSystemNotice({ kind: SYSTEM_NOTICE_KIND.PanCounter, entityId: victim.id, text: msg }),
+              );
+            }
+          },
+          onJailed: (player, at) => {
+            wantedRef?.resetStars(player, at, world, transport);
+          },
+        })
+      : null;
+  npcs.setEscortListener((event) => detention?.handleEscort(event));
+
+  const wanted = new WantedRuntime({
+    spendCoins: (player, amount, reason) => economy.trySpendCoins(player, amount, reason),
+    grantCoins: (player, amount, reason) => economy.grantCoins(player, amount, reason),
+    onBroadcastActivity: (actor, kind, at) => activity.emit(kind, actor.id, at),
+    onSurrenderJail: (player, at) => detention?.jailImmediate(player, at),
+  });
+  wantedRef = wanted;
+
+  const vehicles = new VehicleRuntime({
+    onBumpPedestrian: (driver, victim, _speed, at) => {
+      falls.triggerFall(victim, FALL_KIND.Tumble, 1_800, at, world, transport);
+      if (victim.isNpc) {
+        specialNpcs.onBumpNpc(driver, victim, at);
+        if (clinic.isNurse(victim.id)) wanted.addStar(driver, 2, at, world, transport);
+      } else {
+        wanted.addStar(driver, 1, at, world, transport);
+        clinic.observeHit(driver, victim, at);
+      }
+    },
+    onExitSeat: (entries) => broadcastSeats(entries),
+  });
+
+  const ghost = new GhostRuntime({
+    onEjectVehicle: (player, at) => vehicles.ejectDriver(player, at, world, transport),
+    onCancelClinic: (playerId, at) => clinic.cancelPatient(playerId, at),
+    onBroadcastActivity: (actor, kind, at) => activity.emit(kind, actor.id, at),
+    onGrantCoins: (player, amount, reason) => economy.grantCoins(player, amount, reason),
+    onUpdateGrid: (player) => {
+      if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+    },
+  });
+
+  const fishing = new FishingRuntime({
+    grantCoins: (player, amount, reason) => economy.grantCoins(player, amount, reason),
+    onBroadcastActivity: (actor, kind, at) => activity.emit(kind, actor.id, at),
+  });
+
+  const turf = new TurfRuntime({
+    grantCoins: (player, amount, reason) => economy.grantCoins(player, amount, reason),
+    onBroadcastActivity: (actor, kind, at) => activity.emit(kind, actor.id, at),
+  });
+
+  const gigs = new GigRuntime({
+    grantCoins: (player, amount, reason) => economy.grantCoins(player, amount, reason),
+    onBroadcastActivity: (actor, kind, at) => activity.emit(kind, actor.id, at),
+    pickWantedTarget: (w, selfId) => {
+      const top = wanted.highestWanted(w);
+      return top && top.id !== selfId ? top : null;
+    },
+  });
+
+  const specialNpcs = new SpecialNpcRuntime({
+    world,
+    grid,
+    transport,
+    falls,
+    wanted,
+    grantCoins: (player, amount, reason) => economy.grantCoins(player, amount, reason),
+    spendCoins: (player, amount, reason) => economy.trySpendCoins(player, amount, reason),
+  });
+  if (config.npc.enabled && config.npc.count > 0) {
+    specialNpcs.spawn(clock.now());
+  }
+
+  const sendSyncOnEnterView = (viewer: Player, target: Player): void => {
+    const now = clock.now();
+    if (target.wantedStars > 0) transport.send(viewer.wsId, wanted.packetFor(target, now));
+    if (target.ghostMode !== GHOST_MODE.Alive) transport.send(viewer.wsId, ghost.packetFor(target, now));
+    if (target.fishingState !== 0) transport.send(viewer.wsId, fishing.packetFor(target));
+  };
+
   const ventObserver = {
     onVentHit(attacker: Parameters<typeof clinic.observeHit>[0], target: Parameters<typeof clinic.observeHit>[1], now: number): void {
+      if (!attacker.isNpc) {
+        if (clinic.isNurse(target.id)) {
+          falls.triggerFall(attacker, FALL_KIND.Slip, 2_200, now, world, transport);
+          wanted.addStar(attacker, 2, now, world, transport);
+        } else if (target.isNpc) {
+          specialNpcs.onBumpNpc(attacker, target, now);
+          if (target.role !== ENTITY_ROLE_PLAYER) wanted.addStar(attacker, 1, now, world, transport);
+        } else if (attacker.id !== target.id && target.wantedStars === 0) {
+          wanted.addStar(attacker, 1, now, world, transport);
+        }
+      }
       detention?.onVentHit(attacker, target, now);
       clinic.observeHit(attacker, target, now);
     },
     onKnockdown(attacker: Parameters<typeof clinic.observeHit>[0], target: Parameters<typeof clinic.observeHit>[1], now: number): void {
       // 全园区通报先发：被创飞的人可能倒在角落，远处只能靠这条消息知道
       activity.emit(ACTIVITY_KIND.VentKnockdown, target.id, now);
+      // 街头倒地激活 CPR 抢救窗与幽灵出窍备选
+      if (!target.isNpc && target.wsId !== 0 && target.ghostMode === GHOST_MODE.Alive) {
+        ghost.enterFlatline(target, now, world, transport);
+      }
       // 只奖励真人：NPC 互殴与自伤不往任何人的钱包里记钱
       if (attacker.isNpc || attacker.wsId === 0 || target.id === attacker.id) return;
       if (target.isNpc) {
@@ -533,6 +645,11 @@ export function startGameServer(config: ServerConfig) {
         }
         const line = NPC_KNOCKDOWN_LINES[(target.id + Math.floor(now / 1000)) % NPC_KNOCKDOWN_LINES.length]!;
         broadcastChatLine(target, line, now, world, transport, chatHistory, 2, DANMAKU_MODE.Scroll);
+        return;
+      }
+      // 追缉悬赏：击倒通缉犯直接领取全额赏金
+      if (target.wantedStars > 0) {
+        wanted.claimBounty(attacker, target, now, world, transport);
         return;
       }
       if (target.wsId !== 0 && takeStreetCooldown('pvp', attacker.id, target.id, PVP_REWARD_COOLDOWN_MS, now)) {
@@ -703,6 +820,8 @@ export function startGameServer(config: ServerConfig) {
     ws.send(encodeBoss({ hp: world.boss.hp, attackerId: 0, died: false, reset: false }));
     // 救护车停靠时不发冗余包，入场必须单独补一次位置；在途伤员状态也一并补
     clinic.sendSnapshot(ws.data.wsId, now);
+    ws.send(vehicles.buildFullPacket());
+    ws.send(turf.buildPacket());
     // 入场补发窗口占用：远处楼里的头不必等下一次有人进出才出现
     ws.send(encodeApartmentPeek({ entries: apartment.snapshot() }));
     const occupied = seats.snapshot();
@@ -715,7 +834,7 @@ export function startGameServer(config: ServerConfig) {
       now,
       true,
     );
-    refreshView(player, world, grid, transport, now);
+    refreshView(player, world, grid, transport, now, sendSyncOnEnterView);
     // 必须在 refreshView 之后：这时双方的 known 才补齐，播报才发得到「看得见他的人」
     announceEnter(player, world, transport);
     console.log(`[game] + ${player.name}#${player.id} online=${world.humans}`);
@@ -836,6 +955,7 @@ export function startGameServer(config: ServerConfig) {
       if (grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
       // 按 Q 挥手上升沿互动：最近空闲 NPC 转身回礼 + AOI 冒泡，同 NPC 每 60s 奖一次币
       if (!wasWaving && player.wave) {
+        specialNpcs.onWave(player, now);
         const npc = npcs.reactToWave(player, now);
         if (npc) {
           if (takeStreetCooldown('wave', player.id, npc.id, NPC_WAVE_COOLDOWN_MS, now)) {
@@ -1176,7 +1296,7 @@ export function startGameServer(config: ServerConfig) {
       player.lastP2PAt = now;
       const request = decodeUseItem(data);
       // 目标校验、库存扣减、护盾与整蛊保护全部收在 sim/items（ADR-0085）
-      useItem({ world, transport, economy, npcs }, player, request.targetId, request.itemId, now);
+      useItem({ world, transport, economy, npcs, falls, turf }, player, request.targetId, request.itemId, now);
       return;
     }
 
@@ -1331,6 +1451,83 @@ export function startGameServer(config: ServerConfig) {
       sendInteractReject(player, INTERACT_ACTION.Apartment, INTERACT_REASON.NoTarget);
       return;
     }
+
+    // ---- Phase 2-4 GTA 全岛新增玩法上行（0x60..0x6d） ----
+
+    if (op === OpCode.C2S_FISHING) {
+      const req = decodeFishingAction(data);
+      if (!fishing.handleAction(player, req.action, req.spotId, now, world, transport)) {
+        sendInteractReject(player, INTERACT_ACTION.Fishing, INTERACT_REASON.Busy);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_VEHICLE_ACTION) {
+      const req = decodeVehicleAction(data);
+      if (!vehicles.handleAction(player, req.action, req.vehicleId, now, world, transport, seats)) {
+        sendInteractReject(player, INTERACT_ACTION.Vehicle, INTERACT_REASON.TooFar);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_CLEAR_STAR) {
+      const req = decodeClearStar(data);
+      if (req.method === 3) {
+        if (!clinic.serveCoffee(player, now, transport)) {
+          sendInteractReject(player, INTERACT_ACTION.ClinicCoffee, INTERACT_REASON.Cooldown);
+        }
+        return;
+      }
+      if (!wanted.handleClearRequest(player, req.method, now, world, transport)) {
+        sendInteractReject(player, INTERACT_ACTION.ClearStar, INTERACT_REASON.NotEnoughCoins);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_CPR) {
+      const req = decodeCprRequest(data);
+      if (req.targetId === 0 || req.targetId === player.id) {
+        if (player.ghostMode === GHOST_MODE.Flatline) {
+          ghost.enterGhostPhase(player, now, world, transport);
+          return;
+        }
+        if (!clinic.serveCoffee(player, now, transport)) {
+          sendInteractReject(player, INTERACT_ACTION.ClinicCoffee, INTERACT_REASON.Cooldown);
+        }
+        return;
+      }
+      if (!ghost.performCpr(player, req.targetId, now, world, transport)) {
+        sendInteractReject(player, INTERACT_ACTION.Cpr, INTERACT_REASON.NoTarget);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_GRAFFITI) {
+      const req = decodeGraffitiRequest(data);
+      if (!turf.handleSpray(player, req.wallId, now, world, transport)) {
+        sendInteractReject(player, INTERACT_ACTION.Graffiti, INTERACT_REASON.Cooldown);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_GIG_ACTION) {
+      const req = decodeGigAction(data);
+      if (!gigs.handleAction(player, req.action, req.targetId, now, world, transport)) {
+        sendInteractReject(player, INTERACT_ACTION.Gig, INTERACT_REASON.Busy);
+      }
+      return;
+    }
+
+    if (op === OpCode.C2S_VILLA_CUSTOMIZE) {
+      const req = decodeVillaCustomize(data);
+      if (!villas.customize(player, req.villa, req.theme, req.tagline)) {
+        sendInteractReject(player, INTERACT_ACTION.VillaCustomize, INTERACT_REASON.OwnerOnly);
+        return;
+      }
+      broadcastVilla(now);
+      state?.markDirty();
+      return;
+    }
   }
 
   function handleClose(ws: GameWebSocket): void {
@@ -1345,7 +1542,12 @@ export function startGameServer(config: ServerConfig) {
     // 先退赌注再清理世界：对局/邀请都按 player.id 引用，晚一步就成了悬空引用
     challenge.onDisconnect(player, clock.now());
     // 急救清理必须早于座位释放：在途救护车要立刻放空返航，队列 / 护盾也要移除
-    clinic.onDisconnect(player.id, clock.now());
+    const closeNow = clock.now();
+    vehicles.ejectDriver(player, closeNow, world, transport);
+    fishing.cancel(player, world, transport);
+    gigs.clearPlayer(player.id);
+    wanted.resetStars(player, closeNow, world, transport);
+    clinic.onDisconnect(player.id, closeNow);
     // 清掉这个 id 的去重记录：实体 id 会被复用，留着会吞掉新玩家的第一条播报
     activity.forget(player.id);
     // 盯梢中的保安立刻收工，别对着一个已经消失的目标原地打转
@@ -1355,7 +1557,7 @@ export function startGameServer(config: ServerConfig) {
     const releasedWindow = apartment.leave(player.id);
     player.roomId = 0;
     if (releasedWindow) broadcastApartmentPeek();
-    if (villas.onOwnerLeave(player)) broadcastVilla(clock.now());
+    if (villas.onOwnerLeave(player, closeNow)) broadcastVilla(closeNow);
     // 钱包记录离开时刻，容量淘汰按它排序；同时把最后一次变动带进落盘窗口
     wallets.touch(player.wallet, clock.now());
     state?.markDirty();
@@ -1594,7 +1796,7 @@ export function startGameServer(config: ServerConfig) {
       });
     }
 
-    // 钱包容量淘汰：每分钟一次，在线与托管中的记录不淘汰
+    // 钱包容量淘汰：每分钟一次，在线与托管中的记录不淘汰；同时回收超 7 天无人打理房产
     if (now - lastWalletPruneAt >= 60_000) {
       lastWalletPruneAt = now;
       const onlineDevices = new Set<string>();
@@ -1602,27 +1804,44 @@ export function startGameServer(config: ServerConfig) {
         if (player.deviceId) onlineDevices.add(player.deviceId);
       }
       wallets.prune((id) => onlineDevices.has(id), now);
+      if (villas.reclaimStale(now) > 0) {
+        applyVillaLocks();
+        broadcastVilla(now);
+        state?.markDirty();
+      }
     }
 
-    // 发泄结算必须跑在 runTick 之前：受害者被推开的坐标与躺姿要赶在同一 Tick 的
-    // dirty 广播里发出去。放到 runTick 之后会晚 50ms，旁观者先看到站着、再看到倒下。
-    // 入座者免伤（ADR-0065），因此这里不再产生座位释放条目。
-    // 命中观察者与执法模块是同一个实例：没有保安 / 关闭执法时不存在，攻击自然不计数
+    // 发泄结算必须跑在 runTick 之前
     resolveVents(world, grid, transport, now, ventObserver, challenge.duelPort);
 
-    // 冲击波在憋气结束后结算；调度器推进事件阶段。两者都是「一次数值比较」的早退，
-    // 空闲时对 50ms 帧没有任何开销。
     bossShock.tick(now);
     worldEvents.tick(now);
-
-    // 邀请超时与占位对局裁决都挂在同一个 Tick：内部有空表早退，稳态零开销
     challenge.tick(now);
+
+    // Phase 2-4 载具动力学与趣味 GTA 子系统全部在同步前完成位置更新（Zero-GC）
+    falls.tick(world, now);
+    ghost.tick(world, now, transport);
+    vehicles.tick(TICK_MS, now, world, grid, transport);
+    fishing.tick(world, now, transport);
+    gigs.tick(world, now, transport);
+    turf.tick(world, now, transport);
+    wanted.tick(world, now, transport);
+
+    // 通缉星级触发保安追缉：未被纸箱/隐身完美掩护且未被追的通缉玩家自动纳入警力视野
+    if (detention && tickCount % 10 === 0) {
+      for (const p of world.players.values()) {
+        if (p.isNpc || p.wsId === 0 || p.wantedStars <= 0 || p.incapacitated) continue;
+        if ((p.activeBuffs.get(BUFF.Box) ?? 0) > now || (p.activeBuffs.get(BUFF.Stealth) ?? 0) > now) continue;
+        detention.openWantedCase(p, now);
+      }
+    }
 
     // 先看姿态边沿再派单：保安本 Tick 就能起步，抓取 / 拖行也在同一帧生效
     detention?.observe(now);
 
     // 同事的行为要跑在 runTick 之前：新坐标与朝向赶在同一 Tick 的 dirty 广播里发出去
     npcs.update(now);
+    specialNpcs.tick(now);
     npcSampler.push(npcs.updateMs);
 
     // 押送事件已在本 Tick 回传；这里处理排队重试与断线 / 超时兜底
@@ -1634,7 +1853,7 @@ export function startGameServer(config: ServerConfig) {
     // Buff 到期清理（ADR-0085）：条目上限 5，单遍扫描；只有真的过期才重算乘子
     for (const player of world.players.values()) pruneBuffs(player, now);
 
-    const result = runTick(world, grid, transport, tickCount, now);
+    const result = runTick(world, grid, transport, tickCount, now, sendSyncOnEnterView);
     tickSampler.push(result.duration);
 
     // 共享运行态落盘（ADR-0081）：只在指纹变化时打脏标记，

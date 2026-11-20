@@ -3,10 +3,12 @@ import {
   AMBULANCE_FLAG_CARRYING,
   AMBULANCE_FLAG_SIREN,
   AMBULANCE_STATE,
+  BUFF,
   CLINIC_AMBULANCE_SPOTS,
   CLINIC_ACCESS_PAVING,
   CLINIC_BED_SEAT_IDS,
   CLINIC_BEDS,
+  CLINIC_COFFEE_SPOT,
   CLINIC_COUNTER,
   CLINIC_DROP,
   CLINIC_NURSE_LANE_X,
@@ -17,18 +19,23 @@ import {
   CLINIC_VEHICLE_ENTRY,
   DIRECTION,
   ENTITY_ROLE_NURSE,
+  HOTSPOT_SERVER_SLACK,
   MOVE_SPEED,
   PATIENT_STATE,
+  PLAYER_EFFECT,
   PLAYER_RADIUS,
-  PLAZA_CENTER,
   POSE,
+  SYSTEM_NOTICE_KIND,
   TICK_MS,
   clampWorldX,
   clampWorldY,
   clinicBedSide,
   encodeAmbulance,
   encodePatientStatus,
+  encodePlayerEffect,
+  encodeSystemNotice,
   findFreePoint,
+  formatSystemNotice,
   isBlocked,
   isInClinicInterior,
   quantizeCoord,
@@ -43,6 +50,7 @@ import {
   type PatientState,
   type SeatStateEntry,
 } from '@niuma/shared-types';
+import { clearBuff, setBuff } from './buffs';
 import { findPath, nearestFreePoint, type NavPoint } from '../nav/path';
 import type { SpatialGrid } from '../spatial/grid';
 import type { ActivityHub } from './activity';
@@ -50,39 +58,24 @@ import type { SeatRegistry } from './seats';
 import type { Player, World } from './world';
 import type { Transport } from './view';
 
-/** 出警速度：玩家常速的 1.6 倍 */
-const AMBULANCE_SPEED = MOVE_SPEED * 1.6;
+/** 出警速度：升级至玩家常速的 2.1 倍 */
+const AMBULANCE_SPEED = MOVE_SPEED * 2.1;
 /** 抵达判定：目标 48px 内即可挂人；救护车不必压到玩家脚底 */
 const PICKUP_RADIUS = 48;
 /** 送回落点判定：车位 / 站内落点 64px 内开始交床 */
 const DROP_RADIUS = 64;
-/**
- * 出警 / 送回 / 返航的防卡死上限：整段路超过这个时长仍未完成就安全落点兜底。
- * ADR-0115 后正常路段由寻路驱动，不会顶墙；这里只是最后一道保险。
- */
-const UNSTUCK_MS = 8000;
-/** 寻路中途完全不动多久算卡死：比整段上限更早触发，避免原地磨满 8 秒 */
-const NAV_STALL_MS = 2200;
+/** 出警 / 送回 / 返航防卡死上限 */
+const UNSTUCK_MS = 12000;
+/** 寻路中途完全不动多久算卡死 */
+const NAV_STALL_MS = 3200;
 /** 停滞判定的最小位移：低于它视作原地打转 */
 const NAV_STALL_EPS = 2;
-/**
- * 出警 / 送回的固定绕行航点（不做寻路，ADR-0097）：
- * 先穿服务广场南沿，再走东主路进中央广场，避开急救站围挡与公寓楼群。
- */
-const AMBULANCE_EAST_GATE = { x: CLINIC_RECT.x + CLINIC_RECT.w / 2, y: PLAZA_CENTER.y } as const;
-const AMBULANCE_ROAD_GATE = { x: PLAZA_CENTER.x + 320, y: PLAZA_CENTER.y } as const;
 /** 两辆都在任务时，真人伤员最多在内存队列里等 6 秒就地包扎 */
 const HUMAN_QUEUE_TIMEOUT_MS = 6000;
-/**
- * NPC 排队上限（ADR-0114）。
- *
- * 救护车往返要走两段固定绕行（ADR-0097），一轮出警 + 治疗通常 20~28 秒；
- * 6 秒兜底会让排队的 NPC 在倒地原地站起来并发 15 秒免疫，玩家看到的就是
- * 「打倒了却没有任何车出发」。给足两轮往返，只有真卡死时才就地包扎。
- */
-const NPC_QUEUE_TIMEOUT_MS = 45000;
-/** 病床治疗时长 */
-const TREATMENT_MS = 3000;
+/** NPC 排队上限 */
+const NPC_QUEUE_TIMEOUT_MS = 35000;
+/** 病床治疗时长（优化为 2.5s 快速周转） */
+const TREATMENT_MS = 2500;
 /** 治愈后的工伤保护 */
 const IMMUNITY_MS = 15000;
 const IMMUNITY_TICKS = 300;
@@ -416,6 +409,88 @@ export class AmbulanceManager {
     this.recovery = port;
   }
 
+  isNurse(playerId: number): boolean {
+    return this.nurses.some((n) => n.id === playerId);
+  }
+
+  /**
+   * 街头 CPR 救醒时调用：立刻撤回对该伤员的排队 / 出车与占床。
+   */
+  cancelPatient(playerId: number, now: number): boolean {
+    let cancelled = false;
+    for (let i = this.waiting.length - 1; i >= 0; i -= 1) {
+      if (this.waiting[i]!.playerId === playerId) {
+        this.waiting.splice(i, 1);
+        cancelled = true;
+      }
+    }
+    for (const car of this.cars) {
+      if (car.targetId === playerId) {
+        this.enterReturning(car, now);
+        cancelled = true;
+      }
+    }
+    if (this.beds.delete(playerId)) cancelled = true;
+    if (this.tweens.delete(playerId)) cancelled = true;
+    const player = this.world.get(playerId);
+    if (player && (cancelled || player.incapacitated)) {
+      if (player.seat !== 0) {
+        const changes: SeatStateEntry[] = [];
+        this.seats.release(player, changes);
+        this.broadcastSeats(changes);
+      }
+      player.incapacitated = false;
+      player.carriedBy = 0;
+      player.patientState = PATIENT_STATE.None;
+      player.patientUntil = 0;
+      if (player.pose === POSE.Lie) player.applyState(player.direction, POSE.Idle, false);
+      cancelled = true;
+    }
+    return cancelled;
+  }
+
+  /**
+   * 急诊大厅免费续命咖啡（45s 冷却）：清除降薪贴/滑倒并加 20s +12% 移速，对健康访客全面开放。
+   */
+  serveCoffee(player: Player, now: number, transport: Transport): boolean {
+    if (player.isNpc || player.incapacitated || now < player.clinicCoffeeCdUntil) return false;
+    const dx = player.x - CLINIC_COFFEE_SPOT.x;
+    const dy = player.y - CLINIC_COFFEE_SPOT.y;
+    const reach = 72 + HOTSPOT_SERVER_SLACK * 0.5;
+    if (dx * dx + dy * dy > reach * reach) return false;
+
+    player.clinicCoffeeCdUntil = now + 45_000;
+    clearBuff(player, BUFF.Poster, now);
+    clearBuff(player, BUFF.Slip, now);
+    player.fallUntil = 0;
+    setBuff(player, BUFF.CoffeeHeal, now + 20_000, now);
+
+    const fx = encodePlayerEffect({
+      effect: PLAYER_EFFECT.CoffeeHeal,
+      sourceId: player.id,
+      targetId: player.id,
+      extraId: 0,
+      durationMs: 20_000,
+      isTarget: true,
+      blocked: false,
+    });
+    if (player.wsId !== 0) {
+      transport.send(player.wsId, fx);
+      const msg = formatSystemNotice(SYSTEM_NOTICE_KIND.ClinicCoffee);
+      if (msg) {
+        transport.send(
+          player.wsId,
+          encodeSystemNotice({ kind: SYSTEM_NOTICE_KIND.ClinicCoffee, entityId: player.id, text: msg }),
+        );
+      }
+    }
+    for (const id of player.known) {
+      const other = this.world.get(id);
+      if (other && other.wsId !== 0) transport.send(other.wsId, fx);
+    }
+    return true;
+  }
+
   /**
    * 由 `resolveVents` 的命中观察者调用：只处理擂台外的真实命中。
    *
@@ -662,7 +737,9 @@ export class AmbulanceManager {
 
     if (car.state === AMBULANCE_STATE.Returning) {
       if (car.leg === 0) {
-        const arrived = this.advanceRoute(car, AMBULANCE_ROAD_GATE.x, AMBULANCE_ROAD_GATE.y, now);
+        const arrived = rectContains(CLINIC_REGION_RECT, car.x, car.y)
+          ? true
+          : this.advanceRoute(car, CLINIC_VEHICLE_ENTRY.x, CLINIC_VEHICLE_ENTRY.y, now);
         const stalled = now - car.lastProgressAt >= NAV_STALL_MS;
         if (arrived || stalled || now - car.phaseAt >= UNSTUCK_MS) {
           car.leg = 1;
@@ -670,10 +747,6 @@ export class AmbulanceManager {
           car.lastProgressAt = now;
           this.clearRoute(car);
         }
-        return;
-      }
-      if (car.leg === 1) {
-        this.advanceLeg(car, AMBULANCE_EAST_GATE.x, AMBULANCE_EAST_GATE.y, 2, now);
         return;
       }
       const spotX = this.spotX(car);
@@ -699,23 +772,28 @@ export class AmbulanceManager {
         return;
       }
 
-      // 固定两段绕行：研发园东侧空地 → 南向主路，再从路口追伤员
+      // 出车先顺南向开口直奔 A* 寻路，不再绕远门
       if (car.leg === 0) {
-        this.advanceLeg(car, AMBULANCE_EAST_GATE.x, AMBULANCE_EAST_GATE.y, 1, now);
-        return;
-      }
-      if (car.leg === 1) {
-        this.advanceLeg(car, AMBULANCE_ROAD_GATE.x, AMBULANCE_ROAD_GATE.y, 2, now);
-        return;
-      }
-
-      // 站内伤员（ADR-0092）：从主路直奔站心会撞上护士站围挡，先停到南侧通道口再进站
-      if (car.leg === 2 && rectContains(CLINIC_REGION_RECT, patient.x, patient.y)) {
-        this.advanceLeg(car, CLINIC_VEHICLE_ENTRY.x, CLINIC_VEHICLE_ENTRY.y, 3, now);
-        return;
+        if (rectContains(CLINIC_RECT, car.x, car.y)) {
+          this.advanceLeg(car, CLINIC_VEHICLE_ENTRY.x, CLINIC_VEHICLE_ENTRY.y, 1, now);
+          return;
+        }
+        car.leg = 1;
+        this.clearRoute(car);
       }
 
-      // 伤员昏迷后位置不动：按寻路路线逐点推进，穿过门洞而不是直线顶墙（ADR-0115）
+      // 若伤员也倒在急救站里，先对齐南口再进站
+      if (car.leg === 1 && rectContains(CLINIC_REGION_RECT, patient.x, patient.y) && !rectContains(CLINIC_RECT, car.x, car.y)) {
+        const distToEntry = Math.hypot(CLINIC_VEHICLE_ENTRY.x - car.x, CLINIC_VEHICLE_ENTRY.y - car.y);
+        if (distToEntry > 20) {
+          this.advanceRoute(car, CLINIC_VEHICLE_ENTRY.x, CLINIC_VEHICLE_ENTRY.y, now);
+          return;
+        }
+        car.leg = 2;
+        this.clearRoute(car);
+      }
+
+      // A* 全岛高速寻路直奔伤员（ADR-0115）
       const arrived = this.advanceRoute(car, patient.x, patient.y, now);
       const dist = Math.hypot(patient.x - car.x, patient.y - car.y);
       if (arrived || dist <= PICKUP_RADIUS) {
@@ -730,7 +808,6 @@ export class AmbulanceManager {
         return;
       }
 
-      // 路线规划失败（目标被围死）或中途卡死：落到伤员附近最近的合法点，绝不写进墙里
       const stalled = now - car.lastProgressAt >= NAV_STALL_MS;
       const timedOut = now - car.phaseAt >= UNSTUCK_MS;
       if (car.route.length === 0 || stalled || timedOut) {
@@ -751,15 +828,16 @@ export class AmbulanceManager {
       return;
     }
 
-    // Transporting：把伤员挂在车尾，沿主路 → 东侧空地 → 站内落点送回
+    // Transporting：把伤员挂在车尾，直接 A* 返航南门通道再进站交床
     if (!patient) {
       this.enterReturning(car, now);
       return;
     }
     this.attachPatient(car, patient);
-    // 送回第一段：从伤员所在场所出来到主路口。场所内有门洞时走路线，避免出场所就顶墙。
     if (car.leg === 0) {
-      const arrived = this.advanceRoute(car, AMBULANCE_ROAD_GATE.x, AMBULANCE_ROAD_GATE.y, now);
+      const arrived = rectContains(CLINIC_RECT, car.x, car.y)
+        ? true
+        : this.advanceRoute(car, CLINIC_VEHICLE_ENTRY.x, CLINIC_VEHICLE_ENTRY.y, now);
       const stalled = now - car.lastProgressAt >= NAV_STALL_MS;
       if (arrived || stalled || now - car.phaseAt >= UNSTUCK_MS) {
         car.leg = 1;
@@ -769,17 +847,12 @@ export class AmbulanceManager {
       }
       return;
     }
-    if (car.leg === 1) {
-      this.advanceLeg(car, AMBULANCE_EAST_GATE.x, AMBULANCE_EAST_GATE.y, 2, now);
-      return;
-    }
     const arrived = this.advanceRoute(car, CLINIC_DROP.x, CLINIC_DROP.y, now);
     if (arrived || now - car.phaseAt >= UNSTUCK_MS) {
       const safe = nearestFreePoint(CLINIC_DROP.x, CLINIC_DROP.y);
       car.x = safe?.x ?? CLINIC_DROP.x;
       car.y = safe?.y ?? CLINIC_DROP.y;
       this.clearRoute(car);
-      // 交接期内车停在落点等护士：伤员继续挂车尾，CARRYING 照常亮
       this.beginHandover(car, patient, now);
     }
   }
@@ -1138,6 +1211,17 @@ export class AmbulanceManager {
         : dy > 0
           ? DIRECTION.Down
           : DIRECTION.Up;
+    if (Math.hypot(target.x - nurse.x, target.y - nurse.y) <= 2) {
+      nurse.x = target.x;
+      nurse.y = target.y;
+      this.grid.update(nurse.id, nurse.x, nurse.y);
+      duty.index += 1;
+      duty.lastProgressAt = now;
+      if (!duty.path[duty.index]) return true;
+      nurse.applyState(direction, POSE.Walk, true);
+      nurse.markDirtyIfChanged();
+      return false;
+    }
     nurse.applyState(direction, POSE.Walk, true);
     nurse.markDirtyIfChanged();
     this.grid.update(nurse.id, nurse.x, nurse.y);
@@ -1166,10 +1250,10 @@ export class AmbulanceManager {
     const spot = CLINIC_NURSE_SPOTS[this.nurseSpots[index] ?? 0] ?? CLINIC_NURSE_SPOTS[0];
     const path = !rectContains(CLINIC_REGION_RECT, nurse.x, nurse.y)
       ? [{ x: spot.x, y: spot.y }]
-      : nurse.y <= CLINIC_RECT.y + 18
-        ? // 站在柜台后的窄带里：贴墙横着走回去，别绕南边一整圈
+      : nurse.y <= CLINIC_RECT.y + 38
+        ? // 站在柜台后的 38px 宽带里：横着直接走回站位
           [{ x: nurse.x, y: spot.y }, { x: spot.x, y: spot.y }]
-        : // 床区 / 落点：先回 22px 走廊，沿走廊北上，最后折向站位
+        : // 床区 / 落点：先回护理走廊，沿走廊北上，最后折向站位
           [
             { x: CLINIC_NURSE_LANE_X, y: CLINIC_NURSE_LANE_Y },
             { x: CLINIC_NURSE_LANE_X, y: spot.y },
@@ -1296,30 +1380,20 @@ export class AmbulanceManager {
         this.finishRecovery(player, now, tick);
         continue;
       }
-      // 下床（ADR-0109）：床心 → 床尾外侧，逐 Tick 平移 360ms；
-      // 康复 / 免疫等收尾都放到过渡结束之后，否则 NPC 会先在床上站起来再弹走
-      const tailX = bed.x + bed.w / 2;
-      const tailY = bed.y + bed.h + 18;
-      this.startTween(player, tailX, tailY, LIFT_MS, now, (done, at) => {
+      // 下床（按 3 张病床各自不挡墙的床侧站位落地，结束后立刻放开操作控制）
+      const side = clinicBedSide(bedIndex);
+      this.startTween(player, side.x, side.y, LIFT_MS, now, (done, at) => {
         this.finishRecovery(done, at, Math.max(tick, Math.floor(at / TICK_MS)));
       });
     }
   }
 
   /**
-   * 下床/地面治疗完成后的统一出口（ADR-0117）。
-   *
-   * 护士是站内固定岗，不参与出院，直接走原收尾；其余康复者先逐帧走出站体，
-   * 到站外才 `finishStay` 领护盾。这样发 Shielded 时人已在站外，客户端
-   * `patientLocked` 全程保持 true，本地预测不会与服务端出院位移抢写。
+   * 下床/地面治疗完成后的统一出口（开放版急诊站）：
+   * 治疗完下床后立刻恢复自由行动并领取护盾，取消旧版强行脚本缓步送出站外的锁死逻辑。
    */
   private finishRecovery(player: Player, now: number, tick: number): void {
-    // 护士是站内固定岗，不参与出院，直接走原收尾。
-    if (player.role === ENTITY_ROLE_NURSE) {
-      this.finishStay(player, now, tick);
-      return;
-    }
-    this.beginDischarge(player, now);
+    this.finishStay(player, now, tick);
   }
 
   /** 登记一次出院：真人与 NPC 同口径，期间不解锁、不交还 NPC 层 */

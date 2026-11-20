@@ -34,7 +34,15 @@ export type AudioEvent =
   /** 续杯：喝茶的咕嘟声（ADR-0061） */
   | { kind: 'tea'; x: number; y: number }
   /** 整蛊：踩到香蕉皮的滑倒短音（ADR-0085） */
-  | { kind: 'slip'; x: number; y: number };
+  | { kind: 'slip'; x: number; y: number }
+  /** GTA 音效：载具启动 / 警笛 / 咬钩 / 喷漆涂鸦 / CPR 除颤 / 通缉升高 / 急诊咖啡 */
+  | { kind: 'vehicle'; x: number; y: number; horn?: boolean }
+  | { kind: 'siren'; x: number; y: number }
+  | { kind: 'fish'; x: number; y: number; bite: boolean }
+  | { kind: 'spray'; x: number; y: number }
+  | { kind: 'cpr'; x: number; y: number }
+  | { kind: 'wanted'; x: number; y: number; stars: number }
+  | { kind: 'coffee'; x: number; y: number };
 
 /**
  * 引擎对"平台"的全部依赖，注入而不是直接摸全局。

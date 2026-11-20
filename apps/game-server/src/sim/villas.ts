@@ -4,6 +4,7 @@ import {
   VILLA_TREE_RANGE,
   isNearVillaGate,
   isNearVillaTree,
+  truncateVillaTagline,
   villaBuyPrice,
   villaBuyoutRefund,
   villaDoorSolid,
@@ -32,6 +33,12 @@ export interface VillaRecord {
   locked: boolean;
   /** 上次结算时刻：pending 按完整分钟从这里往后算 */
   lastCollectAt: number;
+  /** 主题色：0 暖阳金 / 1 霓虹粉 / 2 翡翠森 */
+  theme?: number;
+  /** 房产自定义灯牌宣言（最多 12 字） */
+  tagline?: string;
+  /** 最近在线时刻（供超 7 天无人打理自动收回挂牌） */
+  lastOnlineAt?: number;
 }
 
 export interface VillaSaveState {
@@ -125,6 +132,7 @@ export class VillaRuntime {
       ownerId: player.id,
       locked: false,
       lastCollectAt: now,
+      lastOnlineAt: now,
     });
     if (prevOwnerDeviceId) this.lastPendingByDevice.delete(prevOwnerDeviceId);
     this.lastPendingByDevice.delete(player.deviceId);
@@ -143,6 +151,34 @@ export class VillaRuntime {
     if (!record || record.ownerDeviceId !== player.deviceId) return false;
     record.locked = !record.locked;
     return true;
+  }
+
+  /** 房主自定义灯牌主题色与公告宣言（Stage 2） */
+  customize(player: Player, id: number, theme: number, tagline: string): boolean {
+    const record = this.records.get(id);
+    if (!record || record.ownerDeviceId !== player.deviceId) return false;
+    const safeTheme = Number.isFinite(theme) ? Math.max(0, Math.min(2, Math.floor(theme))) : 0;
+    const safeTagline = truncateVillaTagline(tagline ?? '');
+    if (safeTheme === 0) delete record.theme;
+    else record.theme = safeTheme;
+    if (safeTagline === '') delete record.tagline;
+    else record.tagline = safeTagline;
+    return true;
+  }
+
+  /** 超过 maxOfflineMs（默认 7 天）无人打理的空置房产自动收回重挂 */
+  reclaimStale(now: number, maxOfflineMs = 7 * 24 * 3600 * 1000): number {
+    let removed = 0;
+    for (const [id, record] of this.records) {
+      if (record.ownerId !== 0) continue;
+      const last = record.lastOnlineAt ?? record.lastCollectAt;
+      if (last > 0 && now - last >= maxOfflineMs) {
+        this.records.delete(id);
+        removed += 1;
+      }
+    }
+    if (removed > 0) this.rebuildOwnerDevices();
+    return removed;
   }
 
   /** 收走摇钱树产出：房主 + 站在院内 + 有完整分钟的产出 */
@@ -194,6 +230,8 @@ export class VillaRuntime {
         owned: true,
         mine: false,
         pending: 0,
+        ...(record.theme !== undefined ? { theme: record.theme } : {}),
+        ...(record.tagline !== undefined ? { tagline: record.tagline } : {}),
       };
     });
     return { villas };
@@ -224,6 +262,8 @@ export class VillaRuntime {
         owned: true,
         mine,
         pending: mine ? Math.min(0xffff, villaPendingIncome(record.lastCollectAt, now, spec.income)) : 0,
+        ...(record.theme !== undefined ? { theme: record.theme } : {}),
+        ...(record.tagline !== undefined ? { tagline: record.tagline } : {}),
       };
     });
     return { villas };
@@ -248,6 +288,9 @@ export class VillaRuntime {
           ownerId: 0,
           locked: record.locked === true,
           lastCollectAt: Number.isFinite(record.lastCollectAt) ? Math.floor(record.lastCollectAt) : now,
+          ...(typeof record.theme === 'number' && record.theme > 0 ? { theme: Math.min(2, Math.floor(record.theme)) } : {}),
+          ...(typeof record.tagline === 'string' && record.tagline.length > 0 ? { tagline: truncateVillaTagline(record.tagline) } : {}),
+          ...(typeof record.lastOnlineAt === 'number' && Number.isFinite(record.lastOnlineAt) ? { lastOnlineAt: Math.floor(record.lastOnlineAt) } : {}),
         });
       }
     }
@@ -255,12 +298,13 @@ export class VillaRuntime {
   }
 
   /** 事件驱动：房主上线只扫至多 8 条记录，O(1) 返回是否改变了在线指示灯或房主名 */
-  onOwnerJoin(player: Player): boolean {
+  onOwnerJoin(player: Player, now = Date.now()): boolean {
     if (!this.ownsAny(player.deviceId)) return false;
     this.lastPendingByDevice.delete(player.deviceId);
     let changed = false;
     for (const record of this.records.values()) {
       if (record.ownerDeviceId !== player.deviceId) continue;
+      record.lastOnlineAt = now;
       if (record.ownerId !== player.id || record.ownerName !== player.name) {
         record.ownerId = player.id;
         record.ownerName = player.name;
@@ -285,13 +329,14 @@ export class VillaRuntime {
   }
 
   /** 事件驱动：房主离园置零在线标志并清掉个人 pending 缓存 */
-  onOwnerLeave(player: Player): boolean {
+  onOwnerLeave(player: Player, now = Date.now()): boolean {
     if (!this.ownsAny(player.deviceId)) return false;
     this.lastPendingByDevice.delete(player.deviceId);
     let changed = false;
     for (const record of this.records.values()) {
       if (record.ownerId !== player.id) continue;
       record.ownerId = 0;
+      record.lastOnlineAt = now;
       changed = true;
     }
     return changed;

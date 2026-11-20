@@ -3,8 +3,15 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  ClearStarRequest,
+  CprRequest,
+  FishingActionRequest,
+  GigActionRequest,
+  GraffitiRequest,
   NavTargetId,
   ResumeState,
+  VehicleActionRequest,
+  VillaCustomizeRequest,
 } from '@niuma/shared-types';
 import type { PlayerBadge } from '../badge';
 import type { DanmakuPrefs } from '../danmaku-prefs';
@@ -77,6 +84,13 @@ export interface GameClient {
   claimQuest(questId: number): void;
   /** 手动抢红包（自动拾取走会话层） */
   claimEvent(index: number): void;
+  vehicleAction(request: VehicleActionRequest): void;
+  clearStar(request: ClearStarRequest): void;
+  cpr(request: CprRequest): void;
+  fishingAction(request: FishingActionRequest): void;
+  graffiti(request: GraffitiRequest): void;
+  gigAction(request: GigActionRequest): void;
+  villaCustomize(request: VillaCustomizeRequest): void;
   navigateTo(id: NavTargetId): void;
   /** 回中央广场：广场不是场所，走客户端动作而不是 `NAV_TARGETS` */
   navigateHome(): void;

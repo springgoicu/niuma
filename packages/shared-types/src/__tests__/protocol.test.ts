@@ -126,6 +126,48 @@ import {
   unpackState,
   SYSTEM_NOTICE_KIND,
   formatSystemNotice,
+  CLEAR_STAR_METHOD,
+  FALL_KIND,
+  FISH_LOOT_KIND,
+  FISHING_ACTION,
+  FISHING_STATE,
+  GHOST_MODE,
+  GIG_ACTION,
+  GIG_KIND,
+  GIG_STATE,
+  VEHICLE_ACTION,
+  VEHICLE_KIND,
+  VILLA_THEME,
+  encodeFishingAction,
+  decodeFishingAction,
+  encodeFishingState,
+  decodeFishingState,
+  encodeVehicleAction,
+  decodeVehicleAction,
+  encodeVehicleState,
+  decodeVehicleState,
+  encodeClearStar,
+  decodeClearStar,
+  encodeWantedState,
+  decodeWantedState,
+  encodeCprRequest,
+  decodeCprRequest,
+  encodeGhostState,
+  decodeGhostState,
+  encodeFallEvent,
+  decodeFallEvent,
+  encodeGraffitiRequest,
+  decodeGraffitiRequest,
+  encodeTurfState,
+  decodeTurfState,
+  encodeGigAction,
+  decodeGigAction,
+  encodeGigState,
+  decodeGigState,
+  encodeVillaCustomize,
+  decodeVillaCustomize,
+  encodeVillaState,
+  decodeVillaState,
 } from '../index';
 
 describe('move packet', () => {
@@ -1683,5 +1725,112 @@ describe('世界事件与画饼冲击波包（ADR-0088）', () => {
     };
     const truncated = encodeBossShock(packet).subarray(0, BOSS_SHOCK_PACKET_BYTES - 1);
     expect(() => decodeBossShock(truncated)).toThrow(/boss shock must be/);
+  });
+});
+
+describe('Phase 2-4 像素职场 GTA 协议扩展包（0x60..0x6d）', () => {
+  it('钓鱼请求与状态往返一致', () => {
+    const req = { action: FISHING_ACTION.Cast, spotId: 2 };
+    expect(decodeFishingAction(encodeFishingAction(req))).toEqual(req);
+
+    const state = {
+      id: 42,
+      state: FISHING_STATE.Biting,
+      spotId: 1,
+      biteAtMs: 123456,
+      rewardKind: FISH_LOOT_KIND.GoldKoi,
+    };
+    expect(decodeFishingState(encodeFishingState(state))).toEqual(state);
+  });
+
+  it('载具请求与状态快照（f32 / i16）往返一致', () => {
+    const req = { action: VEHICLE_ACTION.Boost, vehicleId: 12 };
+    expect(decodeVehicleAction(encodeVehicleAction(req))).toEqual(req);
+
+    const snap = {
+      vehicles: [
+        {
+          vehicleId: 3,
+          kind: VEHICLE_KIND.PatrolCart,
+          driverId: 99,
+          x: 4128.5,
+          y: 3960.25,
+          vx: -180,
+          vy: 245,
+          dir: 1,
+          flags: 0b101,
+        },
+      ],
+    };
+    expect(decodeVehicleState(encodeVehicleState(snap))).toEqual(snap);
+  });
+
+  it('通缉、消星、幽灵态、CPR 与搞笑倒地包往返一致', () => {
+    expect(decodeClearStar(encodeClearStar({ method: CLEAR_STAR_METHOD.Payphone, param: 1 }))).toEqual({
+      method: CLEAR_STAR_METHOD.Payphone,
+      param: 1,
+    });
+    expect(decodeWantedState(encodeWantedState({ id: 7, stars: 4, bounty: 160, clearCdSec: 32 }))).toEqual({
+      id: 7,
+      stars: 4,
+      bounty: 160,
+      clearCdSec: 32,
+    });
+    expect(decodeCprRequest(encodeCprRequest({ targetId: 18 }))).toEqual({ targetId: 18 });
+    expect(
+      decodeGhostState(encodeGhostState({ id: 18, mode: GHOST_MODE.Ghost, cprProgress: 66, leftMs: 14500 })),
+    ).toEqual({ id: 18, mode: GHOST_MODE.Ghost, cprProgress: 66, leftMs: 14500 });
+    expect(decodeFallEvent(encodeFallEvent({ kind: FALL_KIND.Tornado, targetId: 8, durationMs: 2400 }))).toEqual({
+      kind: FALL_KIND.Tornado,
+      targetId: 8,
+      durationMs: 2400,
+    });
+  });
+
+  it('街头涂鸦、零工与房产个性化宣言往返与兼容旧包格式', () => {
+    expect(decodeGraffitiRequest(encodeGraffitiRequest({ wallId: 9 }))).toEqual({ wallId: 9 });
+    const turf = {
+      walls: [
+        { wallId: 0, ownerId: 5, ownerName: '张大牛' },
+        { wallId: 4, ownerId: 0, ownerName: '' },
+      ],
+    };
+    expect(decodeTurfState(encodeTurfState(turf))).toEqual(turf);
+
+    expect(decodeGigAction(encodeGigAction({ action: GIG_ACTION.Accept, targetId: 2 }))).toEqual({
+      action: GIG_ACTION.Accept,
+      targetId: 2,
+    });
+    const gig = {
+      kind: GIG_KIND.Delivery,
+      state: GIG_STATE.Active,
+      targetX: 4430,
+      targetY: 5586,
+      reward: 55,
+      timeLeftSec: 84,
+      targetId: 4,
+    };
+    expect(decodeGigState(encodeGigState(gig))).toEqual(gig);
+
+    const custom = { villa: 2, theme: VILLA_THEME.CyberNeon, tagline: '加班不如飙车！' };
+    expect(decodeVillaCustomize(encodeVillaCustomize(custom))).toEqual(custom);
+
+    const villaState = {
+      villas: [
+        { id: 0, ownerId: 1, ownerName: '老王', locked: true, owned: true, mine: true, pending: 25 },
+        {
+          id: 2,
+          ownerId: 2,
+          ownerName: '霓虹大亨',
+          locked: false,
+          owned: true,
+          mine: false,
+          pending: 0,
+          theme: VILLA_THEME.CyberNeon,
+          tagline: '全场消费老板买单',
+        },
+      ],
+    };
+    expect(decodeVillaState(encodeVillaState(villaState))).toEqual(villaState);
   });
 });

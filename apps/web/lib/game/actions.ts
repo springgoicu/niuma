@@ -47,6 +47,9 @@ export type InteractionIntent =
   | { kind: 'wave' }
   /** 与最近的可互动设施（售货机 / 饮水机 / 咖啡机）互动 */
   | { kind: 'interact' }
+  | { kind: 'vehicle' }
+  | { kind: 'cpr' }
+  | { kind: 'gig' }
   /** 当前状态下不可用：提示文案交给 session 走瞬时 hint 通道 */
   | { kind: 'blocked'; hint: string };
 
@@ -102,6 +105,12 @@ export function resolveInteraction(action: ActionKey, state: InteractionState): 
     case 'interact':
       // 附近没有设施时由 session 走瞬时提示，不在这里判距离
       return { kind: 'interact' };
+    case 'vehicle':
+      return { kind: 'vehicle' };
+    case 'cpr':
+      return { kind: 'cpr' };
+    case 'gig':
+      return { kind: 'gig' };
   }
 }
 
@@ -155,6 +164,10 @@ export function actionPresentation(action: ActionKey, state: PresentationState):
       return { active: false, unavailable, reason: unavailable ? HINT_WAVE_WHILE_WALKING : undefined };
     }
     case 'jump':
+      return { active: false, unavailable: false };
+    case 'vehicle':
+    case 'cpr':
+    case 'gig':
       return { active: false, unavailable: false };
   }
 }

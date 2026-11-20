@@ -53,6 +53,16 @@ export const HINT = {
   theater: '[F] 换个频道',
   /** 站在游乐园器械旁按 F 打卡拍照 */
   parkPhoto: '[F] 打卡拍照',
+  // ---- Phase 2-4 像素职场 GTA 地标 ----
+  clinicCoffee: '[F] 喝杯孟婆续命咖啡（免单提神）',
+  changingBooth: '[F] 进变装亭消星换身份（60 币）',
+  estateBoard: '[F] 查看全园地产总览',
+  payphone: '[F] 打内线消星（90 币）',
+  fishingPier: '[F] 抛竿摸鱼 / 收竿',
+  graffitiWall: '[F] 喷漆涂鸦占领地盘（+35 币）',
+  loadingDock: '[F] 接取 / 交付街头零工',
+  bossVault: '[F] 撬老板金库（+120 币 · 通缉+2★）',
+  securityGarage: '[F] 保安警备亭（自首清星 / 接巡逻单）',
 } as const;
 
 export type HintCopy = (typeof HINT)[keyof typeof HINT];
@@ -102,6 +112,15 @@ const HINT_BUTTONS: Record<HintCopy, HintButton | null> = {
   [HINT.meeting]: { action: 'interact', label: '开会发言', key: 'F' },
   [HINT.theater]: { action: 'interact', label: '换频道', key: 'F' },
   [HINT.parkPhoto]: { action: 'interact', label: '打卡拍照', key: 'F' },
+  [HINT.clinicCoffee]: { action: 'interact', label: '喝续命咖啡', key: 'F' },
+  [HINT.changingBooth]: { action: 'interact', label: '变装消星', key: 'F' },
+  [HINT.estateBoard]: { action: 'interact', label: '看地产总览', key: 'F' },
+  [HINT.payphone]: { action: 'interact', label: '拨打消星专线', key: 'F' },
+  [HINT.fishingPier]: { action: 'interact', label: '抛竿/收竿', key: 'F' },
+  [HINT.graffitiWall]: { action: 'interact', label: '喷漆涂鸦', key: 'F' },
+  [HINT.loadingDock]: { action: 'interact', label: '接取/交付零工', key: 'F' },
+  [HINT.bossVault]: { action: 'interact', label: '撬老板金库', key: 'F' },
+  [HINT.securityGarage]: { action: 'interact', label: '警备亭消星', key: 'F' },
 };
 
 /** 可互动提示返回按钮描述；劝阻、状态与未知文案返回 null */
@@ -142,6 +161,15 @@ const TOUCH_HINTS: Record<HintCopy, string> = {
   [HINT.meeting]: '点「互动」开会发言',
   [HINT.theater]: '点「互动」换频道',
   [HINT.parkPhoto]: '点「互动」打卡拍照',
+  [HINT.clinicCoffee]: '点「互动」喝续命咖啡',
+  [HINT.changingBooth]: '点「互动」进变装亭消星',
+  [HINT.estateBoard]: '点「互动」查看全园地产总览',
+  [HINT.payphone]: '点「互动」拨打内线消星',
+  [HINT.fishingPier]: '点「互动」抛竿摸鱼',
+  [HINT.graffitiWall]: '点「互动」喷漆涂鸦墙',
+  [HINT.loadingDock]: '点「互动」接取或交付零工',
+  [HINT.bossVault]: '点「互动」撬老板金库',
+  [HINT.securityGarage]: '点「互动」进保安警备亭',
 };
 
 /** 无按键的提示（已到达某地、附近没有设施等）原样透传，不做通用替换 */

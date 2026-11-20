@@ -103,9 +103,9 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
       if (agent.escort) continue;
       if (agent.follow) continue;
       if (agent.player.role !== NPC_ROLE_GUARD) continue;
-      // 昏迷（送医中）与硬直中的保安都不接单；站起来再说
+      // 昏迷（送医中）与硬直 / 平底锅宠物震晕中的保安都不接单；站起来再说
       if (agent.player.incapacitated) continue;
-      if (now < agent.player.stunUntil) continue;
+      if (now < agent.player.stunUntil || now < agent.player.panStunUntil) continue;
       const dx = agent.player.x - target.x;
       const dy = agent.player.y - target.y;
       const distanceSq = dx * dx + dy * dy;
@@ -164,7 +164,7 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
       if (agent.escort || agent.follow) continue;
       if (agent.player.role !== NPC_ROLE_GUARD) continue;
       if (agent.player.incapacitated) continue;
-      if (now < agent.player.stunUntil) continue;
+      if (now < agent.player.stunUntil || now < agent.player.panStunUntil) continue;
       const dx = agent.player.x - target.x;
       const dy = agent.player.y - target.y;
       const distanceSq = dx * dx + dy * dy;
@@ -296,6 +296,14 @@ export function createNpcDirector(options: NpcDirectorOptions): NpcDirector {
     }
     const started = performance.now();
     for (const agent of agents.values()) {
+      const npcPlayer = agent.player;
+      if (now < npcPlayer.panStunUntil && !agent.escort) {
+        if (!npcPlayer.incapacitated && npcPlayer.pose !== POSE.Lie) {
+          npcPlayer.applyState(npcPlayer.direction, POSE.Lie, false);
+          npcPlayer.markDirtyIfChanged();
+        }
+        continue;
+      }
       const escortTargetId = agent.escort?.targetId;
       if (agent.escort) {
         const event = stepEscort(agent, agent.escort, world, now);

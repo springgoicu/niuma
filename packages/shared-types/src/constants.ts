@@ -22,10 +22,12 @@ export const CELL_SIZE = 512;
  * 玩家移动速度（像素/秒）。
  * 世界按 1.25 放大后同比提到 165：同一段路走的秒数不变，手感不会变「拖」。
  */
-export const MOVE_SPEED = 165;
+export const MOVE_SPEED = 185;
 /** 单 Tick 允许的最大位移（像素），含 15% 抖动容差 */
 export const MAX_STEP = (MOVE_SPEED * TICK_MS) / 1000;
 export const MAX_STEP_TOLERANCE = MAX_STEP * 1.15;
+/** 幽灵穿墙态速度倍率 */
+export const GHOST_SPEED_MUL = 1.25;
 
 export const MAX_CHAT_CHARS = 160;
 /** 昵称为空或被审核拦下时的兜底工牌名：协议钳制与客户端回退必须用同一个字面量 */
@@ -202,6 +204,28 @@ export const WORLD_EVENT_PACKET_BYTES = 9;
 export const BOSS_SHOCK_PACKET_BYTES = 11;
 /** 互动拒绝回执（ADR-0104）：op(1) + action(1) + reason(1) */
 export const INTERACT_REJECT_BYTES = 3;
+/** 钓鱼动作上行：op(1) + action(1) + spotId(1) */
+export const FISHING_ACTION_BYTES = 3;
+/** 钓鱼状态广播：op(1) + id(2) + state(1) + spotId(1) + biteAtMs(4) + rewardKind(1) */
+export const FISHING_STATE_BYTES = 10;
+/** 载具上下车/喇叭/加速上行：op(1) + action(1) + vehicleId(2) */
+export const VEHICLE_ACTION_BYTES = 4;
+/** 载具状态快照单条：vehicleId(2) + kind(1) + driverId(2) + x(4) + y(4) + vx(2) + vy(2) + dir(1) + flags(1) */
+export const VEHICLE_ENTRY_BYTES = 19;
+/** 消星/换装上行：op(1) + method(1) + param(1) */
+export const CLEAR_STAR_BYTES = 3;
+/** 通缉状态广播：op(1) + id(2) + stars(1) + bounty(2) + clearCdSec(2) */
+export const WANTED_STATE_BYTES = 8;
+/** 心肺复苏/救治上行：op(1) + targetId(2) */
+export const CPR_ACTION_BYTES = 3;
+/** 倒地/幽灵态广播：op(1) + id(2) + mode(1) + cprProgress(1) + leftMs(2) */
+export const GHOST_STATE_BYTES = 7;
+/** 街头涂鸦上行：op(1) + wallId(1) */
+export const GRAFFITI_ACTION_BYTES = 2;
+/** 街头零工上行：op(1) + action(1) + targetId(2) */
+export const GIG_ACTION_BYTES = 4;
+/** 房产自定义文案/灯牌最大 UTF-8 字节数（中文约 12 字以内） */
+export const VILLA_TAGLINE_MAX_BYTES = 36;
 
 /**
  * 聊天历史（ADR-0039）：服务端进程内环形缓冲，不落盘、不接库。

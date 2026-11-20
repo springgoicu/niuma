@@ -3,8 +3,15 @@ import type {
   CareerSummary,
   CharacterAppearance,
   ChatSendPacket,
+  ClearStarRequest,
+  CprRequest,
+  FishingActionRequest,
+  GigActionRequest,
+  GraffitiRequest,
   NavTargetId,
   ResumeState,
+  VehicleActionRequest,
+  VillaCustomizeRequest,
 } from '@niuma/shared-types';
 import { reloadForStaleAssets, requestBuildCheck } from '../../build-version';
 import type { PlayerBadge } from '../badge';
@@ -499,6 +506,41 @@ export class WorkerGameClient implements GameClient {
     this.post({ t: 'claimEvent', index });
   }
 
+  vehicleAction(request: VehicleActionRequest): void {
+    if (this.delegate) return this.delegate.vehicleAction(request);
+    this.post({ t: 'vehicleAction', request });
+  }
+
+  clearStar(request: ClearStarRequest): void {
+    if (this.delegate) return this.delegate.clearStar(request);
+    this.post({ t: 'clearStar', request });
+  }
+
+  cpr(request: CprRequest): void {
+    if (this.delegate) return this.delegate.cpr(request);
+    this.post({ t: 'cpr', request });
+  }
+
+  fishingAction(request: FishingActionRequest): void {
+    if (this.delegate) return this.delegate.fishingAction(request);
+    this.post({ t: 'fishingAction', request });
+  }
+
+  graffiti(request: GraffitiRequest): void {
+    if (this.delegate) return this.delegate.graffiti(request);
+    this.post({ t: 'graffiti', request });
+  }
+
+  gigAction(request: GigActionRequest): void {
+    if (this.delegate) return this.delegate.gigAction(request);
+    this.post({ t: 'gigAction', request });
+  }
+
+  villaCustomize(request: VillaCustomizeRequest): void {
+    if (this.delegate) return this.delegate.villaCustomize(request);
+    this.post({ t: 'villaCustomize', request });
+  }
+
   navigateTo(id: NavTargetId): void {
     if (this.delegate) return this.delegate.navigateTo(id);
     this.post({ t: 'navigate', id });
@@ -633,6 +675,36 @@ export class WorkerGameClient implements GameClient {
         return;
       case 'bulletinOpen':
         callbacks.onBulletinOpen?.();
+        return;
+      case 'directoryOpen':
+        callbacks.onDirectoryOpen?.();
+        return;
+      case 'activity':
+        callbacks.onActivity?.(message.event);
+        return;
+      case 'estateOpen':
+        callbacks.onEstateBoardOpen?.();
+        return;
+      case 'wanted':
+        callbacks.onWanted?.(message.packet);
+        return;
+      case 'vehicleState':
+        callbacks.onVehicleState?.(message.packet);
+        return;
+      case 'ghost':
+        callbacks.onGhost?.(message.packet);
+        return;
+      case 'fishing':
+        callbacks.onFishing?.(message.packet);
+        return;
+      case 'turf':
+        callbacks.onTurf?.(message.packet);
+        return;
+      case 'gig':
+        callbacks.onGig?.(message.packet);
+        return;
+      case 'fall':
+        callbacks.onFall?.(message.packet);
         return;
       case 'board':
         callbacks.onBoard?.(message.packet);

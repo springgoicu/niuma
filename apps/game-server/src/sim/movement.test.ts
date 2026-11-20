@@ -92,10 +92,10 @@ describe('空闲去脏', () => {
   });
 });
 
-describe('护士站门禁（ADR-0107）', () => {
+describe('急诊站开放式大门', () => {
   const GATE_Y = CLINIC_RECT.y + 90;
 
-  it('站外贴着西门往里走会被夹回门线，不会跨进站内', () => {
+  it('站外贴着西门往里走可以顺畅走入急诊站（开放式急诊室，不再门禁锁死）', () => {
     const player = playerAt(CLINIC_RECT.x - 5, GATE_Y);
     applyMove(
       player,
@@ -103,9 +103,8 @@ describe('护士站门禁（ADR-0107）', () => {
       1000,
     );
 
-    expect(player.x).toBeLessThan(CLINIC_RECT.x);
-    expect(player.x).toBeGreaterThan(CLINIC_RECT.x - 5);
-    expect(isInClinicInterior(player.x, player.y)).toBe(false);
+    expect(player.x).toBeGreaterThan(CLINIC_RECT.x);
+    expect(isInClinicInterior(player.x, player.y)).toBe(true);
   });
 
   it('已经在站里的伤员一路向西能自己走出西门', () => {

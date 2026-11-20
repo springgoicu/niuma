@@ -47,10 +47,18 @@ import {
   decodeEventClaimResult,
   decodeApartmentPeek,
   decodeInteractReject,
+  decodeFishingState,
+  decodeVehicleState,
+  decodeWantedState,
+  decodeGhostState,
+  decodeFallEvent,
+  decodeTurfState,
+  decodeGigState,
   encodeWorkClaim,
   encodeQuestClaim,
   encodeEventClaim,
   encodeVillaRequest,
+  encodeVillaCustomize,
   encodeApartmentRequest,
   encodeBoardRequest,
   encodeCareerReport,
@@ -71,6 +79,12 @@ import {
   encodeUseItem,
   encodeSetName,
   encodeSetStatus,
+  encodeFishingAction,
+  encodeVehicleAction,
+  encodeClearStar,
+  encodeCprRequest,
+  encodeGraffitiRequest,
+  encodeGigAction,
   SYNC_FORMAT_COMPACT,
   SYNC_FORMAT_LEGACY,
   ByteWriter,
@@ -123,6 +137,20 @@ import {
   type QuestStatePacket,
   type WorkResultPacket,
   type WorldEventPacket,
+  type FishingStatePacket,
+  type VehicleStatePacket,
+  type WantedStatePacket,
+  type GhostStatePacket,
+  type FallEventPacket,
+  type TurfStatePacket,
+  type GigStatePacket,
+  type FishingActionRequest,
+  type VehicleActionRequest,
+  type ClearStarRequest,
+  type CprRequest,
+  type GraffitiRequest,
+  type GigActionRequest,
+  type VillaCustomizeRequest,
 } from '@niuma/shared-types';
 import { ensureDeviceId } from '../game/device-id';
 
@@ -232,6 +260,13 @@ export interface NetHandlers {
   onEventClaim?(packet: EventClaimResult): void;
   /** 画饼冲击波：预警 2 秒 / 结算时各一条 */
   onBossShock?(packet: BossShockPacket): void;
+  onFishingState?(packet: FishingStatePacket): void;
+  onVehicleState?(packet: VehicleStatePacket): void;
+  onWantedState?(packet: WantedStatePacket): void;
+  onGhostState?(packet: GhostStatePacket): void;
+  onFallEvent?(packet: FallEventPacket): void;
+  onTurfState?(packet: TurfStatePacket): void;
+  onGigState?(packet: GigStatePacket): void;
 }
 
 function defaultUrl(): string {
@@ -600,6 +635,27 @@ export class NetClient {
       case OpCode.S2C_BOSS_SHOCK:
         this.handlers.onBossShock?.(decodeBossShock(data));
         break;
+      case OpCode.S2C_FISHING_STATE:
+        this.handlers.onFishingState?.(decodeFishingState(data));
+        break;
+      case OpCode.S2C_VEHICLE_STATE:
+        this.handlers.onVehicleState?.(decodeVehicleState(data));
+        break;
+      case OpCode.S2C_WANTED_STATE:
+        this.handlers.onWantedState?.(decodeWantedState(data));
+        break;
+      case OpCode.S2C_GHOST_STATE:
+        this.handlers.onGhostState?.(decodeGhostState(data));
+        break;
+      case OpCode.S2C_FALL_EVENT:
+        this.handlers.onFallEvent?.(decodeFallEvent(data));
+        break;
+      case OpCode.S2C_TURF_STATE:
+        this.handlers.onTurfState?.(decodeTurfState(data));
+        break;
+      case OpCode.S2C_GIG_STATE:
+        this.handlers.onGigState?.(decodeGigState(data));
+        break;
       case OpCode.S2C_QUEUE_REJECTED:
         this.terminal = true;
         this.handlers.onRejected(decodeQueueRejected(data).reason);
@@ -800,6 +856,41 @@ export class NetClient {
   sendApartment(request: { action: number; arg: number }): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(encodeApartmentRequest(request));
+  }
+
+  sendFishing(request: FishingActionRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeFishingAction(request));
+  }
+
+  sendVehicle(request: VehicleActionRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeVehicleAction(request));
+  }
+
+  sendClearStar(request: ClearStarRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeClearStar(request));
+  }
+
+  sendCpr(request: CprRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeCprRequest(request));
+  }
+
+  sendGraffiti(request: GraffitiRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeGraffitiRequest(request));
+  }
+
+  sendGig(request: GigActionRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeGigAction(request));
+  }
+
+  sendVillaCustomize(request: VillaCustomizeRequest): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(encodeVillaCustomize(request));
   }
 
   dispose(): void {

@@ -287,6 +287,24 @@ export function hintForHotspot(def: HotspotDef): string {
       return HINT.apartment;
     case 'workDesk':
       return HINT.work;
+    case 'clinicCoffee':
+      return HINT.clinicCoffee;
+    case 'changingBooth':
+      return HINT.changingBooth;
+    case 'estateBoard':
+      return HINT.estateBoard;
+    case 'bossVault':
+      return HINT.bossVault;
+    case 'loadingDock':
+      return HINT.loadingDock;
+    case 'securityGarage':
+      return HINT.securityGarage;
+    case 'payphone':
+      return HINT.payphone;
+    case 'fishingPier':
+      return HINT.fishingPier;
+    case 'graffitiWall':
+      return HINT.graffitiWall;
     default:
       return HINT.interact;
   }

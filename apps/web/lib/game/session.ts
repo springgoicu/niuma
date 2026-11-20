@@ -8,7 +8,18 @@ import {
   LIKE_FLAG_SELF,
   CHAT_HISTORY_PAGE_SIZE,
   CHAT_REJECT_REASON,
+  CLEAR_STAR_METHOD,
   DEFAULT_APPEARANCE,
+  FALL_KIND,
+  FISHING_ACTION,
+  FISHING_PIERS,
+  FISHING_STATE,
+  GHOST_MODE,
+  GHOST_SPEED_MUL,
+  GIG_ACTION,
+  GIG_STATE,
+  GRAFFITI_WALLS,
+  ISLAND_SAND,
   JAIL_ANCHORS,
   JAIL_PHASE,
   MOVE_SPEED,
@@ -21,6 +32,8 @@ import {
   SIT_RANGE,
   STATE_BITS,
   SYSTEM_NOTICE_KIND,
+  VEHICLE_ACTION,
+  VEHICLE_SPECS,
   VENT_STUN_MS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -39,6 +52,7 @@ import {
   readSync,
   readSyncTick,
   districtById,
+  isOnLand,
   regionAt,
   resolveWalkInto,
   seatById,
@@ -107,6 +121,21 @@ import {
   type SystemNoticePacket,
   type VentEventPacket,
   type WelcomePacket,
+  type ClearStarRequest,
+  type CprRequest,
+  type FallEventPacket,
+  type FishingActionRequest,
+  type FishingStatePacket,
+  type GhostStatePacket,
+  type GigActionRequest,
+  type GigStatePacket,
+  type GraffitiRequest,
+  type TurfStatePacket,
+  type VehicleActionRequest,
+  type VehicleSnapshot,
+  type VehicleStatePacket,
+  type VillaCustomizeRequest,
+  type WantedStatePacket,
 } from '@niuma/shared-types';
 import { NetClient } from '../net/client';
 import { type BoardEntry, type PlayerBadge } from './badge';
@@ -116,14 +145,24 @@ import { toSnapshotPatch } from './snapshot';
 import { ACTIVITY_TTL_MS } from './activity-feed';
 import { resolveInteraction, type InteractionIntent, type InteractionState } from './actions';
 import { HINT, resolveVisibleHint } from './hint-copy';
-import { BLINK_COLUMN, buildClipTracks, buildOverlayTracks, frameAt, overlayTrackFor, phaseOffset, type ClipTrack } from './clip';
+import {
+  BLINK_COLUMN,
+  buildClipTracks,
+  buildGtaTracks,
+  buildOverlayTracks,
+  frameAt,
+  gtaTrackFor,
+  overlayTrackFor,
+  phaseOffset,
+  type ClipTrack,
+} from './clip';
 import { seatLift } from './seat-art';
 import { NEVER_SENT, shouldSendMove, type MoveSample } from './move-send';
-import { Ecs, Local, Motion, POSE, Position } from './ecs';
+import { Ecs, GtaState, Local, Motion, POSE, Position } from './ecs';
 import type { RemoteSample } from './interp';
 import { JitterBuffer } from './jitter';
 import { ACTION_BY_CODE, directionFromMask, type ActionKey } from './input';
-import type { ViewportInfo } from './runtime/control-channel';
+import { KEY_BIT, type ViewportInfo } from './runtime/control-channel';
 import type { AudioEvent, EngineEnv, SessionProfile } from './runtime/engine-env';
 import { resolveTargetFps } from './runtime/frame-pacing';
 import { createQualitySignal, stepQualitySignal } from './runtime/quality-tiers';
@@ -169,6 +208,7 @@ import { applyClockSample, serverNow, serverTzOffsetMin } from './server-clock';
 import {
   BOW_DURATION_MS,
   bowTexelsAt,
+  ghostAlpha,
   jumpLiftTexels,
   jumpShadowFor,
   ponyMotion,
@@ -243,6 +283,14 @@ export interface WorldSnapshot {
   events?: Array<{ x: number; y: number; tier: number; age: number }>;
   /** 房产归属态快照（直接引用包内只读数组，零分配） */
   villas?: ReadonlyArray<VillaPacket>;
+  /** 载具小地图点（x, y, occupied） */
+  vehicles?: ReadonlyArray<{ x: number; y: number; occupied: boolean }>;
+  /** 通缉玩家坐标 */
+  wanted?: ReadonlyArray<{ x: number; y: number; stars: number }>;
+  /** 零工交付目标坐标 */
+  gigTarget?: { x: number; y: number } | null;
+  /** 涂鸦领地归属点 */
+  turf?: ReadonlyArray<{ x: number; y: number; owned: boolean }>;
 }
 
 /**
@@ -372,6 +420,14 @@ export interface SessionCallbacks {
   onEventClaim?(packet: EventClaimResult): void;
   /** 画饼冲击波：预警 2 秒 / 命中结算各一条 */
   onBossShock?(packet: BossShockPacket): void;
+  onEstateBoardOpen?(): void;
+  onWanted?(packet: WantedStatePacket): void;
+  onVehicleState?(packet: VehicleStatePacket): void;
+  onGhost?(packet: GhostStatePacket): void;
+  onFishing?(packet: FishingStatePacket): void;
+  onTurf?(packet: TurfStatePacket): void;
+  onGig?(packet: GigStatePacket): void;
+  onFall?(packet: FallEventPacket): void;
 }
 
 /** 一次会话绑定的园区：构造后不再变化，重连与落盘都以它为准 */
@@ -538,6 +594,27 @@ export class GameSession {
   private interiorCount = 0;
   /** 本人是否正开着搬砖终端：只影响工位专注光，不进协议 */
   private working = false;
+  // ---- GTA 玩法状态镜像（零分配帧同步）----
+  private readonly gtaTracks = buildGtaTracks(this.tracks);
+  private readonly vehicleMap = new Map<number, VehicleSnapshot>();
+  private readonly minimapVehicles: Array<{ x: number; y: number; occupied: boolean }> = [];
+  private readonly minimapWanted: Array<{ x: number; y: number; stars: number }> = [];
+  private readonly minimapTurf: Array<{ x: number; y: number; owned: boolean }> = [];
+  private readonly minimapGigTarget = { x: 0, y: 0 };
+  private localVehicleId = 0;
+  private localWantedStars = 0;
+  private localGhostMode = 0;
+  private localFishingState = 0;
+  private localFishingSpot = 0;
+  private localGig: GigStatePacket | null = null;
+  private turfWalls: TurfStatePacket['walls'] = [];
+  private sprintHeld = false;
+  private lastBoostSentAt = 0;
+  private cprActiveUntil = 0;
+  private localCoffeeUntil = 0;
+  private localBoxUntil = 0;
+  private localStealthUntil = 0;
+  private localPanUntil = 0;
   /**
    * 发泄节流与出招窗口。
    *
@@ -848,6 +925,13 @@ export class GameSession {
         this.renderer.showBossShock(packet);
         this.callbacks.onBossShock?.(packet);
       },
+      onFishingState: (packet) => this.handleFishingState(packet),
+      onVehicleState: (packet) => this.handleVehicleState(packet),
+      onWantedState: (packet) => this.handleWantedState(packet),
+      onGhostState: (packet) => this.handleGhostState(packet),
+      onFallEvent: (packet) => this.handleFallEvent(packet),
+      onTurfState: (packet) => this.handleTurfState(packet),
+      onGigState: (packet) => this.handleGigState(packet),
     }, this.options.wsUrl, this.env.deviceId);
 
     this.name = profile.name;
@@ -919,6 +1003,7 @@ export class GameSession {
     const x = dequantizeCoord(packet.x);
     const y = dequantizeCoord(packet.y);
     const eid = this.ecs.spawn(id, x, y);
+    GtaState.role[eid] = packet.role ?? 0;
     // 先塞一帧快照：回放缓冲有时间戳，不塞的话这个人在延迟窗口内没有数据可采样。
     // 坐标取自 spawn 包，姿态与叠加位则由随后的 sync 校正。
     this.ecs.remote.push(eid, performance.now(), x, y, packet.state);
@@ -1644,6 +1729,20 @@ export class GameSession {
     this.ventLockUntil = 0;
     this.ventAt = 0;
     this.villaStates = [];
+    this.vehicleMap.clear();
+    this.localVehicleId = 0;
+    this.localWantedStars = 0;
+    this.localGhostMode = 0;
+    this.localFishingState = 0;
+    this.localFishingSpot = 0;
+    this.localGig = null;
+    this.turfWalls = [];
+    this.sprintHeld = false;
+    this.cprActiveUntil = 0;
+    this.localCoffeeUntil = 0;
+    this.localBoxUntil = 0;
+    this.localStealthUntil = 0;
+    this.localPanUntil = 0;
     // 窗口探头随连接重建：新会话从园区门口重新进
     this.inRoom = false;
     this.roomSlot = -1;
@@ -1842,6 +1941,11 @@ export class GameSession {
         this.standUp();
         return;
       case 'jump':
+        if (this.localVehicleId !== 0) {
+          this.net?.sendVehicle({ action: VEHICLE_ACTION.Horn, vehicleId: this.localVehicleId });
+          this.emitAudio({ kind: 'vehicle', x: Position.x[eid]!, y: Position.y[eid]!, horn: true });
+          return;
+        }
         this.clearPray();
         // 坐 / 躺先起身再跳：跳跃是位移动作，躺着原地起跳读不懂。
         // 行走中直接起跳：pose 与 moving 都不动，跳跃帧播完自然接回走路循环。
@@ -1890,6 +1994,15 @@ export class GameSession {
         return;
       case 'interact':
         this.interact(eid);
+        return;
+      case 'vehicle':
+        this.toggleVehicle(eid);
+        return;
+      case 'cpr':
+        this.triggerCprOrCoffee(eid);
+        return;
+      case 'gig':
+        this.triggerGig(eid);
         return;
       case 'blocked':
         this.showHint(intent.hint);
@@ -2046,10 +2159,122 @@ export class GameSession {
       case 'apartmentDoor':
         this.enterApartment();
         return;
+      case 'clinicCoffee':
+        this.net?.sendClearStar({ method: 3, param: 0 });
+        this.emitAudio({ kind: 'coffee', x, y });
+        return;
+      case 'changingBooth':
+        this.net?.sendClearStar({ method: CLEAR_STAR_METHOD.Booth, param: hotspotIndex(def.id) });
+        return;
+      case 'payphone':
+        this.net?.sendClearStar({ method: CLEAR_STAR_METHOD.Payphone, param: hotspotIndex(def.id) });
+        return;
+      case 'estateBoard':
+        this.callbacks.onEstateBoardOpen?.();
+        return;
+      case 'fishingPier': {
+        const spotId = hotspotIndex(def.id);
+        const action =
+          this.localFishingState === FISHING_STATE.Waiting || this.localFishingState === FISHING_STATE.Biting
+            ? FISHING_ACTION.Reel
+            : FISHING_ACTION.Cast;
+        this.net?.sendFishing({ action, spotId });
+        if (action === FISHING_ACTION.Cast) this.emitAudio({ kind: 'fish', x, y, bite: false });
+        return;
+      }
+      case 'graffitiWall':
+        this.net?.sendGraffiti({ wallId: hotspotIndex(def.id) });
+        this.emitAudio({ kind: 'spray', x, y });
+        return;
+      case 'loadingDock':
+        if (this.localGig?.state === GIG_STATE.Active) {
+          this.net?.sendGig({ action: GIG_ACTION.Complete, targetId: this.localGig.targetId });
+        } else {
+          this.net?.sendGig({ action: GIG_ACTION.Accept, targetId: 1 });
+        }
+        return;
+      case 'securityGarage':
+        if (this.localWantedStars > 0) {
+          this.net?.sendClearStar({ method: CLEAR_STAR_METHOD.Surrender, param: 0 });
+        } else {
+          this.net?.sendGig({ action: GIG_ACTION.Accept, targetId: 2 });
+        }
+        return;
+      case 'bossVault':
+        this.renderer.showFloatText(x, y - 16, '👀 老板金库：写着下月发奖金');
+        this.renderer.showBubble(this.localId, '金库居然是空的，快去踹老板 E！');
+        return;
       default:
         // 提示条已经说了能做什么；走到这里说明是未来的新热区，先冒一句通用提示
         this.showHint(hintForHotspot(def));
         return;
+    }
+  }
+
+  private toggleVehicle(eid: number): void {
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    if (this.localVehicleId !== 0) {
+      this.net?.sendVehicle({ action: VEHICLE_ACTION.Exit, vehicleId: this.localVehicleId });
+      return;
+    }
+    let bestId = 0;
+    let bestDistSq = 96 * 96;
+    for (const v of this.vehicleMap.values()) {
+      if (v.driverId !== 0) continue;
+      const dx = v.x - x;
+      const dy = v.y - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= bestDistSq) {
+        bestDistSq = d2;
+        bestId = v.vehicleId;
+      }
+    }
+    if (bestId === 0) {
+      this.showHint('附近没有空闲载具（电驴 / 叉车 / 巡逻车 / 跑车）');
+      return;
+    }
+    this.net?.sendVehicle({ action: VEHICLE_ACTION.Enter, vehicleId: bestId });
+    this.emitAudio({ kind: 'vehicle', x, y });
+  }
+
+  private triggerCprOrCoffee(eid: number): void {
+    const x = Position.x[eid]!;
+    const y = Position.y[eid]!;
+    if (this.localGhostMode === GHOST_MODE.Flatline) {
+      this.net?.sendCpr({ targetId: 0 });
+      this.emitAudio({ kind: 'cpr', x, y });
+      return;
+    }
+    let bestTarget = 0;
+    let bestDistSq = 96 * 96;
+    for (const otherEid of this.ecs.entities()) {
+      const otherNet = this.ecs.netOf[otherEid]!;
+      if (!otherNet || otherNet === this.localId) continue;
+      if (GtaState.ghostMode[otherEid] !== GHOST_MODE.Flatline) continue;
+      const dx = Position.x[otherEid]! - x;
+      const dy = Position.y[otherEid]! - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= bestDistSq) {
+        bestDistSq = d2;
+        bestTarget = otherNet;
+      }
+    }
+    if (bestTarget !== 0) {
+      this.cprActiveUntil = this.elapsed + 600;
+      this.net?.sendCpr({ targetId: bestTarget });
+      this.emitAudio({ kind: 'cpr', x, y });
+      return;
+    }
+    // 急诊大厅咖啡台前也允许按 H 一键饮用
+    this.net?.sendCpr({ targetId: 0 });
+  }
+
+  private triggerGig(_eid: number): void {
+    if (this.localGig?.state === GIG_STATE.Active) {
+      this.net?.sendGig({ action: GIG_ACTION.Complete, targetId: this.localGig.targetId });
+    } else {
+      this.net?.sendGig({ action: GIG_ACTION.Accept, targetId: 0 });
     }
   }
 
@@ -2344,6 +2569,148 @@ export class GameSession {
     this.net?.sendVilla({ villa: villaId, action });
   }
 
+  villaCustomize(request: VillaCustomizeRequest): void {
+    this.net?.sendVillaCustomize(request);
+  }
+
+  vehicleAction(request: VehicleActionRequest): void {
+    this.net?.sendVehicle(request);
+  }
+
+  clearStar(request: ClearStarRequest): void {
+    this.net?.sendClearStar(request);
+  }
+
+  cpr(request: CprRequest): void {
+    this.net?.sendCpr(request);
+  }
+
+  fishingAction(request: FishingActionRequest): void {
+    this.net?.sendFishing(request);
+  }
+
+  graffiti(request: GraffitiRequest): void {
+    this.net?.sendGraffiti(request);
+  }
+
+  gigAction(request: GigActionRequest): void {
+    this.net?.sendGig(request);
+  }
+
+  private handleFishingState(packet: FishingStatePacket): void {
+    const eid = this.ecs.get(packet.id);
+    if (eid) GtaState.fishingState[eid] = packet.state;
+    if (packet.id === this.localId) {
+      this.localFishingState = packet.state;
+      this.localFishingSpot = packet.spotId;
+      if (eid) {
+        const x = Position.x[eid]!;
+        const y = Position.y[eid]!;
+        if (packet.state === FISHING_STATE.Biting) {
+          this.emitAudio({ kind: 'fish', x, y, bite: true });
+          this.showHint('🔥 咬钩啦！快按 F 收竿！');
+        } else if (packet.state === FISHING_STATE.Caught) {
+          this.renderer.showFloatText(x, y - 18, '🐟 摸鱼满载归！');
+        } else if (packet.state === FISHING_STATE.Missed) {
+          this.showHint('鱼游走了，下次手快点！');
+        }
+      }
+    }
+    this.renderer.setFishing(packet);
+    this.callbacks.onFishing?.(packet);
+  }
+
+  private handleVehicleState(packet: VehicleStatePacket): void {
+    for (const eid of this.ecs.entities()) GtaState.vehicleId[eid] = 0;
+    let nextLocalVeh = 0;
+    for (let i = 0; i < packet.vehicles.length; i += 1) {
+      const v = packet.vehicles[i]!;
+      this.vehicleMap.set(v.vehicleId, v);
+      if (v.driverId !== 0) {
+        const driverEid = this.ecs.get(v.driverId);
+        if (driverEid) {
+          GtaState.vehicleId[driverEid] = v.vehicleId;
+          Position.x[driverEid] = v.x;
+          Position.y[driverEid] = v.y;
+        }
+        if (v.driverId === this.localId) nextLocalVeh = v.vehicleId;
+      }
+    }
+    this.localVehicleId = nextLocalVeh;
+    this.renderer.setVehicles(packet);
+    this.callbacks.onVehicleState?.(packet);
+  }
+
+  private handleWantedState(packet: WantedStatePacket): void {
+    const eid = this.ecs.get(packet.id);
+    if (eid) {
+      GtaState.wantedStars[eid] = packet.stars;
+      GtaState.wantedBounty[eid] = packet.bounty;
+    }
+    this.renderer.setEntityWanted(packet.id, packet.stars);
+    if (packet.id === this.localId) {
+      if (packet.stars > this.localWantedStars && eid) {
+        this.emitAudio({ kind: 'wanted', x: Position.x[eid]!, y: Position.y[eid]!, stars: packet.stars });
+      }
+      this.localWantedStars = packet.stars;
+    }
+    this.callbacks.onWanted?.(packet);
+  }
+
+  private handleGhostState(packet: GhostStatePacket): void {
+    const eid = this.ecs.get(packet.id);
+    if (eid) {
+      GtaState.ghostMode[eid] = packet.mode;
+      GtaState.ghostUntil[eid] = this.elapsed + packet.leftMs;
+    }
+    if (packet.id === this.localId) {
+      this.localGhostMode = packet.mode;
+      if (packet.mode !== GHOST_MODE.Alive) {
+        this.cancelNavigation();
+        this.localSeat = 0;
+        this.entitySeat.delete(this.localId);
+        this.seatIntent = false;
+      }
+    }
+    this.callbacks.onGhost?.(packet);
+  }
+
+  private handleFallEvent(packet: FallEventPacket): void {
+    const eid = this.ecs.get(packet.targetId);
+    if (eid) {
+      GtaState.fallKind[eid] = packet.kind + 1;
+      GtaState.fallUntil[eid] = this.elapsed + packet.durationMs;
+      this.emitAudio({ kind: 'slip', x: Position.x[eid]!, y: Position.y[eid]! });
+      if (packet.kind === FALL_KIND.Tornado) {
+        this.renderer.showFloatText(Position.x[eid]!, Position.y[eid]! - 20, '🌪️ 压路机撞飞！');
+      }
+    }
+    if (packet.targetId === this.localId) {
+      this.cancelNavigation();
+      this.localSeat = 0;
+      this.entitySeat.delete(this.localId);
+      this.seatIntent = false;
+      this.stunUntil = Math.max(this.stunUntil, this.elapsed + packet.durationMs);
+    }
+    this.callbacks.onFall?.(packet);
+  }
+
+  private handleTurfState(packet: TurfStatePacket): void {
+    this.turfWalls = packet.walls;
+    this.renderer.setTurf(packet);
+    this.callbacks.onTurf?.(packet);
+  }
+
+  private handleGigState(packet: GigStatePacket): void {
+    this.localGig = packet;
+    if (packet.state === GIG_STATE.Completed) {
+      const eid = this.ecs.get(this.localId);
+      if (eid) this.renderer.showFloatText(Position.x[eid]!, Position.y[eid]! - 18, `+¥${packet.reward} 零工完成！`);
+    }
+    this.renderer.setGig(packet);
+    this.callbacks.onGig?.(packet);
+  }
+
   /** 进公寓：服务端占一个空闲窗口，头就出现在这栋楼的窗洞里（ADR-0098） */
   enterApartment(): void {
     this.net?.sendApartment({ action: 0, arg: 0 });
@@ -2542,11 +2909,14 @@ export class GameSession {
     }
   }
 
-  /** 本地移速乘子：与 `speedMultiplier` 同一组系数，只是数据源换成两张到期表 */
+  /** 本地移速乘子：与 `speedMultiplier` 同一组系数，只是数据源换成到期表 */
   private localSpeedMul(now: number): number {
     let mul = 1;
     if (now < this.localHasteUntil) mul *= BUFF_DEFS[BUFF.Haste].speedMul;
     if (now < this.localPosterUntil) mul *= BUFF_DEFS[BUFF.Poster].speedMul;
+    if (now < this.localCoffeeUntil) mul *= BUFF_DEFS[BUFF.CoffeeHeal].speedMul;
+    if (now < this.localBoxUntil) mul *= BUFF_DEFS[BUFF.Box].speedMul;
+    if (now < this.localStealthUntil) mul *= BUFF_DEFS[BUFF.Stealth].speedMul;
     return mul;
   }
 
@@ -2619,6 +2989,27 @@ export class GameSession {
     if (effect === PLAYER_EFFECT.Haste && targetId === this.localId) {
       this.localHasteUntil = Math.max(this.localHasteUntil, this.elapsed + durationMs);
       this.showHint('冰美式生效：移速 +15%，发泄冷却再缩 30%');
+    }
+    if (effect === PLAYER_EFFECT.CoffeeHeal && targetId === this.localId) {
+      this.localPosterUntil = 0;
+      this.localCoffeeUntil = Math.max(this.localCoffeeUntil, this.elapsed + durationMs);
+      this.emitAudio({ kind: 'coffee', x, y });
+      this.showHint('☕ 续命咖啡生效：负面清空，移速 +12%');
+    }
+    if (effect === PLAYER_EFFECT.Stealth && targetId === this.localId) {
+      this.localStealthUntil = Math.max(this.localStealthUntil, this.elapsed + durationMs);
+      this.showHint('🥷 隐身斗篷：12 秒内躲避保安巡逻视线');
+    }
+    if (effect === PLAYER_EFFECT.Box && targetId === this.localId) {
+      this.localBoxUntil = Math.max(this.localBoxUntil, this.elapsed + durationMs);
+      this.showHint('📦 纸箱伪装：静止即可躲避巡逻搜查');
+    }
+    if (effect === PLAYER_EFFECT.Pan && targetId === this.localId) {
+      this.localPanUntil = Math.max(this.localPanUntil, this.elapsed + durationMs);
+      this.showHint('🍳 老板平底锅：30 秒内抓捕即震晕保安并反赚 20 币');
+    }
+    if (effect === PLAYER_EFFECT.Spray && targetId === this.localId) {
+      this.showHint('🎨 金漆喷罐：涂鸦冷却已清零');
     }
     if (effect === PLAYER_EFFECT.Poster) this.renderer.showBubble(targetId, '🐟 带薪摸鱼');
     if (effect === PLAYER_EFFECT.Guard && targetId === this.localId) {
@@ -2736,6 +3127,17 @@ export class GameSession {
    * 姿态从不因叠加动作改写，所以「坐着发泄完还是坐着」不需要任何回滚逻辑。
    */
   private columnFor(netId: number, eid: number): number {
+    const fallActive = this.elapsed < GtaState.fallUntil[eid]! ? GtaState.fallKind[eid]! : 0;
+    const gta = gtaTrackFor(
+      this.gtaTracks,
+      fallActive,
+      GtaState.ghostMode[eid]!,
+      GtaState.vehicleId[eid]! !== 0,
+      netId === this.localId && this.elapsed < this.cprActiveUntil,
+    );
+    if (gta !== null) {
+      return frameAt(gta, this.elapsed - Motion.since[eid]! + phaseOffset(netId, gta));
+    }
     const pose = Motion.pose[eid]! as Pose;
     const jumping = Motion.jump[eid] === 1;
     const venting = Motion.vent[eid] === 1;
@@ -2779,7 +3181,9 @@ export class GameSession {
       this.inRoom ||
       this.escortLocked ||
       this.elapsed < this.stunUntil ||
-      this.elapsed < this.ventLockUntil;
+      this.elapsed < this.ventLockUntil ||
+      this.localGhostMode === GHOST_MODE.Flatline ||
+      this.elapsed < GtaState.fallUntil[eid]!;
 
     // 本帧手按方向：tick 里已经解算好，这里只读复用槽位
     const manual = this.manual;
@@ -2804,15 +3208,41 @@ export class GameSession {
     if (moving) {
       const prevX = Position.x[eid]!;
       const prevY = Position.y[eid]!;
-      // 本地预测乘上与 Buff 一致的移速系数：冰美式更快、降薪贴更慢
-      const speed = MOVE_SPEED * this.localSpeedMul(this.elapsed);
-      const nextX = clamp(prevX + vx * speed * dt, 0, WORLD_WIDTH - 1);
-      const nextY = clamp(prevY + vy * speed * dt, 0, WORLD_HEIGHT - 1);
-      // 与服务端同一个求解函数：本地预测不会出现「先穿墙再被拉回」
-      // 护士站门禁也在里面（ADR-0107），返回 true 表示这一帧被门线夹住
-      const gated = resolveWalkInto(this.motion, prevX, prevY, nextX, nextY);
-      // 顶在护士站门线上时解释一句，否则「门洞看得见却走不进去」会被当成 bug
-      if (gated) this.hintClinicGate();
+      if (this.localGhostMode === GHOST_MODE.Ghost) {
+        const speed = MOVE_SPEED * this.localSpeedMul(this.elapsed) * GHOST_SPEED_MUL;
+        const nextX = clamp(prevX + vx * speed * dt, 0, WORLD_WIDTH - 1);
+        const nextY = clamp(prevY + vy * speed * dt, 0, WORLD_HEIGHT - 1);
+        if (isOnLand(nextX, nextY, ISLAND_SAND)) {
+          this.motion.x = nextX;
+          this.motion.y = nextY;
+        } else if (isOnLand(nextX, prevY, ISLAND_SAND)) {
+          this.motion.x = nextX;
+          this.motion.y = prevY;
+        } else if (isOnLand(prevX, nextY, ISLAND_SAND)) {
+          this.motion.x = prevX;
+          this.motion.y = nextY;
+        } else {
+          this.motion.x = prevX;
+          this.motion.y = prevY;
+        }
+      } else if (this.localVehicleId !== 0) {
+        const veh = this.vehicleMap.get(this.localVehicleId);
+        const spec = veh ? VEHICLE_SPECS[veh.kind] : undefined;
+        if (this.sprintHeld && this.elapsed - this.lastBoostSentAt >= 900) {
+          this.lastBoostSentAt = this.elapsed;
+          this.net?.sendVehicle({ action: VEHICLE_ACTION.Boost, vehicleId: this.localVehicleId });
+        }
+        const speed = spec ? (this.sprintHeld ? spec.boostSpeed : spec.maxSpeed) : MOVE_SPEED * 1.65;
+        const nextX = clamp(prevX + vx * speed * dt, 0, WORLD_WIDTH - 1);
+        const nextY = clamp(prevY + vy * speed * dt, 0, WORLD_HEIGHT - 1);
+        resolveWalkInto(this.motion, prevX, prevY, nextX, nextY);
+      } else {
+        // 本地预测乘上与 Buff 一致的移速系数：冰美式更快、降薪贴更慢
+        const speed = MOVE_SPEED * this.localSpeedMul(this.elapsed);
+        const nextX = clamp(prevX + vx * speed * dt, 0, WORLD_WIDTH - 1);
+        const nextY = clamp(prevY + vy * speed * dt, 0, WORLD_HEIGHT - 1);
+        resolveWalkInto(this.motion, prevX, prevY, nextX, nextY);
+      }
       const advanced = Math.abs(this.motion.x - prevX) + Math.abs(this.motion.y - prevY) > 0.01;
       Position.x[eid] = this.motion.x;
       Position.y[eid] = this.motion.y;
@@ -2936,6 +3366,7 @@ export class GameSession {
     const column = canBlink ? BLINK_COLUMN : this.columnFor(netId, eid);
     this.renderer.setPose(netId, Motion.direction[eid]!, column);
     this.syncSeatLift(netId, eid);
+    this.renderer.setEntityGhost(netId, ghostAlpha(GtaState.ghostMode[eid]!, this.elapsed));
     this.renderer.setMotion(netId, motion);
 
     // 跳跃弧线：图集只负责姿势与 5 纹素腾空，剩下的落差与阴影由客户端叠
@@ -2970,8 +3401,22 @@ export class GameSession {
    * 不再补发积压：服务端速度窗口封顶后，一帧一个最新坐标比补发一串过期坐标更准。
    */
   private sendMove(eid: number): void {
-    const x = quantizeCoord(Position.x[eid]!);
-    const y = quantizeCoord(Position.y[eid]!);
+    let rawX = Position.x[eid]!;
+    let rawY = Position.y[eid]!;
+    if (this.localVehicleId !== 0) {
+      let steerX = this.manual.x;
+      let steerY = this.manual.y;
+      if (steerX === 0 && steerY === 0 && this.navigator.active) {
+        steerX = this.navVector.x;
+        steerY = this.navVector.y;
+      }
+      if (steerX !== 0 || steerY !== 0) {
+        rawX = clamp(rawX + steerX * 120, 0, WORLD_WIDTH - 1);
+        rawY = clamp(rawY + steerY * 120, 0, WORLD_HEIGHT - 1);
+      }
+    }
+    const x = quantizeCoord(rawX);
+    const y = quantizeCoord(rawY);
     const state = packState(
       Motion.direction[eid]! as Direction,
       Motion.pose[eid]! as Pose,
@@ -3005,7 +3450,9 @@ export class GameSession {
     // 输入：掩码 + 摇杆解算一次，动作环在本帧内排空（正常 0–1 个，容量 4）
     const control = this.env.control;
     control.readTouch(this.touch);
-    directionFromMask(control.readKeys(), this.touch.x, this.touch.y, this.manual);
+    const keyMask = control.readKeys();
+    this.sprintHeld = (keyMask & KEY_BIT.sprint) !== 0;
+    directionFromMask(keyMask, this.touch.x, this.touch.y, this.manual);
     for (let code = control.takeAction(); code !== 0; code = control.takeAction()) {
       const action = ACTION_BY_CODE[code];
       if (action) this.perform(action);
@@ -3118,7 +3565,80 @@ export class GameSession {
       }
       events.push({ x: event.x, y: event.y, tier: event.tier, age: Math.max(0, age) });
     }
-    return { x, y, region: regionAt(x, y), points, events, villas: this.villaStates };
+    let vCount = 0;
+    for (const v of this.vehicleMap.values()) {
+      let slot = this.minimapVehicles[vCount];
+      if (!slot) {
+        slot = { x: 0, y: 0, occupied: false };
+        this.minimapVehicles.push(slot);
+      }
+      slot.x = v.x;
+      slot.y = v.y;
+      slot.occupied = v.driverId !== 0;
+      vCount += 1;
+    }
+    this.minimapVehicles.length = vCount;
+
+    let wCount = 0;
+    for (const netId of this.names.keys()) {
+      const eid = this.ecs.get(netId);
+      if (!eid) continue;
+      const stars = GtaState.wantedStars[eid]!;
+      if (stars <= 0) continue;
+      let slot = this.minimapWanted[wCount];
+      if (!slot) {
+        slot = { x: 0, y: 0, stars: 0 };
+        this.minimapWanted.push(slot);
+      }
+      slot.x = netId === this.localId ? x : Position.x[eid]!;
+      slot.y = netId === this.localId ? y : Position.y[eid]!;
+      slot.stars = stars;
+      wCount += 1;
+    }
+    this.minimapWanted.length = wCount;
+
+    let tCount = 0;
+    for (let i = 0; i < GRAFFITI_WALLS.length; i += 1) {
+      const wall = GRAFFITI_WALLS[i]!;
+      let owned = false;
+      for (let j = 0; j < this.turfWalls.length; j += 1) {
+        const entry = this.turfWalls[j]!;
+        if (entry.wallId === wall.wallId) {
+          owned = entry.ownerId !== 0;
+          break;
+        }
+      }
+      let slot = this.minimapTurf[tCount];
+      if (!slot) {
+        slot = { x: 0, y: 0, owned: false };
+        this.minimapTurf.push(slot);
+      }
+      slot.x = wall.x;
+      slot.y = wall.y;
+      slot.owned = owned;
+      tCount += 1;
+    }
+    this.minimapTurf.length = tCount;
+
+    let gigTarget: { x: number; y: number } | null = null;
+    if (this.localGig?.state === GIG_STATE.Active) {
+      this.minimapGigTarget.x = this.localGig.targetX;
+      this.minimapGigTarget.y = this.localGig.targetY;
+      gigTarget = this.minimapGigTarget;
+    }
+
+    return {
+      x,
+      y,
+      region: regionAt(x, y),
+      points,
+      events,
+      villas: this.villaStates,
+      vehicles: this.minimapVehicles,
+      wanted: this.minimapWanted,
+      gigTarget,
+      turf: this.minimapTurf,
+    };
   }
 
   /**

@@ -17,6 +17,11 @@ import {
   type BossShockPacket,
   type QuestStatePacket,
   type WorldEventPacket,
+  type WantedStatePacket,
+  type GhostStatePacket,
+  type FishingStatePacket,
+  type GigStatePacket,
+  type TurfStatePacket,
 } from '@niuma/shared-types';
 import { create } from 'zustand';
 import { loadChatOpen, saveChatOpen } from './chat-prefs';
@@ -25,6 +30,7 @@ import type { ActivityItem } from './game/activity-feed';
 import type { BoardEntry, PlayerBadge } from './game/badge';
 import type { ChatEntry, SessionStats } from './game/session';
 import type { RenderMode } from './game/runtime/render-mode';
+import { serverNow } from './game/server-clock';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'queued' | 'online' | 'offline' | 'error';
 
@@ -150,6 +156,21 @@ interface GameUiState {
   activities: Array<ActivityItem & { at: number }>;
   /** 播报条开关（localStorage 记忆）：关掉后小地图标记照旧，两者互不牵连 */
   activityFeedOpen: boolean;
+  // ---- GTA 玩法扩展 HUD 状态 ----
+  wanted: { stars: number; bounty: number; clearCdSec: number; updatedAt: number };
+  ghost: { mode: number; cprProgress: number; leftMs: number; updatedAt: number };
+  driving: { vehicleId: number; kind: number };
+  fishing: { state: number; spotId: number; biteAtMs: number; rewardKind: number };
+  gig: (GigStatePacket & { receivedAt: number }) | null;
+  turf: TurfStatePacket | null;
+  estateOpen: boolean;
+  setWanted: (packet: WantedStatePacket | null) => void;
+  setGhost: (packet: GhostStatePacket | null) => void;
+  setDriving: (vehicleId: number, kind?: number) => void;
+  setFishing: (packet: FishingStatePacket | null) => void;
+  setGig: (packet: GigStatePacket | null) => void;
+  setTurf: (packet: TurfStatePacket | null) => void;
+  setEstateOpen: (open: boolean) => void;
   pushActivity: (event: Omit<ActivityItem, 'key'>) => void;
   setActivityFeedOpen: (open: boolean) => void;
   /** 从 localStorage 恢复开关偏好；只在会话启动时调一次 */
@@ -289,6 +310,13 @@ const INITIAL = {
   bossShock: null as { packet: BossShockPacket; receivedAt: number } | null,
   activities: [] as Array<ActivityItem & { at: number }>,
   activityFeedOpen: true,
+  wanted: { stars: 0, bounty: 0, clearCdSec: 0, updatedAt: 0 },
+  ghost: { mode: 0, cprProgress: 0, leftMs: 0, updatedAt: 0 },
+  driving: { vehicleId: 0, kind: 0 },
+  fishing: { state: 0, spotId: 0, biteAtMs: 0, rewardKind: 0 },
+  gig: null as (GigStatePacket & { receivedAt: number }) | null,
+  turf: null as TurfStatePacket | null,
+  estateOpen: false,
 };
 let coinPopSeq = 0;
 let activitySeq = 0;
@@ -349,6 +377,46 @@ export const useGameUi = create<GameUiState>((set) => ({
 
   // ---- 打工产出 / 随机事件 / 每日悬赏（ADR-0088）----
   setWorkOpen: (workOpen) => set({ workOpen }),
+  setWanted: (packet) =>
+    set({
+      wanted: packet
+        ? {
+            stars: packet.stars,
+            bounty: packet.bounty,
+            clearCdSec: packet.clearCdSec,
+            updatedAt: serverNow(),
+          }
+        : { stars: 0, bounty: 0, clearCdSec: 0, updatedAt: 0 },
+    }),
+  setGhost: (packet) =>
+    set({
+      ghost: packet
+        ? {
+            mode: packet.mode,
+            cprProgress: packet.cprProgress,
+            leftMs: packet.leftMs,
+            updatedAt: serverNow(),
+          }
+        : { mode: 0, cprProgress: 0, leftMs: 0, updatedAt: 0 },
+    }),
+  setDriving: (vehicleId, kind = 0) => set({ driving: { vehicleId, kind } }),
+  setFishing: (packet) =>
+    set({
+      fishing: packet
+        ? {
+            state: packet.state,
+            spotId: packet.spotId,
+            biteAtMs: packet.biteAtMs,
+            rewardKind: packet.rewardKind,
+          }
+        : { state: 0, spotId: 0, biteAtMs: 0, rewardKind: 0 },
+    }),
+  setGig: (packet) =>
+    set({
+      gig: packet ? { ...packet, receivedAt: serverNow() } : null,
+    }),
+  setTurf: (turf) => set({ turf }),
+  setEstateOpen: (estateOpen) => set({ estateOpen }),
   setQuests: (quests) => set({ quests }),
   setQuestOpen: (questOpen) => set({ questOpen }),
   // 横幅与冲击波都记下收到时刻：倒计时与动画按本地单调时钟推进，不受本机日历影响

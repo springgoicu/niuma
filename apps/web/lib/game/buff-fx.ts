@@ -31,6 +31,7 @@ interface BuffEntry {
 
 const HASTE_ARC_MS = 620;
 const SHIELD_BREATH_MS = 1600;
+const OUTLINE_COLOR = 0x2a3142;
 
 export class BuffFx {
   readonly container = new Container();
@@ -44,7 +45,15 @@ export class BuffFx {
 
   set(id: number, kind: number, durationMs: number, now: number): void {
     if (durationMs <= 0) return;
-    if (kind !== PLAYER_EFFECT.Haste && kind !== PLAYER_EFFECT.Shield && kind !== PLAYER_EFFECT.Poster) {
+    if (
+      kind !== PLAYER_EFFECT.Haste &&
+      kind !== PLAYER_EFFECT.Shield &&
+      kind !== PLAYER_EFFECT.Poster &&
+      kind !== PLAYER_EFFECT.Stealth &&
+      kind !== PLAYER_EFFECT.Box &&
+      kind !== PLAYER_EFFECT.Pan &&
+      kind !== PLAYER_EFFECT.CoffeeHeal
+    ) {
       return;
     }
     this.entries.set(`${id}:${kind}`, { id, kind, until: now + durationMs, since: now });
@@ -77,7 +86,11 @@ export class BuffFx {
       const y = Math.round(view.root.position.y);
       if (entry.kind === PLAYER_EFFECT.Haste) this.drawHaste(x, y, entry.since, now);
       else if (entry.kind === PLAYER_EFFECT.Shield) this.drawShield(x, y, entry.since, now);
-      else this.drawPoster(x, y);
+      else if (entry.kind === PLAYER_EFFECT.Poster) this.drawPoster(x, y);
+      else if (entry.kind === PLAYER_EFFECT.Stealth) this.drawStealth(x, y, entry.since, now);
+      else if (entry.kind === PLAYER_EFFECT.Box) this.drawBox(x, y);
+      else if (entry.kind === PLAYER_EFFECT.Pan) this.drawPan(x, y, entry.since, now);
+      else if (entry.kind === PLAYER_EFFECT.CoffeeHeal) this.drawCoffeeHeal(x, y, entry.since, now);
     }
   }
 
@@ -113,6 +126,44 @@ export class BuffFx {
     this.gfx.rect(x + 2, top + 3, 6, 2).fill(0x0f2f22);
     // 小挂绳：让牌子看起来是「挂」在头顶而不是浮着
     this.gfx.rect(x - 1, top - 3, 2, 3).fill(0x0f2f22);
+  }
+
+  /** 隐身披风：幽紫半透明潜行轮廓环 */
+  private drawStealth(x: number, y: number, since: number, now: number): void {
+    const breath = (Math.sin(((now - since) / SHIELD_BREATH_MS) * Math.PI * 2) + 1) / 2;
+    const alpha = 0.3 + breath * 0.35;
+    this.gfx.ellipse(x, y, 12, 4).stroke({ width: 1, color: 0x9b87f5, alpha });
+    this.gfx.ellipse(x, y - 16, 10, 15).stroke({ width: 1, color: OUTLINE_COLOR, alpha: alpha * 0.85 });
+  }
+
+  /** 纸箱伪装：牛皮纸箱套住上半身 + 封箱胶带 */
+  private drawBox(x: number, y: number): void {
+    this.gfx.rect(x - 11, y - 24, 22, 18).fill(OUTLINE_COLOR);
+    this.gfx.rect(x - 10, y - 23, 20, 16).fill(0xd6a66a);
+    this.gfx.rect(x - 10, y - 16, 20, 2).fill(0xb57f45);
+    this.gfx.rect(x - 6, y - 20, 4, 2).fill(OUTLINE_COLOR);
+    this.gfx.rect(x + 2, y - 20, 4, 2).fill(OUTLINE_COLOR);
+  }
+
+  /** 平底锅反制：角色右侧悬浮一枚金属平底锅图标，准备随时反击保安 */
+  private drawPan(x: number, y: number, since: number, now: number): void {
+    const bob = Math.round(Math.sin(((now - since) / HASTE_ARC_MS) * Math.PI * 2));
+    const px = x + 13;
+    const py = y - 20 + bob;
+    this.gfx.circle(px, py, 5).fill(OUTLINE_COLOR);
+    this.gfx.circle(px, py, 3).fill(0x8c97aa);
+    this.gfx.rect(px - 1, py + 4, 2, 6).fill(OUTLINE_COLOR);
+    this.gfx.rect(px + 2, py - 2, 2, 2).fill(0xf6c453);
+  }
+
+  /** 孟婆特调咖啡：金翠温热环绕上浮粒子 */
+  private drawCoffeeHeal(x: number, y: number, since: number, now: number): void {
+    const phase = (((now - since) % HASTE_ARC_MS) / HASTE_ARC_MS + 1) % 1;
+    const rise = Math.round(phase * 12);
+    const alpha = 0.7 * (1 - phase * 0.6);
+    this.gfx.ellipse(x, y, 13, 4).stroke({ width: 1, color: 0xf6c453, alpha: alpha * 0.7 });
+    this.gfx.rect(x - 6, y - 8 - rise, 3, 3).fill({ color: 0x34d3a6, alpha });
+    this.gfx.rect(x + 4, y - 12 - rise, 3, 3).fill({ color: 0xf6c453, alpha });
   }
 
   destroy(): void {

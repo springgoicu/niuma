@@ -78,14 +78,11 @@ describe('园区导览到达点（ADR-0040 / ADR-0097）', () => {
     }
   });
 
-  it('护士急救站：到达点落在西门外的铺装上，不越过门禁（ADR-0107）', () => {
+  it('护士急救站：开放通行后导览直接送入急诊大厅内部', () => {
     const clinic = NAV_TARGETS.find((item) => item.id === 'clinic');
     if (!clinic) throw new Error('缺少护士急救站导览目标');
-    // 站内只收救护车送来的伤员：导览把人送到门外，玩家不会被顶在门线上
-    expect(rectContains(CLINIC_RECT, clinic.arrive.x, clinic.arrive.y)).toBe(false);
-    expect(isInClinicInterior(clinic.arrive.x, clinic.arrive.y)).toBe(false);
-    // 仍在急救站区域矩形里：区域名照旧显示「护士急救站」
-    expect(rectContains(CLINIC_ACCESS_PAVING, clinic.arrive.x, clinic.arrive.y)).toBe(true);
+    expect(rectContains(CLINIC_RECT, clinic.arrive.x, clinic.arrive.y)).toBe(true);
+    expect(isInClinicInterior(clinic.arrive.x, clinic.arrive.y)).toBe(true);
     expect(rectContains(CLINIC_REGION_RECT, clinic.arrive.x, clinic.arrive.y)).toBe(true);
   });
 

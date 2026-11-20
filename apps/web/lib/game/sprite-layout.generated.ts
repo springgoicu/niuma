@@ -11,11 +11,11 @@ export interface GeneratedClip {
 }
 
 export const SPRITE_LAYOUT = {
-  "version": 11,
+  "version": 12,
   "frame": {
     "w": 64,
     "h": 64,
-    "columns": 34,
+    "columns": 53,
     "rows": 4
   },
   "origin": {
@@ -190,6 +190,100 @@ export const SPRITE_LAYOUT = {
       ],
       "loopFrom": 0,
       "loop": false
+    },
+    "slip": {
+      "frames": [
+        34,
+        35,
+        36
+      ],
+      "frameMs": [
+        120,
+        180,
+        320
+      ],
+      "loopFrom": 2,
+      "loop": false
+    },
+    "tumble": {
+      "frames": [
+        37,
+        38,
+        39,
+        40
+      ],
+      "frameMs": [
+        110,
+        110,
+        120,
+        140
+      ],
+      "loopFrom": 0,
+      "loop": true
+    },
+    "tornado": {
+      "frames": [
+        41,
+        42
+      ],
+      "frameMs": [
+        90,
+        90
+      ],
+      "loopFrom": 0,
+      "loop": true
+    },
+    "flatline": {
+      "frames": [
+        43,
+        44
+      ],
+      "frameMs": [
+        480,
+        480
+      ],
+      "loopFrom": 0,
+      "loop": true
+    },
+    "ghost": {
+      "frames": [
+        45,
+        46,
+        47
+      ],
+      "frameMs": [
+        220,
+        220,
+        220
+      ],
+      "loopFrom": 0,
+      "loop": true
+    },
+    "drive": {
+      "frames": [
+        48,
+        49
+      ],
+      "frameMs": [
+        180,
+        180
+      ],
+      "loopFrom": 0,
+      "loop": true
+    },
+    "cpr": {
+      "frames": [
+        50,
+        51,
+        52
+      ],
+      "frameMs": [
+        150,
+        150,
+        150
+      ],
+      "loopFrom": 0,
+      "loop": true
     }
   },
   "cosmeticSize": 20,

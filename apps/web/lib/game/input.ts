@@ -4,7 +4,7 @@ import { KEY_BIT } from './runtime/control-channel';
  * 动作键的语义编号。跨线程传输用数字（见 `runtime/control-channel.ts` 的动作环），
  * 组件层仍然按字符串识别，两边靠 `ACTION_CODE` / `ACTION_BY_CODE` 互转。
  */
-export type ActionKey = 'sit' | 'lie' | 'vent' | 'jump' | 'wave' | 'interact';
+export type ActionKey = 'sit' | 'lie' | 'vent' | 'jump' | 'wave' | 'interact' | 'vehicle' | 'cpr' | 'gig';
 
 export const ACTION_CODE: Readonly<Record<ActionKey, number>> = {
   sit: 1,
@@ -14,6 +14,9 @@ export const ACTION_CODE: Readonly<Record<ActionKey, number>> = {
   jump: 4,
   wave: 5,
   interact: 6,
+  vehicle: 7,
+  cpr: 8,
+  gig: 9,
 };
 
 export const ACTION_BY_CODE: Readonly<Record<number, ActionKey>> = {
@@ -23,6 +26,9 @@ export const ACTION_BY_CODE: Readonly<Record<number, ActionKey>> = {
   4: 'jump',
   5: 'wave',
   6: 'interact',
+  7: 'vehicle',
+  8: 'cpr',
+  9: 'gig',
 };
 
 /** 键盘 `event.code` → 方向位；非移动键返回 0 */

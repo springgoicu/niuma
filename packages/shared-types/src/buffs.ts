@@ -19,16 +19,25 @@ export const PLAYER_EFFECT = {
   Slip: 4,
   Guard: 5,
   Sparkle: 6,
+  Stealth: 7,
+  Box: 8,
+  Pan: 9,
+  CoffeeHeal: 10,
+  Spray: 11,
 } as const;
 export type PlayerEffectId = (typeof PLAYER_EFFECT)[keyof typeof PLAYER_EFFECT];
 
-/** 进入 `Player.activeBuffs` 的状态：没有 Sparkle */
+/** 进入 `Player.activeBuffs` 的状态：没有 Sparkle/Spray */
 export const BUFF = {
   Haste: PLAYER_EFFECT.Haste,
   Shield: PLAYER_EFFECT.Shield,
   Poster: PLAYER_EFFECT.Poster,
   Slip: PLAYER_EFFECT.Slip,
   Guard: PLAYER_EFFECT.Guard,
+  Stealth: PLAYER_EFFECT.Stealth,
+  Box: PLAYER_EFFECT.Box,
+  Pan: PLAYER_EFFECT.Pan,
+  CoffeeHeal: PLAYER_EFFECT.CoffeeHeal,
 } as const;
 export type BuffType = (typeof BUFF)[keyof typeof BUFF];
 
@@ -93,6 +102,42 @@ export const BUFF_DEFS: Readonly<Record<BuffType, BuffDef>> = {
     ventCdMul: 1,
     trick: false,
     label: '被盯梢',
+  },
+  [BUFF.Stealth]: {
+    type: BUFF.Stealth,
+    effect: PLAYER_EFFECT.Stealth,
+    durationMs: 12_000,
+    speedMul: 1.05,
+    ventCdMul: 1,
+    trick: false,
+    label: '隐身摸鱼',
+  },
+  [BUFF.Box]: {
+    type: BUFF.Box,
+    effect: PLAYER_EFFECT.Box,
+    durationMs: 25_000,
+    speedMul: 0.65,
+    ventCdMul: 1,
+    trick: false,
+    label: '纸箱伪装',
+  },
+  [BUFF.Pan]: {
+    type: BUFF.Pan,
+    effect: PLAYER_EFFECT.Pan,
+    durationMs: 30_000,
+    speedMul: 1,
+    ventCdMul: 1,
+    trick: false,
+    label: '持锅戒备',
+  },
+  [BUFF.CoffeeHeal]: {
+    type: BUFF.CoffeeHeal,
+    effect: PLAYER_EFFECT.CoffeeHeal,
+    durationMs: 20_000,
+    speedMul: 1.12,
+    ventCdMul: 0.85,
+    trick: false,
+    label: '孟婆续命',
   },
 };
 

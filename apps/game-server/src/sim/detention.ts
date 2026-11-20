@@ -1,5 +1,6 @@
 import {
   ACTIVITY_KIND,
+  BUFF,
   DIRECTION,
   ENTITY_ROLE_GUARD,
   ENTITY_ROLE_NURSE,
@@ -11,6 +12,7 @@ import {
   encodeSystemNotice,
   formatSystemNotice,
 } from '@niuma/shared-types';
+import { clearBuff } from './buffs';
 import type { SpatialGrid } from '../spatial/grid';
 import type { ActivityHub } from './activity';
 import { broadcastSystemNotice } from './notice';
@@ -101,7 +103,8 @@ export type EscortAbortReason =
   | 'stuck'
   | 'cancelled'
   | 'guard_down'
-  | 'target_down';
+  | 'target_down'
+  | 'pan_counter';
 
 /** 保安任务回报：追击中抓到、送到反省点、或异常中止 */
 export type EscortEvent =
@@ -124,6 +127,10 @@ export interface DetentionOptions {
   releaseSeat(player: Player): void;
   /** 全园区播报端口（ADR-0112）：可选注入，测试与无播报部署零改动 */
   activity?: ActivityHub;
+  /** 平底锅反击保安成功回调 */
+  onPanCounter?: (guard: Player, target: Player, now: number) => void;
+  /** 送进小黑屋完成回调（用于重置通缉星级等） */
+  onJailed?: (player: Player, now: number) => void;
 }
 
 type CasePhase = 'pending' | 'chasing' | 'dragging';
@@ -165,6 +172,8 @@ export class Detention implements VentHitObserver {
   private readonly escort: EscortPort;
   private readonly releaseSeat: (player: Player) => void;
   private readonly activity: ActivityHub | undefined;
+  private readonly onPanCounterCb: DetentionOptions['onPanCounter'];
+  private readonly onJailedCb: DetentionOptions['onJailed'];
   private readonly watches = new Map<number, CycleWatch>();
   private readonly cases = new Map<number, DetentionCase>();
   /** 打人账本：攻击者 id → 受害者 id → 窗口内的命中时刻 */
@@ -185,6 +194,38 @@ export class Detention implements VentHitObserver {
     this.escort = options.escort;
     this.releaseSeat = options.releaseSeat;
     this.activity = options.activity;
+    this.onPanCounterCb = options.onPanCounter;
+    this.onJailedCb = options.onJailed;
+  }
+
+  /** 通缉星级触发保安追捕建案（避免反复派单） */
+  openWantedCase(player: Player, now: number): void {
+    if (player.isNpc || player.wsId === 0 || player.incapacitated) return;
+    if (this.cases.has(player.id)) return;
+    this.openCase(player, now, SYSTEM_NOTICE_KIND.DetainedFight);
+  }
+
+  /** 街头自首：清空当前押送单并直接请进小黑屋反省点 */
+  jailImmediate(player: Player, now: number): void {
+    if (player.isNpc || player.wsId === 0) return;
+    const existing = this.cases.get(player.id);
+    if (existing) {
+      this.escort.cancel(player.id);
+      this.cases.delete(player.id);
+    }
+    const anchorIdx = this.pickAnchor();
+    const anchor = JAIL_ANCHORS[anchorIdx] ?? JAIL_ANCHORS[1]!;
+    player.seat = 0;
+    player.stunUntil = 0;
+    player.lastMoveAt = now;
+    player.x = anchor.x;
+    player.y = anchor.y;
+    player.applyState(DIRECTION.Up, POSE.Idle, false);
+    player.markDirtyIfChanged();
+    if (this.grid.update(player.id, player.x, player.y)) player.needsViewRefresh = true;
+    this.broadcast(player, JAIL_PHASE.Released, 0, 0);
+    this.activity?.emit(ACTIVITY_KIND.GuardJailed, player.id, now);
+    this.onJailedCb?.(player, now);
   }
 
   /**
@@ -351,6 +392,21 @@ export class Detention implements VentHitObserver {
       this.broadcast(player, JAIL_PHASE.Released, 0, event.guardId);
       this.activity?.emit(ACTIVITY_KIND.GuardJailed, player.id, event.now);
       this.cases.delete(event.targetId);
+      this.onJailedCb?.(player, event.now);
+      return;
+    }
+
+    if (event.kind === 'abort' && event.reason === 'pan_counter') {
+      const guard = this.world.get(event.guardId);
+      clearBuff(player, BUFF.Pan, event.now);
+      if (guard) {
+        guard.panStunUntil = event.now + 2_000;
+        guard.stunUntil = event.now + 2_000;
+        guard.applyState(guard.direction, POSE.Lie, false);
+        guard.markDirtyIfChanged();
+        this.onPanCounterCb?.(guard, player, event.now);
+      }
+      this.abort(player, entry, 'pan_counter');
       return;
     }
 

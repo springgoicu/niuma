@@ -27,8 +27,8 @@ export const NPC_ROLE_WORKER = 0;
 export const NPC_ROLE_GUARD = 1;
 export type NpcRole = typeof NPC_ROLE_WORKER | typeof NPC_ROLE_GUARD;
 
-/** 固定 3 位保安；不随 GAME_NPC_COUNT 变化，关停仍由 GAME_NPC_ENABLED/count=0 控制 */
-export const GUARD_COUNT = 3;
+/** 固定 4 位保安（Stage 2 优化加派巡逻编制）；关停仍由 GAME_NPC_ENABLED/count=0 控制 */
+export const GUARD_COUNT = 4;
 
 /** 保安统一显示名：4 个汉字 = 8 显示宽，仍落在头顶 16 单位预算内 */
 export const GUARD_NAME = '园区保安';

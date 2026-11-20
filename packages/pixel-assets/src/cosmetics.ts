@@ -28,6 +28,9 @@ export const COSMETIC_CATALOG = {
     // ADR-0088：打工经济上线后的一批「暴富」件（只许追加）
     'golden_helmet',
     'crown',
+    // Stage 1：喜剧职场头饰（与 HEADWEAR_IDS 严格对齐）
+    'balding_wig',
+    'delivery_helmet',
   ],
   eyes: ['round', 'sun', 'monocle', 'cyber_shades', 'gold_rim_glasses'],
   neck: ['scarf', 'collar', 'phones', 'chinese_knot', 'jade_pendant', 'epaulette', 'gold_chain', 'red_scarf'],
@@ -416,7 +419,7 @@ function drawHeadwear(id: string, dir: CosmeticDirection): Icon {
     icon.rect(9, 3, 1, 1, TRIM);
     icon.rect(12, 3, 1, 1, TRIM);
     icon.rect(10, 4, 2, 1, TRIM);
-  } else {
+  } else if (id === 'curse_hoop') {
     // 赛博紧箍咒（ADR-0061）：贴前额的一圈金箍（row 10–12），
     // 上下各留一档亮边当「自带辉光」，正中 3×3 空心方环读成卷云纹。
     if (dir === 'side') {
@@ -440,6 +443,45 @@ function drawHeadwear(id: string, dir: CosmeticDirection): Icon {
     icon.rect(9, 11, 1, 1, DEEP);
     icon.rect(11, 11, 1, 1, DEEP);
     icon.rect(9, 12, 3, 1, DEEP);
+  } else if (id === 'balding_wig') {
+    // 资深秃顶假发：光亮光滑地中海发际线 + 两侧一圈碎发
+    if (dir === 'side') {
+      icon.rect(4, 5, 11, 2, TRIM);
+      icon.rect(2, 7, 5, 4, SHADE);
+      icon.rect(2, 8, 3, 3, DEEP);
+      return finished(icon);
+    }
+    if (dir === 'up') {
+      icon.rect(4, 5, 12, 2, TRIM);
+      icon.rect(2, 7, 16, 4, SHADE);
+      icon.rect(3, 9, 14, 2, DEEP);
+      return finished(icon);
+    }
+    // 正面：头顶反光高光弧 + 两鬓「地中海」耳上毛发
+    icon.rect(6, 5, 8, 1, TRIM);
+    icon.rect(8, 6, 3, 1, TRIM);
+    icon.rect(2, 7, 3, 4, SHADE);
+    icon.rect(15, 7, 3, 4, SHADE);
+    icon.rect(2, 9, 3, 2, DEEP);
+    icon.rect(15, 9, 3, 2, DEEP);
+  } else if (id === 'delivery_helmet') {
+    // 闪送黄色头盔：圆润亮面盔体 + 双兔耳状小天线/反光风镜檐
+    if (dir === 'side') {
+      icon.rect(8, 1, 2, 2, TRIM);
+      icon.rect(6, 3, 9, 1, BASE);
+      icon.rect(4, 4, 12, 3, BASE);
+      icon.rect(5, 7, 11, 2, SHADE);
+      icon.rect(11, 7, 6, 2, DEEP);
+      return finished(icon);
+    }
+    icon.rect(5, 1, 2, 2, TRIM);
+    icon.rect(13, 1, 2, 2, TRIM);
+    icon.rect(5, 3, 10, 1, BASE);
+    icon.rect(3, 4, 14, 4, BASE);
+    icon.rect(4, 8, 12, 2, DEEP);
+    if (dir === 'down') {
+      icon.rect(6, 5, 8, 1, TRIM);
+    }
   }
 
   return finished(icon);

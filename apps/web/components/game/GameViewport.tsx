@@ -10,6 +10,7 @@ import {
   INTERACT_REASON,
   ITEM_REJECT_LABEL,
   SHOUT_REJECT_LABEL,
+  VILLA_SPECS,
   type BoardMetric,
   type BoardPacket,
   P2P_INVITE_REASON_LABEL,
@@ -81,7 +82,10 @@ import {
 import { InstallAppButton } from './InstallAppButton';
 import { ActivityFeed } from './ActivityFeed';
 import { DistrictBanner } from './DistrictBanner';
+import { EstateBoardDialog } from './EstateBoardDialog';
+import { GigAndStatusHUD } from './GigAndStatusHUD';
 import { InteractionHint } from './InteractionHint';
+import { WantedStarsHUD } from './WantedStarsHUD';
 import { JoinGate } from './JoinGate';
 import { LeaderboardDialog } from './LeaderboardDialog';
 import { MiniMap } from './MiniMap';
@@ -120,6 +124,14 @@ const INTERACT_VERB: Record<number, string> = {
   [INTERACT_ACTION.QuestClaim]: '领悬赏',
   [INTERACT_ACTION.EventClaim]: '抢红包',
   [INTERACT_ACTION.Apartment]: '公寓探头',
+  [INTERACT_ACTION.Fishing]: '摸鱼垂钓',
+  [INTERACT_ACTION.Vehicle]: '驾驶载具',
+  [INTERACT_ACTION.ClearStar]: '消星洗白',
+  [INTERACT_ACTION.Graffiti]: '街头涂鸦',
+  [INTERACT_ACTION.Gig]: '街头零工',
+  [INTERACT_ACTION.Cpr]: '街头急救',
+  [INTERACT_ACTION.VillaCustomize]: '门匾装修',
+  [INTERACT_ACTION.ClinicCoffee]: '续命咖啡',
   [INTERACT_ACTION.Unknown]: '操作',
 };
 
@@ -190,6 +202,8 @@ export function GameViewport({
   const [bulletinOpen, setBulletinOpen] = useState(false);
   /** 代码工位彩蛋（F2）：只在电脑端有入口，整层盖住园区 HUD */
   const [studioOpen, setStudioOpen] = useState(false);
+  /** `?crt=1` 怀旧扫描线叠加层（仅客户端 effect 读取，SSR 首帧安全） */
+  const [crtEnabled, setCrtEnabled] = useState(false);
   /** 五个指标的快照：一次请求回五条，页签切换只读本地缓存 */
   const [boards, setBoards] = useState<Partial<Record<BoardMetric, BoardPacket>>>({});
   /** 行为统计门面：距离 / 摸鱼 / 被喷 / 加班都从这里记 */
@@ -248,6 +262,10 @@ export function GameViewport({
   const wallet = useGameUi((state) => state.wallet);
   const quests = useGameUi((state) => state.quests);
   const seated = useGameUi((state) => state.seated);
+  const estateOpen = useGameUi((state) => state.estateOpen);
+  const villas = useGameUi((state) => state.villas);
+  const setEstateOpen = useGameUi((state) => state.setEstateOpen);
+  const setVillaOpen = useGameUi((state) => state.setVillaOpen);
   /** 有可领的悬赏就在按钮上点一颗金点：不发通知、不抢焦点 */
   const questReady = (quests?.entries ?? []).some(
     (entry) => !entry.claimed && entry.progress >= entry.target,
@@ -367,6 +385,7 @@ export function GameViewport({
   // 挂载后再读盘：localStorage 在 SSR 不存在，首帧必须与默认值一致才不触发水合告警
   useEffect(() => {
     setDanmakuPrefs(loadDanmakuPrefs());
+    setCrtEnabled(new URLSearchParams(window.location.search).get('crt') === '1');
   }, []);
 
   // 进入园区即开始本地考勤：1 秒心跳走内存，离开页面 / 卸载时停表并落盘。
@@ -641,6 +660,29 @@ export function GameViewport({
             ui.setHint('画饼冲击波！按 Space 跳起');
           }
         },
+        onEstateBoardOpen: () => {
+          clientRef.current?.clearMovement();
+          useGameUi.getState().setEstateOpen(true);
+        },
+        onWanted: (packet) => {
+          const ui = useGameUi.getState();
+          if (packet.id === ui.selfId || ui.selfId === 0) ui.setWanted(packet);
+        },
+        onVehicleState: (packet) => {
+          const ui = useGameUi.getState();
+          const mine = ui.selfId > 0 ? packet.vehicles.find((v) => v.driverId === ui.selfId) : undefined;
+          ui.setDriving(mine?.vehicleId ?? 0, mine?.kind ?? 0);
+        },
+        onGhost: (packet) => {
+          const ui = useGameUi.getState();
+          if (packet.id === ui.selfId || ui.selfId === 0) ui.setGhost(packet);
+        },
+        onFishing: (packet) => {
+          const ui = useGameUi.getState();
+          if (packet.id === ui.selfId || ui.selfId === 0) ui.setFishing(packet);
+        },
+        onTurf: (packet) => useGameUi.getState().setTurf(packet),
+        onGig: (packet) => useGameUi.getState().setGig(packet),
       },
       // Enter 与点选都发生在主线程：键盘监听不经过渲染线程，命中判定在渲染线程
       onRequestChat: openChat,
@@ -1036,6 +1078,26 @@ export function GameViewport({
                 <MiniMap hostRef={minimapRef} />
               </div>
             )}
+
+            {/* GTA 状态浮层：通缉星级 / 零工倒计时 / 钓鱼提示 / 濒死幽灵 */}
+            <div className="pointer-events-none absolute right-3 top-16 z-20 flex max-w-[320px] flex-col items-end gap-2 sm:right-5 sm:top-18">
+              <WantedStarsHUD
+                onClearStar={(method, param = 0) =>
+                  clientRef.current?.clearStar({ method, param })
+                }
+                onNavigateBooth={() => clientRef.current?.navigateHome()}
+                onNavigatePayphone={() => clientRef.current?.navigateTo('clinic')}
+              />
+              <GigAndStatusHUD
+                onFishing={(action, spotId) =>
+                  clientRef.current?.fishingAction({ action, spotId })
+                }
+                onGig={(action, targetId = 0) =>
+                  clientRef.current?.gigAction({ action, targetId })
+                }
+                onCprSelf={() => clientRef.current?.cpr({ targetId: 0 })}
+              />
+            </div>
           </div>
 
           {/* 牛马币互动层：快捷菜单 / 邀请 / 对局 / 商店 / 飘字共享同一 z-index */}
@@ -1072,7 +1134,25 @@ export function GameViewport({
             onP2PAction={(matchId, action) => clientRef.current?.p2pAction(matchId, action)}
             onShout={(text) => clientRef.current?.shout(text)}
             onVilla={(villa, action) => clientRef.current?.villaAction(villa, action)}
+            onVillaCustomize={(villa, theme, tagline) =>
+              clientRef.current?.villaCustomize({ villa, theme, tagline })
+            }
           />
+
+          <EstateBoardDialog
+            open={estateOpen}
+            villas={villas}
+            onClose={() => setEstateOpen(false)}
+            onInspectVilla={(id) => setVillaOpen(id)}
+            onNavigateVilla={(id) => {
+              const spec = VILLA_SPECS.find((item) => item.id === id);
+              if (spec) clientRef.current?.navigateTo(spec.navId);
+            }}
+          />
+
+          {crtEnabled && (
+            <div aria-hidden className="crt-scanlines pointer-events-none absolute inset-0 z-40" />
+          )}
 
           {/* 他人工牌：桌面与手机共用同一个完整档案弹窗，避免两套布局的字段漂移 */}
           <RemoteArchiveDialog

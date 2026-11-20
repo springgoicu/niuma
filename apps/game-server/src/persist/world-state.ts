@@ -323,6 +323,15 @@ function normalizeVillas(raw: unknown): { villas: VillaRecordShape[] } {
       ownerId: 0,
       locked: record.locked === true,
       lastCollectAt: Number.isFinite(record.lastCollectAt) ? Math.floor(record.lastCollectAt!) : 0,
+      ...(typeof record.theme === 'number' && Number.isFinite(record.theme)
+        ? { theme: Math.max(0, Math.min(2, Math.floor(record.theme))) }
+        : {}),
+      ...(typeof record.tagline === 'string' && record.tagline.length > 0
+        ? { tagline: record.tagline.slice(0, 36) }
+        : {}),
+      ...(typeof record.lastOnlineAt === 'number' && Number.isFinite(record.lastOnlineAt)
+        ? { lastOnlineAt: Math.floor(record.lastOnlineAt) }
+        : {}),
     });
   }
   return { villas };
@@ -335,6 +344,9 @@ type VillaRecordShape = {
   ownerId: number;
   locked: boolean;
   lastCollectAt: number;
+  theme?: number;
+  tagline?: string;
+  lastOnlineAt?: number;
 };
 
 function isProfileRecord(value: unknown): value is ProfileRecord {

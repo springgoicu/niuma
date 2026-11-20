@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  BUFF,
   DEFAULT_APPEARANCE,
   JAIL,
   JAIL_DOOR,
@@ -60,17 +61,14 @@ function inJail(player: Player): boolean {
   );
 }
 
-describe('押送状态机（ADR-0072）', () => {
-  it('抓取 → 按肩 → 拖行：保安与被押者一路移动到小黑屋', () => {
+describe('押送状态机（ADR-0072 -> 2.2s 戏剧性抓捕定格）', () => {
+  it('抓取 → 2.2s 当场制服定格（hold）→ 到达（arrive）', () => {
     warmEscortGrid();
-    const { world, guard, target, agent, task } = setup();
+    const { world, target, agent, task } = setup();
     const events: EscortEvent[] = [];
-    const startX = target.x;
     let now = NOW;
-    /** 抓到时刻与首次进入拖行的时刻：两者之间必须隔着按肩停顿 */
     let grabbedAt = 0;
-    let dragAt = 0;
-    let towDistance = Number.POSITIVE_INFINITY;
+    let arrivedAt = 0;
 
     for (let tick = 0; tick < MAX_TICKS; tick += 1) {
       now += TICK_MS;
@@ -80,28 +78,35 @@ describe('押送状态机（ADR-0072）', () => {
         if (event.kind === 'grab') {
           grabbedAt = now;
           expect(target.pose).toBe(POSE.Lie);
+          expect(task.stage).toBe('hold');
+        }
+        if (event.kind === 'arrive') {
+          arrivedAt = now;
+          break;
         }
       }
-      // 阶段必须真的切到 drag：漏掉这一步会永远停在按肩阶段，双方原地不动
-      if (dragAt === 0 && task.stage === 'drag') dragAt = now;
-      if (dragAt !== 0) {
-        towDistance = Math.min(towDistance, Math.hypot(guard.x - target.x, guard.y - target.y));
-      }
-      if (events.some((entry) => entry.kind === 'arrive')) break;
     }
 
     expect(events[0]?.kind).toBe('grab');
-    expect(dragAt).toBeGreaterThan(0);
-    expect(dragAt - grabbedAt).toBeGreaterThanOrEqual(ESCORT.GRAB_HOLD_MS);
-    // 被押者被带着走了至少一个身位，并且进了屋（ADR-0077：房间收小，位移从 200 降到 180）
-    expect(target.x - startX).toBeGreaterThan(150);
-    expect(target.x).toBeGreaterThan(JAIL.x);
-    // 拖行时目标始终挂在保安身后 22px
-    expect(towDistance).toBeLessThanOrEqual(ESCORT.TOW_OFFSET_PX + 1);
-    // 保安自己也要进屋：不能站在墙外判定到达
-    expect(inJail(guard)).toBe(true);
-    expect(inJail(target)).toBe(true);
+    expect(grabbedAt).toBeGreaterThan(0);
+    expect(arrivedAt - grabbedAt).toBeGreaterThanOrEqual(ESCORT.GRAB_HOLD_MS);
     expect(events[events.length - 1]?.kind).toBe('arrive');
+  });
+
+  it('持平底锅 Buff 的玩家接近抓取半径时触发 pan_counter 反杀中止', () => {
+    warmEscortGrid();
+    const { world, guard, target, agent, task } = setup();
+    target.activeBuffs.set(BUFF.Pan, NOW + 10_000);
+
+    const event = stepEscort(agent, task, world, NOW + TICK_MS);
+
+    expect(event).toEqual({
+      kind: 'abort',
+      guardId: guard.id,
+      targetId: target.id,
+      now: NOW + TICK_MS,
+      reason: 'pan_counter',
+    });
   });
 
   it('目标失联时原地中止，不把保安挪走', () => {

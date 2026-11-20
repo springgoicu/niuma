@@ -172,3 +172,47 @@ export function phaseOffset(netId: number, track: ClipTrack): number {
   const hashed = Math.imul(netId + 1, 2654435761) >>> 0;
   return hashed % track.loopDurationMs;
 }
+
+/** GTA 扩展状态动作轨：滑倒 / 翻滚 / 龙卷飞 / 平躺待救 / 幽灵穿墙 / 驾驶 / CPR 急救 */
+export interface GtaTracks {
+  readonly slip: ClipTrack | null;
+  readonly tumble: ClipTrack | null;
+  readonly tornado: ClipTrack | null;
+  readonly flatline: ClipTrack | null;
+  readonly ghost: ClipTrack | null;
+  readonly drive: ClipTrack | null;
+  readonly cpr: ClipTrack | null;
+}
+
+export function buildGtaTracks(tracks: ClipTracks): GtaTracks {
+  return {
+    slip: tracks.slip ?? null,
+    tumble: tracks.tumble ?? null,
+    tornado: tracks.tornado ?? null,
+    flatline: tracks.flatline ?? null,
+    ghost: tracks.ghost ?? null,
+    drive: tracks.drive ?? null,
+    cpr: tracks.cpr ?? null,
+  };
+}
+
+/**
+ * GTA 状态覆写动作选择（零分配）：
+ * 摔倒（1=滑倒 / 2=翻滚 / 3=龙卷飞）> 濒死/幽灵（1=flatline / 2=ghost）> 驾驶（drive）> CPR 施救（cpr）。
+ */
+export function gtaTrackFor(
+  gta: GtaTracks,
+  fallKind: number,
+  ghostMode: number,
+  driving: boolean,
+  cprActive: boolean,
+): ClipTrack | null {
+  if (fallKind === 1) return gta.slip;
+  if (fallKind === 2) return gta.tumble;
+  if (fallKind === 3) return gta.tornado;
+  if (ghostMode === 1) return gta.flatline;
+  if (ghostMode === 2) return gta.ghost;
+  if (driving) return gta.drive;
+  if (cprActive) return gta.cpr;
+  return null;
+}
