@@ -20,6 +20,8 @@ export * from './activity';
 export * from './moderation/index';
 export * from './world/geometry';
 export * from './world/ribbon';
+export * from './world/island';
+export * from './world/botany';
 export * from './world/layout';
 export * from './world/districts';
 export * from './world/clinic';

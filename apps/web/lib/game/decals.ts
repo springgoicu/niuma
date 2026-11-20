@@ -11,23 +11,34 @@ export const DECAL_KINDS = [
   'bloomRose',
   'leaf',
   'shoot',
+  'bloomLavender',
+  'petalPink',
 ] as const;
 export type DecalKind = (typeof DECAL_KINDS)[number];
 
 /** 基础草地层只撒前四种：花只长在花海里与零散点缀层 */
 export const GROUND_DECAL_KINDS: readonly number[] = [0, 1, 2, 3];
-/** 三种花海贴花在 DECAL_KINDS 里的起点，与 FlowerPatch.palette 顺序一一对应 */
+/** 前三种花海贴花在 DECAL_KINDS 里的起点 */
 export const BLOOM_KIND_BASE = 4;
 /** 林间落叶：只在树丛半径内单独撒，不混进基础草地层 */
 export const LEAF_KINDS: readonly number[] = [DECAL_KINDS.indexOf('leaf')];
+/** 落樱瓣：只长在樱林 / 蓝花楹林下 */
+export const PETAL_KINDS: readonly number[] = [DECAL_KINDS.indexOf('petalPink')];
 /** 竹笋（ADR-0061）：只长在竹林区，别处一株都不冒 */
 export const SHOOT_KINDS: readonly number[] = [DECAL_KINDS.indexOf('shoot')];
-/** 花海贴花在单个花田里的种类：0 白雏菊 / 1 金盏 / 2 暖粉 */
-export function bloomDecalKind(palette: 0 | 1 | 2): number {
+const LAVENDER_KIND = DECAL_KINDS.indexOf('bloomLavender');
+/** 花海贴花在单个花田里的种类：0 白雏菊 / 1 金盏 / 2 暖粉 / 3 熏衣草 */
+export function bloomDecalKind(palette: 0 | 1 | 2 | 3): number {
+  if (palette === 3) return LAVENDER_KIND;
   return BLOOM_KIND_BASE + palette;
 }
 /** 全岛零散野花的种类池 */
-export const WILDFLOWER_KINDS: readonly number[] = [BLOOM_KIND_BASE, BLOOM_KIND_BASE + 1, BLOOM_KIND_BASE + 2];
+export const WILDFLOWER_KINDS: readonly number[] = [
+  BLOOM_KIND_BASE,
+  BLOOM_KIND_BASE + 1,
+  BLOOM_KIND_BASE + 2,
+  LAVENDER_KIND,
+];
 
 /**
  * 贴花撒点：纯放置逻辑，不依赖 Pixi。

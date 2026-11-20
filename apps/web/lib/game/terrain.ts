@@ -30,6 +30,7 @@ import {
 import { buildBorderForest } from './border-forest';
 import {
   LEAF_KINDS,
+  PETAL_KINDS,
   SHOOT_KINDS,
   WILDFLOWER_KINDS,
   bloomDecalKind,
@@ -53,6 +54,7 @@ import {
 } from './terrain-edge';
 import { TERRAIN_COLORS as C, URBAN_GROUND as U, WINTER_COLORS as W } from './terrain-palette';
 import {
+  HERO_TREE_H,
   PROP_SHADOW,
   TREE_H,
   makeAsphaltTexture,
@@ -65,13 +67,13 @@ import {
   makeRockTexture,
   makeSnowTexture,
   makeStoneTexture,
-  makeTreeTextures,
+  makeTreeTextureBank,
   makeWaterTexture,
   makeWildTexture,
   type DecalAtlas,
-  type TreeTextures,
+  type TreeTextureBank,
 } from './terrain-textures';
-import { speciesIndexAt } from './vegetation-species';
+import { GROVE_FLOOR_STYLE, speciesAt, type TreeSpeciesId } from './vegetation-species';
 
 /**
  * 地形视图（本项目的 MapRenderer）：把 shared-types 的静态布局铺成 Pixi 图层。
@@ -110,15 +112,17 @@ const SHOOT_CHANCE = 0.22;
 /** 角色的包围盒（texel）：遮挡判定用它去和树冠盒求交 */
 const PONY_HALF_W = 13;
 const PONY_HEIGHT = 48;
-/** 树冠相对树根的高度范围：树干 28–36 高，树冠从 108 一直盖到 26 */
-const CANOPY_TOP = TREE_H;
-const CANOPY_BOTTOM = 26;
+/** 树冠遮挡判定尺寸（标准景观树 / 百岁地标古树） */
+const TREE_CANOPY_HALF_W = 40;
+const TREE_CANOPY_BOTTOM = 24;
+const HERO_CANOPY_HALF_W = 58;
+const HERO_CANOPY_BOTTOM = 28;
 /** 树冠网格索引的单元边长 */
 const OCCLUSION_CELL = 128;
-/** 边界密林近排着色：只压一点明度，保留树冠的层次 */
-const BORDER_NEAR_TINT = 0xc8d8c0;
-/** 边界密林远排着色：压到一半明度，与林下深色底纹接住，读成一堵暗墙 */
-const BORDER_FAR_TINT = 0x7d9678;
+/** 三排环岛密林着色：近岸鲜明 → 中排柔暗 → 远排与林地融合 */
+const BORDER_NEAR_TINT = 0xd2e0c8;
+const BORDER_MID_TINT = 0xa3ba99;
+const BORDER_FAR_TINT = 0x769072;
 
 /**
  * 主干道路缘的冷灰变体（去国风重塑）。
@@ -142,15 +146,15 @@ interface TerrainTextures {
   water: Texture;
   /** 边界外林地地面（ADR-0064）：四边密林脚下的深色底 */
   wild: Texture;
-  trees: TreeTextures[];
+  treeBank: TreeTextureBank;
   rock: Texture;
   reed: Texture;
   planter: Texture;
   decals: DecalAtlas;
   /** 冬季才烘焙的覆雪平铺：夏季整张不存在，也不占显存 */
   snow?: Texture;
-  /** 树 / 花箱 / 石头的底座投影，全部按 0x1E2846 @0.2 烘焙 */
-  shadows: { tree: Texture; planter: Texture; rock: Texture };
+  /** 树 / 古树 / 花箱 / 石头的底座投影，全部按 0x1E2846 @0.2 烘焙 */
+  shadows: { tree: Texture; heroTree: Texture; planter: Texture; rock: Texture };
 }
 
 /** 一段待绘制的边缘：底色全部画完之后再统一出图，草缘永远最后压上 */
@@ -214,11 +218,6 @@ function flattenPoints(points: ReadonlyArray<Point>): number[] {
   return flat;
 }
 
-/** 128px 单元的空间哈希键：坐标恒为正，直接位拼 */
-function cellKey(x: number, y: number): number {
-  return (Math.floor(x / OCCLUSION_CELL) << 16) ^ Math.floor(y / OCCLUSION_CELL);
-}
-
 /**
  * 地形视图：本项目的 MapRenderer。
  *
@@ -266,7 +265,7 @@ export class TerrainView {
       stone: makeStoneTexture(renderer),
       water: makeWaterTexture(renderer, this.winter),
       wild: makeWildTexture(renderer, this.winter),
-      trees: makeTreeTextures(renderer, this.winter),
+      treeBank: makeTreeTextureBank(renderer, this.winter),
       rock: makeRockTexture(renderer),
       reed: makeReedTexture(renderer),
       planter: makePlanterTexture(renderer),
@@ -274,6 +273,7 @@ export class TerrainView {
       ...(this.winter ? { snow: makeSnowTexture(renderer) } : {}),
       shadows: {
         tree: makePropShadowTexture(renderer, PROP_SHADOW.tree.w, PROP_SHADOW.tree.h),
+        heroTree: makePropShadowTexture(renderer, PROP_SHADOW.heroTree.w, PROP_SHADOW.heroTree.h),
         planter: makePropShadowTexture(renderer, PROP_SHADOW.planter.w, PROP_SHADOW.planter.h),
         rock: makePropShadowTexture(renderer, PROP_SHADOW.rock.w, PROP_SHADOW.rock.h),
       },
@@ -284,13 +284,13 @@ export class TerrainView {
   build(depth: DepthSink): void {
     this.depth = depth;
     this.addWild();
-    this.addGrass();
+    // 先铺 29 顶点多边形沙滩外环，再在内缩草地上遮罩草皮，天然严丝合缝形成 26px 有机沙滩
     this.addSandBand();
+    this.addGrass();
     this.addBorderForest();
     this.addGroveFloor();
     this.addFlowerMeadow();
-    // 覆雪压在草地/林下/花海之上、路缘与土路之下：
-    // 路缘与土路是「被踩过的地面」，雪本来就留不住（ADR-0046 的层序）
+    // 覆雪压在草地/林下/花海之上、路缘与土路之下
     if (this.winter) this.addSnowCover();
     this.addPlaza();
     this.addPaths();
@@ -318,82 +318,88 @@ export class TerrainView {
   }
 
   /**
-   * 沙滩装饰带：矩形边界内侧一条 `ISLAND_SAND` 宽的环。
-   *
-   * 玩家碰撞线就是这条带的外沿（`isOnLand` 的内缩矩形），
-   * 沙 / 草交界仍走材质网格的齿状边缘：草从内侧压进沙里，
-   * 外沿再补一条湿沙暗边，与外侧林地接住。
+   * 沙滩装饰带：沿 29 顶点有机岛界向内铺出一条 26px 宽细沙环。
+   * 沙环本身先铺满整座岛外缘轮廓，随后 `addGrass` 用内缩 `ISLAND_SAND` 轮廓遮罩盖在上面，
+   * 天然无接缝、无孔洞、无凹角折断。
    */
   private addSandBand(): void {
-    const { x, y, w, h } = ISLAND.bounds;
-    const band = ISLAND_SAND;
+    const outer = polygonContour(ISLAND.points, 22);
+    const inner = offsetContour(outer, -ISLAND_SAND);
     const sand = new Graphics();
-    sand.rect(x, y, w, band).fill(C.sand);
-    sand.rect(x, y + h - band, w, band).fill(C.sand);
-    sand.rect(x, y + band, band, h - band * 2).fill(C.sand);
-    sand.rect(x + w - band, y + band, band, h - band * 2).fill(C.sand);
+    traceContour(sand, outer);
+    sand.fill(C.sand);
     this.base.addChild(sand);
 
     if (!this.edgeEnabled) return;
-    // 内缘：草压着沙长。沙在轮廓外侧、草在内侧，齿必须朝外才是「盖进沙里」；
-    // 沙的暗边会落在草上，所以这条线不画内缘
+    // 内缘：草压着沙长，齿向外生长
     this.edges.push({
       self: MATERIAL.sand,
       other: MATERIAL.grass,
-      contour: roundedRectContour({ x: x + band, y: y + band, w: w - band * 2, h: h - band * 2 }, 0),
+      contour: inner,
       rim: false,
       grow: 'out',
       seed: 0x5a4d31,
     });
-    // 外缘：沙探进林地，补一条湿沙暗边
+    // 外缘：沙探进深林地面，补湿沙暗边
     this.edges.push({
       self: MATERIAL.sand,
       other: MATERIAL.outside,
-      contour: roundedRectContour({ x, y, w, h }, 0),
+      contour: outer,
       rim: true,
       seed: 0x6b5e42,
     });
   }
 
-  /** 草地：矩形陆地直接铺满，不再需要多边形遮罩 */
+  /** 有机多边形草地：贴合内缩海岸线，覆盖沙滩内圈 */
   private addGrass(): void {
+    const outer = polygonContour(ISLAND.points, 22);
+    const inner = offsetContour(outer, -ISLAND_SAND);
+    if (this.options.flat) {
+      const g = new Graphics();
+      traceContour(g, inner);
+      g.fill(C.grassBase);
+      this.base.addChild(g);
+      return;
+    }
     const { x, y, w, h } = ISLAND.bounds;
     const grass = new TilingSprite({ texture: this.textures.grass, width: w, height: h });
     grass.position.set(x, y);
-    this.base.addChild(grass);
+    const mask = new Graphics();
+    traceContour(mask, inner);
+    mask.fill(0xffffff);
+    this.base.addChild(mask, grass);
+    grass.mask = mask;
   }
 
   /**
-   * 四边密林：矩形外两排树影，只画不碰（ADR-0064）。
-   *
-   * 近排贴在沙带外沿、远排压暗并垫在更外面，两排错开半格连成一堵林墙。
-   * 树影不进深度层：玩家永远走不到这一带，压在地形底色之上就够，
-   * 也不需要树冠遮挡与底座投影。
+   * 环岛三层密林：绕 29 顶点多边形海岸外侧排布近 / 中 / 远三圈生态林带，只画不碰。
    */
   private addBorderForest(): void {
-    const trees = buildBorderForest(ISLAND.bounds);
-    const canopies = this.textures.trees.map((parts) => parts.canopy);
+    const trees = buildBorderForest(ISLAND.points);
     const near = new Container();
+    const mid = new Container();
     const far = new Container();
     for (const tree of trees) {
-      const sprite = new Sprite(canopies[tree.variant % canopies.length]!);
+      const variants = this.textures.treeBank.bySpecies[tree.species];
+      const tex = (variants?.[tree.variant % variants.length] ?? this.textures.treeBank.flat[0]!).canopy;
+      const sprite = new Sprite(tex);
       sprite.anchor.set(0.5, 1);
       sprite.position.set(tree.x, tree.y);
-      sprite.tint = tree.depth === 0 ? BORDER_NEAR_TINT : BORDER_FAR_TINT;
-      (tree.depth === 0 ? near : far).addChild(sprite);
-      // 树冠向上长到 108px、向两边各探 36px，裁剪范围要覆盖到
-      this.culler.add(sprite, tree.x, tree.y, 36, 112);
+      sprite.tint =
+        tree.depth === 0 ? BORDER_NEAR_TINT : tree.depth === 1 ? BORDER_MID_TINT : BORDER_FAR_TINT;
+      (tree.depth === 0 ? near : tree.depth === 1 ? mid : far).addChild(sprite);
+      this.culler.add(sprite, tree.x, tree.y, 44, TREE_H + 6);
     }
-    // 先远后近：近排永远压在远排之上
-    this.base.addChild(far, near);
+    // 远排在底 → 中排过渡 → 近排压在最前
+    this.base.addChild(far, mid, near);
   }
 
   /**
-   * 林下地面：每簇树一小片半透明草色，不是整块林地。
-   * 透明让 256px 草纹透上来，树丛之间仍是连续草地，不会切出「深绿方块」。
+   * 生态树丛林下地被：6 种群落主题自带对应叶色与花瓣斑点地面。
    */
   private addGroveFloor(): void {
     WORLD_LAYOUT.groves.forEach((grove, index) => {
+      const style = GROVE_FLOOR_STYLE[grove.theme];
       const rect = {
         x: grove.x - grove.radius,
         y: grove.y - grove.radius,
@@ -402,41 +408,48 @@ export class TerrainView {
       };
       const g = new Graphics();
       if (this.options.flat) {
-        g.rect(rect.x, rect.y, rect.w, rect.h).fill({ color: C.forestFloor, alpha: 0.35 });
+        g.rect(rect.x, rect.y, rect.w, rect.h).fill({ color: style.fill, alpha: style.alpha });
       } else {
-        const contour = organicContour(rect, 0x1f3a + index * 7919, 10, 20);
+        const contour = organicContour(rect, 0x1f3a + index * 7919, 10, 22);
         traceContour(g, contour);
-        g.fill({ color: C.forestFloor, alpha: 0.35 });
-        // Pixi 8 的 alignment：1 = 内侧，0.5 = 居中，0 = 外侧
-        g.poly(contourPolygon(contour)).stroke({ color: C.grassDeep, width: 3, alignment: 1, alpha: 0.4 });
+        g.fill({ color: style.fill, alpha: style.alpha });
+        g.poly(contourPolygon(contour)).stroke({ color: style.rim, width: 3, alignment: 1, alpha: 0.42 });
+        // 林下光斑与落花碎影：按每棵树微偏撒 4 枚微粒地面块
+        const rand = seeded(0x3a91 + index * 1009);
+        for (const t of grove.trees) {
+          for (let p = 0; p < 3; p += 1) {
+            const px = Math.round(t.x + (rand() - 0.5) * 44);
+            const py = Math.round(t.y + (rand() - 0.5) * 28);
+            g.rect(px, py, 2 + Math.floor(rand() * 2), 2).fill({ color: style.petalFill, alpha: 0.28 });
+          }
+        }
       }
       this.base.addChild(g);
     });
   }
 
   /**
-   * 花海底色：草甸本身还是草，只是一层更亮更暖的绿。
-   * 真正让它成为「花海」的是叠在上面的花朵贴花。
+   * 花海底色：4 号熏衣草草甸带冷清鼠尾草蓝绿底，其余保留暖意草甸色。
    */
   private addFlowerMeadow(): void {
     WORLD_LAYOUT.flowerFields.forEach((field, index) => {
       const g = new Graphics();
       const contour = organicContour(field.rect, 0x6f1d + index * 3571, 10, 26);
+      const isLavender = field.palette === 3;
       traceContour(g, contour);
-      g.fill({ color: C.meadowTint, alpha: 0.4 });
-      g.poly(contourPolygon(contour)).stroke({ color: C.meadowShade, width: 2, alignment: 1, alpha: 0.5 });
+      g.fill({ color: isLavender ? 0x7c8f78 : C.meadowTint, alpha: 0.42 });
+      g.poly(contourPolygon(contour)).stroke({
+        color: isLavender ? 0x627370 : C.meadowShade,
+        width: 2,
+        alignment: 1,
+        alpha: 0.5,
+      });
       this.base.addChild(g);
     });
   }
 
   /**
-   * 覆雪层：一张平铺 + 一块遮罩，覆盖草地、林地、花海与广场。
-   *
-   * 遮罩取「矩形边界内缩 ISLAND_SAND」：沙带是边界内侧 26px 的环，
-   * 内缩一整条沙带宽，雪正好止在沙带内缘——
-   * 岸边该是雪化了的湿沙，而不是又一层白。
-   *
-   * 沙与雪之间没有过渡；雪缘的过渡交给 `flushEdges` 的冬季齿色。
+   * 冬季覆雪层：严格遮罩在 29 顶点多边形内缩 `ISLAND_SAND` 的陆地上，岸边仍是湿沙。
    */
   private addSnowCover(): void {
     const texture = this.textures.snow;
@@ -446,7 +459,6 @@ export class TerrainView {
       width: WORLD_WIDTH,
       height: WORLD_HEIGHT,
     });
-    // 平铺相位与世界坐标对齐：与草地同尺寸，两张纹理的雪堆不会各走各的
     snow.tilePosition.set(0, 0);
 
     if (this.options.flat) {
@@ -454,12 +466,9 @@ export class TerrainView {
       return;
     }
 
-    const { x, y, w, h } = ISLAND.bounds;
+    const inner = offsetContour(polygonContour(ISLAND.points, 22), -ISLAND_SAND);
     const mask = new Graphics();
-    traceContour(
-      mask,
-      roundedRectContour({ x: x + ISLAND_SAND, y: y + ISLAND_SAND, w: w - ISLAND_SAND * 2, h: h - ISLAND_SAND * 2 }, 0),
-    );
+    traceContour(mask, inner);
     mask.fill(0xffffff);
     this.base.addChild(mask);
     snow.mask = mask;
@@ -805,7 +814,7 @@ export class TerrainView {
         ),
       );
     }
-    // 林间落叶：只铺在树丛半径内，跟着树影走，不撒到开阔草地上
+    // 林间落叶与樱瓣：樱花 / 蓝花楹林混铺落花瓣，其余落叶
     for (const grove of WORLD_LAYOUT.groves) {
       const rect = {
         x: grove.x - grove.radius,
@@ -816,6 +825,11 @@ export class TerrainView {
       this.addDecalSprites(
         scatterDecals(rect, (x, y) => this.decalAllowed(x, y), 0x7ea5 + grove.x * 31 + grove.y, LEAF_CHANCE, LEAF_KINDS),
       );
+      if (grove.theme === 'sakura' || grove.theme === 'jacaranda') {
+        this.addDecalSprites(
+          scatterDecals(rect, (x, y) => this.decalAllowed(x, y), 0x91c3 + grove.x * 17 + grove.y, 0.42, PETAL_KINDS),
+        );
+      }
     }
     // 竹笋（ADR-0061）：只撒在竹林区，走近竹林才看得见零星青绿笋尖
     for (const zone of BAMBOO_SHOOT_ZONES) {
@@ -858,19 +872,23 @@ export class TerrainView {
       ...WORLD_LAYOUT.looseTrees,
     ];
     for (const tree of trees) {
-      // 树种按坐标派生（银杏 / 冬青 / 羽毛枫 / 罗汉松 / 垂柳）。
-      // 布局里的 `variant` 仍是 0..3 的旧编号，直接拿它取五套色板会错位，
-      // 所以坐标优先、variant 只在这条链路之外（小地图图标等）继续使用。
-      const parts = this.textures.trees[speciesIndexAt(tree.x, tree.y) % this.textures.trees.length]!;
-      this.addPropShadow(tree.x, tree.y, this.textures.shadows.tree);
+      const isHero = tree.scale === 1;
+      const species: TreeSpeciesId = tree.species ?? speciesAt(tree.x, tree.y);
+      const parts = isHero
+        ? this.textures.treeBank.heroBySpecies[species]
+        : this.textures.treeBank.bySpecies[species][tree.variant % 3]!;
+      this.addPropShadow(
+        tree.x,
+        tree.y,
+        isHero ? this.textures.shadows.heroTree : this.textures.shadows.tree,
+      );
       const trunk = this.treeSprite(depth, parts.trunk, tree.x, tree.y);
-      // 树干与树冠同帧同锚点、同 zIndex：角色在树后时两层都在其上，
-      // 遮挡只把树冠 alpha 压到 0.85，树干保持不透明（ADR-0013）。
       const canopy = this.treeSprite(depth, parts.canopy, tree.x, tree.y);
-      // 树冠向上长到 108px、向两边各探 36px，裁剪范围要覆盖到
-      this.culler.add(trunk, tree.x, tree.y, 36, 112);
-      this.culler.add(canopy, tree.x, tree.y, 36, 112);
-      this.trackCanopy(canopy, tree.x, tree.y);
+      const cullW = isHero ? 68 : 44;
+      const cullH = isHero ? HERO_TREE_H + 6 : TREE_H + 6;
+      this.culler.add(trunk, tree.x, tree.y, cullW, cullH);
+      this.culler.add(canopy, tree.x, tree.y, cullW, cullH);
+      this.trackCanopy(canopy, tree.x, tree.y, isHero);
     }
   }
 
@@ -882,21 +900,32 @@ export class TerrainView {
     return sprite;
   }
 
-  /** 只登记树冠：遮挡判定只关心树冠，树干永远不透明 */
-  private trackCanopy(sprite: Sprite, x: number, y: number): void {
+  /** 只登记树冠（覆盖树冠矩形穿过的全部 128px 格）：古树高于 128px 也不会漏检 */
+  private trackCanopy(sprite: Sprite, x: number, y: number, hero = false): void {
+    const halfW = hero ? HERO_CANOPY_HALF_W : TREE_CANOPY_HALF_W;
+    const topH = hero ? HERO_TREE_H : TREE_H;
+    const botH = hero ? HERO_CANOPY_BOTTOM : TREE_CANOPY_BOTTOM;
     const entry: CanopyEntry = {
       sprite,
-      left: x - 36,
-      right: x + 36,
-      top: y - CANOPY_TOP,
-      bottom: y - CANOPY_BOTTOM,
+      left: x - halfW,
+      right: x + halfW,
+      top: y - topH,
+      bottom: y - botH,
       baseY: y,
     };
     this.canopies.push(entry);
-    const key = cellKey(x, y);
-    const bucket = this.canopyGrid.get(key);
-    if (bucket) bucket.push(entry);
-    else this.canopyGrid.set(key, [entry]);
+    const fromX = Math.floor(entry.left / OCCLUSION_CELL);
+    const toX = Math.floor(entry.right / OCCLUSION_CELL);
+    const fromY = Math.floor(entry.top / OCCLUSION_CELL);
+    const toY = Math.floor(entry.baseY / OCCLUSION_CELL);
+    for (let cy = fromY; cy <= toY; cy += 1) {
+      for (let cx = fromX; cx <= toX; cx += 1) {
+        const key = (cx << 16) ^ cy;
+        const bucket = this.canopyGrid.get(key);
+        if (bucket) bucket.push(entry);
+        else this.canopyGrid.set(key, [entry]);
+      }
+    }
   }
 
   private addPlanters(depth: DepthSink): void {
@@ -986,19 +1015,29 @@ export class TerrainView {
     this.base.destroy({ children: true });
     this.edge.destroy({ children: true });
     this.decals.destroy({ children: true });
-    for (const tree of this.textures.trees) {
-      tree.trunk.destroy(true);
-      tree.canopy.destroy(true);
+    for (const variants of Object.values(this.textures.treeBank.bySpecies)) {
+      for (const tree of variants) {
+        tree.trunk.destroy(true);
+        tree.canopy.destroy(true);
+      }
+    }
+    for (const hero of Object.values(this.textures.treeBank.heroBySpecies)) {
+      hero.trunk.destroy(true);
+      hero.canopy.destroy(true);
     }
     this.textures.grass.destroy(true);
     this.textures.dirt.destroy(true);
+    this.textures.asphalt.destroy(true);
+    this.textures.stone.destroy(true);
     this.textures.water.destroy(true);
     this.textures.wild.destroy(true);
     this.textures.rock.destroy(true);
     this.textures.reed.destroy(true);
     this.textures.planter.destroy(true);
     this.textures.decals.texture.destroy(true);
+    this.textures.snow?.destroy(true);
     this.textures.shadows.tree.destroy(true);
+    this.textures.shadows.heroTree.destroy(true);
     this.textures.shadows.planter.destroy(true);
     this.textures.shadows.rock.destroy(true);
   }

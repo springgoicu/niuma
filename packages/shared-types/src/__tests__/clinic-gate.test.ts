@@ -40,7 +40,7 @@ describe('护士急救站门禁（ADR-0107）', () => {
 
   it('南侧救护车通道同样只挡脚不走车', () => {
     const out = { x: 0, y: 0 };
-    const blocked = resolveWalkInto(out, 5160, 3900, 5160, 3850);
+    const blocked = resolveWalkInto(out, CLINIC_RECT.x + 100, 3900, CLINIC_RECT.x + 100, 3850);
     expect(blocked).toBe(true);
     expect(out.y).toBeGreaterThan(CLINIC_RECT.y + CLINIC_RECT.h);
     expect(isInClinicInterior(out.x, out.y)).toBe(false);
@@ -86,7 +86,7 @@ describe('护士急救站门禁（ADR-0107）', () => {
 
   it('救护车走的仍是地形求解，可以直插站内落点', () => {
     const out = { x: 0, y: 0 };
-    resolveMotionInto(out, 5160, 3960, CLINIC_DROP.x, CLINIC_DROP.y);
+    resolveMotionInto(out, CLINIC_RECT.x + 100, 3960, CLINIC_DROP.x, CLINIC_DROP.y);
     expect(isInClinicInterior(out.x, out.y)).toBe(true);
     expect(out.x).toBeCloseTo(CLINIC_DROP.x, 5);
     expect(out.y).toBeCloseTo(CLINIC_DROP.y, 5);

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { findFreePoint, isBlocked, resolveMotion } from '../world/collision';
+import { findFreePoint, isBlocked, PLAYER_RADIUS, resolveMotion } from '../world/collision';
+import { APARTMENT_SPECS } from '../world/apartment';
 import { pointInPolygon, rectContains } from '../world/geometry';
 import {
+  HERO_TREE_TRUNK_RADIUS,
   ISLAND,
   SPAWN_CENTER,
   SPAWN_RADIUS,
@@ -71,11 +73,9 @@ describe('中央广场与五向出街', () => {
 
 describe('内角辅助滑行（ADR-0099）', () => {
   it('斜着贴凸墙角推进时不会一下停死，位移不超过步长', () => {
-    // 301 栋东南角 (3500, 4920)：楼体整块实心，外面是巷道与草地。
-    // 站位离两条边各 7px（斜距 9.9 > 半径 9，站得住），朝墙角斜走时
-    // 4px 整步与两条单轴滑行会同时被挡 —— 这正是旧实现「顶住不动」的位置。
-    const fromX = 3507;
-    const fromY = 4927;
+    const apt = APARTMENT_SPECS[0]!.rect;
+    const fromX = apt.x + apt.w + 7;
+    const fromY = apt.y + apt.h + 7;
     expect(isBlocked(fromX, fromY)).toBe(false);
     const toX = fromX - 12;
     const toY = fromY - 12;
@@ -300,8 +300,10 @@ describe('矩形边界', () => {
     for (const [x, y] of [
       [2000, 3000], // 西侧边界外
       [100, 100], // 西北角外
+      [ISLAND.bounds.x + 20, ISLAND.bounds.y + 20], // 包围盒西北角已在岛外海林
+      [ISLAND.bounds.x + ISLAND.bounds.w - 20, ISLAND.bounds.y + 20], // 包围盒东北角在岛外
       [5800, 4000], // 东侧边界外
-      [4000, 2300], // 北侧边界外
+      [4000, 2180], // 北侧边界外
       [4000, 6000], // 南侧边界外
     ] as const) {
       expect(isOnLand(x, y)).toBe(false);
@@ -310,18 +312,29 @@ describe('矩形边界', () => {
   });
 
   it('从陆地走向四边都会被挡住', () => {
-    // 北边界 y = 2412，玩家半径 9：停在边界内侧
-    const north = resolveMotion(3950, 2700, 3950, 2300);
-    expect(north.y).toBeGreaterThan(2412);
+    const north = resolveMotion(3950, 2700, 3950, 2150);
+    expect(north.y).toBeGreaterThan(ISLAND.bounds.y);
+    expect(isOnLand(north.x, north.y, PLAYER_RADIUS)).toBe(true);
 
-    const west = resolveMotion(2800, 3900, 2500, 3900);
-    expect(west.x).toBeGreaterThan(2560);
+    const west = resolveMotion(2800, 3900, 2250, 3900);
+    expect(west.x).toBeGreaterThan(ISLAND.bounds.x);
+    expect(isOnLand(west.x, west.y, PLAYER_RADIUS)).toBe(true);
 
-    const south = resolveMotion(5500, 5600, 5500, 5900);
-    expect(south.y).toBeLessThan(5780);
+    const south = resolveMotion(5400, 5600, 5400, 5950);
+    expect(south.y).toBeLessThan(ISLAND.bounds.y + ISLAND.bounds.h);
+    expect(isOnLand(south.x, south.y, PLAYER_RADIUS)).toBe(true);
 
-    const east = resolveMotion(5400, 4000, 5700, 4000);
-    expect(east.x).toBeLessThan(5600);
+    const east = resolveMotion(5400, 4000, 5850, 4000);
+    expect(east.x).toBeLessThan(ISLAND.bounds.x + ISLAND.bounds.w);
+    expect(isOnLand(east.x, east.y, PLAYER_RADIUS)).toBe(true);
+  });
+
+  it('地标古树采用更大的树干碰撞半径', () => {
+    const heroes = WORLD_LAYOUT.looseTrees.filter((tree) => tree.scale === 1);
+    expect(heroes.length).toBe(6);
+    for (const hero of heroes) {
+      expect(isBlocked(hero.x + 15, hero.y - HERO_TREE_TRUNK_RADIUS + 1, 1)).toBe(true);
+    }
   });
 
   it('所有静态地形都在矩形以内，且离边界至少 24px', () => {

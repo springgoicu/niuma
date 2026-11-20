@@ -7,6 +7,7 @@ import {
   WORLD_LAYOUT,
   WORLD_WIDTH,
   distanceSqToPolygon,
+  isOnLand,
   isOnPlaza,
   pointInPolygon,
   rectContains,
@@ -68,36 +69,27 @@ export const EDGE_TILE = 32;
 
 const PATHS = WORLD_LAYOUT.paths;
 const LAKES = WORLD_LAYOUT.lakes;
-const BOUNDS = ISLAND.bounds;
+const ISLAND_SAND_SQ = ISLAND_SAND * ISLAND_SAND;
 
 /**
  * 某点的材质。顺序即优先级，先命中者胜：
- * 水（三湖）> 土路 > 石砖圆庭 > 边界沙带 > 草地 > 边界外密林。
- *
- * ADR-0047：中央石砖广场是独立材质，草缘会从草地一侧压进石缝；
- * 土路从广场边缘穿出时压住石砖，形成「从圆庭走到土路」的连续过渡。
- * ADR-0064：陆地是矩形，沙带是边界内侧 `ISLAND_SAND` 宽的一条环。
+ * 水（三湖）> 土路 > 石砖圆庭 > 多边形内侧沙带 > 草地 > 岛界外密林。
  */
 export function materialAt(x: number, y: number): MaterialId {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return MATERIAL.outside;
 
   for (const lake of LAKES) {
-    // 先过包围盒：湖面判定是 16 点多边形，逐点跑一遍太贵。
-    // 与 isWaterAt 一样把边界距离 0 补成水面，避免岸边 1px 环「显示草地却触发涉水」。
     if (!rectContains(lake.rect, x, y)) continue;
     if (pointInPolygon(x, y, lake.points) || distanceSqToPolygon(x, y, lake.points) === 0) return MATERIAL.water;
   }
   for (const path of PATHS) {
-    // 带状路是斜的：包围盒只能粗筛，必须再判多边形
     if (rectContains(path.rect, x, y) && pointInPolygon(x, y, path.polygon)) return MATERIAL.dirt;
   }
   if (isOnPlaza(x, y)) return MATERIAL.stone;
 
-  const { x: bx, y: by, w, h } = BOUNDS;
-  if (x <= bx || y <= by || x >= bx + w || y >= by + h) return MATERIAL.outside;
-  // 离最近一条边的距离：沙带贴着边界内侧铺，再往内才是草地
-  const edge = Math.min(x - bx, bx + w - x, y - by, by + h - y);
-  return edge <= ISLAND_SAND ? MATERIAL.sand : MATERIAL.grass;
+  if (!isOnLand(x, y)) return MATERIAL.outside;
+  // 离 29 顶点多边形岸线的最短距离：沙带贴着海岸内侧铺，再往内才是草地
+  return distanceSqToPolygon(x, y, ISLAND.points) <= ISLAND_SAND_SQ ? MATERIAL.sand : MATERIAL.grass;
 }
 
 /* ------------------------------------------------------------------ *

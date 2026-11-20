@@ -11,13 +11,13 @@ import type { SolidRect } from './campus';
 import type { WorldRect } from './geometry';
 
 /** 站台本体：柜台在西、病床在东、救护车位在门前南侧 */
-export const CLINIC_RECT: WorldRect = { x: 5060, y: 3660, w: 248, h: 210 };
+export const CLINIC_RECT: WorldRect = { x: 5180, y: 3660, w: 248, h: 210 };
 
-/** 区域名矩形：站台外扩 10px，围栏也算「站在急救站」 */
-export const CLINIC_REGION_RECT: WorldRect = { x: 4960, y: 3640, w: 268, h: 250 };
+/** 区域名矩形：覆盖无障碍引道 + 站台外扩围栏，整片区域都算「站在急救站」 */
+export const CLINIC_REGION_RECT: WorldRect = { x: 5080, y: 3640, w: 368, h: 250 };
 
 /** 从服务广场接进站内的无障碍铺装（高度与西侧人行门洞等宽，ADR-0092） */
-export const CLINIC_ACCESS_PAVING: WorldRect = { x: 4960, y: 3722, w: 100, h: 56 };
+export const CLINIC_ACCESS_PAVING: WorldRect = { x: 5080, y: 3722, w: 100, h: 56 };
 
 export const CLINIC_COUNTER: WorldRect = {
   x: CLINIC_RECT.x + 12,

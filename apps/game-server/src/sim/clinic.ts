@@ -22,7 +22,6 @@ import {
   PLAYER_RADIUS,
   PLAZA_CENTER,
   POSE,
-  SERVICE_SQUARE,
   TICK_MS,
   clampWorldX,
   clampWorldY,
@@ -70,7 +69,7 @@ const NAV_STALL_EPS = 2;
  * 出警 / 送回的固定绕行航点（不做寻路，ADR-0097）：
  * 先穿服务广场南沿，再走东主路进中央广场，避开急救站围挡与公寓楼群。
  */
-const AMBULANCE_EAST_GATE = { x: CLINIC_RECT.x + CLINIC_RECT.w / 2, y: SERVICE_SQUARE.y + SERVICE_SQUARE.h - 40 } as const;
+const AMBULANCE_EAST_GATE = { x: CLINIC_RECT.x + CLINIC_RECT.w / 2, y: PLAZA_CENTER.y } as const;
 const AMBULANCE_ROAD_GATE = { x: PLAZA_CENTER.x + 320, y: PLAZA_CENTER.y } as const;
 /** 两辆都在任务时，真人伤员最多在内存队列里等 6 秒就地包扎 */
 const HUMAN_QUEUE_TIMEOUT_MS = 6000;

@@ -52,27 +52,27 @@ export interface DistrictSpec {
 }
 
 const RING_LAKE_RECT: WorldRect = {
-  x: 2640,
-  y: 4700,
-  w: 440,
-  h: 450,
+  x: 2580,
+  y: 4620,
+  w: 460,
+  h: 460,
 };
-const MOPING_LAKE_RECT: WorldRect = { x: 4900, y: 5000, w: 660, h: 690 };
-const CHENSI_POND_RECT: WorldRect = { x: 4830, y: 2700, w: 510, h: 420 };
+const MOPING_LAKE_RECT: WorldRect = { x: 4920, y: 4960, w: 620, h: 640 };
+const CHENSI_POND_RECT: WorldRect = { x: 4860, y: 2740, w: 520, h: 420 };
 
-/** 三湖 + 原亭址草地 + 竹林：景观区的网络地块（不搬湖，只认领） */
+/** 三湖 + 原亭址草地 + 竹林：景观区的网络地块 */
 const SCENERY_RECTS: ReadonlyArray<WorldRect> = [
   rectExpanded(RING_LAKE_RECT, 60),
   rectExpanded(MOPING_LAKE_RECT, 30),
   rectExpanded(CHENSI_POND_RECT, 30),
-  // 摸鱼湖钓屋坐落于原摸鱼亭原址草地，归景观区
-  { x: 5250, y: 4710, w: 200, h: 180 },
+  // 摸鱼湖钓屋坐落于湖东北岸草地，归景观区
+  { x: 5220, y: 4680, w: 240, h: 230 },
   // 沉思浅塘北岸：沉思畔茶院半岛（避开西侧游乐区与南侧服务广场）
-  { x: 4900, y: 2440, w: 300, h: 250 },
+  { x: 4900, y: 2460, w: 340, h: 240 },
   // 西主路尽头的区门前庭
-  { x: 2680, y: 4010, w: 360, h: 300 },
+  { x: 2560, y: 4030, w: 420, h: 320 },
   // 竹林：西主路以南、涟漪湖以北的绿带（含翠竹隐士居）
-  { x: 3100, y: 4180, w: 400, h: 320 },
+  { x: 3020, y: 4160, w: 460, h: 320 },
 ];
 
 export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
@@ -80,9 +80,7 @@ export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
     id: 'corporate',
     name: '企业区',
     scene: 'indoor',
-    // 企业楼 2620–3540 × 3200–3976（走廊加宽后南沿下移 16px）+ 楼前庭 3540–3740
-    rects: [{ x: 2600, y: 3170, w: 1130, h: 830 }],
-    // 区门坐标在前庭接广场的那条支路上，避开企业楼东门
+    rects: [{ x: 2600, y: 3200, w: 1140, h: 820 }],
     gate: { x: 3760, y: 3780 },
     color: 0xc9b38a,
   },
@@ -90,17 +88,18 @@ export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
     id: 'amusement',
     name: '游乐区',
     scene: 'outdoor',
-    // 赌场亭 + 八角笼 + 游乐园 + 游乐大街
-    rects: [{ x: 2580, y: 2520, w: 2100, h: 640 }],
-    gate: { x: 4096, y: 3160 },
+    rects: [
+      { x: 2680, y: 2620, w: 860, h: 500 },
+      { x: 3540, y: 2460, w: 1120, h: 660 },
+    ],
+    gate: { x: 4096, y: 3080 },
     color: 0xe28aa0,
   },
   {
     id: 'living',
     name: '生活区',
     scene: 'indoor',
-    // 公寓 + 门前花园 + 生活大街 + 宿舍 + 影音室 + 两栋小院
-    rects: [{ x: 3140, y: 4640, w: 1680, h: 1120 }],
+    rects: [{ x: 3140, y: 4600, w: 1710, h: 1180 }],
     gate: { x: 4096, y: 4700 },
     color: 0xb9a78f,
   },
@@ -108,9 +107,8 @@ export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
     id: 'service',
     name: '服务区',
     scene: 'indoor',
-    // 服务广场：卫生间 / 小黑屋 / 急救站
-    rects: [{ x: 4500, y: 3580, w: 900, h: 900 }],
-    gate: { x: 4540, y: 4096 },
+    rects: [{ x: 4560, y: 3560, w: 930, h: 960 }],
+    gate: { x: 4580, y: 4096 },
     color: 0xa8c4cc,
   },
   {
@@ -118,7 +116,7 @@ export const DISTRICTS: ReadonlyArray<DistrictSpec> = [
     name: '景观区',
     scene: 'outdoor',
     rects: SCENERY_RECTS,
-    gate: { x: 2760, y: 4020 },
+    gate: { x: 2760, y: 4050 },
     color: 0x7fb69b,
   },
 ];
@@ -306,7 +304,7 @@ export const NAV_ARRIVALS: Record<NavTargetId, { readonly x: number; readonly y:
   // 财神供案正前方：案面底边外 18px，落地即可按 F 上香，不压案腿
   shrine: { x: SHRINE_ALTAR.x, y: SHRINE_ALTAR.y + 18 },
   // 游乐园南门内侧：进门两步就是喷泉前空地
-  park: { x: 4096, y: 3020 },
+  park: { x: 4096, y: 2940 },
   // 发泄室垫内左下角：老板左脚外侧，站过去就能出招
   bossArena: { x: BOSS_ARENA.x + 50, y: BOSS_ARENA.y + BOSS_ARENA.h - 20 },
   ...PROPERTY_ARRIVALS,

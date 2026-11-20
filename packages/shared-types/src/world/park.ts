@@ -23,7 +23,7 @@ import type { WorldRect } from './geometry';
  * 北缘离岛北界 148px；南缘正对北向主路末端（3230），东缘离岛东界 120px；
  * 西缘离四角院落西北角 220px。
  */
-export const AMUSEMENT_PARK: WorldRect = { x: 3556, y: 2560, w: 1080, h: 600 };
+export const AMUSEMENT_PARK: WorldRect = { x: 3556, y: 2480, w: 1080, h: 600 };
 
 /** 无墙建筑：只借用 BuildingSpec 的地面 / 小地图 / 贴花排除与密度统计 */
 export const PARK_BUILDING: BuildingSpec = {
@@ -36,21 +36,21 @@ export const PARK_BUILDING: BuildingSpec = {
  * 南门与东门：`y` 是门的落地线，`gap` 是入口铺装的半宽。
  * ADR-0103 之后游乐园不再围矮栅栏，这两个缺口只用于铺装与导览，不再派生装饰立柱。
  */
-export const PARK_SOUTH_GATE = { x: 4096, y: 3160, gap: 44 } as const;
-export const PARK_EAST_GATE = { x: 4636, y: 2640, gap: 40 } as const;
+export const PARK_SOUTH_GATE = { x: 4096, y: 3080, gap: 44 } as const;
+export const PARK_EAST_GATE = { x: 4636, y: 2560, gap: 40 } as const;
 
 /** 南门外的铺装：从北向主路末端接到游乐园橡胶垫 */
-export const PARK_GATE_PAVING: WorldRect = { x: 4036, y: 3160, w: 120, h: 80 };
+export const PARK_GATE_PAVING: WorldRect = { x: 4036, y: 3080, w: 120, h: 80 };
 
 /** 游乐园的灯柱 / 长椅 / 垃圾桶继续走现有 prop；这里只给坐标 */
 export const PARK_PROPS: ReadonlyArray<{ kind: 'lamp' | 'bench' | 'bin'; x: number; y: number }> = [
-  { kind: 'lamp', x: 3616, y: 2648 },
-  { kind: 'lamp', x: 4564, y: 3100 },
-  { kind: 'lamp', x: 3616, y: 3100 },
-  { kind: 'lamp', x: 4336, y: 2626 },
-  { kind: 'bench', x: 3788, y: 3108 },
-  { kind: 'bench', x: 4336, y: 3108 },
-  { kind: 'bin', x: 4584, y: 2668 },
+  { kind: 'lamp', x: 3616, y: 2568 },
+  { kind: 'lamp', x: 4564, y: 3020 },
+  { kind: 'lamp', x: 3616, y: 3020 },
+  { kind: 'lamp', x: 4336, y: 2546 },
+  { kind: 'bench', x: 3788, y: 3028 },
+  { kind: 'bench', x: 4336, y: 3028 },
+  { kind: 'bin', x: 4584, y: 2588 },
 ];
 
 /* ------------------------------------------------------------------ *
@@ -80,14 +80,14 @@ export interface SlideArt {
 }
 
 export const PARK_SLIDE: SlideArt = {
-  hit: { x: 4444, y: 2552, w: 144, h: 178 },
-  top: { x: 4506, y: 2610 },
-  landing: { x: 4576, y: 2726 },
+  hit: { x: 4444, y: 2472, w: 144, h: 178 },
+  top: { x: 4506, y: 2530 },
+  landing: { x: 4576, y: 2646 },
   chute: [
-    [4506, 2610],
-    [4522, 2642],
-    [4548, 2678],
-    [4576, 2726],
+    [4506, 2530],
+    [4522, 2562],
+    [4548, 2598],
+    [4576, 2646],
   ],
 };
 
@@ -96,14 +96,14 @@ export const PARK_SLIDE: SlideArt = {
  * ------------------------------------------------------------------ */
 
 /** 塔楼底座：44×18，正好压在 top 平台下方 */
-const SLIDE_TOWER_SOLID: SolidRect = { kind: 'prop', x: 4484, y: 2592, w: 44, h: 18 };
+const SLIDE_TOWER_SOLID: SolidRect = { kind: 'prop', x: 4484, y: 2512, w: 44, h: 18 };
 
 /** 秋千 / 跷跷板 / 旋转木马的落地底座 */
 export const PARK_RIDE_SOLIDS: ReadonlyArray<SolidRect> = [
   SLIDE_TOWER_SOLID,
-  { kind: 'prop', x: 3676, y: 2758, w: 60, h: 12 },
-  { kind: 'prop', x: 4098, y: 2890, w: 56, h: 10 },
-  { kind: 'prop', x: 3858, y: 2956, w: 76, h: 24 },
+  { kind: 'prop', x: 3676, y: 2678, w: 60, h: 12 },
+  { kind: 'prop', x: 4098, y: 2810, w: 56, h: 10 },
+  { kind: 'prop', x: 3858, y: 2876, w: 76, h: 24 },
 ];
 
 /** 器械中心与朝向：渲染端只读这一份，不另写坐标 */
@@ -115,9 +115,9 @@ export interface ParkRide {
 }
 
 export const PARK_RIDES: ReadonlyArray<ParkRide> = [
-  { kind: 'swing', x: 3706, y: 2770, variant: 0 },
-  { kind: 'seesaw', x: 4126, y: 2900, variant: 1 },
-  { kind: 'carousel', x: 3896, y: 2980, variant: 2 },
+  { kind: 'swing', x: 3706, y: 2690, variant: 0 },
+  { kind: 'seesaw', x: 4126, y: 2820, variant: 1 },
+  { kind: 'carousel', x: 3896, y: 2900, variant: 2 },
 ];
 
 /* ------------------------------------------------------------------ *
@@ -142,21 +142,21 @@ export interface ParkAttraction {
 }
 
 export const PARK_ATTRACTIONS: ReadonlyArray<ParkAttraction> = [
-  { kind: 'ferris', x: 4346, y: 2960, w: 172, h: 182 },
-  { kind: 'train', x: 3976, y: 2625, w: 140, h: 60 },
-  { kind: 'sandpit', x: 3626, y: 2850, w: 120, h: 64 },
-  { kind: 'fountain', x: 4296, y: 2780, w: 106, h: 106 },
+  { kind: 'ferris', x: 4346, y: 2880, w: 172, h: 182 },
+  { kind: 'train', x: 3976, y: 2545, w: 140, h: 60 },
+  { kind: 'sandpit', x: 3626, y: 2770, w: 120, h: 64 },
+  { kind: 'fountain', x: 4296, y: 2700, w: 106, h: 106 },
 ];
 
 /** 大件器械的落地底座：只压最下面一条，玩家从正面仍可走到跟前 */
 export const PARK_ATTRACTION_SOLIDS: ReadonlyArray<SolidRect> = [
   // 摩天轮：左右两只基座
-  { kind: 'prop', x: 4274, y: 3038, w: 44, h: 20 },
-  { kind: 'prop', x: 4374, y: 3038, w: 44, h: 20 },
+  { kind: 'prop', x: 4274, y: 2958, w: 44, h: 20 },
+  { kind: 'prop', x: 4374, y: 2958, w: 44, h: 20 },
   // 小火车：整条轨道底盘，宽度贴着车头
-  { kind: 'prop', x: 3908, y: 2652, w: 136, h: 10 },
+  { kind: 'prop', x: 3908, y: 2572, w: 136, h: 10 },
   // 沙池：南沿一条矮沿，孩子从北侧走进沙里
-  { kind: 'prop', x: 3566, y: 2876, w: 120, h: 8 },
+  { kind: 'prop', x: 3566, y: 2796, w: 120, h: 8 },
   // 喷泉：水池外缘南侧
-  { kind: 'prop', x: 4248, y: 2826, w: 96, h: 8 },
+  { kind: 'prop', x: 4248, y: 2746, w: 96, h: 8 },
 ];

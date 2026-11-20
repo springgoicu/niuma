@@ -666,6 +666,32 @@ export class VenueFx {
       this.leaves.push({ sprite, seed, x, y, span: 18 + seedUnit(seed + 1) * 22 });
     }
 
+    // 生态树丛飘落花瓣与色叶（预分配零 GC：樱粉瓣 / 蓝花楹紫瓣 / 枫叶红）
+    let petalIdx = 0;
+    for (const grove of WORLD_LAYOUT.groves) {
+      if (grove.theme !== 'sakura' && grove.theme !== 'jacaranda' && grove.theme !== 'maple') continue;
+      const tint =
+        grove.theme === 'sakura'
+          ? 0xf5becd
+          : grove.theme === 'jacaranda'
+            ? 0xa597df
+            : 0xc97852;
+      for (let k = 0; k < 2 && petalIdx < 24; k += 1) {
+        const tree = grove.trees[k % grove.trees.length]!;
+        const sprite = new Sprite(leaf);
+        sprite.anchor.set(0.5, 0.5);
+        sprite.tint = tint;
+        const seed = 500 + petalIdx * 41;
+        const px = tree.x + (seedUnit(seed + 1) - 0.5) * 44;
+        const py = tree.y - 38 + (seedUnit(seed + 2) - 0.5) * 24;
+        sprite.position.set(px, py);
+        sprite.visible = false;
+        this.container.addChild(sprite);
+        this.leaves.push({ sprite, seed, x: px, y: py, span: 20 + seedUnit(seed + 3) * 18 });
+        petalIdx += 1;
+      }
+    }
+
     // 湖面反光：每个湖 8 点，落在湖心六成范围内
     let glintSeed = 101;
     for (const lake of WORLD_LAYOUT.lakes) {

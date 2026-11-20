@@ -78,7 +78,7 @@ export interface ApartmentSpec {
  */
 const APARTMENT_RECTS: ReadonlyArray<WorldRect> = [
   // 301 生活区西排
-  { x: 3200, y: 4680, w: APARTMENT_W, h: APARTMENT_H },
+  { x: 3260, y: 4640, w: APARTMENT_W, h: APARTMENT_H },
 ];
 
 /** 楼栋数：只留 301 一栋，`slot` 恒为 0 */
@@ -87,13 +87,13 @@ export const APARTMENT_ROOM_COUNT = APARTMENT_RECTS.length;
 /**
  * 门前口袋花园：撤掉五栋后留下的空地，纯装饰、零碰撞（ADR-0101）。
  *
- * 北沿咬住 301 楼体南墙外 16px，南沿停在生活大街路缘上方 8px，
- * 西沿与楼体齐平，东沿离南向主路路缘 20px。石板小径与灌木都落在这块地里。
+ * 北沿咬住 301 楼体南墙外 16px，南沿停在生活大街路缘上方，
+ * 西沿与楼体齐平，东沿让开南向主路路缘。石板小径与灌木都落在这块地里。
  */
-export const APARTMENT_GARDEN: WorldRect = { x: 3200, y: 4936, w: 820, h: 356 };
+export const APARTMENT_GARDEN: WorldRect = { x: 3260, y: 4896, w: 740, h: 316 };
 
 /** 花园石板小径：门口台阶 → 生活大街，32px 宽、整数纹素，中线对齐 301 门牌 */
-export const APARTMENT_GARDEN_PATH: WorldRect = { x: 3334, y: 4952, w: 32, h: 340 };
+export const APARTMENT_GARDEN_PATH: WorldRect = { x: 3394, y: 4912, w: 32, h: 300 };
 
 /**
  * 世界坐标窗口表：下标 = slot，内层下标 = 窗口编号 0..19。

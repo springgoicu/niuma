@@ -76,6 +76,12 @@ export const TERRAIN_COLORS = {
   /** 暖粉：花瓣取设计系统的 #E0A9A0，暗边是同色相压暗 */
   petalRose: 0xe0a9a0,
   petalRoseDeep: 0xc4827b,
+  /** 熏衣草与鸢尾：花海第四色板，带蓝调紫瓣 */
+  bloomLavender: 0xa494de,
+  bloomLavenderDeep: 0x7664b5,
+  /** 落樱瓣：粉珊瑚薄瓣，铺在樱林地下与草间 */
+  petalPink: 0xf4bdcd,
+  petalPinkDeep: 0xde8aa3,
   decalStone: 0xb9ae99,
 
   /** 大物件底座投影：冷靛蓝 0x1E2846 @0.2，暖地面上不能落纯黑 */
@@ -218,6 +224,7 @@ export const MINIMAP_COLORS = {
   flowerWhite: cssColor(TERRAIN_COLORS.flowerPetal),
   flowerGold: cssColor(TERRAIN_COLORS.petalGold),
   flowerRose: cssColor(TERRAIN_COLORS.petalRose),
+  flowerLavender: cssColor(TERRAIN_COLORS.bloomLavender),
   /** 中央石砖圆庭：浅石色填充 + 深缝描边 */
   stone: cssColor(TERRAIN_COLORS.stoneAlt),
   plazaCurb: cssColor(TERRAIN_COLORS.plazaCurb),

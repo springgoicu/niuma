@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { WORLD_LAYOUT } from '@niuma/shared-types';
 import { roundedRectContour } from '../autotile';
 import {
   EDGE_BIT,
@@ -11,7 +12,8 @@ import {
   materialAt,
 } from '../terrain-edge';
 
-const LAKE_INSIDE = { x: 5370, y: 5565 };
+const LAKE0 = WORLD_LAYOUT.lakes[0]!.rect;
+const LAKE_INSIDE = { x: Math.round(LAKE0.x + LAKE0.w / 2), y: Math.round(LAKE0.y + LAKE0.h / 2) };
 const PATH_INSIDE = { x: 4096, y: 4800 };
 const PLAZA_INSIDE = { x: 4096, y: 4096 };
 const OFFICE_LAWN = { x: 3566, y: 4000 };
@@ -26,13 +28,13 @@ describe('材质判定', () => {
     expect(materialAt(GRASS_INSIDE.x, GRASS_INSIDE.y)).toBe(MATERIAL.grass);
   });
 
-  it('边界沙带：矩形内侧 ISLAND_SAND 宽是沙，再往内是草，出了矩形就是林地', () => {
-    // ADR-0077：陆地是 x 2560–5600 / y 2412–5780 的矩形，北边界 y = 2412
-    expect(materialAt(2700, 2412 + 8)).toBe(MATERIAL.sand);
-    expect(materialAt(2700, 2412 + 26)).toBe(MATERIAL.sand);
-    expect(materialAt(2700, 2412 + 40)).toBe(MATERIAL.grass);
-    expect(materialAt(2700, 2412 - 1)).toBe(MATERIAL.outside);
-    expect(materialAt(2560 - 10, 3000)).toBe(MATERIAL.outside);
+  it('边界沙带：多边形海岸内侧 ISLAND_SAND 宽是沙，再往内是草，出了海岸就是林地', () => {
+    // 29 顶点北游乐岬 v4[4020,2260]->v5[4440,2280]，x=4100 处岸线约 y=2263.8
+    expect(materialAt(4100, 2272)).toBe(MATERIAL.sand);
+    expect(materialAt(4100, 2286)).toBe(MATERIAL.sand);
+    expect(materialAt(4100, 2310)).toBe(MATERIAL.grass);
+    expect(materialAt(4100, 2254)).toBe(MATERIAL.outside);
+    expect(materialAt(2400, 2320)).toBe(MATERIAL.outside);
   });
 
   it('非有限坐标回落到边界外，不会把 NaN 传进判定', () => {

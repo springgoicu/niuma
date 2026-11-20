@@ -5,7 +5,16 @@ import { DECAL_KINDS } from './decals';
 import { fillEllipse } from './fx';
 import { seeded } from './seeded';
 import { TERRAIN_COLORS as C, URBAN_GROUND as U, WINTER_COLORS as W } from './terrain-palette';
-import { TREE_SPECIES, TREE_SPECIES_ORDER, type TreeSpeciesPalette } from './vegetation-species';
+import { makeTreeTextureBank } from './tree-art';
+export {
+  HERO_TREE_H,
+  HERO_TREE_W,
+  TREE_H,
+  TREE_W,
+  makeTreeTextureBank,
+  type TreeTextureBank,
+  type TreeTextures,
+} from './tree-art';
 
 /**
  * 地形贴图工厂：全部 1:1 生成 + nearest 采样（ADR-0005）。
@@ -378,161 +387,16 @@ export function makeWildTexture(renderer: TextureFactory, winter = false): Textu
 }
 
 /* ------------------------------------------------------------------ *
- * 树：树干与树冠拆成两张同帧纹理（ADR-0013）
- *
- * 拆层是为了「角色走到树后时只让树冠淡到 0.85」。两张纹理必须共用
- * 同一个 TREE_W × TREE_H 画布，否则 (0.5, 1) 锚点会让树冠整体偏移。
+ * 树贴图已抽离至 `tree-art.ts`（9 树种 × 3 变体 + 古树冠）
  * ------------------------------------------------------------------ */
 
-export const TREE_W = 72;
-export const TREE_H = 108;
-const TREE_CENTER = TREE_W / 2;
-const TREE_FRAME = new Rectangle(0, 0, TREE_W, TREE_H);
-
-/** 五种不对称树冠轮廓：与 `TREE_SPECIES_ORDER` 一一对应，宽度随高度变化，避免规整的锥形堆叠 */
-const TREE_PROFILES: number[][] = [
-  // 银杏：伞状丰满冠顶，上半部最宽
-  [0.12, 0.2, 0.3, 0.42, 0.56, 0.7, 0.83, 0.94, 1, 0.98, 0.94, 0.91, 0.96, 1, 0.98, 0.94, 0.88, 0.81, 0.74, 0.66, 0.57, 0.46, 0.32, 0.18],
-  // 冬青球：紧凑近乎正圆，上下对称
-  [0.18, 0.3, 0.44, 0.59, 0.74, 0.87, 0.96, 1, 0.96, 0.9, 0.83, 0.77, 0.82, 0.9, 0.97, 0.94, 0.88, 0.81, 0.73, 0.64, 0.54, 0.42, 0.28, 0.14],
-  // 羽毛枫：层叠云片，中段有收腰
-  [0.1, 0.19, 0.3, 0.43, 0.57, 0.71, 0.84, 0.95, 0.99, 0.94, 0.87, 0.8, 0.76, 0.82, 0.91, 0.99, 0.97, 0.91, 0.83, 0.74, 0.64, 0.52, 0.36, 0.2],
-  // 罗汉松：窄顶宽底的云片层
-  [0.16, 0.28, 0.42, 0.57, 0.72, 0.85, 0.96, 1, 0.97, 0.92, 0.86, 0.8, 0.76, 0.8, 0.88, 0.95, 0.98, 0.94, 0.86, 0.77, 0.67, 0.55, 0.4, 0.23],
-  // 垂柳：细顶尖、下部最宽，柳丝压到接近湖面
-  [0.1, 0.16, 0.24, 0.32, 0.4, 0.48, 0.56, 0.64, 0.72, 0.8, 0.86, 0.9, 0.94, 0.96, 0.98, 0.99, 1, 0.98, 0.94, 0.88, 0.8, 0.7, 0.56, 0.4],
-];
-const TREE_ROW_HEIGHT = 3;
-const TREE_CANOPY_WIDTHS = [58, 62, 64, 60, 56] as const;
-
-export interface TreeTextures {
-  trunk: Texture;
-  canopy: Texture;
-}
-
-function makeTreeParts(
-  renderer: TextureFactory,
-  variant: number,
-  palette: TreeSpeciesPalette,
-  winter = false,
-): TreeTextures {
-  const profile = TREE_PROFILES[variant % TREE_PROFILES.length]!;
-  const canopyWidth = TREE_CANOPY_WIDTHS[variant % TREE_CANOPY_WIDTHS.length]!;
-  const trunkWidth = 7 + (variant % 2) * 3;
-  const trunkHeight = 28 + (variant % 3) * 4;
-  const trunkX = Math.round(TREE_CENTER - trunkWidth / 2);
-  const trunkTop = TREE_H - trunkHeight;
-  const random = seeded(0x7f4a + variant * 977);
-
-  const trunk = bake(
-    renderer,
-    (g) => {
-      // 树根：底部两格外扩，树才不是插在地上的一根棍
-      g.rect(trunkX - 3, TREE_H - 5, trunkWidth + 6, 5).fill(palette.trunk);
-      g.rect(trunkX - 2, TREE_H - 6, trunkWidth + 4, 3).fill(palette.trunkLight);
-      g.rect(trunkX - 1, trunkTop, trunkWidth + 2, trunkHeight).fill(palette.trunk);
-      g.rect(trunkX, trunkTop, trunkWidth, trunkHeight).fill(palette.trunkLight);
-      g.rect(trunkX, trunkTop, 2, trunkHeight).fill(palette.trunk);
-      // 树皮纹理：只用同一族的两档，靠近黑的深棕会把暖色体系戳破
-      for (let i = 0; i < 6; i += 1) {
-        const y = trunkTop + 3 + Math.floor(random() * (trunkHeight - 6));
-        g.rect(trunkX + 2 + Math.floor(random() * (trunkWidth - 3)), y, 1, 2).fill(palette.trunk);
-      }
-      // 树干与树冠的接缝：压一档暗，树冠盖上去才有「长在树上」的感觉
-      g.rect(trunkX - 1, trunkTop, trunkWidth + 2, 2).fill(palette.trunk);
-      if (winter) {
-        // 树根积雪：贴地一圈，雪才像「堆在树脚」而不是悬浮在树干上
-        g.rect(trunkX - 4, TREE_H - 7, trunkWidth + 8, 3).fill(W.snowBase);
-        g.rect(trunkX - 3, TREE_H - 6, trunkWidth + 6, 1).fill(W.snowLight);
-        g.rect(trunkX - 5, TREE_H - 4, trunkWidth + 10, 2).fill(W.snowShade);
-      }
-    },
-    { frame: TREE_FRAME },
-  );
-
-  const canopy = bake(
-    renderer,
-    (g) => {
-      let centerShift = 0;
-      /** 雪帽要按行宽重新铺一遍，所以行几何必须留到循环之后 */
-      const rows: Array<{ x: number; y: number; width: number }> = [];
-      profile.forEach((ratio, index) => {
-        const width = Math.max(6, Math.round(ratio * canopyWidth));
-        const y = trunkTop - (index + 1) * TREE_ROW_HEIGHT;
-        const drift = random();
-        centerShift = Math.max(-2, Math.min(2, centerShift + (drift > 0.7 ? 1 : drift < 0.3 ? -1 : 0)));
-        const x = Math.round(TREE_CENTER + centerShift - width / 2);
-        rows.push({ x, y, width });
-        // 叶簇外沿保留一档暗色，轮廓高低变化而不是齐刷刷叠成层层方片
-        const overhang = random() > 0.76 ? 2 : 1;
-        g.rect(x - overhang, y, width + overhang * 2, TREE_ROW_HEIGHT).fill(palette.canopyEdge);
-        g.rect(x, y, width, TREE_ROW_HEIGHT).fill(palette.canopyMid);
-        if (random() > 0.34) {
-          const highlightX = x + 1 + Math.floor(random() * Math.max(1, width - 4));
-          g.rect(highlightX, y, 2 + Math.floor(random() * 3), 1).fill(palette.canopyLight);
-        }
-        if (random() > 0.48) {
-          const shadeX = x + 1 + Math.floor(random() * Math.max(1, width - 3));
-          g.rect(shadeX, y + TREE_ROW_HEIGHT - 1, 2 + Math.floor(random() * 2), 1).fill(palette.canopyDeep);
-        }
-
-        // 受光斑点分散成小叶簇，不沿每一行横向排成条纹
-        const marks = 1 + Math.floor(random() * 3);
-        for (let m = 0; m < marks; m += 1) {
-          const mx = x + 2 + Math.floor(random() * Math.max(1, width - 5));
-          const my = y + Math.floor(random() * TREE_ROW_HEIGHT);
-          const bright = random() > 0.45;
-          g.rect(mx, my, random() > 0.6 ? 3 : 1, 1).fill(bright ? palette.canopyGlow : palette.canopyDeep);
-        }
-      });
-
-      if (winter) {
-        // 雪帽：只压上半部，越靠顶越厚。逐行都盖满会在 3px 行距上拉出一道道横纹，
-        // 所以下半部只在外沿枝尖点雪，中间留出叶色。
-        const snowStart = Math.floor(rows.length * 0.66);
-        for (let i = snowStart; i < rows.length; i += 1) {
-          const row = rows[i]!;
-          const t = (i - snowStart) / Math.max(1, rows.length - 1 - snowStart);
-          const thickness = t > 0.62 ? 2 : 1;
-          const cover = Math.max(4, Math.round(row.width * (0.78 + 0.18 * t)));
-          const x = row.x + Math.round((row.width - cover) / 2);
-          g.rect(x, row.y, cover, thickness).fill(W.snowBase);
-          if (t > 0.55) g.rect(x + 1, row.y + 1, Math.max(2, cover - 2), 1).fill(W.snowLight);
-        }
-        // 雪线：雪帽下沿压一道雪影，帽才不会像贴上去的白纸
-        const edgeRow = rows[snowStart];
-        if (edgeRow) g.rect(edgeRow.x, edgeRow.y + 1, edgeRow.width, 1).fill(W.snowShade);
-        // 枝尖薄雪：外沿左右各点几粒，雪挂在探出的枝条上
-        for (let i = Math.floor(rows.length * 0.34); i < snowStart; i += 1) {
-          const row = rows[i]!;
-          if (random() > 0.45) continue;
-          const side = random() > 0.5;
-          const sx = side ? row.x - 1 : row.x + row.width - 1;
-          g.rect(sx, row.y, 2, 1).fill(W.snowShade);
-          g.rect(sx, row.y + 1, 1, 1).fill(W.snowLight);
-        }
-      }
-      // 树冠底缘：向下收一档暗边，和树干之间才有厚度
-      const bottomY = trunkTop - TREE_ROW_HEIGHT;
-      const bottomWidth = Math.round(profile[profile.length - 1]! * canopyWidth);
-      g.rect(Math.round(TREE_CENTER + centerShift - bottomWidth / 2) - 1, bottomY + 1, bottomWidth + 2, 2).fill(palette.canopyDeep);
-    },
-    { frame: TREE_FRAME },
-  );
-
-  return { trunk, canopy };
-}
-
-/**
- * 五套树种贴图：索引与 `TREE_SPECIES_ORDER` 一致。
- * 每套都是 trunk + canopy 两张同帧纹理，构造期一次烘焙，帧循环零生成。
- */
-export function makeTreeTextures(renderer: TextureFactory, winter = false): TreeTextures[] {
-  return TREE_SPECIES_ORDER.map((id, index) => makeTreeParts(renderer, index, TREE_SPECIES[id], winter));
+/** 9 树种主序兼容数组：供边界林与旧测试接口直接按物种顺序取贴图 */
+export function makeTreeTextures(renderer: TextureFactory, winter = false) {
+  return makeTreeTextureBank(renderer, winter).flat;
 }
 
 /* ------------------------------------------------------------------ *
- * 大物件底座投影：树 / 花箱 / 石头共用一套逐行椭圆
+ * 大物件底座投影：树 / 古树 / 花箱 / 石头共用一套逐行椭圆
  *
  * 只压 0.2 一档、内芯再补 0.06：再深就会在暖色草地上糊出一块灰。
  * 缩放一律走纹素整数倍，不做 alpha 渐变贴图——渐变会把硬像素边磨成雾。
@@ -540,6 +404,7 @@ export function makeTreeTextures(renderer: TextureFactory, winter = false): Tree
 
 export const PROP_SHADOW = {
   tree: { w: 46, h: 18 },
+  heroTree: { w: 72, h: 24 },
   planter: { w: 22, h: 10 },
   rock: { w: 18, h: 8 },
 } as const;
@@ -747,6 +612,29 @@ function drawShoot(g: Graphics, x: number): void {
   g.rect(x + 5, 15, 9, 1).fill(C.grassDeep);
 }
 
+/** 熏衣草花穗：高挑竖直紫穗 + 青灰茎 */
+function drawBloomLavender(g: Graphics, x: number): void {
+  g.rect(x + 4, 9, 1, 7).fill(C.reed);
+  g.rect(x + 8, 7, 1, 9).fill(C.reed);
+  g.rect(x + 12, 10, 1, 6).fill(C.reed);
+  g.rect(x + 3, 5, 3, 5).fill(C.bloomLavender);
+  g.rect(x + 4, 4, 2, 2).fill(C.bloomLavenderDeep);
+  g.rect(x + 7, 3, 3, 6).fill(C.bloomLavender);
+  g.rect(x + 8, 2, 1, 2).fill(C.petalRose);
+  g.rect(x + 11, 6, 3, 5).fill(C.bloomLavender);
+  g.rect(x + 12, 8, 2, 2).fill(C.bloomLavenderDeep);
+  g.rect(x + 3, 15, 10, 1).fill(C.grassDeep);
+}
+
+/** 落樱瓣：三枚错落斜飞粉瓣，铺在樱林草皮下 */
+function drawPetalPink(g: Graphics, x: number): void {
+  g.rect(x + 4, 11, 3, 2).fill(C.petalPink);
+  g.rect(x + 5, 10, 1, 1).fill(C.petalPinkDeep);
+  g.rect(x + 9, 8, 2, 2).fill(C.petalPink);
+  g.rect(x + 10, 12, 3, 2).fill(C.petalPinkDeep);
+  g.rect(x + 10, 12, 2, 1).fill(C.petalPink);
+}
+
 export function makeDecalAtlas(renderer: TextureFactory): DecalAtlas {
   const at = (kind: (typeof DECAL_KINDS)[number]): number => DECAL_SPRITE * DECAL_KINDS.indexOf(kind);
   const texture = bake(
@@ -761,6 +649,8 @@ export function makeDecalAtlas(renderer: TextureFactory): DecalAtlas {
       drawBloomRose(g, at('bloomRose'));
       drawLeaf(g, at('leaf'));
       drawShoot(g, at('shoot'));
+      drawBloomLavender(g, at('bloomLavender'));
+      drawPetalPink(g, at('petalPink'));
     },
     { frame: new Rectangle(0, 0, DECAL_SPRITE * DECAL_KINDS.length, DECAL_SPRITE) },
   );

@@ -129,7 +129,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 1000,
     income: 25,
     tagline: '生活大街南侧独立砖砌小院，自带摇钱树。',
-    rect: { x: 4300, y: 5390, w: 220, h: 170 },
+    rect: { x: 4320, y: 5390, w: 220, h: 170 },
   }),
   property({
     id: 1,
@@ -142,7 +142,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 1000,
     income: 25,
     tagline: '一号院东邻，同规格双拼砖院与门前花园。',
-    rect: { x: 4560, y: 5390, w: 220, h: 170 },
+    rect: { x: 4600, y: 5390, w: 220, h: 170 },
   }),
   property({
     id: 2,
@@ -155,7 +155,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 5000,
     income: 80,
     tagline: '霓虹娱乐街西首地标：蓝砖舞池、顶配灯球与高额分红。',
-    rect: { x: 2600, y: 2640, w: 320, h: 320 },
+    rect: { x: 2700, y: 2640, w: 320, h: 320 },
   }),
   property({
     id: 3,
@@ -168,7 +168,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 2500,
     income: 45,
     tagline: '娱乐街中段潮酷工坊：赛博霓虹棚顶与街头胎印。',
-    rect: { x: 2980, y: 2700, w: 240, h: 260 },
+    rect: { x: 3060, y: 2700, w: 240, h: 260 },
   }),
   property({
     id: 4,
@@ -181,7 +181,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 600,
     income: 18,
     tagline: '三盏灯笼一锅热汤：低门槛入局的街头网红宵夜摊。',
-    rect: { x: 3280, y: 2780, w: 200, h: 180 },
+    rect: { x: 3330, y: 2780, w: 200, h: 180 },
   }),
   property({
     id: 5,
@@ -194,7 +194,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 500,
     income: 15,
     tagline: '摸鱼湖东北岸观景木屋，新手最易入手的第一套产权。',
-    rect: { x: 5250, y: 4710, w: 200, h: 150 },
+    rect: { x: 5240, y: 4700, w: 200, h: 150 },
   }),
   property({
     id: 6,
@@ -207,7 +207,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 1200,
     income: 30,
     tagline: '翠竹林南侧青瓦竹院，远离喧嚣又紧邻西主路。',
-    rect: { x: 3110, y: 4320, w: 210, h: 150 },
+    rect: { x: 3060, y: 4300, w: 210, h: 150 },
   }),
   property({
     id: 7,
@@ -220,7 +220,7 @@ export const VILLA_SPECS: ReadonlyArray<VillaSpec> = [
     price: 2800,
     income: 50,
     tagline: '沉思浅塘北岸私密茶院，俯瞰东北湖景的黄金别业。',
-    rect: { x: 4920, y: 2450, w: 260, h: 170 },
+    rect: { x: 4940, y: 2500, w: 260, h: 170 },
   }),
 ];
 

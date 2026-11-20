@@ -4,6 +4,7 @@ import {
   CLINIC_RECT,
   DISTRICTS,
   ISLAND,
+  NEON_STRIP_PLAZA,
   VIEW_RADIUS,
   VILLA_SPECS,
   WORLD_CENTER,
@@ -16,6 +17,7 @@ import {
 } from '@niuma/shared-types';
 import { ACTIVITY_TTL_MS } from './activity-feed';
 import { MINIMAP_COLORS as M } from './terrain-palette';
+import { MINIMAP_TREE_COLORS } from './vegetation-species';
 
 /**
  * 小地图绘制。
@@ -103,7 +105,7 @@ function buildingRect(name: string): WorldRect {
 /** 核心场所：6 处地标 + 房产三态屋标由 drawVillaPins 单独绘制 */
 export const MINIMAP_VENUE_MARKS: ReadonlyArray<MiniMapMark> = [
   markAt(BOSS_ARENA, 'corporate'),
-  markAt({ x: 3000, y: 2840, w: 80, h: 80 }, 'amusement'),
+  markAt(NEON_STRIP_PLAZA, 'amusement'),
   markAt(CLINIC_RECT, 'service'),
   markAt(buildingRect('卫生间'), 'service'),
   markAt(buildingRect('小黑屋'), 'service'),
@@ -156,20 +158,35 @@ function traceWorldPolygon(ctx: MiniMapContext, points: readonly Point[], camX: 
   ctx.closePath();
 }
 
-/** 树只画 1px 点：树丛是几粒聚在一起，孤树则是草地里的一粒深绿 */
+/** 按物种分色画树：标准树 1px、地标古树 3×3 亮点带墨框，零分配 */
 function drawTreeDots(
   ctx: MiniMapContext,
   trees: readonly TreeInstance[],
   camX: number,
   camY: number,
-  color: string,
+  fallback: string,
 ): void {
-  ctx.fillStyle = color;
   const reach = VIEW_RADIUS + 80;
+  let lastFill = '';
   for (let i = 0; i < trees.length; i += 1) {
     const tree = trees[i]!;
     if (Math.abs(tree.x - camX) > reach || Math.abs(tree.y - camY) > reach) continue;
-    ctx.fillRect(screenX(tree.x, camX), screenY(tree.y, camY), 1, 1);
+    const sx = screenX(tree.x, camX);
+    const sy = screenY(tree.y, camY);
+    const fill = MINIMAP_TREE_COLORS[tree.species] ?? fallback;
+    if (tree.scale === 1) {
+      ctx.fillStyle = M.markInk;
+      ctx.fillRect(sx - 2, sy - 2, 5, 5);
+      ctx.fillStyle = fill;
+      ctx.fillRect(sx - 1, sy - 1, 3, 3);
+      lastFill = fill;
+      continue;
+    }
+    if (fill !== lastFill) {
+      ctx.fillStyle = fill;
+      lastFill = fill;
+    }
+    ctx.fillRect(sx, sy, 1, 1);
   }
 }
 
@@ -179,16 +196,16 @@ function drawTerrain(ctx: MiniMapContext, camX: number, camY: number): void {
   ctx.fillStyle = M.wild;
   ctx.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
-  // 陆地是矩形：直接描四条边，沙色描边就是边界沙带
-  const { x, y, w, h } = ISLAND.bounds;
+  // 29 顶点有机岛屿与海岸沙滩轮廓
   ctx.fillStyle = M.ground;
-  fillWorldRect(ctx, { x, y, w, h }, camX, camY);
+  traceWorldPolygon(ctx, ISLAND.points, camX, camY);
+  ctx.fill();
   ctx.strokeStyle = M.shore;
   ctx.lineWidth = 2;
-  ctx.strokeRect(screenX(x, camX), screenY(y, camY), span(w), span(h));
+  ctx.stroke();
   ctx.lineWidth = 1;
 
-  // 树丛只铺一小片柔和底色，不再画整块「加班林」矩形
+  // 树丛只铺一小片柔和底色
   ctx.fillStyle = M.forest;
   for (const grove of WORLD_LAYOUT.groves) {
     ctx.beginPath();
@@ -196,11 +213,18 @@ function drawTerrain(ctx: MiniMapContext, camX: number, camY: number): void {
     ctx.fill();
   }
 
-  // 花海：亮一档的草色块 + 三粒该花田配色的花点，20px 内也能和普通草地分开
+  // 花海：四色花点（白雏菊 / 金盏 / 暖粉 / 熏衣草），帧内零分配
   for (const field of WORLD_LAYOUT.flowerFields) {
     ctx.fillStyle = M.meadow;
     fillWorldRect(ctx, field.rect, camX, camY);
-    ctx.fillStyle = field.palette === 0 ? M.flowerWhite : field.palette === 1 ? M.flowerGold : M.flowerRose;
+    ctx.fillStyle =
+      field.palette === 0
+        ? M.flowerWhite
+        : field.palette === 1
+          ? M.flowerGold
+          : field.palette === 2
+            ? M.flowerRose
+            : M.flowerLavender;
     for (let i = 0; i < FLOWER_DOTS.length; i += 1) {
       const dot = FLOWER_DOTS[i]!;
       ctx.fillRect(

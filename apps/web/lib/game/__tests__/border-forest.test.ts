@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { ISLAND } from '@niuma/shared-types';
+import { ISLAND, pointInPolygon } from '@niuma/shared-types';
 import { FOREST_MAX_TREES, FOREST_TREE_VARIANTS, buildBorderForest } from '../border-forest';
 
 const BOUNDS = ISLAND.bounds;
 const TREES = buildBorderForest(BOUNDS);
-/** 最大相邻间距 = 步长 64 + 两侧抖动各 14，留 4px 余量 */
-const MAX_GAP = 64 + 14 * 2 + 4;
+/** 最大相邻间距 = 步长 72 + 两侧抖动各 12，留 4px 余量 */
+const MAX_GAP = 72 + 12 * 2 + 4;
 
 function outside(x: number, y: number): boolean {
   return x <= BOUNDS.x || x >= BOUNDS.x + BOUNDS.w || y <= BOUNDS.y || y >= BOUNDS.y + BOUNDS.h;
@@ -45,6 +45,19 @@ describe('边界密林', () => {
     for (const tree of TREES) {
       expect(tree.variant).toBeGreaterThanOrEqual(0);
       expect(tree.variant).toBeLessThan(FOREST_TREE_VARIANTS);
+    }
+  });
+
+  it('29 顶点有机岛界环绕三排密林与多物种岸带', () => {
+    const polyTrees = buildBorderForest(ISLAND.points);
+    expect(polyTrees.length).toBeGreaterThan(350);
+    expect(polyTrees.length).toBeLessThanOrEqual(FOREST_MAX_TREES);
+    const depths = new Set(polyTrees.map((t) => t.depth));
+    expect(depths).toEqual(new Set([0, 1, 2]));
+    const species = new Set(polyTrees.map((t) => t.species));
+    expect(species.size).toBeGreaterThanOrEqual(6);
+    for (const tree of polyTrees) {
+      expect(pointInPolygon(tree.x, tree.y, ISLAND.points)).toBe(false);
     }
   });
 });

@@ -21,7 +21,16 @@ import {
   type Point,
   type WorldRect,
 } from './geometry';
-import { ISLAND, PLANTER_RADIUS, TREE_TRUNK_RADIUS, WORLD_CENTER, WORLD_LAYOUT, isOnLand, isWaterAt } from './layout';
+import {
+  HERO_TREE_TRUNK_RADIUS,
+  ISLAND,
+  PLANTER_RADIUS,
+  TREE_TRUNK_RADIUS,
+  WORLD_CENTER,
+  WORLD_LAYOUT,
+  isOnLand,
+  isWaterAt,
+} from './layout';
 
 /** 玩家碰撞半径：约等于身体宽度的一半（角色 48 texel 高、躯干 23 宽），墙体与树干的体感由此决定 */
 export const PLAYER_RADIUS = 9;
@@ -64,11 +73,11 @@ function footCircle(x: number, y: number, r: number): Blocker {
 // ADR-0028：办公区删除围栏，树篱只做视觉分区（走 props 管线，不产生 blocker）
 for (const grove of WORLD_LAYOUT.groves) {
   for (const tree of grove.trees) {
-    blockers.push(footCircle(tree.x, tree.y, TREE_TRUNK_RADIUS));
+    blockers.push(footCircle(tree.x, tree.y, tree.scale === 1 ? HERO_TREE_TRUNK_RADIUS : TREE_TRUNK_RADIUS));
   }
 }
 for (const tree of WORLD_LAYOUT.looseTrees) {
-  blockers.push(footCircle(tree.x, tree.y, TREE_TRUNK_RADIUS));
+  blockers.push(footCircle(tree.x, tree.y, tree.scale === 1 ? HERO_TREE_TRUNK_RADIUS : TREE_TRUNK_RADIUS));
 }
 for (const planter of WORLD_LAYOUT.planters) {
   blockers.push(footCircle(planter.x, planter.y, PLANTER_RADIUS));
@@ -269,13 +278,29 @@ export function findFreePoint(
 ): { x: number; y: number } {
   let startX = Number.isFinite(x) ? x : WORLD_CENTER.x;
   let startY = Number.isFinite(y) ? y : WORLD_CENTER.y;
-  // 压测会把出生半径放大到 3000，采样点会落进海里：先夹回陆地包围盒再就近搜。
-  // 只判「在不在陆地」，不判半径——贴岸的点保留原点，环搜索会自己往内陆走。
+  // 多边形岛界收紧：若起点落在外海/密林湾凹槽之外，先沿连线向岛心逐步拉回陆地再做环搜索
   if (!isOnLand(startX, startY)) {
     const { x: bx, y: by, w, h } = ISLAND.bounds;
     const margin = radius + 1;
     startX = clamp(startX, bx + margin, bx + w - margin);
     startY = clamp(startY, by + margin, by + h - margin);
+    if (!isOnLand(startX, startY)) {
+      let lo = 0;
+      let hi = 1;
+      for (let step = 0; step < 16; step += 1) {
+        const mid = (lo + hi) * 0.5;
+        const px = startX + (WORLD_CENTER.x - startX) * mid;
+        const py = startY + (WORLD_CENTER.y - startY) * mid;
+        if (isOnLand(px, py)) hi = mid;
+        else lo = mid;
+      }
+      startX = startX + (WORLD_CENTER.x - startX) * hi;
+      startY = startY + (WORLD_CENTER.y - startY) * hi;
+      if (!isOnLand(startX, startY)) {
+        startX = WORLD_CENTER.x;
+        startY = WORLD_CENTER.y;
+      }
+    }
   }
   if (freeAt(startX, startY, radius, avoidWater)) {
     return { x: startX, y: startY };

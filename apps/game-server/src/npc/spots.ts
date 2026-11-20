@@ -1,4 +1,5 @@
 import {
+  NEON_STRIP_PLAZA,
   PLAYER_RADIUS,
   VILLA_SPECS,
   WORLD_BOUNDS,
@@ -28,8 +29,8 @@ const MIN_WALK_PX = 240;
 const MIN_SPAWN_GAP = 160;
 /** 街头热闹热区（霓虹商业街广场 & 沉思浅塘北岸），供 NPC 优先漫步打卡 */
 const FEATURED_SPOTS: ReadonlyArray<NpcSpot> = [
-  { x: 3000, y: 2990 },
-  { x: 4980, y: 2660 },
+  { x: NEON_STRIP_PLAZA.x + 260, y: NEON_STRIP_PLAZA.y + 40 },
+  { x: VILLA_SPECS[7]!.gate.x, y: VILLA_SPECS[7]!.gate.y + 24 },
 ];
 
 function isExcludedNpcSpot(x: number, y: number): boolean {

@@ -36,15 +36,15 @@ import { isOutdoorGround } from './ground';
 /** 五条过渡带：企业/游乐/生活/服务四区之间的空草地，坐标全部落在既有留白里 */
 export const STREET_DECOR_BANDS: ReadonlyArray<WorldRect> = [
   // 北：企业楼东墙外 ↔ 北主路（游乐大街与前庭之间那条空草带）
-  { x: 3540, y: 3180, w: 340, h: 300 },
+  { x: 3540, y: 3160, w: 340, h: 300 },
   // 东：服务广场以南 ↔ 摸鱼湖北岸
-  { x: 4530, y: 4480, w: 340, h: 480 },
+  { x: 4580, y: 4520, w: 340, h: 460 },
   // 西：企业楼以南 ↔ 涟漪湖北岸（竹林与花海之间的绿带）
-  { x: 2600, y: 4030, w: 430, h: 640 },
+  { x: 2580, y: 4030, w: 430, h: 580 },
   // 西南：涟漪湖以南 ↔ 生活大街西端
-  { x: 2600, y: 5180, w: 510, h: 500 },
+  { x: 2580, y: 5140, w: 510, h: 500 },
   // 东北：沉思浅塘以南 ↔ 服务广场北缘
-  { x: 4860, y: 3160, w: 600, h: 400 },
+  { x: 4860, y: 3180, w: 600, h: 380 },
 ];
 
 /**
@@ -236,41 +236,29 @@ function groundAllowed(x: number, y: number, minPath: number, maxPath: number): 
 export const STREET_ANCHORS: ReadonlyArray<{ kind: StreetDecorKind; x: number; y: number; variant: 0 | 1 }> = [
   // 企业楼前庭东北角：进楼前顺手投一封信
   { kind: 'postbox', x: 3788, y: 3548, variant: 0 },
-  // 企业区前庭西侧：消防栓贴着草地，让开 200×200 的铺装
+  // 企业区前庭南侧：消防栓贴着草地，让开 200×200 的铺装
   { kind: 'hydrant', x: 3572, y: 3768, variant: 0 },
-  // 服务广场北缘：消防栓守着急救站的转弯半径
-  { kind: 'hydrant', x: 4620, y: 3560, variant: 0 },
-  // 服务广场东侧：备用垃圾桶留在东主路的尽头
-  { kind: 'bin', x: 5420, y: 3900, variant: 1 },
-  // 游乐大街西端（赌场亭南）：邮筒
-  { kind: 'postbox', x: 3060, y: 3160, variant: 1 },
-  // 生活大街西端：邮筒与垃圾桶成对，读得出「这里是回家那条街」
-  { kind: 'postbox', x: 3016, y: 5336, variant: 0 },
-  { kind: 'bin', x: 2996, y: 5456, variant: 0 },
+  // 服务广场北缘草坪：消防栓守着北部支路
+  { kind: 'hydrant', x: 4500, y: 3400, variant: 0 },
+  // 急救站东侧外缘：备用垃圾桶守着东岸步道
+  { kind: 'bin', x: 5480, y: 3880, variant: 1 },
+  // 游乐大街西段南缘：邮筒
+  { kind: 'postbox', x: 3060, y: 3120, variant: 1 },
+  // 生活大街西端：邮筒与垃圾桶成对
+  { kind: 'postbox', x: 3140, y: 5180, variant: 0 },
+  { kind: 'bin', x: 2996, y: 5410, variant: 0 },
   // 景观区西带（涟漪湖北岸）：消防栓
-  { kind: 'hydrant', x: 2700, y: 4640, variant: 1 },
-  // 南主路东侧：垃圾桶守着广场出口
+  { kind: 'hydrant', x: 2700, y: 4550, variant: 1 },
+  // 南主路东侧：垃圾桶守着出口
   { kind: 'bin', x: 4300, y: 4960, variant: 1 },
 ];
 
-/**
- * 现代街道家具的「基准点」：每种一件，各自贴着一处已确认可站的旧锚点。
- *
- * 为什么不写死坐标：`propsAllowed` 会按水距、实体净空、树距逐条否决，
- * 写死的坐标一旦被树冠或铺装挡住就静默消失（测试会红）。
- * 这里以基准点为圆心做一轮固定顺序的就近探测，第一个合法落点胜出；
- * 顺序是常量，所以任何设备算出来的位置完全一致。
- */
 const MODERN_ANCHORS: ReadonlyArray<{ kind: StreetDecorKind; bx: number; by: number; variant: 0 | 1 }> = [
-  // 霓虹街路口：大红色玻璃电话亭，顶部冷白 CALL 灯箱（二期接单点）
-  { kind: 'phoneBooth', bx: 3060, by: 3160, variant: 0 },
-  // 南主路东侧：第二座电话亭，从生活区回园区先看见它
+  { kind: 'phoneBooth', bx: 3060, by: 3120, variant: 0 },
   { kind: 'phoneBooth', bx: 4300, by: 4960, variant: 1 },
-  // 企业楼侧巷：施工锥桶与空调外机成组，读得出「这里还在施工 / 机房在运转」
   { kind: 'cone', bx: 3572, by: 3768, variant: 0 },
   { kind: 'acUnit', bx: 3788, by: 3548, variant: 0 },
-  // 服务广场北缘：荧光按键饮料贩卖机
-  { kind: 'vending', bx: 4620, by: 3560, variant: 0 },
+  { kind: 'vending', bx: 4500, by: 3400, variant: 0 },
 ];
 
 /** 就近探测顺序：先横向让开一个身位，再上下错位，最后退回基准点本身兜底 */
@@ -301,10 +289,10 @@ function resolveModernAnchor(anchor: (typeof MODERN_ANCHORS)[number]): StreetPro
 
 /** 排水篦子：沿五区街面与主路的路缘手写，读起来像「这条路有人维护」 */
 export const STREET_GRATE_ANCHORS: ReadonlyArray<{ x: number; y: number; variant: 0 | 1 }> = [
-  { x: 3132, y: 3140, variant: 0 },
-  { x: 4470, y: 4264, variant: 1 },
-  { x: 3560, y: 3660, variant: 0 },
-  { x: 4972, y: 3560, variant: 1 },
+  { x: 3132, y: 3082, variant: 0 },
+  { x: 4576, y: 4264, variant: 1 },
+  { x: 3560, y: 3704, variant: 0 },
+  { x: 4966, y: 3576, variant: 1 },
 ];
 
 /** 排水篦子允许贴着铺装边：篦子本来就嵌在路缘上，不算「站在路面中间」 */

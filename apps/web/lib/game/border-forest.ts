@@ -1,82 +1,120 @@
 /**
- * 边界外密林的树位（ADR-0064）。
+ * 有机多边形环岛三层密林（替代旧版四直边双排林墙）：
  *
- * 园区边界是一个矩形，四边之外不再有海，而是一片不可通行的密林。
- * 这一层只产出「树根坐标 + 明暗档」，不含任何 Pixi 对象：
- * 渲染侧负责贴图、着色与裁剪，测试侧只校验位置与数量。
- *
- * 纪律：种子固定、只用 `seeded` 的 mulberry32，不碰 Math.random / Math.sin / Math.cos，
- * 每次启动、每台机器长出来的林墙完全一样。
+ * - 沿顺时针多边形海岸外法线方向排布 3 排错位林墙（near 0 / mid 1 / far 2），
+ *   外浅内深、树种按南北东西岸带生态自然过渡；
+ * - 全程无 Math.random / Math.sin / Math.cos，不依附 Pixi，便于双端测试校验。
  */
 
-import type { WorldRect } from '@niuma/shared-types';
+import { pointInPolygon, type Point, type WorldRect } from '@niuma/shared-types';
 import { seeded } from './seeded';
+import type { TreeSpeciesId } from './vegetation-species';
 
-/** 一排树影：只画不碰，角色永远走不到这一带 */
 export interface ForestTree {
-  /** 树根坐标（世界像素，精灵锚点在脚底中央） */
+  /** 树根坐标（世界像素，精灵锚点 0.5, 1） */
   x: number;
   y: number;
-  /** 0 = 近排（贴着沙带外沿）；1 = 远排（压暗一档，负责把地平线堵死） */
-  depth: 0 | 1;
-  /** 树冠变体索引，由调用方对纹理数量取模 */
+  /** 0 近岸林缘 / 1 中景密林 / 2 远景幽林 */
+  depth: 0 | 1 | 2;
+  /** 同物种形态变体索引 0..2 */
   variant: number;
+  /** 按海岸区位分配的生态树种 */
+  species: TreeSpeciesId;
 }
 
-/** 树影总量上限：四边两排铺满后仍留余量，超出说明参数被改坏了 */
-export const FOREST_MAX_TREES = 640;
-/** 树冠变体数量：与 `makeTreeTextures` 的数量一致 */
-export const FOREST_TREE_VARIANTS = 4;
+/** 29 顶点周长下 3 排密林约 560–720 棵，设上限防参数失控 */
+export const FOREST_MAX_TREES = 1200;
+export const FOREST_TREE_VARIANTS = 3;
 
-/** 近排离矩形边界的距离：站在沙带上就能贴到树干 */
-const NEAR_OFFSET = 22;
-/** 远排离矩形边界的距离：再往外的深色靠林地底纹接住 */
-const FAR_OFFSET = 96;
-/** 相邻树影的间距：树冠 58–64 宽，64 的间距正好连成一堵墙 */
-const SPACING = 64;
-/** 前后左右的抖动幅度：破掉整齐的直线，但不会露出缝隙 */
-const JITTER = 14;
+const RING_OFFSETS: ReadonlyArray<{ depth: 0 | 1 | 2; offset: number; spacing: number; phase: number }> = [
+  { depth: 0, offset: 24, spacing: 58, phase: 0 },
+  { depth: 1, offset: 76, spacing: 64, phase: 0.5 },
+  { depth: 2, offset: 138, spacing: 72, phase: 0.25 },
+];
 
-type Side = 'top' | 'bottom' | 'left' | 'right';
+const JITTER_ALONG = 12;
+const JITTER_OUT = 10;
 
-/** 一条边上两排树的步进位置：远排错开半格，近排从端点起铺 */
-const SIDES: ReadonlyArray<Side> = ['top', 'bottom', 'left', 'right'];
+function coastalSpecies(x: number, y: number, r: number): TreeSpeciesId {
+  if (x >= 4750 && y < 3400) {
+    return r < 0.55 ? 'pine' : r < 0.85 ? 'cypress' : 'osmanthus';
+  }
+  if (y < 3250) {
+    return r < 0.45 ? 'sakura' : r < 0.78 ? 'maple' : 'pine';
+  }
+  if (x >= 4750 && y < 4850) {
+    return r < 0.4 ? 'jacaranda' : r < 0.75 ? 'osmanthus' : 'cypress';
+  }
+  if (x >= 4750) {
+    return r < 0.45 ? 'willow' : r < 0.8 ? 'osmanthus' : 'pine';
+  }
+  if (y >= 4850) {
+    return r < 0.42 ? 'holly' : r < 0.74 ? 'cypress' : 'ginkgo';
+  }
+  return r < 0.42 ? 'cypress' : r < 0.76 ? 'ginkgo' : 'maple';
+}
+
+function toPolygon(boundsOrPoints: WorldRect | ReadonlyArray<Point>): Point[] {
+  if (Array.isArray(boundsOrPoints)) {
+    return boundsOrPoints.map(([x, y]) => [x, y]);
+  }
+  const rect = boundsOrPoints as WorldRect;
+  return [
+    [rect.x, rect.y],
+    [rect.x + rect.w, rect.y],
+    [rect.x + rect.w, rect.y + rect.h],
+    [rect.x, rect.y + rect.h],
+  ];
+}
 
 /**
- * 生成四边树位。
- *
- * 每条边沿切线方向按 `SPACING` 铺，垂直方向向矩形外侧偏移；
- * 近排与远排错开半格，远排再叠一点抖动，林墙才有厚度而不是印刷网纹。
+ * 绕多边形外缘（支持任意顺时针岛屿多边形或包围盒）铺设 3 层错落密林。
+ * 凹湾处若某抖动点落回陆地内，会被 `pointInPolygon` 自动跳过，决不踩进海岸沙滩。
  */
-export function buildBorderForest(bounds: WorldRect): ForestTree[] {
+export function buildBorderForest(boundsOrPoints: WorldRect | ReadonlyArray<Point>): ForestTree[] {
   const random = seeded(0x7f1c3a5d);
-  const { x, y, w, h } = bounds;
+  const polygon = toPolygon(boundsOrPoints);
+  if (polygon.length < 3) return [];
+
   const trees: ForestTree[] = [];
+  const wobbleAlong = (): number => Math.round((random() - 0.5) * JITTER_ALONG * 2);
+  const wobbleOut = (): number => Math.round((random() - 0.5) * JITTER_OUT * 2);
+  const pickVariant = (): number => Math.floor(random() * FOREST_TREE_VARIANTS) % FOREST_TREE_VARIANTS;
 
-  /** 抖动取整数像素：树根落在整数格上，像素边缘才不会发虚 */
-  const wobble = (): number => Math.round((random() - 0.5) * JITTER * 2);
-  const pick = (): number => Math.floor(random() * FOREST_TREE_VARIANTS) % FOREST_TREE_VARIANTS;
+  for (let i = 0; i < polygon.length; i += 1) {
+    const [ax, ay] = polygon[i]!;
+    const [bx, by] = polygon[(i + 1) % polygon.length]!;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) continue;
+    const ux = dx / length;
+    const uy = dy / length;
+    // 顺时针边（屏幕坐标 y 向下）的外法线 = (uy, -ux)
+    const nx = uy;
+    const ny = -ux;
 
-  for (const side of SIDES) {
-    const span = side === 'top' || side === 'bottom' ? w : h;
-    for (let t = 0; t < span; t += SPACING) {
-      // 近排
-      const nearAlong = t + wobble();
-      const nearOut = NEAR_OFFSET + wobble();
-      // 远排：沿切线错开半格
-      const farAlong = t + Math.round(SPACING / 2) + wobble();
-      const farOut = FAR_OFFSET + wobble();
-      trees.push(place(side, nearAlong, nearOut, 0, pick()));
-      trees.push(place(side, farAlong, farOut, 1, pick()));
+    for (const ring of RING_OFFSETS) {
+      const steps = Math.max(1, Math.floor(length / ring.spacing));
+      for (let s = 0; s < steps; s += 1) {
+        const t = (s + ring.phase) / steps;
+        if (t < 0 || t >= 1) continue;
+        const along = length * t + wobbleAlong();
+        const out = ring.offset + wobbleOut();
+        const px = Math.round(ax + ux * along + nx * out);
+        const py = Math.round(ay + uy * along + ny * out);
+        // 凹湾处防误入陆地：一旦在多边形内即放弃该点
+        if (pointInPolygon(px, py, polygon)) continue;
+        trees.push({
+          x: px,
+          y: py,
+          depth: ring.depth,
+          variant: pickVariant(),
+          species: coastalSpecies(px, py, random()),
+        });
+      }
     }
   }
 
   return trees;
-
-  function place(side: Side, along: number, out: number, depth: 0 | 1, variant: number): ForestTree {
-    if (side === 'top') return { x: Math.round(x + along), y: Math.round(y - out), depth, variant };
-    if (side === 'bottom') return { x: Math.round(x + along), y: Math.round(y + h + out), depth, variant };
-    if (side === 'left') return { x: Math.round(x - out), y: Math.round(y + along), depth, variant };
-    return { x: Math.round(x + w + out), y: Math.round(y + along), depth, variant };
-  }
 }

@@ -40,7 +40,7 @@ const PILES: ReadonlyArray<{ x: number; y: number; variant: 0 | 1 | 2 }> = [
   { x: 3878, y: 4274, variant: 2 },
   { x: 4312, y: 4238, variant: 1 },
   { x: 3560, y: 5226, variant: 0 },
-  { x: 4620, y: 5470, variant: 2 },
+  { x: 4570, y: 5440, variant: 2 },
   { x: 4040, y: 5610, variant: 1 },
 ];
 

@@ -4,11 +4,13 @@ import { pointInPolygon, rectContains } from '../world/geometry';
 import {
   AVENUE_TREE_COUNT,
   GROVE_MIN_GAP,
+  HERO_TREE_COUNT,
   ISLAND,
   PLANTER_RADIUS,
   PLAZA_RADIUS,
   SPAWN_CENTER,
   SPAWN_RADIUS,
+  TREE_SPECIES_LIST,
   WELCOME_LANDMARKS,
   WORLD_CENTER,
   WORLD_LAYOUT,
@@ -52,28 +54,25 @@ function strictInside(rect: { x: number; y: number; w: number; h: number }, x: n
 }
 
 describe('陆地边界锁定', () => {
-  it('矩形陆地收到 ADR-0077 的 3040×3368', () => {
-    expect(ISLAND.bounds).toEqual({ x: 2560, y: 2412, w: 3040, h: 3368 });
-    expect(ISLAND.points).toEqual([
-      [2560, 2412],
-      [5600, 2412],
-      [5600, 5780],
-      [2560, 5780],
-    ]);
-    // 四角与四边中段都仍是可通行陆地
+  it('29 顶点有机多边形陆地且打破四角矩形', () => {
+    expect(ISLAND.bounds).toEqual({ x: 2340, y: 2260, w: 3440, h: 3680 });
+    expect(ISLAND.points).toHaveLength(29);
+    // 各半岛与核心区域均在陆地上
     for (const [x, y] of [
-      [3400, 2600],
-      [5400, 4000],
-      [3300, 5400],
-      [2700, 4500],
+      [4020, 2360],
+      [5540, 3960],
+      [4200, 5800],
+      [2560, 4020],
     ] as const) {
       expect(isOnLand(x, y)).toBe(true);
     }
-    // 矩形之外仍然不可进入
+    // 矩形包围盒外角与海域皆不可进入
     for (const [x, y] of [
+      [ISLAND.bounds.x + 20, ISLAND.bounds.y + 20],
+      [ISLAND.bounds.x + ISLAND.bounds.w - 20, ISLAND.bounds.y + 20],
       [2000, 3000],
-      [4000, 2300],
-      [5800, 4000],
+      [4000, 2150],
+      [5820, 4000],
       [100, 100],
     ] as const) {
       expect(isOnLand(x, y)).toBe(false);
@@ -256,8 +255,14 @@ describe('散落树簇', () => {
       expect(grove.trees.length).toBeLessThanOrEqual(5);
     }
     expect(trees.length).toBeGreaterThanOrEqual(90);
-    // 林荫道必须真的种出来：偏移量被留白规则全拒会是静默回归
+    // 林荫道与 6 棵地标古树必须真的种出来
     expect(AVENUE_TREE_COUNT).toBeGreaterThan(0);
+    expect(HERO_TREE_COUNT).toBe(6);
+    expect(trees.filter((tree) => tree.scale === 1)).toHaveLength(6);
+    const seenSpecies = new Set(trees.map((tree) => tree.species));
+    for (const species of TREE_SPECIES_LIST) {
+      expect(seenSpecies.has(species), `全岛缺少树种 ${species}`).toBe(true);
+    }
   });
 
   it('树丛中心两两不小于 GROVE_MIN_GAP', () => {
@@ -323,6 +328,8 @@ describe('放射状路网与花海', () => {
 
   it('花海落在空草地上，不压广场与路径', () => {
     expect(WORLD_LAYOUT.flowerFields.length).toBeGreaterThanOrEqual(6);
+    const palettes = new Set(WORLD_LAYOUT.flowerFields.map((field) => field.palette));
+    expect(palettes).toEqual(new Set([0, 1, 2, 3]));
     for (const field of WORLD_LAYOUT.flowerFields) {
       const { x, y, w, h } = field.rect;
       for (const [px, py] of [

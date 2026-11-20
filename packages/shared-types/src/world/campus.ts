@@ -260,7 +260,7 @@ export const CORRIDOR_H = 56;
  *
  * 楼不再像旧四角院落那样围住广场：广场独立成市政中心，五个方向各接一条街。
  */
-export const CAMPUS_RECT: WorldRect = { x: 2620, y: 3200, w: 920, h: ROOM_H * 2 + CORRIDOR_H };
+export const CAMPUS_RECT: WorldRect = { x: 2620, y: 3220, w: 920, h: ROOM_H * 2 + CORRIDOR_H };
 
 /** 北排西：开放工作区（无墙，两排背靠背工位） */
 export const WORKROOM: WorldRect = { x: CAMPUS_RECT.x, y: CAMPUS_RECT.y, w: ROOM_W, h: ROOM_H };
@@ -293,11 +293,11 @@ export const VENT_ROOM: WorldRect = {
  * 生活区宿舍：与企业楼分家，落到生活大街南侧（ADR-0097）。
  * 显示名仍是「宿舍区」，标识符沿用 LOUNGE，避免 HUD 与测试大改。
  */
-export const LOUNGE: WorldRect = { x: 3820, y: 5400, w: ROOM_W, h: ROOM_H };
+export const LOUNGE: WorldRect = { x: 3780, y: 5380, w: ROOM_W, h: ROOM_H };
 /** 服务区卫生间：独立小楼，门朝北面的服务广场 */
 export const RESTROOM: WorldRect = {
-  x: 4600,
-  y: 3660,
+  x: 4650,
+  y: 3630,
   w: RESTROOM_W,
   h: RESTROOM_H,
 };
@@ -310,7 +310,7 @@ export const RESTROOM: WorldRect = {
  * ADR-0103 之后影厅是开放平面：东侧直接接门前铺装，三排座椅仍面朝北端的大屏幕。
  * ------------------------------------------------------------------ */
 
-export const HOME_THEATER: WorldRect = { x: 3200, y: 5400, w: 460, h: 320 };
+export const HOME_THEATER: WorldRect = { x: 3180, y: 5380, w: 460, h: 320 };
 /** 门前铺装：从场地东沿接到生活大街 */
 export const HOME_THEATER_DOOR_PAVING: WorldRect = {
   x: HOME_THEATER.x + HOME_THEATER.w,
@@ -363,7 +363,7 @@ export const THEATER_SEATS: Array<Omit<SeatInstance, 'id' | 'desk'>> = THEATER_R
  * y=4950 的支路全部不动，只把东墙与南墙收进来，三个反省位更紧凑。
  * ------------------------------------------------------------------ */
 
-export const JAIL: WorldRect = { x: 4600, y: 4040, w: 320, h: 240 };
+export const JAIL: WorldRect = { x: 4760, y: 4240, w: 320, h: 240 };
 /** 西墙门洞：开向服务广场 */
 export const JAIL_DOOR: DoorSpec = {
   side: 'west',
@@ -694,22 +694,22 @@ export const AREA_LOGOS: PropInstance[] = [
  * 长椅顺序不变，`seatId` 不会整体后移。
  */
 export const LIVING_PROPS: PropInstance[] = [
-  { kind: 'lamp', x: 3160, y: 5290 },
-  { kind: 'lamp', x: 3500, y: 5290 },
-  { kind: 'lamp', x: 3900, y: 5290 },
-  { kind: 'lamp', x: 4420, y: 5290 },
-  { kind: 'plant', x: 3240, y: 5290 },
-  { kind: 'plant', x: 3620, y: 5290 },
-  { kind: 'plant', x: 4100, y: 5290 },
-  { kind: 'plant', x: 4560, y: 5290 },
-  { kind: 'bench', x: 3340, y: 5320 },
-  { kind: 'bench', x: 4060, y: 5320 },
-  { kind: 'bench', x: 4520, y: 5320 },
-  { kind: 'table', x: 3000, y: 5400 },
-  { kind: 'table', x: 4560, y: 5400 },
-  { kind: 'bike', x: 3040, y: 5500 },
-  { kind: 'sign', x: 4160, y: 4740 },
-  { kind: 'bin', x: 3140, y: 5290 },
+  { kind: 'lamp', x: 3160, y: 5270 },
+  { kind: 'lamp', x: 3500, y: 5270 },
+  { kind: 'lamp', x: 3900, y: 5270 },
+  { kind: 'lamp', x: 4420, y: 5270 },
+  { kind: 'plant', x: 3240, y: 5270 },
+  { kind: 'plant', x: 3620, y: 5270 },
+  { kind: 'plant', x: 4100, y: 5270 },
+  { kind: 'plant', x: 4560, y: 5270 },
+  { kind: 'bench', x: 3340, y: 5300 },
+  { kind: 'bench', x: 4060, y: 5300 },
+  { kind: 'bench', x: 4520, y: 5300 },
+  { kind: 'table', x: 2980, y: 5380 },
+  { kind: 'table', x: 4570, y: 5364 },
+  { kind: 'bike', x: 3020, y: 5480 },
+  { kind: 'sign', x: 4160, y: 4700 },
+  { kind: 'bin', x: 3140, y: 5270 },
 ];
 
 /**
